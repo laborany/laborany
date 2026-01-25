@@ -13,6 +13,10 @@ import HomePage from './pages/HomePage'
 import ExecutePage from './pages/ExecutePage'
 import HistoryPage, { SessionDetailPage } from './pages/HistoryPage'
 import SkillsPage from './pages/SkillsPage'
+import WorkflowsPage from './pages/WorkflowsPage'
+import WorkflowEditPage from './pages/WorkflowEditPage'
+import WorkflowRunPage from './pages/WorkflowRunPage'
+import WorkflowHistoryPage, { WorkflowRunDetailPage } from './pages/WorkflowHistoryPage'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           受保护路由                                      │
@@ -137,11 +141,27 @@ function AppLayout({ children }: { children: React.ReactNode }) {
               isCollapsed={sidebarCollapsed}
             />
             <NavItem
+              to="/workflows"
+              icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+              </svg>}
+              label="工作流"
+              isCollapsed={sidebarCollapsed}
+            />
+            <NavItem
               to="/history"
               icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>}
               label="历史"
+              isCollapsed={sidebarCollapsed}
+            />
+            <NavItem
+              to="/workflow-history"
+              icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              </svg>}
+              label="工作流历史"
               isCollapsed={sidebarCollapsed}
             />
           </nav>
@@ -226,6 +246,54 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <SkillsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/workflows"
+            element={
+              <ProtectedRoute>
+                <WorkflowsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/workflows/new"
+            element={
+              <ProtectedRoute>
+                <WorkflowEditPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/workflows/:workflowId/edit"
+            element={
+              <ProtectedRoute>
+                <WorkflowEditPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/workflows/:workflowId/run"
+            element={
+              <ProtectedRoute>
+                <WorkflowRunPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/workflow-history"
+            element={
+              <ProtectedRoute>
+                <WorkflowHistoryPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/workflow-history/:runId"
+            element={
+              <ProtectedRoute>
+                <WorkflowRunDetailPage />
               </ProtectedRoute>
             }
           />

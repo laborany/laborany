@@ -68,6 +68,61 @@ async def init_db():
             )
         """)
 
+        # ┌──────────────────────────────────────────────────────────────────┐
+        # │                       工作流相关表                                 │
+        # └──────────────────────────────────────────────────────────────────┘
+
+        # 工作流定义表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS workflows (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                icon TEXT,
+                definition TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                is_public INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+
+        # 工作流执行记录表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_runs (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                status TEXT DEFAULT 'running',
+                input TEXT NOT NULL,
+                context TEXT,
+                current_step INTEGER DEFAULT 0,
+                total_steps INTEGER NOT NULL,
+                started_at TEXT DEFAULT (datetime('now')),
+                completed_at TEXT,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(id),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+
+        # 步骤执行记录表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_step_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                step_index INTEGER NOT NULL,
+                skill_id TEXT NOT NULL,
+                session_id TEXT,
+                status TEXT DEFAULT 'pending',
+                output TEXT,
+                error TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id)
+            )
+        """)
+
         await db.commit()
 
 

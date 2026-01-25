@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import traceback
 
-from src.api import auth, skill, session, file, task
+from src.api import auth, skill, session, file, task, workflow
 from src.core.database import init_db
 
 # ┌──────────────────────────────────────────────────────────────────────────┐
@@ -52,6 +52,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(task.router, prefix="/api/task", tags=["任务文件"])
 app.include_router(skill.router, prefix="/api/skill", tags=["Skill"])
+app.include_router(workflow.router, prefix="/api/workflow", tags=["工作流"])
 app.include_router(session.router, prefix="/api/sessions", tags=["会话"])
 app.include_router(file.router, prefix="/api/files", tags=["文件"])
 

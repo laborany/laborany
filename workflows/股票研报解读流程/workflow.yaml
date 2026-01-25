@@ -1,0 +1,17 @@
+name: 股票研报解读流程
+description: 用户输入pdf研报，pdf skills先提取内容，写入文档中；然后金融研报助手再读取文档，根据内容分析研报本身
+icon: null
+steps:
+  - skill: pdf
+    name: pdf
+    prompt: ""
+  - skill: financial-report
+    name: 金融研报助手
+    prompt: ""
+input:
+  pdf文档:
+    type: file
+    description: pdf文档
+    required: true
+    default: null
+on_failure: stop

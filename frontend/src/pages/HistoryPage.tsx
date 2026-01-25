@@ -4,7 +4,7 @@
  * ║  展示用户的历史会话记录，支持查看详情和继续对话                                ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useAgent, TaskFile } from '../hooks/useAgent'
 import ChatInput from '../components/shared/ChatInput'
