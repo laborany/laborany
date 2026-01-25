@@ -1,0 +1,249 @@
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                         Agent 通信 Hook                                   ║
+ * ║                                                                          ║
+ * ║  职责：SSE 流式通信、消息管理、执行控制、任务文件管理                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝ */
+
+import { useState, useCallback, useRef } from 'react'
+
+const API_BASE = '/api'
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           类型定义                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export interface AgentMessage {
+  id: string
+  type: 'user' | 'assistant' | 'tool' | 'error'
+  content: string
+  toolName?: string
+  timestamp: Date
+}
+
+export interface TaskFile {
+  name: string
+  path: string
+  type: 'file' | 'folder'
+  ext?: string
+  size?: number
+  children?: TaskFile[]
+}
+
+interface AgentState {
+  messages: AgentMessage[]
+  isRunning: boolean
+  sessionId: string | null
+  error: string | null
+  taskFiles: TaskFile[]
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           Hook 实现                                       │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export function useAgent(skillId: string) {
+  const [state, setState] = useState<AgentState>({
+    messages: [],
+    isRunning: false,
+    sessionId: null,
+    error: null,
+    taskFiles: [],
+  })
+
+  const abortRef = useRef<AbortController | null>(null)
+  const currentTextRef = useRef('')
+
+  // 执行查询
+  const execute = useCallback(
+    async (query: string) => {
+      const token = localStorage.getItem('token')
+      if (!token) return
+
+      // 添加用户消息
+      const userMessage: AgentMessage = {
+        id: crypto.randomUUID(),
+        type: 'user',
+        content: query,
+        timestamp: new Date(),
+      }
+
+      setState((s) => ({
+        ...s,
+        messages: [...s.messages, userMessage],
+        isRunning: true,
+        error: null,
+      }))
+
+      // 准备助手消息
+      const assistantId = crypto.randomUUID()
+      currentTextRef.current = ''
+
+      abortRef.current = new AbortController()
+
+      try {
+        const res = await fetch(`${API_BASE}/skill/execute`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ skill_id: skillId, query }),
+          signal: abortRef.current.signal,
+        })
+
+        const reader = res.body?.getReader()
+        const decoder = new TextDecoder()
+
+        if (!reader) throw new Error('无法读取响应流')
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const chunk = decoder.decode(value)
+          const lines = chunk.split('\n')
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+
+            try {
+              const event = JSON.parse(line.slice(6))
+              handleEvent(event, assistantId)
+            } catch {
+              // 忽略解析错误
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name !== 'AbortError') {
+          setState((s) => ({
+            ...s,
+            error: (err as Error).message,
+          }))
+        }
+      } finally {
+        setState((s) => ({ ...s, isRunning: false }))
+        abortRef.current = null
+      }
+    },
+    [skillId],
+  )
+
+  // 处理 SSE 事件
+  function handleEvent(event: Record<string, unknown>, assistantId: string) {
+    switch (event.type) {
+      case 'session':
+        setState((s) => ({ ...s, sessionId: event.sessionId as string }))
+        break
+
+      case 'text':
+        currentTextRef.current += event.content as string
+        setState((s) => {
+          const existing = s.messages.find((m) => m.id === assistantId)
+          if (existing) {
+            return {
+              ...s,
+              messages: s.messages.map((m) =>
+                m.id === assistantId
+                  ? { ...m, content: currentTextRef.current }
+                  : m,
+              ),
+            }
+          }
+          return {
+            ...s,
+            messages: [
+              ...s.messages,
+              {
+                id: assistantId,
+                type: 'assistant',
+                content: currentTextRef.current,
+                timestamp: new Date(),
+              },
+            ],
+          }
+        })
+        break
+
+      case 'tool_use':
+        setState((s) => ({
+          ...s,
+          messages: [
+            ...s.messages,
+            {
+              id: crypto.randomUUID(),
+              type: 'tool',
+              content: JSON.stringify(event.toolInput, null, 2),
+              toolName: event.toolName as string,
+              timestamp: new Date(),
+            },
+          ],
+        }))
+        break
+
+      case 'error':
+        setState((s) => ({ ...s, error: event.message as string }))
+        break
+    }
+  }
+
+  // 中止执行
+  const stop = useCallback(async () => {
+    abortRef.current?.abort()
+
+    if (state.sessionId) {
+      const token = localStorage.getItem('token')
+      await fetch(`${API_BASE}/skill/stop/${state.sessionId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    }
+
+    setState((s) => ({ ...s, isRunning: false }))
+  }, [state.sessionId])
+
+  // 清空消息
+  const clear = useCallback(() => {
+    setState({
+      messages: [],
+      isRunning: false,
+      sessionId: null,
+      error: null,
+      taskFiles: [],
+    })
+  }, [])
+
+  // 获取任务产出文件
+  const fetchTaskFiles = useCallback(async () => {
+    if (!state.sessionId) return
+
+    const token = localStorage.getItem('token')
+    try {
+      const res = await fetch(`${API_BASE}/task/${state.sessionId}/files`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setState((s) => ({ ...s, taskFiles: data.files || [] }))
+      }
+    } catch {
+      // 忽略错误
+    }
+  }, [state.sessionId])
+
+  // 获取文件下载/预览 URL
+  const getFileUrl = useCallback(
+    (filePath: string) => {
+      if (!state.sessionId) return ''
+      return `${API_BASE}/task/${state.sessionId}/files/${filePath}`
+    },
+    [state.sessionId],
+  )
+
+  return {
+    ...state,
+    execute,
+    stop,
+    clear,
+    fetchTaskFiles,
+    getFileUrl,
+  }
+}

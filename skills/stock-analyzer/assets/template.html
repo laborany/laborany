@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{STOCK_NAME}} ({{STOCK_CODE}}) - 股票分析报告</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        /* ══════════════════════════════════════════════════════════════
+           基础样式重置与变量定义
+           ══════════════════════════════════════════════════════════════ */
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-card: #21262d;
+            --text-primary: #f0f6fc;
+            --text-secondary: #8b949e;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-blue: #58a6ff;
+            --accent-yellow: #d29922;
+            --border-color: #30363d;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           布局容器
+           ══════════════════════════════════════════════════════════════ */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .grid { display: grid; gap: 20px; }
+        .grid-2 { grid-template-columns: repeat(2, 1fr); }
+        .grid-3 { grid-template-columns: repeat(3, 1fr); }
+        @media (max-width: 1024px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+        /* ══════════════════════════════════════════════════════════════
+           头部区域 - 股票概览
+           ══════════════════════════════════════════════════════════════ */
+        .header {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .stock-title {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .stock-name { font-size: 2rem; font-weight: 700; }
+        .stock-code { font-size: 1.2rem; color: var(--text-secondary); }
+        .price-section { display: flex; align-items: baseline; gap: 16px; }
+        .current-price { font-size: 2.5rem; font-weight: 700; }
+        .price-change { font-size: 1.2rem; padding: 4px 12px; border-radius: 6px; }
+        .price-up { color: var(--accent-green); background: rgba(63, 185, 80, 0.15); }
+        .price-down { color: var(--accent-red); background: rgba(248, 81, 73, 0.15); }
+        .analysis-date { color: var(--text-secondary); font-size: 0.9rem; margin-top: 12px; }
+
+        /* ══════════════════════════════════════════════════════════════
+           卡片组件
+           ══════════════════════════════════════════════════════════════ */
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .card-title::before {
+            content: '';
+            display: inline-block;
+            width: 4px;
+            height: 16px;
+            background: var(--accent-blue);
+            margin-right: 10px;
+            border-radius: 2px;
+            vertical-align: middle;
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           图表容器
+           ══════════════════════════════════════════════════════════════ */
+        .chart-container { width: 100%; height: 400px; }
+        .chart-container-small { width: 100%; height: 200px; }
+        .chart-container-medium { width: 100%; height: 280px; }
+
+        /* ══════════════════════════════════════════════════════════════
+           指标标签
+           ══════════════════════════════════════════════════════════════ */
+        .indicator-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        .indicator-item { background: var(--bg-card); padding: 12px; border-radius: 8px; }
+        .indicator-label { font-size: 0.85rem; color: var(--text-secondary); }
+        .indicator-value { font-size: 1.2rem; font-weight: 600; margin-top: 4px; }
+        .signal-bullish { color: var(--accent-green); }
+        .signal-bearish { color: var(--accent-red); }
+        .signal-neutral { color: var(--accent-yellow); }
+
+        /* ══════════════════════════════════════════════════════════════
+           新闻列表
+           ══════════════════════════════════════════════════════════════ */
+        .news-list { list-style: none; }
+        .news-item {
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .news-item:last-child { border-bottom: none; }
+        .news-title { font-weight: 500; margin-bottom: 4px; }
+        .news-meta { font-size: 0.85rem; color: var(--text-secondary); }
+        .news-sentiment {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            margin-left: 8px;
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           策略建议卡片
+           ══════════════════════════════════════════════════════════════ */
+        .strategy-card {
+            background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+            border-left: 4px solid var(--accent-blue);
+        }
+        .strategy-section { margin-bottom: 16px; }
+        .strategy-section:last-child { margin-bottom: 0; }
+        .strategy-label {
+            font-size: 0.9rem;
+            color: var(--accent-blue);
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .strategy-content { color: var(--text-primary); }
+        .risk-warning {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid rgba(248, 81, 73, 0.3);
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 16px;
+        }
+        .risk-warning-title {
+            color: var(--accent-red);
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- ════════════════════════════════════════════════════════════
+             头部区域 - 股票概览
+             ════════════════════════════════════════════════════════════ -->
+        <header class="header">
+            <div class="stock-title">
+                <span class="stock-name">{{STOCK_NAME}}</span>
+                <span class="stock-code">{{STOCK_CODE}}</span>
+            </div>
+            <div class="price-section">
+                <span class="current-price">{{CURRENT_PRICE}}</span>
+                <span class="price-change {{PRICE_DIRECTION}}">{{PRICE_CHANGE}}</span>
+            </div>
+            <div class="analysis-date">分析日期: {{ANALYSIS_DATE}}</div>
+        </header>
+
+        <!-- ════════════════════════════════════════════════════════════
+             K线图表区域 (含成交量)
+             ════════════════════════════════════════════════════════════ -->
+        <div class="card" style="margin-bottom: 20px;">
+            <h2 class="card-title">K线走势</h2>
+            <div id="kline-chart" class="chart-container"></div>
+            <div id="volume-chart" class="chart-container-small" style="margin-top: -30px;"></div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════
+             技术指标图表区域 - 三栏布局
+             ════════════════════════════════════════════════════════════ -->
+        <div class="grid grid-3" style="margin-bottom: 20px;">
+            <div class="card">
+                <h2 class="card-title">MACD</h2>
+                <div id="macd-chart" class="chart-container-medium"></div>
+            </div>
+            <div class="card">
+                <h2 class="card-title">RSI</h2>
+                <div id="rsi-chart" class="chart-container-medium"></div>
+            </div>
+            <div class="card">
+                <h2 class="card-title">KDJ</h2>
+                <div id="kdj-chart" class="chart-container-medium"></div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════
+             主要内容区域 - 双栏布局
+             ════════════════════════════════════════════════════════════ -->
+        <div class="grid grid-2">
+            <!-- 左栏: 技术分析 -->
+            <div class="card">
+                <h2 class="card-title">技术指标信号</h2>
+                <div class="indicator-grid">
+                    {{TECHNICAL_INDICATORS}}
+                </div>
+            </div>
+
+            <!-- 右栏: 基本面分析 -->
+            <div class="card">
+                <h2 class="card-title">基本面分析</h2>
+                <div class="indicator-grid">
+                    {{FUNDAMENTAL_INDICATORS}}
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════
+             新闻与策略区域
+             ════════════════════════════════════════════════════════════ -->
+        <div class="grid grid-2" style="margin-top: 20px;">
+            <!-- 左栏: 新闻资讯 -->
+            <div class="card">
+                <h2 class="card-title">近期新闻</h2>
+                <ul class="news-list">
+                    {{NEWS_LIST}}
+                </ul>
+            </div>
+
+            <!-- 右栏: 交易策略 -->
+            <div class="card strategy-card">
+                <h2 class="card-title">交易策略建议</h2>
+                <div class="strategy-section">
+                    <div class="strategy-label">短期策略 (1-2周)</div>
+                    <div class="strategy-content">{{SHORT_TERM_STRATEGY}}</div>
+                </div>
+                <div class="strategy-section">
+                    <div class="strategy-label">中期策略 (1-3月)</div>
+                    <div class="strategy-content">{{MID_TERM_STRATEGY}}</div>
+                </div>
+                <div class="risk-warning">
+                    <div class="risk-warning-title">风险提示</div>
+                    <div>{{RISK_WARNING}}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════
+             综合分析区域
+             ════════════════════════════════════════════════════════════ -->
+        <div class="card" style="margin-top: 20px;">
+            <h2 class="card-title">综合分析</h2>
+            <div style="line-height: 1.8;">{{COMPREHENSIVE_ANALYSIS}}</div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════════
+             免责声明
+             ════════════════════════════════════════════════════════════ -->
+        <footer style="text-align: center; padding: 30px; color: var(--text-secondary); font-size: 0.85rem;">
+            <p>本报告由 AI 自动生成，仅供参考，不构成任何投资建议。</p>
+            <p>投资有风险，入市需谨慎。请结合自身情况，理性决策。</p>
+        </footer>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         ECharts 图表初始化脚本
+         ════════════════════════════════════════════════════════════════ -->
+    <script>
+        // K线图表数据 (由 Claude 填充)
+        const chartData = {{CHART_DATA}};
+
+        // ──────────────────────────────────────────────────────────────
+        // K线图初始化
+        // ──────────────────────────────────────────────────────────────
+        const klineChart = echarts.init(document.getElementById('kline-chart'));
+        const klineOption = {
+            backgroundColor: 'transparent',
+            tooltip: {
+                trigger: 'axis',
+                axisPointer: { type: 'cross' }
+            },
+            legend: {
+                data: ['K线', 'MA5', 'MA10', 'MA20', 'MA60', '布林上轨', '布林下轨'],
+                textStyle: { color: '#8b949e' },
+                selected: { '布林上轨': false, '布林下轨': false, 'MA60': false }
+            },
+            grid: {
+                left: '10%', right: '10%', bottom: '5%'
+            },
+            xAxis: {
+                type: 'category',
+                data: chartData.dates,
+                axisLine: { lineStyle: { color: '#30363d' } },
+                axisLabel: { color: '#8b949e', show: false }
+            },
+            yAxis: {
+                type: 'value',
+                scale: true,
+                axisLine: { lineStyle: { color: '#30363d' } },
+                axisLabel: { color: '#8b949e' },
+                splitLine: { lineStyle: { color: '#21262d' } }
+            },
+            dataZoom: [
+                { type: 'inside', xAxisIndex: [0, 1], start: 50, end: 100 }
+            ],
+            series: [
+                {
+                    name: 'K线',
+                    type: 'candlestick',
+                    data: chartData.kline,
+                    itemStyle: {
+                        color: '#3fb950',
+                        color0: '#f85149',
+                        borderColor: '#3fb950',
+                        borderColor0: '#f85149'
+                    }
+                },
+                { name: 'MA5', type: 'line', data: chartData.ma5, smooth: true, lineStyle: { width: 1, color: '#f0b90b' }, symbol: 'none' },
+                { name: 'MA10', type: 'line', data: chartData.ma10, smooth: true, lineStyle: { width: 1, color: '#58a6ff' }, symbol: 'none' },
+                { name: 'MA20', type: 'line', data: chartData.ma20, smooth: true, lineStyle: { width: 1, color: '#a371f7' }, symbol: 'none' },
+                { name: 'MA60', type: 'line', data: chartData.ma60 || [], smooth: true, lineStyle: { width: 1, color: '#3fb950' }, symbol: 'none' },
+                { name: '布林上轨', type: 'line', data: chartData.bollUpper || [], smooth: true, lineStyle: { width: 1, type: 'dashed', color: '#8b949e' }, symbol: 'none' },
+                { name: '布林下轨', type: 'line', data: chartData.bollLower || [], smooth: true, lineStyle: { width: 1, type: 'dashed', color: '#8b949e' }, symbol: 'none' }
+            ]
+        };
+        klineChart.setOption(klineOption);
+
+        // ──────────────────────────────────────────────────────────────
+        // 成交量图表初始化
+        // ──────────────────────────────────────────────────────────────
+        const volumeChart = echarts.init(document.getElementById('volume-chart'));
+        const volumeOption = {
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis' },
+            grid: { left: '10%', right: '10%', top: '10%', bottom: '20%' },
+            xAxis: {
+                type: 'category',
+                data: chartData.dates,
+                axisLine: { lineStyle: { color: '#30363d' } },
+                axisLabel: { color: '#8b949e', fontSize: 10 }
+            },
+            yAxis: {
+                type: 'value',
+                axisLine: { lineStyle: { color: '#30363d' } },
+                axisLabel: { color: '#8b949e', formatter: (v) => v >= 1e6 ? (v/1e6).toFixed(1) + 'M' : v },
+                splitLine: { lineStyle: { color: '#21262d' } }
+            },
+            dataZoom: [
+                { type: 'inside', xAxisIndex: 0, start: 50, end: 100 }
+            ],
+            series: [{
+                name: '成交量',
+                type: 'bar',
+                data: (chartData.volume || []).map((v, i) => ({
+                    value: v,
+                    itemStyle: {
+                        color: chartData.kline && chartData.kline[i] && chartData.kline[i][1] >= chartData.kline[i][0] ? '#3fb950' : '#f85149'
+                    }
+                }))
+            }]
+        };
+        volumeChart.setOption(volumeOption);
+
+        // ──────────────────────────────────────────────────────────────
+        // MACD 图表初始化
+        // ──────────────────────────────────────────────────────────────
+        const macdChart = echarts.init(document.getElementById('macd-chart'));
+        const macdOption = {
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis' },
+            legend: {
+                data: ['MACD', 'DIF', 'DEA'],
+                textStyle: { color: '#8b949e', fontSize: 10 }
+            },
+            grid: { left: '12%', right: '8%', top: '20%', bottom: '15%' },
+            xAxis: {
+                type: 'category',
+                data: chartData.dates,
+                axisLine: { lineStyle: { color: '#30363d' } },
+                axisLabel: { color: '#8b949e', fontSize: 9, interval: 'auto' }
+            },
+            yAxis: {
+                type: 'value',
+                scale: true,
+                axisLine: { lineStyle: { color: '#30363d' } },
+                axisLabel: { color: '#8b949e', fontSize: 10 },
+                splitLine: { lineStyle: { color: '#21262d' } }
+            },
+            series: [
+                {
+                    name: 'MACD',
+                    type: 'bar',
+                    data: chartData.macd,
+                    itemStyle: {
+                        color: (params) => params.value >= 0 ? '#3fb950' : '#f85149'
+                    }
+                },
+                { name: 'DIF', type: 'line', data: chartData.dif, smooth: true, lineStyle: { width: 1, color: '#58a6ff' }, symbol: 'none' },
+                { name: 'DEA', type: 'line', data: chartData.dea, smooth: true, lineStyle: { width: 1, color: '#f0b90b' }, symbol: 'none' }
+            ]
+        };
+        macdChart.setOption(macdOption);
+
+        // ──────────────────────────────────────────────────────────────
+        // RSI 图表初始化
+        // ──────────────────────────────────────────────────────────────
+        const rsiChart = echarts.init(document.getElementById('rsi-chart'));
+        const rsiOption = {
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis' },
+            legend: {
+                data: ['RSI6', 'RSI12', 'RSI24'],
+                textStyle: { color: '#8b949e', fontSize: 10 }
+            },
+            grid: { left: '12%', right: '8%', top: '20%', bottom: '15%' },
+            xAxis: {
+                type: 'category',
+                data: chartData.dates,
+                axisLine: { lineStyle: { color: '#30363d' } },
+                axisLabel: { color: '#8b949e', fontSize: 9, interval: 'auto' }
+            },
+            yAxis: {
+                type: 'value',
+                min: 0,
+                max: 100,
+                axisLine: { lineStyle: { color: '#30363d' } },
+                axisLabel: { color: '#8b949e', fontSize: 10 },
+                splitLine: { lineStyle: { color: '#21262d' } }
+            },
+            series: [
+                { name: 'RSI6', type: 'line', data: chartData.rsi6 || [], smooth: true, lineStyle: { width: 1, color: '#f0b90b' }, symbol: 'none' },
+                { name: 'RSI12', type: 'line', data: chartData.rsi12 || [], smooth: true, lineStyle: { width: 1, color: '#58a6ff' }, symbol: 'none' },
+                { name: 'RSI24', type: 'line', data: chartData.rsi24 || [], smooth: true, lineStyle: { width: 1, color: '#a371f7' }, symbol: 'none' },
+                { name: '超买线', type: 'line', markLine: { silent: true, data: [{ yAxis: 70 }], lineStyle: { color: '#f85149', type: 'dashed' } } },
+                { name: '超卖线', type: 'line', markLine: { silent: true, data: [{ yAxis: 30 }], lineStyle: { color: '#3fb950', type: 'dashed' } } }
+            ]
+        };
+        rsiChart.setOption(rsiOption);
+
+        // ──────────────────────────────────────────────────────────────
+        // KDJ 图表初始化
+        // ──────────────────────────────────────────────────────────────
+        const kdjChart = echarts.init(document.getElementById('kdj-chart'));
+        const kdjOption = {
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis' },
+            legend: {
+                data: ['K', 'D', 'J'],
+                textStyle: { color: '#8b949e', fontSize: 10 }
+            },
+            grid: { left: '12%', right: '8%', top: '20%', bottom: '15%' },
+            xAxis: {
+                type: 'category',
+                data: chartData.dates,
+                axisLine: { lineStyle: { color: '#30363d' } },
+                axisLabel: { color: '#8b949e', fontSize: 9, interval: 'auto' }
+            },
+            yAxis: {
+                type: 'value',
+                axisLine: { lineStyle: { color: '#30363d' } },
+                axisLabel: { color: '#8b949e', fontSize: 10 },
+                splitLine: { lineStyle: { color: '#21262d' } }
+            },
+            series: [
+                { name: 'K', type: 'line', data: chartData.k || [], smooth: true, lineStyle: { width: 1, color: '#f0b90b' }, symbol: 'none' },
+                { name: 'D', type: 'line', data: chartData.d || [], smooth: true, lineStyle: { width: 1, color: '#58a6ff' }, symbol: 'none' },
+                { name: 'J', type: 'line', data: chartData.j || [], smooth: true, lineStyle: { width: 1, color: '#a371f7' }, symbol: 'none' },
+                { name: '超买线', type: 'line', markLine: { silent: true, data: [{ yAxis: 80 }], lineStyle: { color: '#f85149', type: 'dashed' } } },
+                { name: '超卖线', type: 'line', markLine: { silent: true, data: [{ yAxis: 20 }], lineStyle: { color: '#3fb950', type: 'dashed' } } }
+            ]
+        };
+        kdjChart.setOption(kdjOption);
+
+        // ──────────────────────────────────────────────────────────────
+        // 响应式调整
+        // ──────────────────────────────────────────────────────────────
+        window.addEventListener('resize', () => {
+            klineChart.resize();
+            volumeChart.resize();
+            macdChart.resize();
+            rsiChart.resize();
+            kdjChart.resize();
+        });
+
+        // ──────────────────────────────────────────────────────────────
+        // K线与成交量图表联动
+        // ──────────────────────────────────────────────────────────────
+        echarts.connect([klineChart, volumeChart]);
+    </script>
+</body>
+</html>

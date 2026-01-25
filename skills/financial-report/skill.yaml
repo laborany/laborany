@@ -1,0 +1,52 @@
+# 金融研报助手 Skill 配置
+
+name: 金融研报助手
+description: 分析财报数据，生成专业的金融研究报告
+icon: "📊"
+category: 金融
+
+# 定价（每次执行）
+price_per_run: 0.5
+
+# 支持的功能
+features:
+  - 财务报表分析
+  - 关键指标计算
+  - 行业对比分析
+  - 趋势预测
+  - 研报生成
+
+# 输入要求
+input:
+  required:
+    - query  # 用户的分析需求
+  optional:
+    - files  # 上传的财报文件
+
+# 输出格式
+output:
+  format: markdown
+  sections:
+    - 公司概况
+    - 财务分析
+    - 行业对比
+    - 风险提示
+    - 投资建议
+
+# 模型配置
+model:
+  name: claude-sonnet-4-20250514
+  max_tokens: 8192
+  temperature: 0.3
+
+# 工具配置
+tools:
+  - name: fetch_stock_data
+    description: 获取股票基本信息和实时行情
+    script: scripts/fetch_data.py
+  - name: analyze_financial
+    description: 分析财务报表数据
+    script: scripts/analyze.py
+  - name: generate_report
+    description: 生成研究报告
+    script: scripts/report.py
