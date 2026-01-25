@@ -53,7 +53,7 @@ export default function ChatInput({
   }
 
   return (
-    <div className="border border-gray-300 rounded-lg bg-white">
+    <div className="border border-border rounded-lg bg-card">
       <textarea
         ref={textareaRef}
         value={value}
@@ -63,14 +63,14 @@ export default function ChatInput({
         placeholder={placeholder}
         disabled={isRunning}
         rows={1}
-        className="w-full px-4 py-3 resize-none focus:outline-none disabled:bg-gray-50"
+        className="w-full px-4 py-3 resize-none focus:outline-none disabled:bg-muted bg-transparent text-foreground placeholder:text-muted-foreground"
       />
-      <div className="flex justify-between items-center px-4 py-2 border-t border-gray-100">
-        <span className="text-xs text-gray-400">Ctrl + Enter 发送</span>
+      <div className="flex justify-between items-center px-4 py-2 border-t border-border">
+        <span className="text-xs text-muted-foreground">Ctrl + Enter 发送</span>
         {isRunning ? (
           <button
             onClick={onStop}
-            className="px-4 py-1.5 bg-red-500 text-white text-sm rounded hover:bg-red-600"
+            className="btn-destructive px-4 py-1.5 text-sm"
           >
             停止
           </button>
@@ -78,7 +78,7 @@ export default function ChatInput({
           <button
             onClick={handleSubmit}
             disabled={!value.trim()}
-            className="px-4 py-1.5 bg-primary-600 text-white text-sm rounded hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-primary px-4 py-1.5 text-sm"
           >
             发送
           </button>

@@ -70,10 +70,10 @@ export default function HistoryPage() {
 
   function getStatusBadge(status: string) {
     const styles: Record<string, string> = {
-      running: 'bg-blue-100 text-blue-700',
-      completed: 'bg-green-100 text-green-700',
-      failed: 'bg-red-100 text-red-700',
-      stopped: 'bg-gray-100 text-gray-700',
+      running: 'badge-primary',
+      completed: 'badge-success',
+      failed: 'badge-error',
+      stopped: 'bg-secondary text-secondary-foreground',
     }
     const labels: Record<string, string> = {
       running: '运行中',
@@ -82,7 +82,7 @@ export default function HistoryPage() {
       stopped: '已中止',
     }
     return (
-      <span className={`px-2 py-1 text-xs rounded ${styles[status] || styles.stopped}`}>
+      <span className={`badge ${styles[status] || styles.stopped}`}>
         {labels[status] || status}
       </span>
     )
@@ -92,9 +92,9 @@ export default function HistoryPage() {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/4" />
+          <div className="h-8 bg-muted rounded w-1/4" />
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-20 bg-gray-200 rounded" />
+            <div key={i} className="h-20 bg-muted rounded-lg" />
           ))}
         </div>
       </div>
@@ -104,15 +104,22 @@ export default function HistoryPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <div className="flex items-center gap-4 mb-6">
-        <Link to="/" className="text-gray-500 hover:text-gray-700">
-          ← 返回
+        <Link to="/" className="text-muted-foreground hover:text-foreground transition-colors">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
         </Link>
-        <h2 className="text-2xl font-bold">历史会话</h2>
+        <h2 className="text-2xl font-bold text-foreground">历史会话</h2>
       </div>
 
       {sessions.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
-          暂无历史会话
+        <div className="text-center py-12">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
+            <svg className="w-8 h-8 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <p className="text-muted-foreground">暂无历史会话</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -120,14 +127,14 @@ export default function HistoryPage() {
             <Link
               key={session.id}
               to={`/history/${session.id}`}
-              className="block p-4 bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow"
+              className="block card-hover p-4"
             >
               <div className="flex justify-between items-start">
                 <div className="flex-1">
-                  <p className="font-medium text-gray-900 line-clamp-2">
+                  <p className="font-medium text-foreground line-clamp-2">
                     {session.query}
                   </p>
-                  <p className="text-sm text-gray-500 mt-1">
+                  <p className="text-sm text-muted-foreground mt-1">
                     {formatDate(session.created_at)}
                   </p>
                 </div>
@@ -260,8 +267,8 @@ export function SessionDetailPage() {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/4" />
-          <div className="h-64 bg-gray-200 rounded" />
+          <div className="h-8 bg-muted rounded w-1/4" />
+          <div className="h-64 bg-muted rounded-lg" />
         </div>
       </div>
     )
@@ -270,7 +277,7 @@ export function SessionDetailPage() {
   if (!session) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="text-center py-12 text-gray-500">
+        <div className="text-center py-12 text-muted-foreground">
           会话不存在
         </div>
       </div>
@@ -285,16 +292,18 @@ export function SessionDetailPage() {
       {/* 顶部导航 */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-4">
-          <Link to="/history" className="text-gray-500 hover:text-gray-700">
-            ← 返回历史
+          <Link to="/history" className="text-muted-foreground hover:text-foreground transition-colors">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
           </Link>
-          <h2 className="text-lg font-semibold">
+          <h2 className="text-lg font-semibold text-foreground">
             {session.skill_id}
           </h2>
-          <span className={`px-2 py-1 text-xs rounded ${
-            session.status === 'completed' ? 'bg-green-100 text-green-700' :
-            session.status === 'failed' ? 'bg-red-100 text-red-700' :
-            'bg-gray-100 text-gray-700'
+          <span className={`badge ${
+            session.status === 'completed' ? 'badge-success' :
+            session.status === 'failed' ? 'badge-error' :
+            'bg-secondary text-secondary-foreground'
           }`}>
             {session.status === 'completed' ? '已完成' :
              session.status === 'failed' ? '失败' :
@@ -305,13 +314,15 @@ export function SessionDetailPage() {
           {taskFiles.length > 0 && (
             <button
               onClick={() => setShowFiles(!showFiles)}
-              className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1"
+              className="text-sm text-primary hover:text-primary/80 flex items-center gap-1.5 transition-colors"
             >
-              <span>📁</span>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
               产出文件 ({countTaskFiles(taskFiles)})
             </button>
           )}
-          <div className="text-sm text-gray-500">
+          <div className="text-sm text-muted-foreground">
             {new Date(session.created_at).toLocaleString('zh-CN')}
           </div>
         </div>
@@ -332,8 +343,8 @@ export function SessionDetailPage() {
       </div>
 
       {/* 继续对话输入框 */}
-      <div className="border-t pt-4">
-        <p className="text-sm text-gray-500 mb-2">继续对话：</p>
+      <div className="border-t border-border pt-4">
+        <p className="text-sm text-muted-foreground mb-2">继续对话：</p>
         <ChatInput
           onSubmit={handleContinue}
           onStop={agent.stop}
@@ -358,14 +369,16 @@ function HistoryFilesPanel({
   onClose: () => void
 }) {
   return (
-    <div className="mb-4 bg-white border rounded-lg shadow-sm">
-      <div className="flex items-center justify-between px-4 py-3 border-b">
-        <h3 className="font-medium">产出文件</h3>
+    <div className="mb-4 card overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+        <h3 className="font-medium text-foreground">产出文件</h3>
         <button
           onClick={onClose}
-          className="text-gray-400 hover:text-gray-600"
+          className="text-muted-foreground hover:text-foreground transition-colors"
         >
-          ✕
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
         </button>
       </div>
       <div className="p-4 max-h-64 overflow-y-auto">
@@ -393,8 +406,10 @@ function HistoryFileTree({
         <div key={file.path} style={{ marginLeft: depth * 16 }}>
           {file.type === 'folder' ? (
             <div>
-              <div className="flex items-center gap-2 py-1 text-sm text-gray-600">
-                <span>📁</span>
+              <div className="flex items-center gap-2 py-1.5 text-sm text-muted-foreground">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
                 <span>{file.name}</span>
               </div>
               {file.children && (
@@ -433,11 +448,11 @@ function HistoryFileItem({
   const size = file.size ? formatHistoryFileSize(file.size) : ''
 
   return (
-    <div className="flex items-center justify-between py-1 text-sm hover:bg-gray-50 rounded px-2 -mx-2">
+    <div className="flex items-center justify-between py-1.5 text-sm hover:bg-accent rounded-md px-2 -mx-2 transition-colors">
       <div className="flex items-center gap-2 min-w-0">
         <span>{icon}</span>
-        <span className="truncate">{file.name}</span>
-        {size && <span className="text-xs text-gray-400">({size})</span>}
+        <span className="truncate text-foreground">{file.name}</span>
+        {size && <span className="text-xs text-muted-foreground">({size})</span>}
       </div>
       <div className="flex items-center gap-2 ml-2">
         {isPreviewable && (
@@ -445,7 +460,7 @@ function HistoryFileItem({
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-primary-600 hover:text-primary-700"
+            className="text-xs text-primary hover:text-primary/80 transition-colors"
           >
             预览
           </a>
@@ -453,7 +468,7 @@ function HistoryFileItem({
         <a
           href={url}
           download={file.name}
-          className="text-xs text-gray-500 hover:text-gray-700"
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           下载
         </a>

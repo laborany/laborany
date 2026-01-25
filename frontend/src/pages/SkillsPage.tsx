@@ -174,13 +174,13 @@ export default function SkillsPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold">Skills 管理</h2>
-        <Link to="/" className="text-sm text-primary-600 hover:underline">
+        <h2 className="text-2xl font-bold text-foreground">Skills 管理</h2>
+        <Link to="/" className="text-sm text-primary hover:underline">
           返回首页
         </Link>
       </div>
 
-      <div className="border-b border-gray-200 mb-6">
+      <div className="border-b border-border mb-6">
         <nav className="flex gap-8">
           <TabButton
             active={activeTab === 'installed'}
@@ -356,8 +356,8 @@ tools:
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/4" />
-          <div className="h-64 bg-gray-200 rounded" />
+          <div className="h-8 bg-muted rounded w-1/4" />
+          <div className="h-64 bg-muted rounded" />
         </div>
       </div>
     )
@@ -369,39 +369,41 @@ tools:
       <div className="flex items-center gap-4 mb-6">
         <button
           onClick={onBack}
-          className="text-gray-500 hover:text-gray-700"
+          className="text-muted-foreground hover:text-foreground transition-colors"
         >
-          ← 返回
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
         </button>
         <div className="flex items-center gap-3">
           <span className="text-3xl">{detail?.icon}</span>
           <div>
-            <h2 className="text-2xl font-bold">{detail?.name}</h2>
-            <p className="text-sm text-gray-600">{detail?.description}</p>
+            <h2 className="text-2xl font-bold text-foreground">{detail?.name}</h2>
+            <p className="text-sm text-muted-foreground">{detail?.description}</p>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-12 gap-6">
         {/* 文件列表 */}
-        <div className="col-span-4 bg-white rounded-lg shadow-sm border p-4">
-          <h3 className="font-semibold mb-4">物料结构</h3>
+        <div className="col-span-4 card p-4">
+          <h3 className="font-semibold text-foreground mb-4">物料结构</h3>
           <div className="space-y-1">
             {detail?.files.map((file) => (
               <div key={file.path}>
                 <button
                   onClick={() => file.type !== 'folder' && loadFileContent(file.path)}
-                  className={`w-full text-left px-3 py-2 rounded text-sm flex items-center gap-2 ${
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors ${
                     selectedFile === file.path
-                      ? 'bg-primary-50 text-primary-700'
-                      : 'hover:bg-gray-50'
+                      ? 'bg-primary/10 text-primary'
+                      : 'hover:bg-accent'
                   } ${file.type === 'folder' ? 'cursor-default font-medium' : ''}`}
                 >
                   <FileIcon type={file.type} />
                   <div className="flex-1 min-w-0">
-                    <div className="truncate">{file.name}</div>
+                    <div className="truncate text-foreground">{file.name}</div>
                     {file.description && (
-                      <div className="text-xs text-gray-500 truncate">{file.description}</div>
+                      <div className="text-xs text-muted-foreground truncate">{file.description}</div>
                     )}
                   </div>
                 </button>
@@ -412,10 +414,10 @@ tools:
                       <button
                         key={child.path}
                         onClick={() => loadFileContent(child.path)}
-                        className={`w-full text-left px-3 py-2 rounded text-sm flex items-center gap-2 ${
+                        className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors ${
                           selectedFile === child.path
-                            ? 'bg-primary-50 text-primary-700'
-                            : 'hover:bg-gray-50'
+                            ? 'bg-primary/10 text-primary'
+                            : 'hover:bg-accent'
                         }`}
                       >
                         <FileIcon type={child.type} />
@@ -430,23 +432,23 @@ tools:
         </div>
 
         {/* 文件内容 */}
-        <div className="col-span-8 bg-white rounded-lg shadow-sm border">
+        <div className="col-span-8 card">
           {selectedFile ? (
             <div className="h-full flex flex-col">
-              <div className="flex items-center justify-between px-4 py-3 border-b">
-                <span className="font-medium">{selectedFile}</span>
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                <span className="font-medium text-foreground">{selectedFile}</span>
                 <div className="flex gap-2">
                   {editing ? (
                     <>
                       <button
                         onClick={() => setEditing(false)}
-                        className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
+                        className="px-3 py-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
                       >
                         取消
                       </button>
                       <button
                         onClick={saveFileContent}
-                        className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700"
+                        className="btn-primary px-3 py-1 text-sm"
                       >
                         保存
                       </button>
@@ -454,7 +456,7 @@ tools:
                   ) : (
                     <button
                       onClick={() => setEditing(true)}
-                      className="px-3 py-1 text-sm text-primary-600 hover:text-primary-700"
+                      className="px-3 py-1 text-sm text-primary hover:text-primary/80 transition-colors"
                     >
                       编辑
                     </button>
@@ -466,15 +468,15 @@ tools:
                   <textarea
                     value={fileContent}
                     onChange={(e) => setFileContent(e.target.value)}
-                    className="w-full h-full min-h-[400px] font-mono text-sm p-2 border rounded focus:ring-2 focus:ring-primary-500"
+                    className="input w-full h-full min-h-[400px] font-mono text-sm"
                   />
                 ) : (
-                  <pre className="font-mono text-sm whitespace-pre-wrap">{fileContent}</pre>
+                  <pre className="font-mono text-sm whitespace-pre-wrap text-foreground">{fileContent}</pre>
                 )}
               </div>
             </div>
           ) : (
-            <div className="h-64 flex items-center justify-center text-gray-400">
+            <div className="h-64 flex items-center justify-center text-muted-foreground">
               选择左侧文件查看内容
             </div>
           )}
@@ -628,7 +630,7 @@ Skill 已创建成功！你可以在「已安装」标签页中找到它，点�
 
   return (
     <div className="max-w-3xl mx-auto">
-      <div className="bg-white rounded-lg shadow-sm border">
+      <div className="card">
         {/* 消息列表 */}
         <div className="h-[500px] overflow-y-auto p-4 space-y-4">
           {messages.map((msg, i) => (
@@ -639,8 +641,8 @@ Skill 已创建成功！你可以在「已安装」标签页中找到它，点�
               <div
                 className={`max-w-[80%] px-4 py-3 rounded-lg ${
                   msg.role === 'user'
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-gray-100 text-gray-800'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-foreground'
                 }`}
               >
                 <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
@@ -649,8 +651,8 @@ Skill 已创建成功！你可以在「已安装」标签页中找到它，点�
           ))}
           {generating && (
             <div className="flex justify-start">
-              <div className="bg-gray-100 px-4 py-3 rounded-lg">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
+              <div className="bg-muted px-4 py-3 rounded-lg">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <span className="animate-pulse">●</span>
                   正在思考...
                 </div>
@@ -661,14 +663,14 @@ Skill 已创建成功！你可以在「已安装」标签页中找到它，点�
         </div>
 
         {/* 输入框 */}
-        <div className="border-t p-4">
+        <div className="border-t border-border p-4">
           {generatedSkill ? (
             <div className="flex items-center justify-between">
-              <span className="text-sm text-green-600">Skill 创建成功！</span>
+              <span className="text-sm text-green-600 dark:text-green-400">Skill 创建成功！</span>
               <Link
                 to="/skills"
                 onClick={() => window.location.reload()}
-                className="px-4 py-2 bg-primary-600 text-white text-sm rounded hover:bg-primary-700"
+                className="btn-primary px-4 py-2 text-sm"
               >
                 查看 Skill
               </Link>
@@ -682,12 +684,12 @@ Skill 已创建成功！你可以在「已安装」标签页中找到它，点�
                 onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
                 placeholder="描述你想创建的工作流程..."
                 disabled={generating}
-                className="flex-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-gray-50"
+                className="input flex-1"
               />
               <button
                 onClick={sendMessage}
                 disabled={generating || !input.trim()}
-                className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
+                className="btn-primary px-4 py-2"
               >
                 发送
               </button>
@@ -696,7 +698,7 @@ Skill 已创建成功！你可以在「已安装」标签页中找到它，点�
         </div>
       </div>
 
-      <div className="mt-4 text-center text-sm text-gray-500">
+      <div className="mt-4 text-center text-sm text-muted-foreground">
         通过对话描述你的需求，AI 会帮你生成完整的 Skill 结构
       </div>
     </div>
@@ -816,13 +818,15 @@ function OptimizeSkillChat({
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <div className="flex items-center gap-4 mb-6">
-        <button onClick={onBack} className="text-gray-500 hover:text-gray-700">
-          ← 返回
+        <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
         </button>
-        <h2 className="text-xl font-bold">优化 Skill: {skillName}</h2>
+        <h2 className="text-xl font-bold text-foreground">优化 Skill: {skillName}</h2>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border">
+      <div className="card">
         {/* 消息列表 */}
         <div className="h-[500px] overflow-y-auto p-4 space-y-4">
           {messages.map((msg, i) => (
@@ -833,8 +837,8 @@ function OptimizeSkillChat({
               <div
                 className={`max-w-[80%] px-4 py-3 rounded-lg ${
                   msg.role === 'user'
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-gray-100 text-gray-800'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-foreground'
                 }`}
               >
                 <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
@@ -843,8 +847,8 @@ function OptimizeSkillChat({
           ))}
           {optimizing && (
             <div className="flex justify-start">
-              <div className="bg-gray-100 px-4 py-3 rounded-lg">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
+              <div className="bg-muted px-4 py-3 rounded-lg">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <span className="animate-pulse">●</span>
                   正在分析和优化...
                 </div>
@@ -855,13 +859,13 @@ function OptimizeSkillChat({
         </div>
 
         {/* 输入框 */}
-        <div className="border-t p-4">
+        <div className="border-t border-border p-4">
           {completed ? (
             <div className="flex items-center justify-between">
-              <span className="text-sm text-green-600">Skill 优化完成！</span>
+              <span className="text-sm text-green-600 dark:text-green-400">Skill 优化完成！</span>
               <button
                 onClick={onComplete}
-                className="px-4 py-2 bg-primary-600 text-white text-sm rounded hover:bg-primary-700"
+                className="btn-primary px-4 py-2 text-sm"
               >
                 返回列表
               </button>
@@ -875,12 +879,12 @@ function OptimizeSkillChat({
                 onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
                 placeholder="描述你想要的改进..."
                 disabled={optimizing}
-                className="flex-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-gray-50"
+                className="input flex-1"
               />
               <button
                 onClick={sendMessage}
                 disabled={optimizing || !input.trim()}
-                className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
+                className="btn-primary px-4 py-2"
               >
                 发送
               </button>
@@ -889,7 +893,7 @@ function OptimizeSkillChat({
         </div>
       </div>
 
-      <div className="mt-4 text-center text-sm text-gray-500">
+      <div className="mt-4 text-center text-sm text-muted-foreground">
         AI 会分析现有代码并根据你的需求进行优化
       </div>
     </div>
@@ -913,8 +917,8 @@ function TabButton({
       onClick={onClick}
       className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
         active
-          ? 'border-primary-600 text-primary-600'
-          : 'border-transparent text-gray-500 hover:text-gray-700'
+          ? 'border-primary text-primary'
+          : 'border-transparent text-muted-foreground hover:text-foreground'
       }`}
     >
       {children}
@@ -927,7 +931,7 @@ function LoadingState() {
     <div className="animate-pulse space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-40 bg-gray-200 rounded-lg" />
+          <div key={i} className="h-40 bg-muted rounded-lg" />
         ))}
       </div>
     </div>
@@ -958,8 +962,8 @@ function InstalledSkills({
   if (skills.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500 mb-4">还没有安装任何 Skill</p>
-        <p className="text-sm text-gray-400">去官方 Skills 安装，或创建自定义 Skill</p>
+        <p className="text-muted-foreground mb-4">还没有安装任何 Skill</p>
+        <p className="text-sm text-muted-foreground/70">去官方 Skills 安装，或创建自定义 Skill</p>
       </div>
     )
   }
@@ -969,15 +973,15 @@ function InstalledSkills({
       {skills.map((skill) => (
         <div
           key={skill.id}
-          className="p-6 bg-white rounded-lg shadow-sm border border-gray-100"
+          className="card-hover p-6"
         >
           <div className="flex items-start gap-4">
             <span className="text-3xl">{skill.icon || '🤖'}</span>
             <div className="flex-1">
-              <h3 className="font-semibold text-lg">{skill.name}</h3>
-              <p className="text-sm text-gray-600 mt-1">{skill.description}</p>
+              <h3 className="font-semibold text-lg text-foreground">{skill.name}</h3>
+              <p className="text-sm text-muted-foreground mt-1">{skill.description}</p>
               {skill.category && (
-                <span className="inline-block mt-2 px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded">
+                <span className="inline-block mt-2 px-2 py-1 text-xs bg-secondary text-secondary-foreground rounded">
                   {skill.category}
                 </span>
               )}
@@ -986,26 +990,26 @@ function InstalledSkills({
           <div className="mt-4 flex gap-2">
             <Link
               to={`/execute/${skill.id}`}
-              className="flex-1 text-center py-2 bg-primary-600 text-white text-sm rounded hover:bg-primary-700"
+              className="btn-primary flex-1 text-center py-2 text-sm"
             >
               使用
             </Link>
             <button
               onClick={() => onOptimize(skill.id)}
-              className="px-3 py-2 text-sm text-primary-600 hover:text-primary-700 border border-primary-200 rounded"
+              className="px-3 py-2 text-sm text-primary hover:text-primary/80 border border-primary/20 rounded-lg transition-colors"
               title="AI 优化"
             >
               优化
             </button>
             <button
               onClick={() => onConfigure(skill.id)}
-              className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 border rounded"
+              className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg transition-colors"
             >
               配置
             </button>
             <button
               onClick={() => onUninstall(skill.id)}
-              className="px-3 py-2 text-sm text-red-500 hover:text-red-700 border border-red-200 rounded"
+              className="px-3 py-2 text-sm text-destructive hover:text-destructive/80 border border-destructive/20 rounded-lg transition-colors"
             >
               卸载
             </button>
@@ -1036,11 +1040,11 @@ function OfficialSkillsMarket({
   return (
     <div className="space-y-6">
       {/* 自定义 GitHub URL 安装 */}
-      <div className="bg-white rounded-lg shadow-sm border p-6">
-        <h3 className="font-semibold mb-3">从 GitHub 安装</h3>
-        <p className="text-sm text-gray-600 mb-4">
+      <div className="card p-6">
+        <h3 className="font-semibold text-foreground mb-3">从 GitHub 安装</h3>
+        <p className="text-sm text-muted-foreground mb-4">
           输入 GitHub 仓库中 Skill 的路径，例如：
-          <code className="mx-1 px-2 py-1 bg-gray-100 rounded text-xs">
+          <code className="mx-1 px-2 py-1 bg-muted rounded text-xs">
             anthropics/skills/skills/skill-creator
           </code>
         </p>
@@ -1050,26 +1054,26 @@ function OfficialSkillsMarket({
             value={customUrl}
             onChange={(e) => onCustomUrlChange(e.target.value)}
             placeholder="owner/repo/path/to/skill 或 GitHub URL"
-            className="flex-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500"
+            className="input flex-1"
           />
           <button
             onClick={() => customUrl && onInstall(customUrl)}
             disabled={!customUrl || installing === customUrl}
-            className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
+            className="btn-primary px-6 py-2"
           >
             {installing === customUrl ? '安装中...' : '安装'}
           </button>
         </div>
         {installError && (
-          <p className="mt-2 text-sm text-red-600">{installError}</p>
+          <p className="mt-2 text-sm text-destructive">{installError}</p>
         )}
       </div>
 
       {/* 官方 Skills 列表 */}
       <div>
-        <h3 className="font-semibold mb-4">Anthropic 官方 Skills</h3>
+        <h3 className="font-semibold text-foreground mb-4">Anthropic 官方 Skills</h3>
         {skills.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-muted-foreground">
             <p>正在加载官方 Skills...</p>
           </div>
         ) : (
@@ -1081,30 +1085,30 @@ function OfficialSkillsMarket({
               return (
                 <div
                   key={skill.id}
-                  className="p-6 bg-white rounded-lg shadow-sm border border-gray-100"
+                  className="card-hover p-6"
                 >
                   <div className="flex items-start gap-4">
                     <span className="text-3xl">🔧</span>
                     <div className="flex-1">
-                      <h3 className="font-semibold text-lg">{skill.name}</h3>
-                      <p className="text-sm text-gray-600 mt-1 line-clamp-2">
+                      <h3 className="font-semibold text-lg text-foreground">{skill.name}</h3>
+                      <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
                         {skill.description}
                       </p>
-                      <p className="text-xs text-gray-400 mt-2 truncate">
+                      <p className="text-xs text-muted-foreground/70 mt-2 truncate">
                         {skill.source}
                       </p>
                     </div>
                   </div>
                   <div className="mt-4">
                     {isInstalled ? (
-                      <span className="block text-center py-2 text-sm text-green-600 bg-green-50 rounded">
+                      <span className="block text-center py-2 text-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 rounded-lg">
                         已安装
                       </span>
                     ) : (
                       <button
                         onClick={() => onInstall(skill.source)}
                         disabled={isInstalling}
-                        className="w-full py-2 bg-primary-600 text-white text-sm rounded hover:bg-primary-700 disabled:opacity-50"
+                        className="btn-primary w-full py-2 text-sm"
                       >
                         {isInstalling ? '安装中...' : '安装'}
                       </button>

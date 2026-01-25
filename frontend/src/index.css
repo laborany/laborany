@@ -1,7 +1,230 @@
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                     LaborAny 全局样式                                     ║
+ * ║                                                                          ║
+ * ║  借鉴 workany 的设计系统，提供一致的视觉体验                                 ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝ */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-gray-50 text-gray-900;
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           CSS 变量定义                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+@layer base {
+  :root {
+    /* 基础色彩 */
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+
+    /* 卡片 */
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    /* 主色调 - 橙黄色系（借鉴 workany） */
+    --primary: 24 95% 53%;
+    --primary-foreground: 0 0% 100%;
+    --primary-50: 33 100% 96%;
+    --primary-100: 34 100% 92%;
+    --primary-500: 24 95% 53%;
+    --primary-600: 21 90% 48%;
+    --primary-700: 17 88% 40%;
+
+    /* 次要色 */
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    /* 柔和色 */
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    /* 强调色 */
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+
+    /* 危险色 */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* 边框和输入框 */
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 24 95% 53%;
+
+    /* 圆角 */
+    --radius: 0.75rem;
+  }
+
+  /* 暗色模式 */
+  .dark {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 98%;
+
+    --primary: 24 95% 60%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 24 95% 60%;
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           基础样式                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* 滚动条样式 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/30;
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           组件样式                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+@layer components {
+  /* 按钮基础样式 */
+  .btn {
+    @apply inline-flex items-center justify-center rounded-lg text-sm font-medium
+           transition-colors focus-visible:outline-none focus-visible:ring-2
+           focus-visible:ring-ring focus-visible:ring-offset-2
+           disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary text-primary-foreground hover:bg-primary-600;
+  }
+
+  .btn-secondary {
+    @apply btn bg-secondary text-secondary-foreground hover:bg-secondary/80;
+  }
+
+  .btn-ghost {
+    @apply btn hover:bg-accent hover:text-accent-foreground;
+  }
+
+  .btn-destructive {
+    @apply btn bg-destructive text-destructive-foreground hover:bg-destructive/90;
+  }
+
+  /* 卡片样式 */
+  .card {
+    @apply rounded-xl border bg-card text-card-foreground shadow-sm;
+  }
+
+  .card-hover {
+    @apply card transition-shadow hover:shadow-md;
+  }
+
+  /* 输入框样式 */
+  .input {
+    @apply flex h-10 w-full rounded-lg border border-input bg-background px-3 py-2
+           text-sm ring-offset-background
+           placeholder:text-muted-foreground
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /* 徽章样式 */
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  .badge-primary {
+    @apply badge bg-primary/10 text-primary;
+  }
+
+  .badge-success {
+    @apply badge bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400;
+  }
+
+  .badge-warning {
+    @apply badge bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400;
+  }
+
+  .badge-error {
+    @apply badge bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400;
+  }
+
+  /* 运行状态指示器 */
+  .status-indicator {
+    @apply relative flex h-2 w-2;
+  }
+
+  .status-indicator-running::before {
+    @apply absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75;
+    content: '';
+  }
+
+  .status-indicator-running::after {
+    @apply relative inline-flex h-2 w-2 rounded-full bg-green-500;
+    content: '';
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           工具类                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+@layer utilities {
+  /* 文本截断 */
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* 渐变文字 */
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary to-primary-600 bg-clip-text text-transparent;
+  }
+
+  /* 玻璃效果 */
+  .glass {
+    @apply bg-background/80 backdrop-blur-sm;
+  }
+
+  /* 隐藏滚动条但保持滚动功能 */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 }
