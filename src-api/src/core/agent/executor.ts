@@ -39,9 +39,12 @@ interface ExecuteOptions {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务目录管理                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+function isPackaged(): boolean {
+  return !process.execPath.includes('node')
+}
+
 function getAppDataDir(): string {
-  const isProduction = process.env.NODE_ENV === 'production'
-  if (isProduction) {
+  if (isPackaged()) {
     return platform() === 'win32'
       ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
       : platform() === 'darwin'

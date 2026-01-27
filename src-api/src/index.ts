@@ -16,9 +16,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       配置文件路径                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+function isPackaged(): boolean {
+  // pkg 打包后，process.execPath 指向 exe 文件
+  // 开发模式下，process.execPath 指向 node.exe
+  return !process.execPath.includes('node')
+}
+
 function getConfigDir(): string {
-  const isProduction = process.env.NODE_ENV === 'production'
-  if (isProduction) {
+  if (isPackaged()) {
     const appDataDir = process.platform === 'win32'
       ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
       : process.platform === 'darwin'
