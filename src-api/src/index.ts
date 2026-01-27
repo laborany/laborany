@@ -69,6 +69,7 @@ import workflowRoutes from './routes/workflow.js'
 import fileRoutes from './routes/file.js'
 import configRoutes from './routes/config.js'
 import sessionRoutes from './routes/session.js'
+import setupRoutes from './routes/setup.js'
 import { initDb, closeDb } from './core/database.js'
 
 const app = new Hono()
@@ -96,6 +97,7 @@ app.route('/api/skill', skillRoutes)
 app.route('/api/workflow', workflowRoutes)
 app.route('/api/config', configRoutes)
 app.route('/api/sessions', sessionRoutes)
+app.route('/api/setup', setupRoutes)
 app.route('/api', fileRoutes)
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

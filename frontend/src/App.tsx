@@ -5,9 +5,10 @@
  * ║  设计：借鉴 workany 的现代化布局系统                                        ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './hooks/useAuth'
+import SetupPage from './pages/SetupPage'
 import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 import ExecutePage from './pages/ExecutePage'
@@ -214,6 +215,42 @@ function AppLayout({ children }: { children: React.ReactNode }) {
  * │                           根组件                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export default function App() {
+  const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
+
+  // 检查是否需要初始化设置
+  useEffect(() => {
+    checkSetupStatus()
+  }, [])
+
+  async function checkSetupStatus() {
+    try {
+      const res = await fetch('/api/setup/status')
+      const data = await res.json()
+      setSetupComplete(data.ready)
+    } catch {
+      // API 未就绪，显示设置页面
+      setSetupComplete(false)
+    }
+  }
+
+  // 加载中
+  if (setupComplete === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
+          <span className="text-sm text-muted-foreground">正在初始化...</span>
+        </div>
+      </div>
+    )
+  }
+
+  // 需要设置
+  if (!setupComplete) {
+    return <SetupPage onReady={() => setSetupComplete(true)} />
+  }
+
+  // 正常应用
   return (
     <AuthProvider>
       <AppLayout>
