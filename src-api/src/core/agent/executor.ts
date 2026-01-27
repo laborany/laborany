@@ -376,7 +376,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   writeFileSync(historyFile, historyEntry, { flag: 'a' })
 
   // 确保 Claude Code 可用（优先使用内置 Bundle）
-  onEvent({ type: 'text', content: '正在检查 Claude Code...\n' })
   const claudeConfig = ensureClaudeCode()
   if (!claudeConfig) {
     onEvent({
