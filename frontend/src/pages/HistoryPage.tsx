@@ -24,14 +24,12 @@ interface Session {
 
 interface MessageItem {
   id: number
-  type: string
-  content: {
-    type: string
-    content?: string
-    toolName?: string
-    toolInput?: unknown
-  } | null
-  created_at: string
+  type: string  // 'user', 'assistant', 'tool_use', 'tool_result'
+  content: string | null
+  toolName: string | null
+  toolInput: unknown | null
+  toolResult: string | null
+  createdAt: string
 }
 
 interface SessionDetail extends Session {
@@ -222,34 +220,50 @@ export function SessionDetailPage() {
       timestamp: Date
     }> = []
 
-    // 添加原始查询作为用户消息
-    messages.push({
-      id: 'query',
-      type: 'user',
-      content: session.query,
-      timestamp: new Date(session.created_at),
-    })
-
-    // 添加历史消息
+    // 遍历数据库中的消息
     for (const msg of session.messages) {
-      if (!msg.content) continue
-
-      if (msg.content.type === 'text') {
+      if (msg.type === 'user' && msg.content) {
+        messages.push({
+          id: String(msg.id),
+          type: 'user',
+          content: msg.content,
+          timestamp: new Date(msg.createdAt),
+        })
+      } else if (msg.type === 'assistant' && msg.content) {
         messages.push({
           id: String(msg.id),
           type: 'assistant',
-          content: msg.content.content || '',
-          timestamp: new Date(msg.created_at),
+          content: msg.content,
+          timestamp: new Date(msg.createdAt),
         })
-      } else if (msg.content.type === 'tool_use') {
+      } else if (msg.type === 'tool_use' && msg.toolName) {
         messages.push({
           id: String(msg.id),
           type: 'tool',
-          content: JSON.stringify(msg.content.toolInput, null, 2),
-          toolName: msg.content.toolName,
-          timestamp: new Date(msg.created_at),
+          content: msg.toolInput ? JSON.stringify(msg.toolInput, null, 2) : '',
+          toolName: msg.toolName,
+          timestamp: new Date(msg.createdAt),
+        })
+      } else if (msg.type === 'tool_result' && msg.toolResult) {
+        // 工具结果可以选择性显示
+        messages.push({
+          id: `${msg.id}-result`,
+          type: 'tool',
+          content: msg.toolResult.substring(0, 500) + (msg.toolResult.length > 500 ? '...' : ''),
+          toolName: '执行结果',
+          timestamp: new Date(msg.createdAt),
         })
       }
+    }
+
+    // 如果没有消息记录，至少显示原始查询
+    if (messages.length === 0) {
+      messages.push({
+        id: 'query',
+        type: 'user',
+        content: session.query,
+        timestamp: new Date(session.created_at),
+      })
     }
 
     return messages
