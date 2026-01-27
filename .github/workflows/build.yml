@@ -54,8 +54,19 @@ jobs:
       - name: Install dependencies
         run: npm run install:all
 
-      - name: Build Mac
-        run: npm run build:electron:mac
+      - name: Build API and CLI bundle
+        run: |
+          npm run bundle:cli:mac
+          npm run build:api:mac
+          # 确保可执行文件有执行权限
+          chmod +x src-api/dist/laborany-api-mac
+          chmod +x cli-bundle/node
+
+      - name: Build Frontend
+        run: npm run build:frontend
+
+      - name: Build Electron
+        run: electron-builder --mac --publish never
 
       - name: Upload Mac artifact
         uses: actions/upload-artifact@v4
@@ -79,8 +90,19 @@ jobs:
       - name: Install dependencies
         run: npm run install:all
 
-      - name: Build Linux
-        run: npm run build:electron:linux
+      - name: Build API and CLI bundle
+        run: |
+          npm run bundle:cli:linux
+          npm run build:api:linux
+          # 确保可执行文件有执行权限
+          chmod +x src-api/dist/laborany-api-linux
+          chmod +x cli-bundle/node
+
+      - name: Build Frontend
+        run: npm run build:frontend
+
+      - name: Build Electron
+        run: electron-builder --linux --publish never
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
