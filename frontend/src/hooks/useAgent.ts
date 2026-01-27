@@ -55,7 +55,11 @@ export function useAgent(skillId: string) {
   const execute = useCallback(
     async (query: string) => {
       const token = localStorage.getItem('token')
-      if (!token) return
+      if (!token) {
+        console.error('[useAgent] 未找到认证 token，请重新登录')
+        setState((s) => ({ ...s, error: '未登录，请重新登录' }))
+        return
+      }
 
       // 添加用户消息
       const userMessage: AgentMessage = {
@@ -79,6 +83,7 @@ export function useAgent(skillId: string) {
       abortRef.current = new AbortController()
 
       try {
+        console.log('[useAgent] 发送请求到 /api/skill/execute')
         const res = await fetch(`${API_BASE}/skill/execute`, {
           method: 'POST',
           headers: {
@@ -88,6 +93,13 @@ export function useAgent(skillId: string) {
           body: JSON.stringify({ skill_id: skillId, query }),
           signal: abortRef.current.signal,
         })
+
+        console.log('[useAgent] 响应状态:', res.status)
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({ error: '请求失败' }))
+          throw new Error(errorData.error || `请求失败: ${res.status}`)
+        }
 
         const reader = res.body?.getReader()
         const decoder = new TextDecoder()
@@ -106,13 +118,15 @@ export function useAgent(skillId: string) {
 
             try {
               const event = JSON.parse(line.slice(6))
+              console.log('[useAgent] 收到事件:', event.type)
               handleEvent(event, assistantId)
-            } catch {
-              // 忽略解析错误
+            } catch (parseErr) {
+              console.warn('[useAgent] JSON 解析失败:', line.slice(6, 100))
             }
           }
         }
       } catch (err) {
+        console.error('[useAgent] 执行错误:', err)
         if ((err as Error).name !== 'AbortError') {
           setState((s) => ({
             ...s,

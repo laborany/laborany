@@ -180,6 +180,42 @@ function findClaudeCodePath(): string | undefined {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       自动安装 Claude Code                                │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function installClaudeCode(): boolean {
+  console.log('[Agent] Claude Code 未找到，尝试自动安装...')
+
+  try {
+    execSync('npm install -g @anthropic-ai/claude-code', {
+      encoding: 'utf-8',
+      stdio: 'inherit',
+    })
+    console.log('[Agent] Claude Code 安装成功')
+    return true
+  } catch (error) {
+    console.error('[Agent] Claude Code 安装失败:', error)
+    return false
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       确保 Claude Code 可用                               │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function ensureClaudeCode(): string | undefined {
+  let path = findClaudeCodePath()
+
+  if (!path) {
+    const installed = installClaudeCode()
+    if (installed) {
+      // 安装后重新检查
+      path = findClaudeCodePath()
+    }
+  }
+
+  return path
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       构建环境配置                                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function buildEnvConfig(): Record<string, string | undefined> {
@@ -291,11 +327,23 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const historyEntry = `\n[${timestamp}] User:\n${userQuery}\n`
   writeFileSync(historyFile, historyEntry, { flag: 'a' })
 
-  const claudeCodePath = findClaudeCodePath()
+  // 确保 Claude Code 可用（如果未安装会自动安装）
+  onEvent({ type: 'text', content: '正在检查 Claude Code...\n' })
+  const claudeCodePath = ensureClaudeCode()
   if (!claudeCodePath) {
     onEvent({
       type: 'error',
-      content: 'Claude Code 未安装。请运行: npm install -g @anthropic-ai/claude-code',
+      content: 'Claude Code 安装失败。请手动运行: npm install -g @anthropic-ai/claude-code',
+    })
+    onEvent({ type: 'done' })
+    return
+  }
+
+  // 检查 API Key 配置
+  if (!process.env.ANTHROPIC_API_KEY) {
+    onEvent({
+      type: 'error',
+      content: 'ANTHROPIC_API_KEY 未配置。请在设置页面配置 API 密钥。',
     })
     onEvent({ type: 'done' })
     return
@@ -303,6 +351,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   console.log(`[Agent] Claude Code: ${claudeCodePath}`)
   console.log(`[Agent] Model: ${process.env.ANTHROPIC_MODEL || 'default'}`)
+  console.log(`[Agent] API Key configured: ${process.env.ANTHROPIC_API_KEY ? 'Yes' : 'No'}`)
 
   const isWindows = platform() === 'win32'
   const args = [
