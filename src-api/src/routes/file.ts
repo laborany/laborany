@@ -86,6 +86,26 @@ async function listTaskFiles(baseDir: string, relativePath: string): Promise<Tas
   return files
 }
 
+file.get('/task/:sessionId/files', async (c) => {
+  const sessionId = c.req.param('sessionId')
+  const taskDir = join(TASKS_DIR, sessionId)
+
+  console.log(`[File] Listing files for session: ${sessionId}`)
+  console.log(`[File] Task dir: ${taskDir}`)
+
+  if (!existsSync(taskDir)) {
+    return c.json({ error: '任务目录不存在', taskDir }, 404)
+  }
+
+  try {
+    const files = await listTaskFiles(taskDir, '')
+    return c.json({ files })
+  } catch (err) {
+    console.error('[File] Error listing files:', err)
+    return c.json({ error: '获取文件列表失败' }, 500)
+  }
+})
+
 file.get('/tasks/:sessionId/files', async (c) => {
   const sessionId = c.req.param('sessionId')
   const taskDir = join(TASKS_DIR, sessionId)
@@ -105,9 +125,9 @@ file.get('/tasks/:sessionId/files', async (c) => {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       下载/预览任务文件                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-file.get('/tasks/:sessionId/files/*', async (c) => {
+async function handleFileDownload(c: any, pathPrefix: string) {
   const sessionId = c.req.param('sessionId')
-  const filePath = c.req.path.replace(`/tasks/${sessionId}/files/`, '')
+  const filePath = c.req.path.replace(`/${pathPrefix}/${sessionId}/files/`, '')
   const taskDir = join(TASKS_DIR, sessionId)
   const fullPath = join(taskDir, filePath)
 
@@ -161,6 +181,9 @@ file.get('/tasks/:sessionId/files/*', async (c) => {
   } catch {
     return c.json({ error: '读取文件失败' }, 500)
   }
-})
+}
+
+file.get('/task/:sessionId/files/*', (c) => handleFileDownload(c, 'task'))
+file.get('/tasks/:sessionId/files/*', (c) => handleFileDownload(c, 'tasks'))
 
 export default file

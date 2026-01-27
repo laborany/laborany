@@ -12,6 +12,7 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { stat } from 'fs/promises'
 import { loadSkill, executeAgent, sessionManager } from '../core/agent/index.js'
+import { dbHelper } from '../core/database.js'
 
 const skill = new Hono()
 const SKILLS_DIR = loadSkill.getSkillsDir()
@@ -157,8 +158,18 @@ skill.post('/execute', async (c) => {
   const abortController = new AbortController()
   sessionManager.register(sessionId, abortController)
 
+  // 保存会话到数据库（新会话）
+  if (!existingSessionId) {
+    dbHelper.run(
+      `INSERT INTO sessions (id, user_id, skill_id, query, status) VALUES (?, ?, ?, ?, ?)`,
+      [sessionId, 'default', skillId, query, 'running']
+    )
+  }
+
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId }) })
+
+    let finalStatus = 'completed'
 
     try {
       await executeAgent({
@@ -174,12 +185,19 @@ skill.post('/execute', async (c) => {
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
         await stream.writeSSE({ data: JSON.stringify({ type: 'aborted' }) })
+        finalStatus = 'aborted'
       } else {
         const message = error instanceof Error ? error.message : '执行失败'
         await stream.writeSSE({ data: JSON.stringify({ type: 'error', message }) })
+        finalStatus = 'failed'
       }
     } finally {
       sessionManager.unregister(sessionId)
+      // 更新会话状态
+      dbHelper.run(
+        `UPDATE sessions SET status = ? WHERE id = ?`,
+        [finalStatus, sessionId]
+      )
     }
   })
 })
