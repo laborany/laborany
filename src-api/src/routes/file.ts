@@ -127,9 +127,14 @@ file.get('/tasks/:sessionId/files', async (c) => {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 async function handleFileDownload(c: any, pathPrefix: string) {
   const sessionId = c.req.param('sessionId')
-  const filePath = c.req.path.replace(`/${pathPrefix}/${sessionId}/files/`, '')
+  // 路由挂载在 /api 下，所以完整路径是 /api/task/:sessionId/files/*
+  const filePath = c.req.path.replace(`/api/${pathPrefix}/${sessionId}/files/`, '')
   const taskDir = join(TASKS_DIR, sessionId)
   const fullPath = join(taskDir, filePath)
+
+  console.log(`[File] Download request: ${c.req.path}`)
+  console.log(`[File] Extracted file path: ${filePath}`)
+  console.log(`[File] Full path: ${fullPath}`)
 
   // 安全检查
   if (!fullPath.startsWith(taskDir)) {
@@ -137,7 +142,7 @@ async function handleFileDownload(c: any, pathPrefix: string) {
   }
 
   if (!existsSync(fullPath)) {
-    return c.json({ error: '文件不存在' }, 404)
+    return c.json({ error: '文件不存在', fullPath }, 404)
   }
 
   try {
