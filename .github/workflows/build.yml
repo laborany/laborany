@@ -36,7 +36,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: LaborAny-Windows
-          path: release/*.exe
+          path: release/*Setup*.exe
 
   # ╔══════════════════════════════════════════════════════════════════════════╗
   # ║                         macOS 构建                                        ║
@@ -115,7 +115,7 @@ jobs:
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
           generate_release_notes: true
           files: |
-            artifacts/LaborAny-Windows/*.exe
+            artifacts/LaborAny-Windows/*Setup*.exe
             artifacts/LaborAny-Mac/*.dmg
             artifacts/LaborAny-Linux/*.AppImage
             artifacts/LaborAny-Linux/*.deb
