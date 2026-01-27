@@ -10,8 +10,11 @@
     "dev:electron": "electron .",
     "build": "npm run build:api && npm run build:frontend",
     "build:api": "cd src-api && npm run build",
+    "build:api:win": "cd src-api && npm run build:win",
+    "build:api:mac": "cd src-api && npm run build:mac",
     "build:frontend": "cd frontend && npm run build",
     "build:electron": "npm run build && electron-builder --win",
+    "build:electron:mac": "npm run build:api:mac && npm run build:frontend && electron-builder --mac",
     "install:all": "npm install && cd src-api && npm install && cd ../frontend && npm install"
   },
   "build": {
@@ -25,10 +28,6 @@
       "frontend/dist/**/*"
     ],
     "extraResources": [
-      {
-        "from": "src-api/dist/laborany-api.exe",
-        "to": "api/laborany-api.exe"
-      },
       {
         "from": "frontend/dist",
         "to": "api/frontend"
@@ -53,7 +52,23 @@
     "win": {
       "target": "portable",
       "icon": "src-tauri/icons/icon.ico",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "extraResources": [
+        {
+          "from": "src-api/dist/laborany-api.exe",
+          "to": "api/laborany-api.exe"
+        }
+      ]
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "src-tauri/icons/icon.icns",
+      "extraResources": [
+        {
+          "from": "src-api/dist/laborany-api-mac",
+          "to": "api/laborany-api"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,

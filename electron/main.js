@@ -8,6 +8,7 @@ const { app, BrowserWindow } = require('electron')
 const { spawn, execSync } = require('child_process')
 const path = require('path')
 const fs = require('fs')
+const http = require('http')
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           全局变量                                        │
@@ -44,18 +45,51 @@ function killProcessOnPort(port) {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           检查 API 是否就绪                               │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function checkApiReady() {
+  return new Promise((resolve) => {
+    const req = http.get(`http://localhost:${API_PORT}/health`, (res) => {
+      resolve(res.statusCode === 200 || res.statusCode === 404)
+    })
+    req.on('error', () => resolve(false))
+    req.setTimeout(1000, () => {
+      req.destroy()
+      resolve(false)
+    })
+  })
+}
+
+async function waitForApi(maxAttempts = 30, interval = 500) {
+  for (let i = 0; i < maxAttempts; i++) {
+    console.log(`[Electron] Waiting for API... (${i + 1}/${maxAttempts})`)
+    if (await checkApiReady()) {
+      console.log('[Electron] API is ready!')
+      return true
+    }
+    await new Promise(r => setTimeout(r, interval))
+  }
+  console.error('[Electron] API failed to start')
+  return false
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           启动 API 服务                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function startApiServer() {
   killProcessOnPort(API_PORT)
 
+  // 根据平台选择正确的可执行文件
+  const isWin = process.platform === 'win32'
+  const apiExeName = isWin ? 'laborany-api.exe' : 'laborany-api'
+
   const apiPath = isDev
-    ? path.join(__dirname, '..', 'src-api', 'dist', 'laborany-api.exe')
-    : path.join(process.resourcesPath, 'api', 'laborany-api.exe')
+    ? path.join(__dirname, '..', 'src-api', 'dist', apiExeName)
+    : path.join(process.resourcesPath, 'api', apiExeName)
 
   if (!fs.existsSync(apiPath)) {
     console.error(`[Electron] API executable not found: ${apiPath}`)
-    return
+    return false
   }
 
   console.log(`[Electron] Starting API server: ${apiPath}`)
@@ -80,6 +114,12 @@ function startApiServer() {
   apiProcess.on('close', (code) => {
     console.log(`[API] Process exited with code ${code}`)
   })
+
+  apiProcess.on('error', (err) => {
+    console.error(`[API] Failed to start: ${err.message}`)
+  })
+
+  return true
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -90,15 +130,32 @@ function createWindow() {
     width: 1200,
     height: 800,
     title: 'LaborAny',
+    show: false,  // 先隐藏，等加载完成再显示
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true
     }
   })
 
-  // 始终从 API 服务器加载（它会服务静态文件）
   const url = `http://localhost:${API_PORT}`
   console.log(`[Electron] Loading: ${url}`)
+
+  // 加载完成后显示窗口
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.show()
+  })
+
+  // 加载失败时显示错误
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error(`[Electron] Failed to load: ${errorDescription}`)
+    mainWindow.loadFile(path.join(__dirname, 'error.html')).catch(() => {
+      // 如果没有 error.html，显示空白页面并重试
+      setTimeout(() => {
+        mainWindow.loadURL(url)
+      }, 2000)
+    })
+  })
+
   mainWindow.loadURL(url)
 
   mainWindow.on('closed', () => {
@@ -109,13 +166,22 @@ function createWindow() {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           应用生命周期                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-app.whenReady().then(() => {
-  startApiServer()
+app.whenReady().then(async () => {
+  const started = startApiServer()
 
-  // 等待 API 启动
-  setTimeout(() => {
+  if (started) {
+    // 等待 API 真正启动
+    const ready = await waitForApi()
+    if (ready) {
+      createWindow()
+    } else {
+      // API 启动失败，仍然尝试创建窗口（可能会显示错误）
+      createWindow()
+    }
+  } else {
+    // API 可执行文件不存在
     createWindow()
-  }, 2000)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

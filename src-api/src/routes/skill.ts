@@ -248,6 +248,51 @@ skill.post('/stop/:sessionId', (c) => {
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       对话式创建 Skill (SSE)                              │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+skill.post('/create-chat', async (c) => {
+  const { messages } = await c.req.json()
+
+  if (!messages || !Array.isArray(messages)) {
+    return c.json({ error: '缺少 messages 参数' }, 400)
+  }
+
+  // 使用 skill-creator skill 来创建新 skill
+  const skillCreator = await loadSkill.byId('skill-creator')
+  if (!skillCreator) {
+    return c.json({ error: 'skill-creator 不存在，无法创建 Skill' }, 404)
+  }
+
+  const sessionId = uuid()
+  const abortController = new AbortController()
+  sessionManager.register(sessionId, abortController)
+
+  // 构建查询：将消息历史转换为查询
+  const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
+  const query = lastUserMessage?.content || ''
+
+  return streamSSE(c, async (stream) => {
+    try {
+      await executeAgent({
+        skill: skillCreator,
+        query,
+        sessionId,
+        signal: abortController.signal,
+        onEvent: async (event) => {
+          await stream.writeSSE({ data: JSON.stringify(event) })
+        },
+      })
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '创建失败'
+      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message }) })
+    } finally {
+      sessionManager.unregister(sessionId)
+    }
+  })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       卸载 Skill                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 skill.delete('/:skillId', async (c) => {
