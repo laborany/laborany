@@ -123,7 +123,8 @@ async function loadSingleSkill(skillDir: string): Promise<Skill | null> {
  * │                       提取 YAML Frontmatter                               │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function extractFrontmatter(content: string): Record<string, unknown> | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---/)
+  // 支持 Unix (\n) 和 Windows (\r\n) 换行符
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   if (!match) return null
 
   try {
