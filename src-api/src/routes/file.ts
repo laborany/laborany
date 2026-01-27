@@ -8,9 +8,11 @@ import { Hono } from 'hono'
 import { readFile, readdir, stat, writeFile, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { existsSync } from 'fs'
+import { existsSync, createWriteStream } from 'fs'
 import { homedir } from 'os'
 import { v4 as uuid } from 'uuid'
+import { Readable } from 'stream'
+import busboy from 'busboy'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -211,39 +213,80 @@ function getUploadsDir(): string {
 }
 
 file.post('/files/upload', async (c) => {
-  try {
-    const body = await c.req.parseBody()
-    const uploadedFile = body['file']
+  console.log('[File] Upload request received')
 
-    if (!uploadedFile || !(uploadedFile instanceof File)) {
-      return c.json({ error: '未找到上传文件' }, 400)
-    }
+  const uploadsDir = getUploadsDir()
+  if (!existsSync(uploadsDir)) {
+    await mkdir(uploadsDir, { recursive: true })
+  }
 
-    const uploadsDir = getUploadsDir()
-    if (!existsSync(uploadsDir)) {
-      await mkdir(uploadsDir, { recursive: true })
+  return new Promise((resolve) => {
+    const contentType = c.req.header('content-type') || ''
+    console.log('[File] Content-Type:', contentType)
+
+    if (!contentType.includes('multipart/form-data')) {
+      resolve(c.json({ error: '需要 multipart/form-data 格式' }, 400))
+      return
     }
 
     const fileId = uuid()
-    const ext = uploadedFile.name.split('.').pop() || ''
-    const fileName = ext ? `${fileId}.${ext}` : fileId
-    const filePath = join(uploadsDir, fileName)
+    let fileName = 'upload'
+    let fileSize = 0
+    let filePath = ''
+    let writeStream: ReturnType<typeof createWriteStream> | null = null
 
-    const arrayBuffer = await uploadedFile.arrayBuffer()
-    await writeFile(filePath, Buffer.from(arrayBuffer))
+    const bb = busboy({ headers: { 'content-type': contentType } })
 
-    console.log(`[File] Uploaded: ${filePath}`)
+    bb.on('file', (fieldname, fileStream, info) => {
+      console.log('[File] Receiving file:', info.filename)
+      fileName = info.filename || 'upload'
+      const ext = fileName.split('.').pop() || ''
+      const savedFileName = ext ? `${fileId}.${ext}` : fileId
+      filePath = join(uploadsDir, savedFileName)
 
-    return c.json({
-      id: fileId,
-      name: uploadedFile.name,
-      path: filePath,
-      size: uploadedFile.size,
+      writeStream = createWriteStream(filePath)
+      fileStream.pipe(writeStream)
+
+      fileStream.on('data', (data: Buffer) => {
+        fileSize += data.length
+      })
     })
-  } catch (err) {
-    console.error('[File] Upload error:', err)
-    return c.json({ error: '文件上传失败' }, 500)
-  }
+
+    bb.on('close', () => {
+      console.log(`[File] Upload complete: ${filePath}, size: ${fileSize}`)
+      resolve(c.json({
+        id: fileId,
+        name: fileName,
+        path: filePath,
+        size: fileSize,
+      }))
+    })
+
+    bb.on('error', (err: Error) => {
+      console.error('[File] Busboy error:', err)
+      resolve(c.json({ error: '文件上传失败', detail: err.message }, 500))
+    })
+
+    // 将请求体传递给 busboy
+    const reader = c.req.raw.body?.getReader()
+    if (!reader) {
+      resolve(c.json({ error: '无法读取请求体' }, 400))
+      return
+    }
+
+    const readable = new Readable({
+      async read() {
+        const { done, value } = await reader.read()
+        if (done) {
+          this.push(null)
+        } else {
+          this.push(Buffer.from(value))
+        }
+      }
+    })
+
+    readable.pipe(bb)
+  })
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
