@@ -1,6 +1,11 @@
 {
   "name": "laborany",
   "version": "0.1.0",
+  "description": "LaborAny - AI-powered desktop assistant with Claude Code integration",
+  "author": {
+    "name": "ThinkAny",
+    "email": "support@thinkany.ai"
+  },
   "private": true,
   "main": "electron/main.js",
   "scripts": {
@@ -18,9 +23,9 @@
     "bundle:cli:win": "node scripts/bundle-cli.js win",
     "bundle:cli:mac": "node scripts/bundle-cli.js mac",
     "bundle:cli:linux": "node scripts/bundle-cli.js linux",
-    "build:electron": "npm run bundle:cli:win && npm run build && electron-builder --win",
-    "build:electron:mac": "npm run bundle:cli:mac && npm run build:api:mac && npm run build:frontend && electron-builder --mac",
-    "build:electron:linux": "npm run bundle:cli:linux && npm run build:api:linux && npm run build:frontend && electron-builder --linux",
+    "build:electron": "npm run bundle:cli:win && npm run build && electron-builder --win --publish never",
+    "build:electron:mac": "npm run bundle:cli:mac && npm run build:api:mac && npm run build:frontend && electron-builder --mac --publish never",
+    "build:electron:linux": "npm run bundle:cli:linux && npm run build:api:linux && npm run build:frontend && electron-builder --linux --publish never",
     "install:all": "npm install && cd src-api && npm install && cd ../frontend && npm install"
   },
   "build": {
