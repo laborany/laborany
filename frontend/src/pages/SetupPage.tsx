@@ -227,18 +227,39 @@ export default function SetupPage({ onReady }: SetupPageProps) {
 
           {/* 错误信息 */}
           {error && (
-            <div className="bg-red-500/10 text-red-600 border border-red-500/20 rounded-lg p-4">
-              <p className="text-sm">{error}</p>
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 space-y-2">
+              <p className="text-sm font-medium text-red-600">❌ 出现问题</p>
+              <p className="text-sm text-red-500">{error}</p>
+              <p className="text-xs text-muted-foreground mt-2">
+                如果问题持续出现，请联系技术支持或尝试手动安装 Node.js：
+                <a
+                  href="https://nodejs.org/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:underline ml-1"
+                >
+                  https://nodejs.org/
+                </a>
+              </p>
             </div>
           )}
 
-          {/* 提示信息 */}
+          {/* 提示信息 - 首次安装说明 */}
           {(step === 'installing-nodejs' || step === 'installing-claude') && (
-            <div className="bg-muted/50 rounded-lg p-3 text-xs text-muted-foreground">
-              <p>💡 这是首次运行需要的一次性安装，请耐心等待。</p>
-              <p className="mt-1">安装完成后，以后打开应用将直接进入。</p>
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 space-y-2">
+              <p className="text-sm font-medium text-blue-600">📦 首次运行需要安装必要组件</p>
+              <p className="text-xs text-muted-foreground">
+                这是一次性的自动安装过程，完成后以后打开应用将直接进入。
+              </p>
               {step === 'installing-nodejs' && (
-                <p className="mt-1 text-yellow-600">⚠️ 安装 Node.js 可能需要管理员权限</p>
+                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 mt-2">
+                  <p className="text-sm font-medium text-yellow-700">⚠️ 重要提示</p>
+                  <ul className="text-xs text-yellow-600 mt-1 space-y-1 list-disc list-inside">
+                    <li>安装过程中可能会弹出「用户账户控制」窗口</li>
+                    <li>请点击「是」允许安装（这是正常的系统安全提示）</li>
+                    <li>安装完成后需要重启应用才能生效</li>
+                  </ul>
+                </div>
               )}
             </div>
           )}
@@ -257,9 +278,22 @@ export default function SetupPage({ onReady }: SetupPageProps) {
 
           {/* 需要重启提示 */}
           {needRestart && (
-            <div className="bg-yellow-500/10 text-yellow-600 border border-yellow-500/20 rounded-lg p-4">
-              <p className="font-medium">⚠️ 需要重启应用</p>
-              <p className="text-sm mt-1">Node.js 已安装完成，请关闭并重新打开应用以继续。</p>
+            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <p className="font-medium text-green-600">Node.js 安装成功！</p>
+              </div>
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
+                <p className="text-sm font-medium text-yellow-700">🔄 请重启应用</p>
+                <p className="text-xs text-yellow-600 mt-1">
+                  为了让新安装的组件生效，请关闭此窗口，然后重新打开 LaborAny。
+                </p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  （就像安装新软件后有时需要重启电脑一样，这里只需要重启应用即可）
+                </p>
+              </div>
             </div>
           )}
 
