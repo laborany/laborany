@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "description": "LaborAny - AI-powered desktop assistant with Claude Code integration",
   "author": {
-    "name": "ThinkAny",
-    "email": "support@thinkany.ai"
+    "name": "FunAmiAI",
+    "email": "funamiai@163.com"
   },
   "private": true,
   "main": "electron/main.js",
