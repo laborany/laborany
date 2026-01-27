@@ -135,7 +135,36 @@ function ensureTaskDir(sessionId: string): string {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       Claude Code 路径检测                                │
+ * │  优先级：内置 CLI Bundle > 系统安装 > 自动安装                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+function getBundledClaudePath(): { node: string; cli: string } | null {
+  const os = platform()
+  const exeDir = dirname(process.execPath)
+
+  // 内置 CLI Bundle 的可能位置
+  const candidates = [
+    // Electron 打包后：resources/cli-bundle
+    join(exeDir, '..', 'resources', 'cli-bundle'),
+    join(exeDir, 'resources', 'cli-bundle'),
+    // 开发模式
+    join(__dirname, '..', '..', '..', '..', 'cli-bundle'),
+  ]
+
+  for (const bundleDir of candidates) {
+    const nodeBin = os === 'win32'
+      ? join(bundleDir, 'node.exe')
+      : join(bundleDir, 'node')
+    const cliJs = join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'cli.js')
+
+    if (existsSync(nodeBin) && existsSync(cliJs)) {
+      console.log(`[Agent] 找到内置 CLI Bundle: ${bundleDir}`)
+      return { node: nodeBin, cli: cliJs }
+    }
+  }
+
+  return null
+}
+
 function findClaudeCodePath(): string | undefined {
   const os = platform()
   const whichCmd = os === 'win32' ? 'where' : 'which'
@@ -180,39 +209,58 @@ function findClaudeCodePath(): string | undefined {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       自动安装 Claude Code                                │
+ * │                       确保 Claude Code 可用                               │
+ * │  优先级：内置 CLI Bundle > 系统安装 > 自动安装                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function installClaudeCode(): boolean {
-  console.log('[Agent] Claude Code 未找到，尝试自动安装...')
+interface ClaudeCodeConfig {
+  useBundled: boolean
+  nodePath?: string
+  cliPath?: string
+  claudePath?: string
+}
 
+function ensureClaudeCode(): ClaudeCodeConfig | undefined {
+  // 1. 优先检查内置 CLI Bundle
+  const bundled = getBundledClaudePath()
+  if (bundled) {
+    console.log('[Agent] 使用内置 CLI Bundle')
+    return {
+      useBundled: true,
+      nodePath: bundled.node,
+      cliPath: bundled.cli,
+    }
+  }
+
+  // 2. 检查系统安装的 Claude Code
+  let systemPath = findClaudeCodePath()
+  if (systemPath) {
+    console.log('[Agent] 使用系统安装的 Claude Code')
+    return {
+      useBundled: false,
+      claudePath: systemPath,
+    }
+  }
+
+  // 3. 尝试自动安装
+  console.log('[Agent] Claude Code 未找到，尝试自动安装...')
   try {
     execSync('npm install -g @anthropic-ai/claude-code', {
       encoding: 'utf-8',
       stdio: 'inherit',
     })
     console.log('[Agent] Claude Code 安装成功')
-    return true
+    systemPath = findClaudeCodePath()
+    if (systemPath) {
+      return {
+        useBundled: false,
+        claudePath: systemPath,
+      }
+    }
   } catch (error) {
     console.error('[Agent] Claude Code 安装失败:', error)
-    return false
-  }
-}
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       确保 Claude Code 可用                               │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function ensureClaudeCode(): string | undefined {
-  let path = findClaudeCodePath()
-
-  if (!path) {
-    const installed = installClaudeCode()
-    if (installed) {
-      // 安装后重新检查
-      path = findClaudeCodePath()
-    }
   }
 
-  return path
+  return undefined
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -327,13 +375,13 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const historyEntry = `\n[${timestamp}] User:\n${userQuery}\n`
   writeFileSync(historyFile, historyEntry, { flag: 'a' })
 
-  // 确保 Claude Code 可用（如果未安装会自动安装）
+  // 确保 Claude Code 可用（优先使用内置 Bundle）
   onEvent({ type: 'text', content: '正在检查 Claude Code...\n' })
-  const claudeCodePath = ensureClaudeCode()
-  if (!claudeCodePath) {
+  const claudeConfig = ensureClaudeCode()
+  if (!claudeConfig) {
     onEvent({
       type: 'error',
-      content: 'Claude Code 安装失败。请手动运行: npm install -g @anthropic-ai/claude-code',
+      content: 'Claude Code 未找到且安装失败。请手动运行: npm install -g @anthropic-ai/claude-code',
     })
     onEvent({ type: 'done' })
     return
@@ -349,7 +397,12 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     return
   }
 
-  console.log(`[Agent] Claude Code: ${claudeCodePath}`)
+  if (claudeConfig.useBundled) {
+    console.log(`[Agent] Node: ${claudeConfig.nodePath}`)
+    console.log(`[Agent] CLI: ${claudeConfig.cliPath}`)
+  } else {
+    console.log(`[Agent] Claude Code: ${claudeConfig.claudePath}`)
+  }
   console.log(`[Agent] Model: ${process.env.ANTHROPIC_MODEL || 'default'}`)
   console.log(`[Agent] API Key configured: ${process.env.ANTHROPIC_API_KEY ? 'Yes' : 'No'}`)
 
@@ -375,12 +428,25 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   console.log(`[Agent] Args: ${args.join(' ')}`)
 
-  const proc = spawn(claudeCodePath, args, {
-    cwd: taskDir,
-    env: buildEnvConfig(),
-    shell: isWindows,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
+  // 根据配置选择启动方式
+  let proc
+  if (claudeConfig.useBundled) {
+    // 使用内置 Bundle：node cli.js [args]
+    const bundledArgs = [claudeConfig.cliPath!, ...args]
+    proc = spawn(claudeConfig.nodePath!, bundledArgs, {
+      cwd: taskDir,
+      env: buildEnvConfig(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+  } else {
+    // 使用系统安装的 claude 命令
+    proc = spawn(claudeConfig.claudePath!, args, {
+      cwd: taskDir,
+      env: buildEnvConfig(),
+      shell: isWindows,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+  }
 
   proc.stdin.write(prompt)
   proc.stdin.end()

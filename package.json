@@ -14,9 +14,13 @@
     "build:api:mac": "cd src-api && npm run build:mac",
     "build:api:linux": "cd src-api && npm run build:linux",
     "build:frontend": "cd frontend && npm run build",
-    "build:electron": "npm run build && electron-builder --win",
-    "build:electron:mac": "npm run build:api:mac && npm run build:frontend && electron-builder --mac",
-    "build:electron:linux": "npm run build:api:linux && npm run build:frontend && electron-builder --linux",
+    "bundle:cli": "node scripts/bundle-cli.js",
+    "bundle:cli:win": "node scripts/bundle-cli.js win",
+    "bundle:cli:mac": "node scripts/bundle-cli.js mac",
+    "bundle:cli:linux": "node scripts/bundle-cli.js linux",
+    "build:electron": "npm run bundle:cli:win && npm run build && electron-builder --win",
+    "build:electron:mac": "npm run bundle:cli:mac && npm run build:api:mac && npm run build:frontend && electron-builder --mac",
+    "build:electron:linux": "npm run bundle:cli:linux && npm run build:api:linux && npm run build:frontend && electron-builder --linux",
     "install:all": "npm install && cd src-api && npm install && cd ../frontend && npm install"
   },
   "build": {
@@ -49,10 +53,15 @@
       {
         "from": "CLAUDE.md",
         "to": "CLAUDE.md"
+      },
+      {
+        "from": "cli-bundle",
+        "to": "cli-bundle",
+        "filter": ["**/*"]
       }
     ],
     "win": {
-      "target": "portable",
+      "target": "nsis",
       "icon": "src-tauri/icons/icon.ico",
       "signAndEditExecutable": false,
       "extraResources": [
@@ -85,7 +94,11 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LaborAny"
     }
   },
   "devDependencies": {
