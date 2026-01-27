@@ -5,11 +5,12 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Hono } from 'hono'
-import { readFile, readdir, stat } from 'fs/promises'
+import { readFile, readdir, stat, writeFile, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
+import { v4 as uuid } from 'uuid'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -190,5 +191,97 @@ async function handleFileDownload(c: any, pathPrefix: string) {
 
 file.get('/task/:sessionId/files/*', (c) => handleFileDownload(c, 'task'))
 file.get('/tasks/:sessionId/files/*', (c) => handleFileDownload(c, 'tasks'))
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       文件上传（工作流输入）                               │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function getUploadsDir(): string {
+  const isProduction = process.env.NODE_ENV === 'production'
+
+  if (isProduction) {
+    const appDataDir = process.platform === 'win32'
+      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
+      : process.platform === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
+        : join(homedir(), '.config', 'laborany')
+    return join(appDataDir, 'uploads')
+  }
+
+  return join(__dirname, '../../../uploads')
+}
+
+file.post('/files/upload', async (c) => {
+  try {
+    const body = await c.req.parseBody()
+    const uploadedFile = body['file']
+
+    if (!uploadedFile || !(uploadedFile instanceof File)) {
+      return c.json({ error: '未找到上传文件' }, 400)
+    }
+
+    const uploadsDir = getUploadsDir()
+    if (!existsSync(uploadsDir)) {
+      await mkdir(uploadsDir, { recursive: true })
+    }
+
+    const fileId = uuid()
+    const ext = uploadedFile.name.split('.').pop() || ''
+    const fileName = ext ? `${fileId}.${ext}` : fileId
+    const filePath = join(uploadsDir, fileName)
+
+    const arrayBuffer = await uploadedFile.arrayBuffer()
+    await writeFile(filePath, Buffer.from(arrayBuffer))
+
+    console.log(`[File] Uploaded: ${filePath}`)
+
+    return c.json({
+      id: fileId,
+      name: uploadedFile.name,
+      path: filePath,
+      size: uploadedFile.size,
+    })
+  } catch (err) {
+    console.error('[File] Upload error:', err)
+    return c.json({ error: '文件上传失败' }, 500)
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取上传的文件                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+file.get('/files/:fileId', async (c) => {
+  const fileId = c.req.param('fileId')
+  const uploadsDir = getUploadsDir()
+
+  // 查找文件（可能有不同扩展名）
+  if (!existsSync(uploadsDir)) {
+    return c.json({ error: '文件不存在' }, 404)
+  }
+
+  const files = await readdir(uploadsDir)
+  const matchedFile = files.find(f => f.startsWith(fileId))
+
+  if (!matchedFile) {
+    return c.json({ error: '文件不存在' }, 404)
+  }
+
+  const filePath = join(uploadsDir, matchedFile)
+  const content = await readFile(filePath)
+  const ext = matchedFile.split('.').pop()?.toLowerCase() || ''
+
+  const mimeTypes: Record<string, string> = {
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+    csv: 'text/csv',
+    json: 'application/json',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+  }
+
+  return new Response(content, {
+    headers: { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' },
+  })
+})
 
 export default file
