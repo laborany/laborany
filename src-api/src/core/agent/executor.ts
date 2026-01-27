@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { spawn, execSync } from 'child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'fs'
 import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
@@ -33,29 +33,95 @@ interface ExecuteOptions {
   sessionId: string
   signal: AbortSignal
   onEvent: (event: AgentEvent) => void
+  workDir?: string  // 可选的工作目录，用于工作流共享目录
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务目录管理                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function getTasksBaseDir(): string {
+function getAppDataDir(): string {
   const isProduction = process.env.NODE_ENV === 'production'
-
   if (isProduction) {
-    const appDataDir = platform() === 'win32'
+    return platform() === 'win32'
       ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
       : platform() === 'darwin'
         ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
         : join(homedir(), '.config', 'laborany')
-    return join(appDataDir, 'tasks')
+  }
+  return join(__dirname, '..', '..', '..', '..')
+}
+
+function getTasksBaseDir(): string {
+  return join(getAppDataDir(), 'tasks')
+}
+
+function findClaudeMd(): string | null {
+  /* ┌────────────────────────────────────────────────────────────────────────┐
+   * │  在多个可能的位置查找 CLAUDE.md                                         │
+   * │  优先级：pkg 打包路径 > Electron resources > 开发模式路径               │
+   * └────────────────────────────────────────────────────────────────────────┘ */
+  const candidates: string[] = []
+
+  // 1. pkg 打包模式：exe 在 resources/api/，CLAUDE.md 在 resources/
+  const exeDir = dirname(process.execPath)
+  candidates.push(join(exeDir, '..', 'CLAUDE.md'))
+  candidates.push(join(exeDir, 'CLAUDE.md'))
+
+  // 2. Electron resources 路径（如果 resourcesPath 存在）
+  if ((process as NodeJS.Process & { resourcesPath?: string }).resourcesPath) {
+    const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath!
+    candidates.push(join(resourcesPath, 'CLAUDE.md'))
   }
 
-  // 开发模式：相对于项目根目录
-  return join(__dirname, '..', '..', '..', '..', 'tasks')
+  // 3. 开发模式：从项目根目录读取
+  candidates.push(join(__dirname, '..', '..', '..', '..', 'CLAUDE.md'))
+
+  // 4. 相对于当前工作目录
+  candidates.push(join(process.cwd(), 'CLAUDE.md'))
+
+  // 查找第一个存在的文件
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      console.log(`[Agent] Found CLAUDE.md at: ${candidate}`)
+      return candidate
+    }
+  }
+
+  console.warn(`[Agent] CLAUDE.md not found in any of: ${candidates.join(', ')}`)
+  return null
+}
+
+function getClaudeMdPath(): string | null {
+  return findClaudeMd()
 }
 
 function getTaskDir(sessionId: string): string {
   return join(getTasksBaseDir(), sessionId)
+}
+
+function copyClaudeMdToDir(targetDir: string): void {
+  /* ┌────────────────────────────────────────────────────────────────────────┐
+   * │  复制 CLAUDE.md 到目标目录                                              │
+   * └────────────────────────────────────────────────────────────────────────┘ */
+  const claudeMdSrc = getClaudeMdPath()
+  const claudeMdDest = join(targetDir, 'CLAUDE.md')
+
+  if (!claudeMdSrc) {
+    console.warn(`[Agent] CLAUDE.md source not found, skipping copy`)
+    return
+  }
+
+  if (existsSync(claudeMdDest)) {
+    console.log(`[Agent] CLAUDE.md already exists at: ${claudeMdDest}`)
+    return
+  }
+
+  try {
+    copyFileSync(claudeMdSrc, claudeMdDest)
+    console.log(`[Agent] Copied CLAUDE.md: ${claudeMdSrc} -> ${claudeMdDest}`)
+  } catch (err) {
+    console.warn(`[Agent] Failed to copy CLAUDE.md: ${err}`)
+  }
 }
 
 function ensureTaskDir(sessionId: string): string {
@@ -63,6 +129,7 @@ function ensureTaskDir(sessionId: string): string {
   if (!existsSync(taskDir)) {
     mkdirSync(taskDir, { recursive: true })
   }
+  copyClaudeMdToDir(taskDir)
   return taskDir
 }
 
@@ -196,14 +263,24 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): vo
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, workDir } = options
 
   if (signal.aborted) {
     throw new DOMException('Aborted', 'AbortError')
   }
 
-  const taskDir = ensureTaskDir(sessionId)
-  const historyFile = join(taskDir, 'history.txt')
+  // 使用指定的工作目录或根据 sessionId 生成
+  const taskDir = workDir || ensureTaskDir(sessionId)
+  if (workDir && !existsSync(workDir)) {
+    mkdirSync(workDir, { recursive: true })
+  }
+  // 确保 CLAUDE.md 存在于工作目录
+  if (workDir) {
+    copyClaudeMdToDir(workDir)
+  }
+
+  // 使用 sessionId 区分不同步骤的历史记录
+  const historyFile = join(taskDir, `history-${sessionId}.txt`)
   const isNewSession = !existsSync(historyFile)
   console.log(`[Agent] Task directory: ${taskDir}`)
   console.log(`[Agent] Is new session: ${isNewSession}`)

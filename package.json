@@ -44,6 +44,10 @@
       {
         "from": ".env.example",
         "to": ".env.example"
+      },
+      {
+        "from": "CLAUDE.md",
+        "to": "CLAUDE.md"
       }
     ],
     "win": {

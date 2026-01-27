@@ -139,6 +139,7 @@ export function useWorkflowExecutor(workflow: Workflow | null) {
   })
 
   const abortControllerRef = useRef<AbortController | null>(null)
+  const runIdRef = useRef<string | null>(null)
 
   // 初始化步骤状态
   const initSteps = useCallback((wf: Workflow): StepRunState[] => {
@@ -223,6 +224,7 @@ export function useWorkflowExecutor(workflow: Workflow | null) {
   const handleEvent = useCallback((event: Record<string, unknown>) => {
     switch (event.type) {
       case 'run':
+        runIdRef.current = event.runId as string
         setRunState(prev => ({ ...prev, runId: event.runId as string }))
         break
 
@@ -301,20 +303,30 @@ export function useWorkflowExecutor(workflow: Workflow | null) {
 
   // 中止执行
   const stop = useCallback(async () => {
+    // 先中止前端的 fetch 请求
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
     }
-    if (runState.runId) {
+    // 使用 ref 获取最新的 runId，通知后端中止执行
+    const currentRunId = runIdRef.current
+    if (currentRunId) {
       const token = localStorage.getItem('token')
-      await fetch(`${API_BASE}/workflow/stop/${runState.runId}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      try {
+        await fetch(`${API_BASE}/workflow/stop/${currentRunId}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      } catch {
+        // 忽略网络错误（可能已经断开连接）
+      }
     }
-  }, [runState.runId])
+    // 立即更新状态为已中止
+    setRunState(prev => ({ ...prev, status: 'stopped' }))
+  }, [])
 
   // 重置状态
   const reset = useCallback(() => {
+    runIdRef.current = null
     setRunState({
       runId: null,
       status: 'idle',

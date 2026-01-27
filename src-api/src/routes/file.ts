@@ -56,10 +56,19 @@ async function listTaskFiles(baseDir: string, relativePath: string): Promise<Tas
   const entries = await readdir(fullPath, { withFileTypes: true })
   const files: TaskFile[] = []
 
-  const ignoreList = new Set(['history.txt', '.git', 'node_modules', '__pycache__'])
+  /* ┌────────────────────────────────────────────────────────────────────────┐
+   * │  过滤系统文件和内部文件                                                  │
+   * └────────────────────────────────────────────────────────────────────────┘ */
+  const ignoreList = new Set(['history.txt', '.git', 'node_modules', '__pycache__', 'CLAUDE.md'])
+  const shouldIgnore = (name: string): boolean => {
+    if (ignoreList.has(name)) return true
+    // 过滤 history-*.txt 文件
+    if (name.startsWith('history-') && name.endsWith('.txt')) return true
+    return false
+  }
 
   for (const entry of entries) {
-    if (ignoreList.has(entry.name)) continue
+    if (shouldIgnore(entry.name)) continue
 
     const entryPath = relativePath ? `${relativePath}/${entry.name}` : entry.name
 
@@ -151,21 +160,21 @@ async function handleFileDownload(c: any, pathPrefix: string) {
   try {
     const ext = filePath.split('.').pop()?.toLowerCase() || ''
     const mimeTypes: Record<string, string> = {
-      html: 'text/html',
-      htm: 'text/html',
-      css: 'text/css',
-      js: 'application/javascript',
-      json: 'application/json',
+      html: 'text/html; charset=utf-8',
+      htm: 'text/html; charset=utf-8',
+      css: 'text/css; charset=utf-8',
+      js: 'application/javascript; charset=utf-8',
+      json: 'application/json; charset=utf-8',
       png: 'image/png',
       jpg: 'image/jpeg',
       jpeg: 'image/jpeg',
       gif: 'image/gif',
-      svg: 'image/svg+xml',
+      svg: 'image/svg+xml; charset=utf-8',
       pdf: 'application/pdf',
-      txt: 'text/plain',
-      md: 'text/markdown',
-      csv: 'text/csv',
-      xml: 'application/xml',
+      txt: 'text/plain; charset=utf-8',
+      md: 'text/markdown; charset=utf-8',
+      csv: 'text/csv; charset=utf-8',
+      xml: 'application/xml; charset=utf-8',
       docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',

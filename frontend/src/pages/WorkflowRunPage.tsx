@@ -139,16 +139,8 @@ function InputForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    // 将文件对象转换为文件 ID
-    const submitValues: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(values)) {
-      if (value && typeof value === 'object' && 'id' in value) {
-        submitValues[key] = (value as { id: string }).id
-      } else {
-        submitValues[key] = value
-      }
-    }
-    onSubmit(submitValues)
+    // 保留完整的文件对象（包含 id 和 name），后端需要这些信息来复制文件
+    onSubmit(values)
   }
 
   const paramEntries = Object.entries(params)
