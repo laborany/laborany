@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useWorkflowHistory } from '../hooks/useWorkflow'
 
-const API_BASE = 'http://localhost:8000/api'
+const API_BASE = '/api'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │

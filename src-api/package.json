@@ -1,0 +1,33 @@
+{
+  "name": "laborany-api",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "npm run build:bundle && npm run build:pkg",
+    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/bundle.cjs --external:sql.js --define:import.meta.url=__import_meta_url --banner:js=\"const __import_meta_url = require('url').pathToFileURL(__filename).href;\"",
+    "build:pkg": "npx @yao-pkg/pkg dist/bundle.cjs --targets node20-win-x64 --output dist/laborany-api --config pkg.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.3.1",
+    "hono": "^4.6.14",
+    "jose": "^5.9.6",
+    "sql.js": "^1.11.0",
+    "uuid": "^9.0.1",
+    "yaml": "^2.3.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20.10.0",
+    "@types/sql.js": "^1.4.9",
+    "@types/uuid": "^9.0.7",
+    "@yao-pkg/pkg": "^5.15.0",
+    "esbuild": "^0.27.2",
+    "tsx": "^4.6.0",
+    "typescript": "^5.3.2"
+  }
+}

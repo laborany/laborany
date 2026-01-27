@@ -1,0 +1,6 @@
+{
+  "assets": [
+    "node_modules/sql.js/dist/sql-wasm.wasm"
+  ],
+  "scripts": []
+}

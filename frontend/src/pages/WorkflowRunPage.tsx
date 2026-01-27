@@ -12,7 +12,7 @@ import {
   type WorkflowInputParam,
 } from '../hooks/useWorkflow'
 
-const API_BASE = 'http://localhost:8000/api'
+const API_BASE = '/api'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           文件上传组件                                     │

@@ -1,0 +1,64 @@
+{
+  "name": "laborany",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -n api,frontend -c blue,green \"npm run dev:api\" \"npm run dev:frontend\"",
+    "dev:api": "cd src-api && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:electron": "electron .",
+    "build": "npm run build:api && npm run build:frontend",
+    "build:api": "cd src-api && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "build:electron": "npm run build && electron-builder --win",
+    "install:all": "npm install && cd src-api && npm install && cd ../frontend && npm install"
+  },
+  "build": {
+    "appId": "ai.thinkany.laborany",
+    "productName": "LaborAny",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "src-api/dist/laborany-api.exe",
+        "to": "api/laborany-api.exe"
+      },
+      {
+        "from": "frontend/dist",
+        "to": "api/frontend"
+      },
+      {
+        "from": "skills",
+        "to": "skills"
+      },
+      {
+        "from": "workflows",
+        "to": "workflows"
+      },
+      {
+        "from": ".env.example",
+        "to": ".env.example"
+      }
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "src-tauri/icons/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^40.0.0",
+    "electron-builder": "^26.4.0"
+  }
+}

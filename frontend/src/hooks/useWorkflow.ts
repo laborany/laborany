@@ -6,7 +6,7 @@
 
 import { useState, useCallback, useRef } from 'react'
 
-const API_BASE = 'http://localhost:8000/api'
+const API_BASE = '/api'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │

@@ -1,0 +1,191 @@
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                     LaborAny 统一 API 服务                                ║
+ * ║                                                                          ║
+ * ║  技术栈：Hono + sql.js + jose                                            ║
+ * ║  端口：3620（开发和生产）                                                  ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝ */
+
+import { config } from 'dotenv'
+import { resolve, dirname, join } from 'path'
+import { fileURLToPath } from 'url'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'fs'
+import { homedir } from 'os'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       配置文件路径                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function getConfigDir(): string {
+  const isProduction = process.env.NODE_ENV === 'production'
+  if (isProduction) {
+    const appDataDir = process.platform === 'win32'
+      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
+      : process.platform === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
+        : join(homedir(), '.config', 'laborany')
+    if (!existsSync(appDataDir)) {
+      mkdirSync(appDataDir, { recursive: true })
+    }
+    return appDataDir
+  }
+  return resolve(__dirname, '../..')
+}
+
+function loadEnvConfig(): void {
+  const configDir = getConfigDir()
+  const envPath = join(configDir, '.env')
+
+  // 如果用户配置不存在，从示例文件复制
+  if (!existsSync(envPath)) {
+    // API exe 在 resources/api/，.env.example 在 resources/
+    const examplePath = join(dirname(process.execPath), '..', '.env.example')
+    const devExamplePath = resolve(__dirname, '../../.env.example')
+
+    if (existsSync(examplePath)) {
+      copyFileSync(examplePath, envPath)
+      console.log(`[Config] 已创建配置文件: ${envPath}`)
+    } else if (existsSync(devExamplePath)) {
+      copyFileSync(devExamplePath, envPath)
+    }
+  }
+
+  // 加载配置
+  config({ path: envPath })
+  console.log(`[Config] 配置文件路径: ${envPath}`)
+}
+
+loadEnvConfig()
+
+import { serve } from '@hono/node-server'
+import { Hono } from 'hono'
+import { cors } from 'hono/cors'
+import { logger } from 'hono/logger'
+import { serveStatic } from '@hono/node-server/serve-static'
+
+import authRoutes from './routes/auth.js'
+import skillRoutes from './routes/skill.js'
+import workflowRoutes from './routes/workflow.js'
+import fileRoutes from './routes/file.js'
+import configRoutes from './routes/config.js'
+import sessionRoutes from './routes/session.js'
+import { initDb, closeDb } from './core/database.js'
+
+const app = new Hono()
+const PORT = parseInt(process.env.PORT || '3620', 10)
+const isProduction = process.env.NODE_ENV === 'production'
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           中间件配置                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.use('*', cors())
+app.use('*', logger())
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                         健康检查端点                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/health', (c) => {
+  return c.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           路由挂载                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.route('/api/auth', authRoutes)
+app.route('/api/skill', skillRoutes)
+app.route('/api/workflow', workflowRoutes)
+app.route('/api/config', configRoutes)
+app.route('/api/sessions', sessionRoutes)
+app.route('/api', fileRoutes)
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       静态文件服务（生产模式）                              │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function getStaticRoot(): string {
+  // 打包后的路径：与 exe 同级的 frontend 目录
+  const pkgPath = join(dirname(process.execPath), 'frontend')
+  if (existsSync(pkgPath)) return pkgPath
+
+  // 开发模式：相对于源码的路径
+  const devPath = resolve(__dirname, '../../frontend/dist')
+  if (existsSync(devPath)) return devPath
+
+  return ''
+}
+
+const staticRoot = getStaticRoot()
+
+if (staticRoot) {
+  console.log(`[LaborAny API] 静态文件目录: ${staticRoot}`)
+
+  // 服务静态资源
+  app.get('/assets/*', async (c) => {
+    const filePath = join(staticRoot, c.req.path)
+    if (existsSync(filePath)) {
+      const content = readFileSync(filePath)
+      const ext = filePath.split('.').pop() || ''
+      const mimeTypes: Record<string, string> = {
+        js: 'application/javascript',
+        css: 'text/css',
+        html: 'text/html',
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        svg: 'image/svg+xml',
+        ico: 'image/x-icon',
+      }
+      return c.body(content, 200, {
+        'Content-Type': mimeTypes[ext] || 'application/octet-stream',
+      })
+    }
+    return c.notFound()
+  })
+
+  // SPA 回退：所有非 API 请求返回 index.html
+  app.get('*', async (c) => {
+    if (c.req.path.startsWith('/api')) return c.notFound()
+    const indexPath = join(staticRoot, 'index.html')
+    if (existsSync(indexPath)) {
+      const content = readFileSync(indexPath, 'utf-8')
+      return c.html(content)
+    }
+    return c.notFound()
+  })
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           启动服务                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+
+async function main() {
+  // 初始化数据库（sql.js 需要异步初始化）
+  await initDb()
+
+  console.log(`[LaborAny API] 启动中...`)
+
+  serve({
+    fetch: app.fetch,
+    port: PORT,
+  }, (info) => {
+    console.log(`[LaborAny API] 运行在 http://localhost:${info.port}`)
+  })
+}
+
+main().catch((err) => {
+  console.error('[LaborAny API] 启动失败:', err)
+  process.exit(1)
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           优雅关闭                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+process.on('SIGINT', () => {
+  console.log('[LaborAny API] 正在关闭...')
+  closeDb()
+  process.exit(0)
+})
+
+process.on('SIGTERM', () => {
+  console.log('[LaborAny API] 正在关闭...')
+  closeDb()
+  process.exit(0)
+})

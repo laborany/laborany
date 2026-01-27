@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:tauri": "TAURI_ENV_PLATFORM=1 vite",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
