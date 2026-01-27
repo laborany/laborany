@@ -12,9 +12,11 @@
     "build:api": "cd src-api && npm run build",
     "build:api:win": "cd src-api && npm run build:win",
     "build:api:mac": "cd src-api && npm run build:mac",
+    "build:api:linux": "cd src-api && npm run build:linux",
     "build:frontend": "cd frontend && npm run build",
     "build:electron": "npm run build && electron-builder --win",
     "build:electron:mac": "npm run build:api:mac && npm run build:frontend && electron-builder --mac",
+    "build:electron:linux": "npm run build:api:linux && npm run build:frontend && electron-builder --linux",
     "install:all": "npm install && cd src-api && npm install && cd ../frontend && npm install"
   },
   "build": {
@@ -66,6 +68,17 @@
       "extraResources": [
         {
           "from": "src-api/dist/laborany-api-mac",
+          "to": "api/laborany-api"
+        }
+      ]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "src-tauri/icons/icon.png",
+      "category": "Utility",
+      "extraResources": [
+        {
+          "from": "src-api/dist/laborany-api-linux",
           "to": "api/laborany-api"
         }
       ]

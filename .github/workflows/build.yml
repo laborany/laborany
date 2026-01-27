@@ -1,12 +1,21 @@
-name: Build Desktop App
+name: Build & Release Desktop App
 
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a release'
+        required: false
+        default: 'false'
+        type: boolean
 
 jobs:
+  # ╔══════════════════════════════════════════════════════════════════════════╗
+  # ║                         Windows 构建                                      ║
+  # ╚══════════════════════════════════════════════════════════════════════════╝
   build-windows:
     runs-on: windows-latest
     steps:
@@ -29,6 +38,9 @@ jobs:
           name: LaborAny-Windows
           path: release/*.exe
 
+  # ╔══════════════════════════════════════════════════════════════════════════╗
+  # ║                         macOS 构建                                        ║
+  # ╚══════════════════════════════════════════════════════════════════════════╝
   build-mac:
     runs-on: macos-latest
     steps:
@@ -50,3 +62,62 @@ jobs:
         with:
           name: LaborAny-Mac
           path: release/*.dmg
+
+  # ╔══════════════════════════════════════════════════════════════════════════╗
+  # ║                         Linux 构建                                        ║
+  # ╚═════════════════════��════════════════════════════════════════════════════╝
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm run install:all
+
+      - name: Build Linux
+        run: npm run build:electron:linux
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LaborAny-Linux
+          path: |
+            release/*.AppImage
+            release/*.deb
+
+  # ╔══════════════════════════════════════════════════════════════════════════╗
+  # ║                         发布 Release                                      ║
+  # ╚══════════════════════════════════════════════════════════════════════════╝
+  release:
+    needs: [build-windows, build-mac, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
+          generate_release_notes: true
+          files: |
+            artifacts/LaborAny-Windows/*.exe
+            artifacts/LaborAny-Mac/*.dmg
+            artifacts/LaborAny-Linux/*.AppImage
+            artifacts/LaborAny-Linux/*.deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
