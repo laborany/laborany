@@ -164,12 +164,24 @@ skill.post('/execute', async (c) => {
       `INSERT INTO sessions (id, user_id, skill_id, query, status) VALUES (?, ?, ?, ?, ?)`,
       [sessionId, 'default', skillId, query, 'running']
     )
+    // 保存用户消息
+    dbHelper.run(
+      `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+      [sessionId, 'user', query]
+    )
+  } else {
+    // 继续对话时也保存用户消息
+    dbHelper.run(
+      `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+      [sessionId, 'user', query]
+    )
   }
 
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId }) })
 
     let finalStatus = 'completed'
+    let assistantContent = ''
 
     try {
       await executeAgent({
@@ -179,8 +191,32 @@ skill.post('/execute', async (c) => {
         signal: abortController.signal,
         onEvent: async (event) => {
           await stream.writeSSE({ data: JSON.stringify(event) })
+
+          // 保存消息到数据库
+          if (event.type === 'text' && event.content) {
+            assistantContent += event.content
+          } else if (event.type === 'tool_use') {
+            dbHelper.run(
+              `INSERT INTO messages (session_id, type, tool_name, tool_input) VALUES (?, ?, ?, ?)`,
+              [sessionId, 'tool_use', event.toolName || '', JSON.stringify(event.toolInput || {})]
+            )
+          } else if (event.type === 'tool_result') {
+            dbHelper.run(
+              `INSERT INTO messages (session_id, type, tool_result) VALUES (?, ?, ?)`,
+              [sessionId, 'tool_result', event.toolResult || '']
+            )
+          }
         },
       })
+
+      // 保存完整的助手回复
+      if (assistantContent) {
+        dbHelper.run(
+          `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+          [sessionId, 'assistant', assistantContent]
+        )
+      }
+
       await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
     } catch (error) {
       if ((error as Error).name === 'AbortError') {

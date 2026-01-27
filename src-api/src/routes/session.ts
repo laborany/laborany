@@ -56,24 +56,32 @@ session.get('/:sessionId', (c) => {
   const messages = dbHelper.query<{
     id: number
     type: string
-    content: string
+    content: string | null
+    tool_name: string | null
+    tool_input: string | null
+    tool_result: string | null
     created_at: string
   }>(`
-    SELECT id, type, content, created_at
+    SELECT id, type, content, tool_name, tool_input, tool_result, created_at
     FROM messages
     WHERE session_id = ?
     ORDER BY created_at ASC
   `, [sessionId])
 
-  // 解析 JSON content
-  const parsedMessages = messages.map(msg => ({
-    ...msg,
-    content: msg.content ? JSON.parse(msg.content) : null
+  // 格式化消息
+  const formattedMessages = messages.map(msg => ({
+    id: msg.id,
+    type: msg.type,
+    content: msg.content,
+    toolName: msg.tool_name,
+    toolInput: msg.tool_input ? JSON.parse(msg.tool_input) : null,
+    toolResult: msg.tool_result,
+    createdAt: msg.created_at
   }))
 
   return c.json({
     ...sessionData,
-    messages: parsedMessages
+    messages: formattedMessages
   })
 })
 
