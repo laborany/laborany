@@ -74,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!res.ok) {
       const error = await res.json()
-      throw new Error(error.detail || '登录失败')
+      throw new Error(error.error || error.detail || '登录失败')
     }
 
     const { access_token } = await res.json()
@@ -92,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!res.ok) {
       const error = await res.json()
-      throw new Error(error.detail || '注册失败')
+      throw new Error(error.error || error.detail || '注册失败')
     }
 
     const { access_token } = await res.json()
