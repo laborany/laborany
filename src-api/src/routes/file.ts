@@ -9,9 +9,30 @@ import { readFile, readdir, stat } from 'fs/promises'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { existsSync } from 'fs'
+import { homedir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const TASKS_DIR = join(__dirname, '../../../tasks')
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       任务目录路径                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function getTasksDir(): string {
+  const isProduction = process.env.NODE_ENV === 'production'
+
+  if (isProduction) {
+    const appDataDir = process.platform === 'win32'
+      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
+      : process.platform === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
+        : join(homedir(), '.config', 'laborany')
+    return join(appDataDir, 'tasks')
+  }
+
+  // 开发模式：相对于项目根目录
+  return join(__dirname, '../../../tasks')
+}
+
+const TASKS_DIR = getTasksDir()
 
 const file = new Hono()
 

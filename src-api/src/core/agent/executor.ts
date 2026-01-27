@@ -38,10 +38,24 @@ interface ExecuteOptions {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务目录管理                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+function getTasksBaseDir(): string {
+  const isProduction = process.env.NODE_ENV === 'production'
+
+  if (isProduction) {
+    const appDataDir = platform() === 'win32'
+      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
+      : platform() === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
+        : join(homedir(), '.config', 'laborany')
+    return join(appDataDir, 'tasks')
+  }
+
+  // 开发模式：相对于项目根目录
+  return join(__dirname, '..', '..', '..', '..', 'tasks')
+}
+
 function getTaskDir(sessionId: string): string {
-  // src-api/src/core/agent/executor.ts -> laborany/tasks/
-  const laboranyRoot = join(__dirname, '..', '..', '..', '..')
-  return join(laboranyRoot, 'tasks', sessionId)
+  return join(getTasksBaseDir(), sessionId)
 }
 
 function ensureTaskDir(sessionId: string): string {
