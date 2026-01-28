@@ -29,7 +29,10 @@ function log(msg) {
 
 function getPlatform() {
   const arg = process.argv[2]
-  if (arg) return arg
+  if (arg) {
+    // 支持 mac-x64, mac-arm64 格式
+    return arg.includes('-') ? arg.split('-')[0] : arg
+  }
 
   const platform = os.platform()
   if (platform === 'win32') return 'win'
@@ -37,9 +40,22 @@ function getPlatform() {
   return 'linux'
 }
 
-function getUvUrl(platform) {
+function getArch() {
+  // 支持通过参数指定架构：mac-x64, mac-arm64
+  const arg = process.argv[2]
+  if (arg && arg.includes('-')) {
+    const archPart = arg.split('-')[1]
+    // 转换为 uv 使用的架构名称
+    if (archPart === 'arm64') return 'aarch64'
+    if (archPart === 'x64') return 'x86_64'
+    return archPart
+  }
+  // 默认使用当前系统架构
+  return os.arch() === 'arm64' ? 'aarch64' : 'x86_64'
+}
+
+function getUvUrl(platform, arch) {
   const base = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}`
-  const arch = os.arch() === 'arm64' ? 'aarch64' : 'x86_64'
 
   if (platform === 'win') {
     return `${base}/uv-x86_64-pc-windows-msvc.zip`
@@ -87,7 +103,8 @@ function download(url, dest) {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 async function main() {
   const platform = getPlatform()
-  log(`目标平台: ${platform}`)
+  const arch = getArch()
+  log(`目标平台: ${platform}, 架构: ${arch}`)
 
   // 清理并创建目录
   if (fs.existsSync(BUNDLE_DIR)) {
@@ -97,9 +114,9 @@ async function main() {
   fs.mkdirSync(CACHE_DIR, { recursive: true })
 
   // 下载 uv
-  const uvUrl = getUvUrl(platform)
+  const uvUrl = getUvUrl(platform, arch)
   const ext = platform === 'win' ? 'zip' : 'tar.gz'
-  const cacheFile = path.join(CACHE_DIR, `uv-${UV_VERSION}-${platform}.${ext}`)
+  const cacheFile = path.join(CACHE_DIR, `uv-${UV_VERSION}-${platform}-${arch}.${ext}`)
 
   if (!fs.existsSync(cacheFile)) {
     await download(uvUrl, cacheFile)

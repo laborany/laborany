@@ -37,9 +37,19 @@ function getPlatform() {
   return 'linux'
 }
 
-function getNodeUrl(platform) {
+function getArch() {
+  // 支持通过参数指定架构：mac-x64, mac-arm64
+  const arg = process.argv[2]
+  if (arg && arg.includes('-')) {
+    const parts = arg.split('-')
+    return parts[1] || 'x64'
+  }
+  // 默认使用当前系统架构
+  return os.arch() === 'arm64' ? 'arm64' : 'x64'
+}
+
+function getNodeUrl(platform, arch) {
   const base = `https://nodejs.org/dist/v${NODE_VERSION}`
-  const arch = os.arch() === 'arm64' ? 'arm64' : 'x64'
 
   if (platform === 'win') {
     return `${base}/node-v${NODE_VERSION}-win-x64.zip`
@@ -79,8 +89,10 @@ function download(url, dest) {
  * │                           主流程                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 async function main() {
-  const platform = getPlatform()
-  log(`目标平台: ${platform}`)
+  const platformArg = process.argv[2] || ''
+  const platform = platformArg.includes('-') ? platformArg.split('-')[0] : getPlatform()
+  const arch = getArch()
+  log(`目标平台: ${platform}, 架构: ${arch}`)
 
   // 清理并创建目录
   if (fs.existsSync(BUNDLE_DIR)) {
@@ -90,9 +102,9 @@ async function main() {
   fs.mkdirSync(CACHE_DIR, { recursive: true })
 
   // 下载 Node.js
-  const nodeUrl = getNodeUrl(platform)
+  const nodeUrl = getNodeUrl(platform, arch)
   const ext = platform === 'win' ? 'zip' : 'tar.gz'
-  const cacheFile = path.join(CACHE_DIR, `node-${NODE_VERSION}-${platform}.${ext}`)
+  const cacheFile = path.join(CACHE_DIR, `node-${NODE_VERSION}-${platform}-${arch}.${ext}`)
 
   if (!fs.existsSync(cacheFile)) {
     await download(nodeUrl, cacheFile)
@@ -154,7 +166,7 @@ async function main() {
   const vendorDir = path.join(BUNDLE_DIR, 'node_modules', '@anthropic-ai', 'claude-code', 'vendor')
   if (fs.existsSync(vendorDir)) {
     const keepPlatform = platform === 'win' ? 'x64-win32'
-                       : platform === 'mac' ? (os.arch() === 'arm64' ? 'arm64-darwin' : 'x64-darwin')
+                       : platform === 'mac' ? (arch === 'arm64' ? 'arm64-darwin' : 'x64-darwin')
                        : 'x64-linux'
 
     const rgDir = path.join(vendorDir, 'ripgrep')

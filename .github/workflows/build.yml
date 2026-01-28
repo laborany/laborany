@@ -39,9 +39,47 @@ jobs:
           path: release/*Setup*.exe
 
   # ╔══════════════════════════════════════════════════════════════════════════╗
-  # ║                         macOS 构建                                        ║
+  # ║                         macOS 构建 (Intel x64)                           ║
   # ╚══════════════════════════════════════════════════════════════════════════╝
-  build-mac:
+  build-mac-x64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm run install:all
+
+      - name: Build API and CLI bundle
+        run: |
+          npm run bundle:cli:mac-x64
+          npm run bundle:uv:mac-x64
+          npm run build:api:mac-x64
+          # 确保可执行文件有执行权限
+          chmod +x src-api/dist/laborany-api-mac
+          chmod +x cli-bundle/node
+          chmod +x uv-bundle/uv
+
+      - name: Build Frontend
+        run: npm run build:frontend
+
+      - name: Build Electron
+        run: npx electron-builder --mac --x64 --publish never
+
+      - name: Upload Mac x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LaborAny-Mac-x64
+          path: release/*.dmg
+
+  # ╔══════════════════════════════════════════════════════════════════════════╗
+  # ║                         macOS 构建 (Apple Silicon arm64)                 ║
+  # ╚══════════════════════════════════════════════════════════════════════════╝
+  build-mac-arm64:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,9 +94,9 @@ jobs:
 
       - name: Build API and CLI bundle
         run: |
-          npm run bundle:cli:mac
-          npm run bundle:uv:mac
-          npm run build:api:mac
+          npm run bundle:cli:mac-arm64
+          npm run bundle:uv:mac-arm64
+          npm run build:api:mac-arm64
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-mac
           chmod +x cli-bundle/node
@@ -68,12 +106,12 @@ jobs:
         run: npm run build:frontend
 
       - name: Build Electron
-        run: npx electron-builder --mac --publish never
+        run: npx electron-builder --mac --arm64 --publish never
 
-      - name: Upload Mac artifact
+      - name: Upload Mac arm64 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LaborAny-Mac
+          name: LaborAny-Mac-arm64
           path: release/*.dmg
 
   # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -120,7 +158,7 @@ jobs:
   # ║                         发布 Release                                      ║
   # ╚══════════════════════════════════════════════════════════════════════════╝
   release:
-    needs: [build-windows, build-mac, build-linux]
+    needs: [build-windows, build-mac-x64, build-mac-arm64, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
     permissions:
@@ -142,7 +180,8 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/LaborAny-Windows/*Setup*.exe
-            artifacts/LaborAny-Mac/*.dmg
+            artifacts/LaborAny-Mac-x64/*.dmg
+            artifacts/LaborAny-Mac-arm64/*.dmg
             artifacts/LaborAny-Linux/*.AppImage
             artifacts/LaborAny-Linux/*.deb
         env:
