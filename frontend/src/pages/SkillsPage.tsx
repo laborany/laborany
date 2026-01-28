@@ -536,11 +536,35 @@ function CreateSkillChat() {
         }),
       })
 
+      /* ┌────────────────────────────────────────────────────────────────────────┐
+       * │  检查响应状态，非 200 时读取错误信息                                     │
+       * └────────────────────────────────────────────────────────────────────────┘ */
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: '请求失败' }))
+        throw new Error(errorData.error || errorData.detail || `HTTP ${response.status}`)
+      }
+
       const reader = response.body?.getReader()
-      if (!reader) throw new Error('No reader')
+      if (!reader) throw new Error('无法读取响应流')
 
       let assistantMessage = ''
       const decoder = new TextDecoder()
+
+      /* ┌────────────────────────────────────────────────────────────────────────┐
+       * │  辅助函数：更新助手消息                                                  │
+       * └────────────────────────────────────────────────────────────────────────┘ */
+      const updateAssistantMessage = (content: string) => {
+        setMessages((prev) => {
+          const newMessages = [...prev]
+          const lastMsg = newMessages[newMessages.length - 1]
+          if (lastMsg?.role === 'assistant') {
+            lastMsg.content = content
+          } else {
+            newMessages.push({ role: 'assistant', content })
+          }
+          return newMessages
+        })
+      }
 
       while (true) {
         const { done, value } = await reader.read()
@@ -550,112 +574,71 @@ function CreateSkillChat() {
         const lines = chunk.split('\n')
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6))
-              if (data.type === 'text' && data.content) {
-                assistantMessage += data.content
-                setMessages((prev) => {
-                  const newMessages = [...prev]
-                  const lastMsg = newMessages[newMessages.length - 1]
-                  if (lastMsg?.role === 'assistant') {
-                    lastMsg.content = assistantMessage
-                  } else {
-                    newMessages.push({ role: 'assistant', content: assistantMessage })
-                  }
-                  return newMessages
-                })
-              } else if (data.type === 'tool_use') {
-                // 显示工具调用信息
-                const toolInfo = `\n\n🔧 正在执行: ${data.toolName || '工具'}...\n`
-                assistantMessage += toolInfo
-                setMessages((prev) => {
-                  const newMessages = [...prev]
-                  const lastMsg = newMessages[newMessages.length - 1]
-                  if (lastMsg?.role === 'assistant') {
-                    lastMsg.content = assistantMessage
-                  } else {
-                    newMessages.push({ role: 'assistant', content: assistantMessage })
-                  }
-                  return newMessages
-                })
-              } else if (data.type === 'tool_result') {
-                // 显示工具执行完成
+          if (!line.startsWith('data: ')) continue
+
+          try {
+            const data = JSON.parse(line.slice(6))
+
+            switch (data.type) {
+              case 'init':
+                assistantMessage = `📁 工作目录: ${data.taskDir || '准备中...'}\n\n`
+                updateAssistantMessage(assistantMessage)
+                break
+
+              case 'text':
+                if (data.content) {
+                  assistantMessage += data.content
+                  updateAssistantMessage(assistantMessage)
+                }
+                break
+
+              case 'tool_use':
+                assistantMessage += `\n🔧 正在执行: ${data.toolName || '工具'}...\n`
+                updateAssistantMessage(assistantMessage)
+                break
+
+              case 'tool_result':
                 assistantMessage += '✅ 完成\n'
-                setMessages((prev) => {
-                  const newMessages = [...prev]
-                  const lastMsg = newMessages[newMessages.length - 1]
-                  if (lastMsg?.role === 'assistant') {
-                    lastMsg.content = assistantMessage
-                  } else {
-                    newMessages.push({ role: 'assistant', content: assistantMessage })
-                  }
-                  return newMessages
-                })
-              } else if (data.type === 'skill_created') {
+                updateAssistantMessage(assistantMessage)
+                break
+
+              case 'error':
+                assistantMessage += `\n❌ 错误: ${data.content || data.message || '未知错误'}\n`
+                updateAssistantMessage(assistantMessage)
+                break
+
+              case 'skill_created':
                 setGeneratedSkill(data.skillId)
-              } else if (data.type === 'done') {
-                // 创建完成，刷新 skill 列表
+                break
+
+              case 'done':
                 setGeneratedSkill('created')
-              }
-            } catch {
-              // 忽略解析错误
+                break
             }
+          } catch {
+            // 非 JSON 行，忽略
           }
         }
       }
-    } catch {
-      // 模拟响应
-      const mockResponse = generateMockResponse(userMessage, messages.length)
-      setMessages((prev) => [...prev, { role: 'assistant', content: mockResponse }])
+
+      /* ┌────────────────────────────────────────────────────────────────────────┐
+       * │  如果没有收到任何消息，显示提示                                          │
+       * └────────────────────────────────────────────────────────────────────────┘ */
+      if (!assistantMessage) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: '处理完成，但没有收到响应内容。请检查后端日志。' },
+        ])
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : '请求失败'
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `❌ 错误: ${errorMsg}\n\n请检查后端服务是否正常运行。` },
+      ])
     } finally {
       setGenerating(false)
     }
-  }
-
-  function generateMockResponse(userInput: string, msgCount: number): string {
-    if (msgCount <= 2) {
-      return `好的，我理解了你想创建一个 **${userInput.slice(0, 20)}** 相关的助手。
-
-让我进一步了解：
-- 这个流程有哪些**具体步骤**？
-- 每个步骤需要做什么？
-- 有没有需要调用的外部工具或 API？`
-    }
-
-    if (msgCount <= 4) {
-      return `明白了！基于你的描述，我来梳理一下这个 Skill 的流程：
-
-**流程步骤：**
-1. 接收用户输入
-2. 数据获取与预处理
-3. 核心分析/处理
-4. 结果整理与输出
-
-**需要的工具：**
-- 数据获取脚本
-- 分析处理脚本
-- 报告生成脚本
-
-这样的流程设计合理吗？如果没问题，我就开始生成完整的 Skill 结构了。`
-    }
-
-    setGeneratedSkill('new-skill-' + Date.now())
-    return `太好了！我已经为你生成了完整的 Skill 结构：
-
-\`\`\`
-skills/
-└── your-skill/
-    ├── SKILL.md          ✅ 主指令已生成
-    ├── FORMS.md          ✅ 表单指南已生成
-    ├── skill.yaml        ✅ 配置文件已生成
-    └── scripts/
-        ├── fetch.py      ✅ 数据获取脚本
-        ├── process.py    ✅ 处理脚本
-        └── output.py     ✅ 输出脚本
-\`\`\`
-
-Skill 已创建成功！你可以在「已安装」标签页中找到它，点击「配置」可以查看和编辑所有文件。`
   }
 
   return (
