@@ -345,6 +345,72 @@ skill.post('/create-chat', async (c) => {
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       对话式优化 Skill (SSE)                              │
+ * │  说明：通过 AI 对话优化现有 Skill 的配置和提示词                           │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+skill.post('/:skillId/optimize', async (c) => {
+  const skillId = c.req.param('skillId')
+  const { messages } = await c.req.json()
+
+  if (!messages || !Array.isArray(messages)) {
+    return c.json({ error: '缺少 messages 参数' }, 400)
+  }
+
+  // 检查目标 skill 是否存在
+  const targetSkill = await loadSkill.byId(skillId)
+  if (!targetSkill) {
+    return c.json({ error: 'Skill 不存在' }, 404)
+  }
+
+  // 检查是否为用户 skill（只有用户 skill 可以被优化）
+  const userSkillPath = join(loadSkill.getUserSkillsDir(), skillId)
+  if (!existsSync(userSkillPath)) {
+    return c.json({ error: '只能优化用户创建的 Skill' }, 403)
+  }
+
+  // 使用 skill-creator 来执行优化（它有修改文件的能力）
+  const skillCreator = await loadSkill.byId('skill-creator')
+  if (!skillCreator) {
+    return c.json({ error: 'skill-creator 不存在，无法优化 Skill' }, 404)
+  }
+
+  const sessionId = uuid()
+  const abortController = new AbortController()
+  sessionManager.register(sessionId, abortController)
+
+  // 构建优化查询
+  const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
+  const query = `请帮我优化位于 ${userSkillPath} 的 Skill "${targetSkill.meta.name}"。
+
+用户的优化需求：${lastUserMessage?.content || ''}
+
+请分析现有的 Skill 文件，然后根据用户需求进行修改。修改完成后，简要说明你做了哪些改进。`
+
+  return streamSSE(c, async (stream) => {
+    try {
+      await executeAgent({
+        skill: skillCreator,
+        query,
+        sessionId,
+        signal: abortController.signal,
+        onEvent: async (event) => {
+          await stream.writeSSE({ data: JSON.stringify(event) })
+        },
+      })
+      // 优化完成后清除缓存
+      loadSkill.clearCache()
+      await stream.writeSSE({ data: JSON.stringify({ type: 'skill_updated', skillId }) })
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '优化失败'
+      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message }) })
+    } finally {
+      sessionManager.unregister(sessionId)
+    }
+  })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       卸载 Skill                                          │
  * │  注意：只能卸载用户目录中的 skill，内置 skills 不可删除                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */

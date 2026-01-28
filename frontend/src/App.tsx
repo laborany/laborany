@@ -14,6 +14,7 @@ import HomePage from './pages/HomePage'
 import ExecutePage from './pages/ExecutePage'
 import HistoryPage, { SessionDetailPage } from './pages/HistoryPage'
 import SkillsPage from './pages/SkillsPage'
+import CreatePage from './pages/CreatePage'
 import WorkflowsPage from './pages/WorkflowsPage'
 import WorkflowEditPage from './pages/WorkflowEditPage'
 import WorkflowRunPage from './pages/WorkflowRunPage'
@@ -293,6 +294,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <SkillsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/create"
+            element={
+              <ProtectedRoute>
+                <CreatePage />
               </ProtectedRoute>
             }
           />

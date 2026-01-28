@@ -229,7 +229,7 @@ file.post('/files/upload', async (c) => {
     await mkdir(uploadsDir, { recursive: true })
   }
 
-  return new Promise((resolve) => {
+  return new Promise<Response>((resolve) => {
     const contentType = c.req.header('content-type') || ''
     console.log('[File] Content-Type:', contentType)
 
