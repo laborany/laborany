@@ -2,21 +2,29 @@
  * ║                         Skill 加载器                                      ║
  * ║                                                                          ║
  * ║  职责：读取 skills 目录下的 SKILL.md 和 skill.yaml                         ║
- * ║  设计：单例模式，缓存已加载的 Skill                                        ║
+ * ║  设计：双目录加载 - 内置 skills（只读）+ 用户 skills（可写）               ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { readFile, readdir } from 'fs/promises'
+import { readFile, readdir, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { existsSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
 import { parse as parseYaml } from 'yaml'
+import { homedir, platform } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取 Skills 目录路径                                │
+ * │                       判断是否为打包模式                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function getSkillsDir(): string {
+function isPackaged(): boolean {
+  return !process.execPath.includes('node')
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取内置 Skills 目录（只读）                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function getBuiltinSkillsDir(): string {
   // 打包后：API exe 在 resources/api/，skills 在 resources/skills/
   const pkgPath = join(dirname(process.execPath), '..', 'skills')
   if (existsSync(pkgPath)) return pkgPath
@@ -25,7 +33,31 @@ function getSkillsDir(): string {
   return join(__dirname, '../../../../skills')
 }
 
-const SKILLS_DIR = getSkillsDir()
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取用户 Skills 目录（可写）                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function getUserSkillsDir(): string {
+  const os = platform()
+  const baseDir = isPackaged()
+    ? os === 'win32'
+      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
+      : os === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
+        : join(homedir(), '.config', 'laborany')
+    : join(__dirname, '../../../../.user-data')
+
+  const userSkillsDir = join(baseDir, 'skills')
+
+  // 确保目录存在
+  if (!existsSync(userSkillsDir)) {
+    mkdirSync(userSkillsDir, { recursive: true })
+  }
+
+  return userSkillsDir
+}
+
+const BUILTIN_SKILLS_DIR = getBuiltinSkillsDir()
+const USER_SKILLS_DIR = getUserSkillsDir()
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -61,10 +93,16 @@ const skillCache = new Map<string, Skill>()
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       加载单个 Skill                                      │
+ * │  优先从用户目录加载，其次从内置目录加载                                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 async function loadSingleSkill(skillDir: string): Promise<Skill | null> {
+  // 优先检查用户目录
+  const userPath = join(USER_SKILLS_DIR, skillDir)
+  const builtinPath = join(BUILTIN_SKILLS_DIR, skillDir)
+
+  const skillPath = existsSync(join(userPath, 'SKILL.md')) ? userPath : builtinPath
+
   try {
-    const skillPath = join(SKILLS_DIR, skillDir)
     const mdPath = join(skillPath, 'SKILL.md')
 
     let systemPrompt: string
@@ -150,12 +188,28 @@ export const loadSkill = {
   },
 
   async listAll(): Promise<SkillMeta[]> {
-    const dirs = await readdir(SKILLS_DIR, { withFileTypes: true })
+    const skillIds = new Set<string>()
     const skills: SkillMeta[] = []
 
-    for (const dir of dirs) {
-      if (!dir.isDirectory()) continue
-      const skill = await this.byId(dir.name)
+    // 从用户目录加载（优先）
+    try {
+      const userDirs = await readdir(USER_SKILLS_DIR, { withFileTypes: true })
+      for (const dir of userDirs) {
+        if (dir.isDirectory()) skillIds.add(dir.name)
+      }
+    } catch { /* 目录可能不存在 */ }
+
+    // 从内置目录加载
+    try {
+      const builtinDirs = await readdir(BUILTIN_SKILLS_DIR, { withFileTypes: true })
+      for (const dir of builtinDirs) {
+        if (dir.isDirectory()) skillIds.add(dir.name)
+      }
+    } catch { /* 目录可能不存在 */ }
+
+    // 加载所有 skills
+    for (const id of skillIds) {
+      const skill = await this.byId(id)
       if (skill) {
         skills.push(skill.meta)
       }
@@ -167,7 +221,18 @@ export const loadSkill = {
     skillCache.clear()
   },
 
+  /* 获取用户 skills 目录（用于创建新 skill） */
+  getUserSkillsDir(): string {
+    return USER_SKILLS_DIR
+  },
+
+  /* 获取内置 skills 目录（只读） */
+  getBuiltinSkillsDir(): string {
+    return BUILTIN_SKILLS_DIR
+  },
+
+  /* 兼容旧 API：返回用户目录 */
   getSkillsDir(): string {
-    return SKILLS_DIR
+    return USER_SKILLS_DIR
   },
 }

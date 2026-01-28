@@ -15,7 +15,20 @@ import { loadSkill, executeAgent, sessionManager } from '../core/agent/index.js'
 import { dbHelper } from '../core/database.js'
 
 const skill = new Hono()
-const SKILLS_DIR = loadSkill.getSkillsDir()
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       查找 Skill 路径                                     │
+ * │  优先用户目录，其次内置目录                                                │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function findSkillPath(skillId: string): string | null {
+  const userPath = join(loadSkill.getUserSkillsDir(), skillId)
+  if (existsSync(userPath)) return userPath
+
+  const builtinPath = join(loadSkill.getBuiltinSkillsDir(), skillId)
+  if (existsSync(builtinPath)) return builtinPath
+
+  return null
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取可用 Skills 列表                                │
@@ -57,7 +70,11 @@ skill.get('/:skillId/detail', async (c) => {
     return c.json({ error: 'Skill 不存在' }, 404)
   }
 
-  const skillPath = join(SKILLS_DIR, skillId)
+  const skillPath = findSkillPath(skillId)
+  if (!skillPath) {
+    return c.json({ error: 'Skill 目录不存在' }, 404)
+  }
+
   const entries = await readdir(skillPath, { withFileTypes: true })
 
   const files: Array<{
@@ -121,8 +138,13 @@ skill.get('/:skillId/file', async (c) => {
     return c.json({ error: '缺少 path 参数' }, 400)
   }
 
+  const skillPath = findSkillPath(skillId)
+  if (!skillPath) {
+    return c.json({ error: 'Skill 不存在' }, 404)
+  }
+
   try {
-    const fullPath = join(SKILLS_DIR, skillId, filePath)
+    const fullPath = join(skillPath, filePath)
     const content = await readFile(fullPath, 'utf-8')
     return c.json({ content })
   } catch {
@@ -132,6 +154,7 @@ skill.get('/:skillId/file', async (c) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       保存 Skill 文件                                      │
+ * │  注意：只能保存到用户目录，内置 skills 是只读的                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 skill.put('/:skillId/file', async (c) => {
   const skillId = c.req.param('skillId')
@@ -141,8 +164,14 @@ skill.put('/:skillId/file', async (c) => {
     return c.json({ error: '缺少 path 或 content 参数' }, 400)
   }
 
+  // 只允许保存到用户目录
+  const userSkillPath = join(loadSkill.getUserSkillsDir(), skillId)
+  if (!existsSync(userSkillPath)) {
+    return c.json({ error: '只能编辑用户创建的 Skill' }, 403)
+  }
+
   try {
-    const fullPath = join(SKILLS_DIR, skillId, filePath)
+    const fullPath = join(userSkillPath, filePath)
     await writeFile(fullPath, content, 'utf-8')
     loadSkill.clearCache()
     return c.json({ success: true })
@@ -265,7 +294,7 @@ skill.post('/stop/:sessionId', (c) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       对话式创建 Skill (SSE)                              │
- * │  说明：在 skills 目录中执行，确保新创建的 skill 直接保存到正确位置          │
+ * │  说明：新 skill 保存到用户目录（AppData），避免 Program Files 权限问题     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 skill.post('/create-chat', async (c) => {
   const { messages } = await c.req.json()
@@ -284,10 +313,12 @@ skill.post('/create-chat', async (c) => {
   const abortController = new AbortController()
   sessionManager.register(sessionId, abortController)
 
-  // 构建查询：将消息历史转换为查询，并附加 skills 目录路径
+  // 获取用户 skills 目录（可写）
+  const userSkillsDir = loadSkill.getUserSkillsDir()
+
+  // 构建查询：告诉 Claude Code 在用户目录创建 skill
   const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
-  const skillsDir = SKILLS_DIR
-  const query = `${lastUserMessage?.content || ''}\n\n【重要】创建 skill 时，请使用以下路径作为 --path 参数：${skillsDir}`
+  const query = `${lastUserMessage?.content || ''}\n\n【重要】创建 skill 时，请使用以下路径作为 --path 参数：${userSkillsDir}`
 
   return streamSSE(c, async (stream) => {
     try {
@@ -296,7 +327,7 @@ skill.post('/create-chat', async (c) => {
         query,
         sessionId,
         signal: abortController.signal,
-        workDir: skillsDir,  // 在 skills 目录中执行
+        // 不设置 workDir，使用默认的 tasks 目录（在 AppData 中）
         onEvent: async (event) => {
           await stream.writeSSE({ data: JSON.stringify(event) })
         },
@@ -315,16 +346,23 @@ skill.post('/create-chat', async (c) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       卸载 Skill                                          │
+ * │  注意：只能卸载用户目录中的 skill，内置 skills 不可删除                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 skill.delete('/:skillId', async (c) => {
   const skillId = c.req.param('skillId')
-  const skillPath = join(SKILLS_DIR, skillId)
 
-  if (!existsSync(skillPath)) {
+  // 只允许删除用户目录中的 skill
+  const userSkillPath = join(loadSkill.getUserSkillsDir(), skillId)
+  if (!existsSync(userSkillPath)) {
+    // 检查是否是内置 skill
+    const builtinPath = join(loadSkill.getBuiltinSkillsDir(), skillId)
+    if (existsSync(builtinPath)) {
+      return c.json({ error: '内置 Skill 不可删除' }, 403)
+    }
     return c.json({ error: 'Skill 不存在' }, 404)
   }
 
-  await rm(skillPath, { recursive: true, force: true })
+  await rm(userSkillPath, { recursive: true, force: true })
   loadSkill.clearCache()
   return c.json({ success: true })
 })
