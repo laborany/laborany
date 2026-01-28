@@ -146,7 +146,9 @@ function getBundledClaudePath(): { node: string; cli: string } | null {
 
   // 内置 CLI Bundle 的可能位置
   const candidates = [
-    // Electron 打包后：resources/cli-bundle
+    // Electron 打包后：API exe 在 resources/api/，cli-bundle 在 resources/cli-bundle
+    join(exeDir, '..', 'cli-bundle'),
+    // Windows 备选路径
     join(exeDir, '..', 'resources', 'cli-bundle'),
     join(exeDir, 'resources', 'cli-bundle'),
     // 开发模式
@@ -158,6 +160,10 @@ function getBundledClaudePath(): { node: string; cli: string } | null {
       ? join(bundleDir, 'node.exe')
       : join(bundleDir, 'node')
     const cliJs = join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'cli.js')
+
+    console.log(`[Agent] 检查 CLI Bundle: ${bundleDir}`)
+    console.log(`[Agent]   node: ${nodeBin} (exists: ${existsSync(nodeBin)})`)
+    console.log(`[Agent]   cli: ${cliJs} (exists: ${existsSync(cliJs)})`)
 
     if (existsSync(nodeBin) && existsSync(cliJs)) {
       console.log(`[Agent] 找到内置 CLI Bundle: ${bundleDir}`)
