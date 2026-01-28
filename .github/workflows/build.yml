@@ -57,10 +57,12 @@ jobs:
       - name: Build API and CLI bundle
         run: |
           npm run bundle:cli:mac
+          npm run bundle:uv:mac
           npm run build:api:mac
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-mac
           chmod +x cli-bundle/node
+          chmod +x uv-bundle/uv
 
       - name: Build Frontend
         run: npm run build:frontend
@@ -93,10 +95,12 @@ jobs:
       - name: Build API and CLI bundle
         run: |
           npm run bundle:cli:linux
+          npm run bundle:uv:linux
           npm run build:api:linux
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-linux
           chmod +x cli-bundle/node
+          chmod +x uv-bundle/uv
 
       - name: Build Frontend
         run: npm run build:frontend

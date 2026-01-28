@@ -75,7 +75,10 @@ import fileRoutes from './routes/file.js'
 import configRoutes from './routes/config.js'
 import sessionRoutes from './routes/session.js'
 import setupRoutes from './routes/setup.js'
+import sandboxRoutes from './routes/sandbox.js'
 import { initDb, closeDb } from './core/database.js'
+import { registerAllProviders } from './providers/index.js'
+import { stopAllProviders } from './core/sandbox/registry.js'
 
 const app = new Hono()
 const PORT = parseInt(process.env.PORT || '3620', 10)
@@ -103,6 +106,7 @@ app.route('/api/workflow', workflowRoutes)
 app.route('/api/config', configRoutes)
 app.route('/api/sessions', sessionRoutes)
 app.route('/api/setup', setupRoutes)
+app.route('/api/sandbox', sandboxRoutes)
 app.route('/api', fileRoutes)
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -167,6 +171,9 @@ async function main() {
   // 初始化数据库（sql.js 需要异步初始化）
   await initDb()
 
+  // 注册沙盒提供者
+  registerAllProviders()
+
   console.log(`[LaborAny API] 启动中...`)
 
   serve({
@@ -185,14 +192,16 @@ main().catch((err) => {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           优雅关闭                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('[LaborAny API] 正在关闭...')
+  await stopAllProviders()
   closeDb()
   process.exit(0)
 })
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('[LaborAny API] 正在关闭...')
+  await stopAllProviders()
   closeDb()
   process.exit(0)
 })

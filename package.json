@@ -23,9 +23,17 @@
     "bundle:cli:win": "node scripts/bundle-cli.js win",
     "bundle:cli:mac": "node scripts/bundle-cli.js mac",
     "bundle:cli:linux": "node scripts/bundle-cli.js linux",
-    "build:electron": "npm run bundle:cli:win && npm run build && electron-builder --win --publish never",
-    "build:electron:mac": "npm run bundle:cli:mac && npm run build:api:mac && npm run build:frontend && electron-builder --mac --publish never",
-    "build:electron:linux": "npm run bundle:cli:linux && npm run build:api:linux && npm run build:frontend && electron-builder --linux --publish never",
+    "bundle:uv": "node scripts/bundle-uv.js",
+    "bundle:uv:win": "node scripts/bundle-uv.js win",
+    "bundle:uv:mac": "node scripts/bundle-uv.js mac",
+    "bundle:uv:linux": "node scripts/bundle-uv.js linux",
+    "bundle:all": "npm run bundle:cli && npm run bundle:uv",
+    "bundle:all:win": "npm run bundle:cli:win && npm run bundle:uv:win",
+    "bundle:all:mac": "npm run bundle:cli:mac && npm run bundle:uv:mac",
+    "bundle:all:linux": "npm run bundle:cli:linux && npm run bundle:uv:linux",
+    "build:electron": "npm run bundle:all:win && npm run build && electron-builder --win --publish never",
+    "build:electron:mac": "npm run bundle:all:mac && npm run build:api:mac && npm run build:frontend && electron-builder --mac --publish never",
+    "build:electron:linux": "npm run bundle:all:linux && npm run build:api:linux && npm run build:frontend && electron-builder --linux --publish never",
     "install:all": "npm install && cd src-api && npm install && cd ../frontend && npm install"
   },
   "build": {
@@ -62,6 +70,11 @@
       {
         "from": "cli-bundle",
         "to": "cli-bundle",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "uv-bundle",
+        "to": "uv-bundle",
         "filter": ["**/*"]
       }
     ],
