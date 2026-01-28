@@ -265,6 +265,7 @@ skill.post('/stop/:sessionId', (c) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       对话式创建 Skill (SSE)                              │
+ * │  说明：在 skills 目录中执行，确保新创建的 skill 直接保存到正确位置          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 skill.post('/create-chat', async (c) => {
   const { messages } = await c.req.json()
@@ -283,9 +284,10 @@ skill.post('/create-chat', async (c) => {
   const abortController = new AbortController()
   sessionManager.register(sessionId, abortController)
 
-  // 构建查询：将消息历史转换为查询
+  // 构建查询：将消息历史转换为查询，并附加 skills 目录路径
   const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
-  const query = lastUserMessage?.content || ''
+  const skillsDir = SKILLS_DIR
+  const query = `${lastUserMessage?.content || ''}\n\n【重要】创建 skill 时，请使用以下路径作为 --path 参数：${skillsDir}`
 
   return streamSSE(c, async (stream) => {
     try {
@@ -294,10 +296,13 @@ skill.post('/create-chat', async (c) => {
         query,
         sessionId,
         signal: abortController.signal,
+        workDir: skillsDir,  // 在 skills 目录中执行
         onEvent: async (event) => {
           await stream.writeSSE({ data: JSON.stringify(event) })
         },
       })
+      // 创建完成后清除缓存，确保新 skill 可以被加载
+      loadSkill.clearCache()
       await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
     } catch (error) {
       const message = error instanceof Error ? error.message : '创建失败'
