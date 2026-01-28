@@ -553,8 +553,35 @@ function CreateSkillChat() {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6))
-              if (data.type === 'text') {
+              if (data.type === 'text' && data.content) {
                 assistantMessage += data.content
+                setMessages((prev) => {
+                  const newMessages = [...prev]
+                  const lastMsg = newMessages[newMessages.length - 1]
+                  if (lastMsg?.role === 'assistant') {
+                    lastMsg.content = assistantMessage
+                  } else {
+                    newMessages.push({ role: 'assistant', content: assistantMessage })
+                  }
+                  return newMessages
+                })
+              } else if (data.type === 'tool_use') {
+                // 显示工具调用信息
+                const toolInfo = `\n\n🔧 正在执行: ${data.toolName || '工具'}...\n`
+                assistantMessage += toolInfo
+                setMessages((prev) => {
+                  const newMessages = [...prev]
+                  const lastMsg = newMessages[newMessages.length - 1]
+                  if (lastMsg?.role === 'assistant') {
+                    lastMsg.content = assistantMessage
+                  } else {
+                    newMessages.push({ role: 'assistant', content: assistantMessage })
+                  }
+                  return newMessages
+                })
+              } else if (data.type === 'tool_result') {
+                // 显示工具执行完成
+                assistantMessage += '✅ 完成\n'
                 setMessages((prev) => {
                   const newMessages = [...prev]
                   const lastMsg = newMessages[newMessages.length - 1]
@@ -567,6 +594,9 @@ function CreateSkillChat() {
                 })
               } else if (data.type === 'skill_created') {
                 setGeneratedSkill(data.skillId)
+              } else if (data.type === 'done') {
+                // 创建完成，刷新 skill 列表
+                setGeneratedSkill('created')
               }
             } catch {
               // 忽略解析错误
