@@ -127,7 +127,7 @@ function copyClaudeMdToDir(targetDir: string): void {
   }
 }
 
-function ensureTaskDir(sessionId: string): string {
+export function ensureTaskDir(sessionId: string): string {
   const taskDir = getTaskDir(sessionId)
   if (!existsSync(taskDir)) {
     mkdirSync(taskDir, { recursive: true })

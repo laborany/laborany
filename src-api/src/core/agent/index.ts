@@ -4,4 +4,4 @@
 
 export { loadSkill, type Skill, type SkillMeta, type SkillTool } from './skill-loader.js'
 export { sessionManager, SessionManager } from './session-manager.js'
-export { executeAgent, type AgentEvent } from './executor.js'
+export { executeAgent, ensureTaskDir, type AgentEvent } from './executor.js'

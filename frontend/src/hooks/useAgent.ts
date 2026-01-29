@@ -50,10 +50,11 @@ export function useAgent(skillId: string) {
 
   const abortRef = useRef<AbortController | null>(null)
   const currentTextRef = useRef('')
+  const sessionIdRef = useRef<string | null>(null)
 
   // 执行查询
   const execute = useCallback(
-    async (query: string) => {
+    async (query: string, files?: File[]) => {
       const token = localStorage.getItem('token')
       if (!token) {
         console.error('[useAgent] 未找到认证 token，请重新登录')
@@ -84,13 +85,35 @@ export function useAgent(skillId: string) {
 
       try {
         console.log('[useAgent] 发送请求到 /api/skill/execute')
+        
+        let body: BodyInit
+        const headers: HeadersInit = {
+          Authorization: `Bearer ${token}`,
+        }
+        
+        const currentSessionId = sessionIdRef.current
+
+        if (files && files.length > 0) {
+          const formData = new FormData()
+          formData.append('skillId', skillId)
+          formData.append('query', query)
+          if (currentSessionId) formData.append('sessionId', currentSessionId)
+          files.forEach(file => formData.append('files', file))
+          body = formData
+          // Content-Type header is handled by browser for FormData
+        } else {
+          headers['Content-Type'] = 'application/json'
+          body = JSON.stringify({ 
+            skill_id: skillId, 
+            query, 
+            sessionId: currentSessionId 
+          })
+        }
+
         const res = await fetch(`${API_BASE}/skill/execute`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ skill_id: skillId, query }),
+          headers,
+          body,
           signal: abortRef.current.signal,
         })
 
@@ -145,7 +168,9 @@ export function useAgent(skillId: string) {
   function handleEvent(event: Record<string, unknown>, assistantId: string) {
     switch (event.type) {
       case 'session':
-        setState((s) => ({ ...s, sessionId: event.sessionId as string }))
+        const sid = event.sessionId as string
+        sessionIdRef.current = sid
+        setState((s) => ({ ...s, sessionId: sid }))
         break
 
       case 'text':
@@ -216,6 +241,7 @@ export function useAgent(skillId: string) {
 
   // 清空消息
   const clear = useCallback(() => {
+    sessionIdRef.current = null
     setState({
       messages: [],
       isRunning: false,

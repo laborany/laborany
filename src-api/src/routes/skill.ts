@@ -11,7 +11,7 @@ import { readFile, readdir, writeFile, mkdir, rm } from 'fs/promises'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { stat } from 'fs/promises'
-import { loadSkill, executeAgent, sessionManager } from '../core/agent/index.js'
+import { loadSkill, executeAgent, sessionManager, ensureTaskDir } from '../core/agent/index.js'
 import { dbHelper } from '../core/database.js'
 
 const skill = new Hono()
@@ -184,11 +184,35 @@ skill.put('/:skillId/file', async (c) => {
  * │                      执行 Skill (SSE 流式响应)                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 skill.post('/execute', async (c) => {
-  const body = await c.req.json()
-  // 兼容 skill_id 和 skillId 两种格式
-  const skillId = body.skillId || body.skill_id
-  const query = body.query
-  const existingSessionId = body.sessionId || body.session_id
+  let skillId: string | undefined
+  let query: string | undefined
+  let existingSessionId: string | undefined
+  const files: File[] = []
+
+  const contentType = c.req.header('Content-Type') || ''
+
+  if (contentType.includes('multipart/form-data')) {
+    const body = await c.req.parseBody({ all: true })
+    skillId = (body['skillId'] as string) || (body['skill_id'] as string)
+    query = body['query'] as string
+    existingSessionId = (body['sessionId'] as string) || (body['session_id'] as string)
+
+    const uploadedFiles = body['files']
+    if (uploadedFiles) {
+      if (Array.isArray(uploadedFiles)) {
+        uploadedFiles.forEach(f => {
+          if (f instanceof File) files.push(f)
+        })
+      } else if (uploadedFiles instanceof File) {
+        files.push(uploadedFiles)
+      }
+    }
+  } else {
+    const body = await c.req.json()
+    skillId = body.skillId || body.skill_id
+    query = body.query
+    existingSessionId = body.sessionId || body.session_id
+  }
 
   if (!skillId || !query) {
     return c.json({ error: '缺少 skillId 或 query 参数' }, 400)
@@ -200,6 +224,22 @@ skill.post('/execute', async (c) => {
   }
 
   const sessionId = existingSessionId || uuid()
+  
+  // 保存上传的文件
+  if (files.length > 0) {
+    try {
+      const taskDir = ensureTaskDir(sessionId)
+      for (const file of files) {
+        const arrayBuffer = await file.arrayBuffer()
+        await writeFile(join(taskDir, file.name), Buffer.from(arrayBuffer))
+      }
+    } catch (err) {
+      console.error('保存文件失败:', err)
+      // 继续执行，不要因为文件保存失败而完全中断（或者应该中断？）
+      // 这里的选择是继续，但记录错误
+    }
+  }
+
   const abortController = new AbortController()
   sessionManager.register(sessionId, abortController)
 
