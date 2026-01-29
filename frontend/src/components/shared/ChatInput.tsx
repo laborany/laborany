@@ -51,11 +51,16 @@ export default function ChatInput({
   }
 
   function handleInput() {
-    // 自动调整高度
+    /* ═════════════════════════════════════════════════════════════════════
+     *  自动调整 textarea 高度
+     *  • 初始高度自适应内容
+     *  • 最大高度 400px，超出后显示滚动条
+     *  • 配合 wrap="soft" 实现自动换行
+     * ═════════════════════════════════════════════════════════════════════ */
     const textarea = textareaRef.current
     if (textarea) {
       textarea.style.height = 'auto'
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 400)}px`
     }
   }
 
@@ -109,7 +114,8 @@ export default function ChatInput({
         placeholder={placeholder}
         disabled={isRunning}
         rows={1}
-        className="w-full px-4 py-3 resize-none focus:outline-none disabled:bg-muted bg-transparent text-foreground placeholder:text-muted-foreground"
+        wrap="soft"
+        className="w-full px-4 py-3 overflow-y-auto resize-none focus:outline-none disabled:bg-muted bg-transparent text-foreground placeholder:text-muted-foreground"
       />
       <div className="flex justify-between items-center px-4 py-2 border-t border-border">
         <div className="flex items-center gap-4">
