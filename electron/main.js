@@ -31,8 +31,12 @@ function killProcessOnPort(port) {
           const parts = line.trim().split(/\s+/)
           const pid = parts[parts.length - 1]
           if (pid && pid !== '0') {
-            console.log(`[Electron] Killing process on port ${port}: PID ${pid}`)
-            execSync(`taskkill /F /PID ${pid}`, { encoding: 'utf8' })
+            /* ═════════════════════════════════════════════════════════════════════
+             *  使用 /T 参数杀死整个进程树（包括子进程）
+             *  这是解决安装时提示未关闭的关键
+             * ═════════════════════════════════════════════════════════════════════ */
+            console.log(`[Electron] Killing process tree on port ${port}: PID ${pid}`)
+            execSync(`taskkill /F /T /PID ${pid}`, { encoding: 'utf8', stdio: 'ignore' })
           }
         }
       }
@@ -166,6 +170,39 @@ function createWindow() {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           应用生命周期                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+
+/* ═════════════════════════════════════════════════════════════════════
+ *  强制杀死所有相关进程
+ *  • 用于确保安装时不会有残留进程
+ *  • 先杀端口监听进程，再杀 API 进程
+ * ═════════════════════════════════════════════════════════════════════ */
+function forceCleanup() {
+  console.log('[Electron] Force cleanup starting...')
+  killProcessOnPort(API_PORT)
+
+  if (process.platform === 'win32' && apiProcess && apiProcess.pid) {
+    /* ┌──────────────────────────────────────────────────────────────────────────┐
+     *  Windows 下强制杀死进程树
+     *  /T - 杀死指定进程及其子进程
+     *  /F - 强制终止
+     * └──────────────────────────────────────────────────────────────────────────┘ */
+    try {
+      execSync(`taskkill /F /T /PID ${apiProcess.pid}`, { encoding: 'utf8', stdio: 'ignore' })
+      console.log(`[Electron] Killed API process tree: PID ${apiProcess.pid}`)
+    } catch (e) {
+      // 进程可能已经退出，忽略错误
+      console.log('[Electron] API process already exited')
+    }
+  } else if (apiProcess) {
+    apiProcess.kill()
+  }
+
+  // 再次清理端口，确保子进程也被杀掉
+  setTimeout(() => {
+    killProcessOnPort(API_PORT)
+    console.log('[Electron] Force cleanup completed')
+  }, 500)
+}
 app.whenReady().then(async () => {
   const started = startApiServer()
 
@@ -198,8 +235,5 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   console.log('[Electron] Cleaning up...')
-  if (apiProcess) {
-    apiProcess.kill()
-  }
-  killProcessOnPort(API_PORT)
+  forceCleanup()
 })
