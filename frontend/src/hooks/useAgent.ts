@@ -26,6 +26,8 @@ export interface TaskFile {
   ext?: string
   size?: number
   children?: TaskFile[]
+  stepIndex?: number    // 工作流步骤索引
+  stepName?: string     // 工作流步骤名称
 }
 
 interface AgentState {

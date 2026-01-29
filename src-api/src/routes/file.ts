@@ -49,6 +49,8 @@ interface TaskFile {
   ext?: string
   size?: number
   children?: TaskFile[]
+  stepIndex?: number    // 工作流步骤索引
+  stepName?: string     // 工作流步骤名称
 }
 
 async function listTaskFiles(baseDir: string, relativePath: string): Promise<TaskFile[]> {
@@ -62,9 +64,18 @@ async function listTaskFiles(baseDir: string, relativePath: string): Promise<Tas
   const ignoreList = new Set(['history.txt', '.git', 'node_modules', '__pycache__', 'CLAUDE.md'])
   const shouldIgnore = (name: string): boolean => {
     if (ignoreList.has(name)) return true
-    // 过滤 history-*.txt 文件
     if (name.startsWith('history-') && name.endsWith('.txt')) return true
     return false
+  }
+
+  /* ┌────────────────────────────────────────────────────────────────────────┐
+   * │  解析工作流步骤目录：step-N-名称                                         │
+   * └────────────────────────────────────────────────────────────────────────┘ */
+  const stepPattern = /^step-(\d+)-(.+)$/
+  const parseStepDir = (name: string): { stepIndex: number; stepName: string } | null => {
+    const match = name.match(stepPattern)
+    if (!match) return null
+    return { stepIndex: parseInt(match[1], 10), stepName: match[2] }
   }
 
   for (const entry of entries) {
@@ -83,8 +94,25 @@ async function listTaskFiles(baseDir: string, relativePath: string): Promise<Tas
         size: fileStat.size,
       })
     } else if (entry.isDirectory()) {
+      const stepInfo = parseStepDir(entry.name)
       const children = await listTaskFiles(baseDir, entryPath)
-      if (children.length > 0) {
+
+      // 将步骤信息传递给子文件
+      if (stepInfo && children.length > 0) {
+        const taggedChildren = children.map(child => ({
+          ...child,
+          stepIndex: child.stepIndex ?? stepInfo.stepIndex,
+          stepName: child.stepName ?? stepInfo.stepName,
+        }))
+        files.push({
+          name: entry.name,
+          path: entryPath,
+          type: 'folder',
+          children: taggedChildren,
+          stepIndex: stepInfo.stepIndex,
+          stepName: stepInfo.stepName,
+        })
+      } else if (children.length > 0) {
         files.push({
           name: entry.name,
           path: entryPath,

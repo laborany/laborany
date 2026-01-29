@@ -101,10 +101,10 @@ function WorkflowCard({
 
       {/* 操作按钮 */}
       <Link
-        to={`/workflows/${workflow.id}/run`}
+        to={`/workflows/${workflow.id}/edit`}
         className="block w-full py-2 text-center bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
       >
-        执行工作流
+        编辑工作流
       </Link>
     </div>
   )

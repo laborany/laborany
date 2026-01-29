@@ -5,11 +5,43 @@
 import { readFile, readdir, mkdir, writeFile, rm } from 'fs/promises'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { existsSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import { homedir, platform } from 'os'
 import type { WorkflowDefinition, WorkflowInputParam, WorkflowStep } from './types.js'
+import { convertWorkflowToSkill } from './converter.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       判断是否为打包模式                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function isPackaged(): boolean {
+  return !process.execPath.includes('node')
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取用户 Skills 目录（可写）                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function getUserSkillsDir(): string {
+  const os = platform()
+  const baseDir = isPackaged()
+    ? os === 'win32'
+      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
+      : os === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
+        : join(homedir(), '.config', 'laborany')
+    : join(__dirname, '../../../../.user-data')
+
+  const userSkillsDir = join(baseDir, 'skills')
+
+  // 确保目录存在
+  if (!existsSync(userSkillsDir)) {
+    mkdirSync(userSkillsDir, { recursive: true })
+  }
+
+  return userSkillsDir
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取 Workflows 目录路径                             │
@@ -139,6 +171,22 @@ export const loadWorkflow = {
     await rm(workflowPath, { recursive: true, force: true })
     workflowCache.delete(id)
     return true
+  },
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                       安装工作流为技能                                     │
+   * │  将工作流转化为技能，安装到用户 skills 目录                                 │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  async installAsSkill(workflowId: string): Promise<{ skillId: string }> {
+    const workflow = await this.byId(workflowId)
+    if (!workflow) {
+      throw new Error(`工作流 "${workflowId}" 不存在`)
+    }
+
+    const userSkillsDir = getUserSkillsDir()
+    const skillId = await convertWorkflowToSkill(workflow, userSkillsDir)
+
+    return { skillId }
   },
 
   clearCache(): void {

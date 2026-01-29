@@ -215,6 +215,7 @@ export default function ExecutePage() {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务产出文件面板                                     │
+ * │  智能检测：有步骤信息时按步骤分组，否则平铺展示                               │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function TaskFilesPanel({
   files,
@@ -227,6 +228,9 @@ function TaskFilesPanel({
   onClose: () => void
   onPreview: (file: TaskFile) => void
 }) {
+  // 检测是否有步骤目录（step-N-* 格式）
+  const hasStepDirs = files.some(f => f.stepIndex !== undefined)
+
   return (
     <div className="mb-4 card overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
@@ -241,8 +245,60 @@ function TaskFilesPanel({
         </button>
       </div>
       <div className="p-4 max-h-64 overflow-y-auto">
-        <FileTree files={files} getFileUrl={getFileUrl} depth={0} onPreview={onPreview} />
+        {hasStepDirs ? (
+          <StepGroupedFiles files={files} getFileUrl={getFileUrl} onPreview={onPreview} />
+        ) : (
+          <FileTree files={files} getFileUrl={getFileUrl} depth={0} onPreview={onPreview} />
+        )}
       </div>
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       按步骤分组展示文件                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function StepGroupedFiles({
+  files,
+  getFileUrl,
+  onPreview,
+}: {
+  files: TaskFile[]
+  getFileUrl: (path: string) => string
+  onPreview: (file: TaskFile) => void
+}) {
+  // 分离步骤目录和普通文件
+  const stepDirs = files.filter(f => f.stepIndex !== undefined).sort((a, b) => (a.stepIndex ?? 0) - (b.stepIndex ?? 0))
+  const otherFiles = files.filter(f => f.stepIndex === undefined)
+
+  return (
+    <div className="space-y-3">
+      {stepDirs.map((stepDir) => (
+        <div key={stepDir.path} className="border border-border rounded-lg overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 text-sm font-medium text-foreground">
+            <span className="text-primary">📋</span>
+            <span>步骤 {(stepDir.stepIndex ?? 0) + 1}: {stepDir.stepName}</span>
+          </div>
+          <div className="px-3 py-2">
+            {stepDir.children && stepDir.children.length > 0 ? (
+              <FileTree files={stepDir.children} getFileUrl={getFileUrl} depth={0} onPreview={onPreview} />
+            ) : (
+              <span className="text-sm text-muted-foreground">无文件</span>
+            )}
+          </div>
+        </div>
+      ))}
+      {otherFiles.length > 0 && (
+        <div className="border border-border rounded-lg overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 text-sm font-medium text-foreground">
+            <span>📁</span>
+            <span>其他文件</span>
+          </div>
+          <div className="px-3 py-2">
+            <FileTree files={otherFiles} getFileUrl={getFileUrl} depth={0} onPreview={onPreview} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

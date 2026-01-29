@@ -61,10 +61,10 @@ function WorkflowItem({ workflow }: { workflow: Workflow }) {
         </div>
       </div>
       <Link
-        to={`/workflows/${workflow.id}/run`}
+        to={`/workflows/${workflow.id}/edit`}
         className="px-4 py-1.5 text-sm bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-colors"
       >
-        执行
+        编辑
       </Link>
     </div>
   )
