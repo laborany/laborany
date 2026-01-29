@@ -164,6 +164,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -177,20 +179,19 @@ jobs:
           # ═════════════════════════════════════════════════════════════════════
           #  删除旧 release 中的所有 assets，避免上传同名文件冲突
           #  ═════════════════════════════════════════════════════════════════════
-          RELEASE_TAG=${GITHUB_REF#refs/tags/v}
-          echo "Checking release tag: $RELEASE_TAG"
+          echo "Checking release tag: $GITHUB_REF"
 
-          # 获取 release 的 asset 列表
-          ASSETS=$(gh release view $RELEASE_TAG --json assets -q '.[] | .[] | .name')
+          # 尝试获取 release 的 asset 列表，如果 release 不存在则跳过
+          ASSETS=$(gh release view "$GITHUB_REF" --json assets -q '.assets[] | .name' 2>/dev/null || true)
 
           if [ -n "$ASSETS" ]; then
             echo "Deleting old assets..."
-            echo "$ASSETS" | while read -r asset; do
+            echo "$ASSETS" | while IFS= read -r asset; do
               echo "Deleting: $asset"
-              gh release delete-asset $RELEASE_TAG "$asset"
+              gh release delete-asset "$GITHUB_REF" "$asset" || true
             done
           else
-            echo "No existing assets found"
+            echo "No existing assets found (or release does not exist yet)"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -199,7 +200,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           draft: false
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
+          prerelease: ${{ endsWith(github.ref, '-alpha') || endsWith(github.ref, '-beta') }}
           generate_release_notes: true
           files: |
             artifacts/LaborAny-Windows/*Setup*.exe
