@@ -172,6 +172,29 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts
 
+      - name: Delete old release assets
+        run: |
+          # ═════════════════════════════════════════════════════════════════════
+          #  删除旧 release 中的所有 assets，避免上传同名文件冲突
+          #  ═════════════════════════════════════════════════════════════════════
+          RELEASE_TAG=${GITHUB_REF#refs/tags/v}
+          echo "Checking release tag: $RELEASE_TAG"
+
+          # 获取 release 的 asset 列表
+          ASSETS=$(gh release view $RELEASE_TAG --json assets -q '.[] | .[] | .name')
+
+          if [ -n "$ASSETS" ]; then
+            echo "Deleting old assets..."
+            echo "$ASSETS" | while read -r asset; do
+              echo "Deleting: $asset"
+              gh release delete-asset $RELEASE_TAG "$asset"
+            done
+          else
+            echo "No existing assets found"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
