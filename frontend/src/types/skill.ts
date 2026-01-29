@@ -66,7 +66,7 @@ export interface ChatMessage {
  * │                           官方市场                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-/** 官方 Skill */
+/** 官方技能 */
 export interface OfficialSkill {
   id: string
   name: string

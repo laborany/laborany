@@ -1,7 +1,7 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                      对话式创建 Skill                                     ║
+ * ║                      对话式创建技能                                       ║
  * ║                                                                          ║
- * ║  通过与 Claude Code 对话，逐步定义流程步骤，生成完整 Skill 结构             ║
+ * ║  通过与 Claude Code 对话，逐步定义流程步骤，生成完整技能配置                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect, useRef } from 'react'
@@ -10,16 +10,16 @@ import type { ChatMessage } from '../../types'
 
 const INITIAL_MESSAGE: ChatMessage = {
   role: 'assistant',
-  content: `你好！我是 Skill 创建助手。
+  content: `你好！我是技能创建助手。
 
-我会帮你通过对话的方式创建一个完整的 AI 工作流程（Skill）。
+我会帮你通过对话的方式创建一个完整的 AI 工作流程（技能）。
 
 请告诉我：
 1. **你想创建什么类型的助手？** （例如：数据分析、内容创作、代码审查等）
 2. **这个助手需要完成什么任务？** （描述具体的工作流程）
 3. **需要什么输入？会产生什么输出？**
 
-描述得越详细，我生成的 Skill 就越精准。`,
+描述得越详细，我生成的技能就越精准。`,
 }
 
 export function CreateSkillChat() {
@@ -131,14 +131,14 @@ export function CreateSkillChat() {
           {generatedSkill ? (
             <div className="flex items-center justify-between">
               <span className="text-sm text-green-600 dark:text-green-400">
-                Skill 创建成功！
+                技能创建成功！
               </span>
               <Link
                 to="/skills"
                 onClick={() => window.location.reload()}
                 className="btn-primary px-4 py-2 text-sm"
               >
-                查看 Skill
+                查看技能
               </Link>
             </div>
           ) : (
@@ -165,7 +165,7 @@ export function CreateSkillChat() {
       </div>
 
       <div className="mt-4 text-center text-sm text-muted-foreground">
-        通过对话描述你的需求，AI 会帮你生成完整的 Skill 结构
+        通过对话描述你的需求，AI 会帮你生成完整的技能配置
       </div>
     </div>
   )

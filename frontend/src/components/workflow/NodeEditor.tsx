@@ -100,9 +100,9 @@ export default function NodeEditor({ step, stepIndex, skills, onUpdate, onClose 
           />
         </div>
 
-        {/* Skill 选择 */}
+        {/* 技能选择 */}
         <div>
-          <label className="block text-sm text-muted-foreground mb-1">选择 Skill</label>
+          <label className="block text-sm text-muted-foreground mb-1">选择技能</label>
           <div className="relative">
             <button
               type="button"
@@ -110,7 +110,7 @@ export default function NodeEditor({ step, stepIndex, skills, onUpdate, onClose 
               className="w-full px-3 py-2 bg-background border border-border rounded-lg text-left flex items-center justify-between text-sm"
             >
               <span className={selectedSkill ? 'text-foreground' : 'text-muted-foreground'}>
-                {selectedSkill ? `${selectedSkill.icon || '🔧'} ${selectedSkill.name}` : '选择 Skill'}
+                {selectedSkill ? `${selectedSkill.icon || '🔧'} ${selectedSkill.name}` : '选择技能'}
               </span>
               <svg className="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />

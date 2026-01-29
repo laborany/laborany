@@ -1,5 +1,5 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                      已安装 Skills 列表                                   ║
+ * ║                      已安装技能列表                                       ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Link } from 'react-router-dom'
@@ -21,9 +21,9 @@ export function InstalledSkills({
   if (skills.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-muted-foreground mb-4">还没有安装任何 Skill</p>
+        <p className="text-muted-foreground mb-4">还没有安装任何技能</p>
         <p className="text-sm text-muted-foreground/70">
-          去官方 Skills 安装，或创建自定义 Skill
+          去官方技能库安装，或创建自定义技能
         </p>
       </div>
     )

@@ -327,7 +327,7 @@ export default function WorkflowEditPage() {
       return
     }
     if (steps.some(s => !s.skill)) {
-      alert('请为所有步骤选择 Skill')
+      alert('请为所有步骤选择技能')
       return
     }
 

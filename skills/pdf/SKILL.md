@@ -1,6 +1,6 @@
 ---
-name: pdf
-description: Comprehensive PDF manipulation toolkit for extracting text and tables, creating new PDFs, merging/splitting documents, and handling forms. When Claude needs to fill in a PDF form or programmatically process, generate, or analyze PDF documents at scale.
+name: PDF文档助手
+description: 提取文本和表格、创建新 PDF、合并拆分文档、填写表单，支持批量处理和分析
 license: Proprietary. LICENSE.txt has complete terms
 ---
 

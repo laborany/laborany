@@ -1,7 +1,7 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                      Skills 管理页面                                      ║
+ * ║                      技能管理页面                                        ║
  * ║                                                                          ║
- * ║  职责：查看、配置、创建 AI Skills                                          ║
+ * ║  职责：查看、配置、创建 AI 技能                                            ║
  * ║  设计：配置展示完整物料结构，创建通过对话式流程                               ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
@@ -142,7 +142,7 @@ export default function SkillsPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-foreground">Skills 管理</h2>
+        <h2 className="text-2xl font-bold text-foreground">技能管理</h2>
         <Link to="/" className="text-sm text-primary hover:underline">
           返回首页
         </Link>
@@ -160,7 +160,7 @@ export default function SkillsPage() {
             active={activeTab === 'official'}
             onClick={() => setActiveTab('official')}
           >
-            官方 Skills
+            官方技能
           </TabButton>
           <TabButton
             active={activeTab === 'create'}

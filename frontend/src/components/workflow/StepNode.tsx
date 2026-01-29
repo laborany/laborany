@@ -77,9 +77,9 @@ function StepNode({ data, selected }: StepNodeProps) {
         </span>
       </div>
 
-      {/* Skill 名称 */}
+      {/* 技能名称 */}
       <div className="text-xs text-muted-foreground truncate">
-        {skillName || '未选择 Skill'}
+        {skillName || '未选择技能'}
       </div>
 
       {/* 输出连接点 */}

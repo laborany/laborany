@@ -1,5 +1,5 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                      官方 Skills 市场                                     ║
+ * ║                      官方技能市场                                         ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import type { OfficialSkill } from '../../types'
@@ -55,14 +55,14 @@ export function OfficialMarket({
         )}
       </div>
 
-      {/* 官方 Skills 列表 */}
+      {/* 官方技能列表 */}
       <div>
         <h3 className="font-semibold text-foreground mb-4">
-          Anthropic 官方 Skills
+          Anthropic 官方技能
         </h3>
         {skills.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
-            <p>正在加载官方 Skills...</p>
+            <p>正在加载官方技能...</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

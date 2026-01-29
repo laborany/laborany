@@ -1,7 +1,7 @@
-# 金融研报助手 Skill 配置
+# 金融报告助手技能配置
 
-name: 金融研报助手
-description: 分析财报数据，生成专业的金融研究报告
+name: 金融报告助手
+description: 分析财务数据，生成专业的金融分析报告
 icon: "📊"
 category: 金融
 

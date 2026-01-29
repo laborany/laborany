@@ -124,7 +124,7 @@ function EmptyState() {
       </div>
       <h3 className="text-lg font-medium text-foreground mb-2">还没有工作流</h3>
       <p className="text-muted-foreground mb-6">
-        创建你的第一个工作流，将多个 Skills 组合成自动化流程
+        创建你的第一个工作流，将多个技能组合成自动化流程
       </p>
       <Link
         to="/workflows/new"

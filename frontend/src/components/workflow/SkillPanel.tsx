@@ -1,7 +1,7 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                         Skill 选择面板                                    ║
+ * ║                         技能选择面板                                      ║
  * ║                                                                          ║
- * ║  侧边栏：展示可用 Skill，支持拖拽到画布添加节点                               ║
+ * ║  侧边栏：展示可用技能，支持拖拽到画布添加节点                                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -71,7 +71,7 @@ export default function SkillPanel({ onAddSkill, skills, onSkillsLoad }: SkillPa
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="搜索 Skill..."
+          placeholder="搜索技能..."
           className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
         />
       </div>
@@ -84,7 +84,7 @@ export default function SkillPanel({ onAddSkill, skills, onSkillsLoad }: SkillPa
           </div>
         ) : filteredSkills.length === 0 ? (
           <div className="text-center text-muted-foreground text-sm py-8">
-            {search ? '未找到匹配的 Skill' : '暂无可用 Skill'}
+            {search ? '未找到匹配的技能' : '暂无可用技能'}
           </div>
         ) : (
           <div className="space-y-2">
@@ -115,7 +115,7 @@ export default function SkillPanel({ onAddSkill, skills, onSkillsLoad }: SkillPa
       {/* 提示 */}
       <div className="p-3 border-t border-border">
         <p className="text-xs text-muted-foreground text-center">
-          拖拽 Skill 到画布添加步骤
+          拖拽技能到画布添加步骤
         </p>
       </div>
     </div>
