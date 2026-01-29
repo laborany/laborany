@@ -9,6 +9,15 @@ import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useAgent, TaskFile } from '../hooks/useAgent'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
+import {
+  PreviewModal,
+  getFileIcon,
+  formatSize,
+  isPreviewable,
+  getExt,
+  getCategory,
+  type FileArtifact,
+} from '../components/preview'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -160,6 +169,7 @@ export function SessionDetailPage() {
   const [continuing, setContinuing] = useState(false)
   const [taskFiles, setTaskFiles] = useState<TaskFile[]>([])
   const [showFiles, setShowFiles] = useState(false)
+  const [previewArtifact, setPreviewArtifact] = useState<FileArtifact | null>(null)
 
   // 用于继续对话的 agent hook
   const agent = useAgent(session?.skill_id || '')
@@ -206,6 +216,22 @@ export function SessionDetailPage() {
   const getFileUrl = useCallback(
     (path: string) => `/api/task/${sessionId}/files/${path}`,
     [sessionId],
+  )
+
+  /* ── 打开预览 Modal ── */
+  const openPreview = useCallback(
+    (file: TaskFile) => {
+      const ext = getExt(file.name)
+      setPreviewArtifact({
+        name: file.name,
+        path: file.path,
+        ext,
+        category: getCategory(ext),
+        size: file.size,
+        url: getFileUrl(file.path),
+      })
+    },
+    [getFileUrl],
   )
 
   // 将历史消息转换为 MessageList 需要的格式
@@ -348,8 +374,15 @@ export function SessionDetailPage() {
           files={taskFiles}
           getFileUrl={getFileUrl}
           onClose={() => setShowFiles(false)}
+          onPreview={openPreview}
         />
       )}
+
+      {/* 预览 Modal */}
+      <PreviewModal
+        artifact={previewArtifact}
+        onClose={() => setPreviewArtifact(null)}
+      />
 
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto mb-4">
@@ -377,10 +410,12 @@ function HistoryFilesPanel({
   files,
   getFileUrl,
   onClose,
+  onPreview,
 }: {
   files: TaskFile[]
   getFileUrl: (path: string) => string
   onClose: () => void
+  onPreview: (file: TaskFile) => void
 }) {
   return (
     <div className="mb-4 card overflow-hidden">
@@ -396,7 +431,7 @@ function HistoryFilesPanel({
         </button>
       </div>
       <div className="p-4 max-h-64 overflow-y-auto">
-        <HistoryFileTree files={files} getFileUrl={getFileUrl} depth={0} />
+        <HistoryFileTree files={files} getFileUrl={getFileUrl} depth={0} onPreview={onPreview} />
       </div>
     </div>
   )
@@ -409,10 +444,12 @@ function HistoryFileTree({
   files,
   getFileUrl,
   depth,
+  onPreview,
 }: {
   files: TaskFile[]
   getFileUrl: (path: string) => string
   depth: number
+  onPreview: (file: TaskFile) => void
 }) {
   return (
     <div className="space-y-1">
@@ -431,11 +468,12 @@ function HistoryFileTree({
                   files={file.children}
                   getFileUrl={getFileUrl}
                   depth={depth + 1}
+                  onPreview={onPreview}
                 />
               )}
             </div>
           ) : (
-            <HistoryFileItem file={file} getFileUrl={getFileUrl} />
+            <HistoryFileItem file={file} getFileUrl={getFileUrl} onPreview={onPreview} />
           )}
         </div>
       ))}
@@ -449,17 +487,17 @@ function HistoryFileTree({
 function HistoryFileItem({
   file,
   getFileUrl,
+  onPreview,
 }: {
   file: TaskFile
   getFileUrl: (path: string) => string
+  onPreview: (file: TaskFile) => void
 }) {
   const url = getFileUrl(file.path)
-  const isPreviewable = ['html', 'htm', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'pdf', 'txt', 'md'].includes(
-    file.ext || '',
-  )
-
-  const icon = getHistoryFileIcon(file.ext || '')
-  const size = file.size ? formatHistoryFileSize(file.size) : ''
+  const ext = file.ext || ''
+  const canPreview = isPreviewable(ext)
+  const icon = getFileIcon(ext)
+  const size = file.size ? formatSize(file.size) : ''
 
   return (
     <div className="flex items-center justify-between py-1.5 text-sm hover:bg-accent rounded-md px-2 -mx-2 transition-colors">
@@ -469,15 +507,13 @@ function HistoryFileItem({
         {size && <span className="text-xs text-muted-foreground">({size})</span>}
       </div>
       <div className="flex items-center gap-2 ml-2">
-        {isPreviewable && (
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
+        {canPreview && (
+          <button
+            onClick={() => onPreview(file)}
             className="text-xs text-primary hover:text-primary/80 transition-colors"
           >
             预览
-          </a>
+          </button>
         )}
         <a
           href={url}
@@ -504,37 +540,4 @@ function countTaskFiles(files: TaskFile[]): number {
     }
   }
   return count
-}
-
-function getHistoryFileIcon(ext: string): string {
-  const icons: Record<string, string> = {
-    html: '🌐',
-    htm: '🌐',
-    pdf: '📕',
-    doc: '📘',
-    docx: '📘',
-    xls: '📗',
-    xlsx: '📗',
-    ppt: '📙',
-    pptx: '📙',
-    png: '🖼️',
-    jpg: '🖼️',
-    jpeg: '🖼️',
-    gif: '🖼️',
-    svg: '🖼️',
-    txt: '📄',
-    md: '📝',
-    json: '📋',
-    csv: '📊',
-    py: '🐍',
-    js: '📜',
-    ts: '📜',
-  }
-  return icons[ext] || '📄'
-}
-
-function formatHistoryFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }

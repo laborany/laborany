@@ -1,14 +1,17 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                         Skill 执行页面                                    ║
  * ║                                                                          ║
- * ║  核心交互页面：输入查询 → 流式显示结果 → 查看产出文件                          ║
+ * ║  核心交互页面：输入查询 → 流式显示结果 → 查看产出文件 → 应用内预览              ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useParams, Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { useAgent, TaskFile } from '../hooks/useAgent'
+import { useVitePreview } from '../hooks/useVitePreview'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
+import { ArtifactPreview, VitePreview, getExt, getCategory, isPreviewable } from '../components/preview'
+import type { FileArtifact } from '../components/preview'
 
 export default function ExecutePage() {
   const { skillId } = useParams<{ skillId: string }>()
@@ -18,6 +21,7 @@ export default function ExecutePage() {
     error,
     sessionId,
     taskFiles,
+    workDir,
     execute,
     stop,
     clear,
@@ -26,6 +30,38 @@ export default function ExecutePage() {
   } = useAgent(skillId || '')
 
   const [showFiles, setShowFiles] = useState(false)
+  const [previewArtifact, setPreviewArtifact] = useState<FileArtifact | null>(null)
+  const [showLivePreview, setShowLivePreview] = useState(false)
+
+  // Live Preview Hook
+  const {
+    status: liveStatus,
+    previewUrl,
+    error: liveError,
+    startPreview,
+    stopPreview,
+  } = useVitePreview(sessionId)
+
+  // 打开预览
+  const openPreview = (file: TaskFile) => {
+    const ext = getExt(file.name)
+    setPreviewArtifact({
+      name: file.name,
+      path: file.path,
+      ext,
+      category: getCategory(ext),
+      size: file.size,
+      url: getFileUrl(file.path),
+    })
+  }
+
+  // 启动 Live Preview
+  const handleStartLivePreview = () => {
+    if (workDir) {
+      setShowLivePreview(true)
+      startPreview(workDir)
+    }
+  }
 
   // 执行完成后自动获取文件列表
   useEffect(() => {
@@ -49,6 +85,17 @@ export default function ExecutePage() {
           </h2>
         </div>
         <div className="flex items-center gap-3">
+          {/* Live Preview 按钮 */}
+          {workDir && taskFiles.length > 0 && (
+            <button
+              onClick={() => setShowLivePreview(!showLivePreview)}
+              className={`text-sm flex items-center gap-1.5 transition-colors ${
+                showLivePreview ? 'text-green-500' : 'text-primary hover:text-primary/80'
+              }`}
+            >
+              🚀 Live Preview
+            </button>
+          )}
           {taskFiles.length > 0 && (
             <button
               onClick={() => setShowFiles(!showFiles)}
@@ -87,7 +134,49 @@ export default function ExecutePage() {
           files={taskFiles}
           getFileUrl={getFileUrl}
           onClose={() => setShowFiles(false)}
+          onPreview={openPreview}
         />
+      )}
+
+      {/* 预览面板 */}
+      {previewArtifact && (
+        <div className="mb-4 h-96">
+          <ArtifactPreview
+            artifact={previewArtifact}
+            onClose={() => setPreviewArtifact(null)}
+          />
+        </div>
+      )}
+
+      {/* Live Preview 面板 */}
+      {showLivePreview && (
+        <div className="mb-4 h-96">
+          <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-background shadow-lg">
+            <div className="flex shrink-0 items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
+              <span className="text-sm font-medium text-foreground">Live Preview</span>
+              <button
+                onClick={() => {
+                  setShowLivePreview(false)
+                  if (liveStatus === 'running') stopPreview()
+                }}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <VitePreview
+                status={liveStatus}
+                previewUrl={previewUrl}
+                error={liveError}
+                onStart={handleStartLivePreview}
+                onStop={stopPreview}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 消息列表 */}
@@ -131,10 +220,12 @@ function TaskFilesPanel({
   files,
   getFileUrl,
   onClose,
+  onPreview,
 }: {
   files: TaskFile[]
   getFileUrl: (path: string) => string
   onClose: () => void
+  onPreview: (file: TaskFile) => void
 }) {
   return (
     <div className="mb-4 card overflow-hidden">
@@ -150,7 +241,7 @@ function TaskFilesPanel({
         </button>
       </div>
       <div className="p-4 max-h-64 overflow-y-auto">
-        <FileTree files={files} getFileUrl={getFileUrl} depth={0} />
+        <FileTree files={files} getFileUrl={getFileUrl} depth={0} onPreview={onPreview} />
       </div>
     </div>
   )
@@ -163,10 +254,12 @@ function FileTree({
   files,
   getFileUrl,
   depth,
+  onPreview,
 }: {
   files: TaskFile[]
   getFileUrl: (path: string) => string
   depth: number
+  onPreview: (file: TaskFile) => void
 }) {
   return (
     <div className="space-y-1">
@@ -185,11 +278,12 @@ function FileTree({
                   files={file.children}
                   getFileUrl={getFileUrl}
                   depth={depth + 1}
+                  onPreview={onPreview}
                 />
               )}
             </div>
           ) : (
-            <FileItem file={file} getFileUrl={getFileUrl} />
+            <FileItem file={file} getFileUrl={getFileUrl} onPreview={onPreview} />
           )}
         </div>
       ))}
@@ -203,16 +297,16 @@ function FileTree({
 function FileItem({
   file,
   getFileUrl,
+  onPreview,
 }: {
   file: TaskFile
   getFileUrl: (path: string) => string
+  onPreview: (file: TaskFile) => void
 }) {
   const url = getFileUrl(file.path)
-  const isPreviewable = ['html', 'htm', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'pdf', 'txt', 'md'].includes(
-    file.ext || '',
-  )
-
-  const icon = getFileIcon(file.ext || '')
+  const ext = file.ext || ''
+  const canPreview = isPreviewable(ext)
+  const icon = getFileIcon(ext)
   const size = file.size ? formatFileSize(file.size) : ''
 
   return (
@@ -223,15 +317,13 @@ function FileItem({
         {size && <span className="text-xs text-muted-foreground">({size})</span>}
       </div>
       <div className="flex items-center gap-2 ml-2">
-        {isPreviewable && (
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
+        {canPreview && (
+          <button
+            onClick={() => onPreview(file)}
             className="text-xs text-primary hover:text-primary/80 transition-colors"
           >
             预览
-          </a>
+          </button>
         )}
         <a
           href={url}

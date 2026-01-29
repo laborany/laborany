@@ -34,6 +34,7 @@ interface AgentState {
   sessionId: string | null
   error: string | null
   taskFiles: TaskFile[]
+  workDir: string | null
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -46,6 +47,7 @@ export function useAgent(skillId: string) {
     sessionId: null,
     error: null,
     taskFiles: [],
+    workDir: null,
   })
 
   const abortRef = useRef<AbortController | null>(null)
@@ -248,6 +250,7 @@ export function useAgent(skillId: string) {
       sessionId: null,
       error: null,
       taskFiles: [],
+      workDir: null,
     })
   }, [])
 
@@ -262,7 +265,11 @@ export function useAgent(skillId: string) {
       })
       if (res.ok) {
         const data = await res.json()
-        setState((s) => ({ ...s, taskFiles: data.files || [] }))
+        setState((s) => ({
+          ...s,
+          taskFiles: data.files || [],
+          workDir: data.workDir || null,
+        }))
       }
     } catch {
       // 忽略错误

@@ -76,6 +76,7 @@ import configRoutes from './routes/config.js'
 import sessionRoutes from './routes/session.js'
 import setupRoutes from './routes/setup.js'
 import sandboxRoutes from './routes/sandbox.js'
+import previewRoutes from './routes/preview.js'
 import { initDb, closeDb } from './core/database.js'
 import { registerAllProviders } from './providers/index.js'
 import { stopAllProviders } from './core/sandbox/registry.js'
@@ -107,6 +108,7 @@ app.route('/api/config', configRoutes)
 app.route('/api/sessions', sessionRoutes)
 app.route('/api/setup', setupRoutes)
 app.route('/api/sandbox', sandboxRoutes)
+app.route('/api/preview', previewRoutes)
 app.route('/api', fileRoutes)
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

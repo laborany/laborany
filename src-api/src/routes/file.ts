@@ -111,7 +111,7 @@ file.get('/task/:sessionId/files', async (c) => {
 
   try {
     const files = await listTaskFiles(taskDir, '')
-    return c.json({ files })
+    return c.json({ files, workDir: taskDir })
   } catch (err) {
     console.error('[File] Error listing files:', err)
     return c.json({ error: '获取文件列表失败' }, 500)
@@ -128,7 +128,7 @@ file.get('/tasks/:sessionId/files', async (c) => {
 
   try {
     const files = await listTaskFiles(taskDir, '')
-    return c.json({ files })
+    return c.json({ files, workDir: taskDir })
   } catch {
     return c.json({ error: '获取文件列表失败' }, 500)
   }

@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react'
 import type { SkillDetail } from '../../types'
 import { FileIcon } from '../shared/FileIcon'
+import { CodeRenderer, MarkdownRenderer, getExt, type FileArtifact } from '../preview'
 
 interface SkillConfigPanelProps {
   skillId: string
@@ -169,17 +170,17 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
                   )}
                 </div>
               </div>
-              <div className="flex-1 p-4 overflow-auto">
+              <div className="flex-1 overflow-auto">
                 {editing ? (
-                  <textarea
-                    value={fileContent}
-                    onChange={(e) => setFileContent(e.target.value)}
-                    className="input w-full h-full min-h-[400px] font-mono text-sm"
-                  />
+                  <div className="p-4">
+                    <textarea
+                      value={fileContent}
+                      onChange={(e) => setFileContent(e.target.value)}
+                      className="input w-full h-full min-h-[400px] font-mono text-sm"
+                    />
+                  </div>
                 ) : (
-                  <pre className="font-mono text-sm whitespace-pre-wrap text-foreground">
-                    {fileContent}
-                  </pre>
+                  <FileContentRenderer path={selectedFile} content={fileContent} />
                 )}
               </div>
             </div>
@@ -254,6 +255,33 @@ function FileTreeItem({ file, selectedFile, onSelect }: FileTreeItemProps) {
       )}
     </div>
   )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       文件内容渲染器                                       │
+ * │                                                                          │
+ * │  根据文件类型选择合适的渲染器：Markdown 或 Code                              │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function FileContentRenderer({ path, content }: { path: string; content: string }) {
+  const ext = getExt(path)
+
+  /* ── 构造 artifact 对象供渲染器使用 ── */
+  const artifact: FileArtifact = {
+    name: path,
+    path,
+    ext,
+    category: ext === 'md' ? 'markdown' : 'code',
+    url: '',
+    content,
+  }
+
+  /* ── Markdown 文件使用 MarkdownRenderer ── */
+  if (ext === 'md') {
+    return <MarkdownRenderer artifact={artifact} />
+  }
+
+  /* ── 其他文件使用 CodeRenderer（带语法高亮） ── */
+  return <CodeRenderer artifact={artifact} />
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
