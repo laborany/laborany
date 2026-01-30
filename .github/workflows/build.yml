@@ -26,6 +26,34 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Update version from tag
+        shell: pwsh
+        run: |
+          # 从 tag 提取版本号 (v0.2.8 -> 0.2.8)
+          $VERSION = "${{ github.ref_name }}" -replace '^v', ''
+          if (-not $VERSION) { $VERSION = "0.0.0" }
+          Write-Host "Setting version to: $VERSION"
+
+          # 更新 package.json
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $pkg.version = $VERSION
+          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json
+
+          # 更新 src-api/package.json
+          $api = Get-Content src-api/package.json | ConvertFrom-Json
+          $api.version = $VERSION
+          $api | ConvertTo-Json -Depth 10 | Set-Content src-api/package.json
+
+          # 更新 frontend/package.json
+          $fe = Get-Content frontend/package.json | ConvertFrom-Json
+          $fe.version = $VERSION
+          $fe | ConvertTo-Json -Depth 10 | Set-Content frontend/package.json
+
+          # 更新 src-tauri/tauri.conf.json
+          $tauri = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
+          $tauri.version = $VERSION
+          $tauri | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
+
       - name: Install dependencies
         run: npm run install:all
 
@@ -66,6 +94,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Update version from tag
+        run: |
+          # 从 tag 提取版本号 (v0.2.8 -> 0.2.8)
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          [ -z "$VERSION" ] && VERSION="0.0.0"
+          echo "Setting version to: $VERSION"
+
+          # 更新所有 package.json 和 tauri.conf.json
+          npm pkg set version="$VERSION"
+          npm pkg set version="$VERSION" --workspace=src-api 2>/dev/null || true
+          npm pkg set version="$VERSION" --workspace=frontend 2>/dev/null || true
+
+          # 更新 tauri.conf.json
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
 
       - name: Install dependencies
         run: npm run install:all
@@ -113,6 +157,17 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Update version from tag
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          [ -z "$VERSION" ] && VERSION="0.0.0"
+          echo "Setting version to: $VERSION"
+          npm pkg set version="$VERSION"
+          npm pkg set version="$VERSION" --workspace=src-api 2>/dev/null || true
+          npm pkg set version="$VERSION" --workspace=frontend 2>/dev/null || true
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
       - name: Install dependencies
         run: npm run install:all
 
@@ -148,7 +203,7 @@ jobs:
 
   # ╔══════════════════════════════════════════════════════════════════════════╗
   # ║                         Linux 构建                                        ║
-  # ╚═════════════════════��════════════════════════════════════════════════════╝
+  # ╚══════════════════════════════════════════════════════════════════════════╝
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -158,6 +213,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Update version from tag
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          [ -z "$VERSION" ] && VERSION="0.0.0"
+          echo "Setting version to: $VERSION"
+          npm pkg set version="$VERSION"
+          npm pkg set version="$VERSION" --workspace=src-api 2>/dev/null || true
+          npm pkg set version="$VERSION" --workspace=frontend 2>/dev/null || true
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
 
       - name: Install dependencies
         run: npm run install:all
