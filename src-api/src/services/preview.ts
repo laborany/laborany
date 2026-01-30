@@ -243,56 +243,97 @@ export class PreviewManager {
    * 私有方法：启动 Vite 服务器
    * ──────────────────────────────────────────────────────────────────────── */
   private async startViteServer(instance: PreviewInstance, workDir: string): Promise<void> {
-    await this.ensureProjectFiles(workDir, instance.port)
+    console.log(`[Preview] ========== 启动 Vite 服务器 ==========`)
+    console.log(`[Preview] taskId: ${instance.taskId}`)
+    console.log(`[Preview] workDir: ${workDir}`)
+    console.log(`[Preview] port: ${instance.port}`)
 
-    console.log(`[Preview] 启动 Vite ${instance.taskId} 端口 ${instance.port}`)
+    await this.ensureProjectFiles(workDir, instance.port)
 
     // 检查是否需要安装依赖
     const viteBin = path.join(workDir, 'node_modules', '.bin', 'vite')
-    if (!fsSync.existsSync(viteBin)) {
-      console.log('[Preview] 安装依赖...')
-      await this.runNpmInstall(workDir)
+    const viteBinExists = fsSync.existsSync(viteBin)
+    console.log(`[Preview] viteBin 路径: ${viteBin}`)
+    console.log(`[Preview] viteBin 存在: ${viteBinExists}`)
+
+    if (!viteBinExists) {
+      console.log('[Preview] 开始安装依赖...')
+      try {
+        await this.runNpmInstall(workDir)
+        console.log('[Preview] 依赖安装完成')
+      } catch (err) {
+        console.error('[Preview] 依赖安装失败:', err)
+        throw err
+      }
     }
 
     // 启动 Vite（优先使用内置 Node.js）
     const viteCli = path.join(workDir, 'node_modules', 'vite', 'bin', 'vite.js')
+    const viteCliExists = fsSync.existsSync(viteCli)
     const bundled = getBundledNodePath()
+
+    console.log(`[Preview] viteCli 路径: ${viteCli}`)
+    console.log(`[Preview] viteCli 存在: ${viteCliExists}`)
+    console.log(`[Preview] bundled Node.js: ${bundled ? bundled.node : 'null'}`)
 
     let cmd: string
     let args: string[]
-    if (fsSync.existsSync(viteCli) && bundled) {
+    let useShell: boolean
+
+    if (viteCliExists && bundled) {
       cmd = bundled.node
       args = [viteCli]
-    } else if (fsSync.existsSync(viteCli)) {
+      useShell = false
+      console.log(`[Preview] 使用内置 Node.js 启动 Vite`)
+    } else if (viteCliExists) {
       cmd = 'node'
       args = [viteCli]
+      useShell = true
+      console.log(`[Preview] 使用系统 Node.js 启动 Vite`)
     } else {
       cmd = 'npx'
       args = ['vite']
+      useShell = true
+      console.log(`[Preview] 使用 npx 启动 Vite`)
     }
+
+    console.log(`[Preview] 执行命令: ${cmd} ${args.join(' ')}`)
+    console.log(`[Preview] shell: ${useShell}`)
 
     const proc = spawn(cmd, args, {
       cwd: workDir,
-      shell: !bundled,
+      shell: useShell,
       stdio: 'pipe',
       env: { ...process.env, FORCE_COLOR: '0' },
     })
 
     instance.process = proc
+    console.log(`[Preview] 进程已启动, PID: ${proc.pid}`)
 
-    proc.stdout?.on('data', d => console.log(`[Preview:vite] ${d.toString().trim()}`))
-    proc.stderr?.on('data', d => console.log(`[Preview:vite] ${d.toString().trim()}`))
+    proc.stdout?.on('data', d => console.log(`[Preview:vite:stdout] ${d.toString().trim()}`))
+    proc.stderr?.on('data', d => console.log(`[Preview:vite:stderr] ${d.toString().trim()}`))
 
     proc.on('close', code => {
+      console.log(`[Preview] Vite 进程关闭, code=${code}, 当前状态=${instance.status}`)
       if (instance.status === 'running' || instance.status === 'starting') {
-        console.log(`[Preview] Vite 退出 code=${code}`)
-        instance.status = 'stopped'
-        this.cleanup(instance)
+        instance.status = 'error'
+        instance.error = `Vite 进程异常退出 (code=${code})`
+        // 清理资源但保留实例，让前端能获取错误信息
+        if (instance.healthCheck) {
+          clearInterval(instance.healthCheck)
+          instance.healthCheck = undefined
+        }
+        if (instance.idleTimeout) {
+          clearTimeout(instance.idleTimeout)
+          instance.idleTimeout = undefined
+        }
+        instance.process = undefined
+        this.releasePort(instance.port)
       }
     })
 
     proc.on('error', err => {
-      console.error('[Preview] Vite 错误:', err)
+      console.error('[Preview] Vite 进程错误:', err)
       instance.status = 'error'
       instance.error = err.message
       this.cleanup(instance)
