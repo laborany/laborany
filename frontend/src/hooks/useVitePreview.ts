@@ -63,17 +63,6 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
     }
   }, [])
 
-  // taskId 变化时重置状态
-  useEffect(() => {
-    if (taskId) {
-      refreshStatus()
-    } else {
-      setStatus('idle')
-      setPreviewUrl(null)
-      setError(null)
-    }
-  }, [taskId])
-
   /* ────────────────────────────────────────────────────────────────────────
    * 更新状态
    * ──────────────────────────────────────────────────────────────────────── */
@@ -105,6 +94,17 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
       console.error('[useVitePreview] 获取状态失败:', err)
     }
   }, [updateFromResponse])
+
+  // taskId 变化时重置状态
+  useEffect(() => {
+    if (taskId) {
+      refreshStatus()
+    } else {
+      setStatus('idle')
+      setPreviewUrl(null)
+      setError(null)
+    }
+  }, [taskId, refreshStatus])
 
   /* ────────────────────────────────────────────────────────────────────────
    * 启动预览

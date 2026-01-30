@@ -125,3 +125,17 @@ async def stop_workflow(run_id: str) -> bool:
         response = await client.post(f"{AGENT_SERVICE_URL}/workflows/stop/{run_id}")
         result = response.json()
         return result.get("success", False)
+
+
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │                           安装工作流为 Skill                               │
+# └──────────────────────────────────────────────────────────────────────────┘
+async def install_workflow_as_skill(workflow_id: str) -> Optional[dict]:
+    """将工作流安装为独立的 Skill"""
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{AGENT_SERVICE_URL}/workflows/{workflow_id}/install"
+        )
+        if response.status_code != 200:
+            return None
+        return response.json()

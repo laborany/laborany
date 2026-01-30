@@ -8,6 +8,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import type { Skill, OfficialSkill } from '../types'
+import { parseErrorMessage, API_BASE } from '../config'
 import { TabButton } from '../components/shared/TabButton'
 import { LoadingState } from '../components/shared/LoadingState'
 import { InstalledSkills } from '../components/skill/InstalledSkills'
@@ -45,7 +46,7 @@ export default function SkillsPage() {
   async function fetchSkills() {
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch('/api/skill/list', {
+      const res = await fetch(`${API_BASE}/skill/list`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       const data = await res.json()
@@ -60,7 +61,7 @@ export default function SkillsPage() {
   async function fetchOfficialSkills() {
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch('/api/skill/official', {
+      const res = await fetch(`${API_BASE}/skill/official`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       const data = await res.json()
@@ -75,7 +76,7 @@ export default function SkillsPage() {
     setInstallError(null)
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch('/api/skill/install', {
+      const res = await fetch(`${API_BASE}/skill/install`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -85,7 +86,7 @@ export default function SkillsPage() {
       })
       if (!res.ok) {
         const data = await res.json()
-        throw new Error(data.detail || '安装失败')
+        throw new Error(parseErrorMessage(data, '安装失败'))
       }
       await fetchSkills()
       setActiveTab('installed')
@@ -101,10 +102,14 @@ export default function SkillsPage() {
     if (!confirm(`确定要卸载 "${skillId}" 吗？`)) return
     try {
       const token = localStorage.getItem('token')
-      await fetch(`/api/skill/${skillId}`, {
+      const res = await fetch(`${API_BASE}/skill/uninstall/${skillId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(parseErrorMessage(data, '卸载失败'))
+      }
       await fetchSkills()
     } catch (err) {
       console.error('卸载失败:', err)

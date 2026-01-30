@@ -1,7 +1,7 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                     LaborAny 全局样式                                     ║
  * ║                                                                          ║
- * ║  借鉴 workany 的设计系统，提供一致的视觉体验                                 ║
+ * ║  使用 OKLCH 感知均匀色彩系统，提供更好的色彩一致性                            ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 @tailwind base;
@@ -9,89 +9,99 @@
 @tailwind utilities;
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           CSS 变量定义                                    │
+ * │                       OKLCH 色彩系统                                      │
+ * │  OKLCH 提供感知均匀的色彩空间，确保色彩变化更自然                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 :root {
   /* 基础色彩 */
-  --background: 0 0% 100%;
-  --foreground: 222 47% 11%;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.2101 0.0318 264.6645);
 
   /* 卡片 */
-  --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2101 0.0318 264.6645);
 
-  /* 主色调 - 橙黄色系（借鉴 workany） */
-  --primary: 24 95% 53%;
-  --primary-foreground: 0 0% 100%;
-  --primary-50: 33 100% 96%;
-  --primary-100: 34 100% 92%;
-  --primary-500: 24 95% 53%;
-  --primary-600: 21 90% 48%;
-  --primary-700: 17 88% 40%;
+  /* 弹出层 */
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2101 0.0318 264.6645);
 
-  /* 次要色 */
-  --secondary: 210 40% 96%;
-  --secondary-foreground: 222 47% 11%;
+  /* 主色调 - 橙黄色系 */
+  --primary: oklch(0.6716 0.1368 48.513);
+  --primary-foreground: oklch(1 0 0);
+  --primary-50: oklch(0.97 0.02 48);
+  --primary-100: oklch(0.94 0.04 48);
+  --primary-500: oklch(0.6716 0.1368 48.513);
+  --primary-600: oklch(0.6 0.14 45);
+  --primary-700: oklch(0.52 0.14 42);
+
+  /* 次要色 - 青色系 */
+  --secondary: oklch(0.536 0.0398 196.028);
+  --secondary-foreground: oklch(1 0 0);
 
   /* 柔和色 */
-  --muted: 210 40% 96%;
-  --muted-foreground: 215 16% 47%;
+  --muted: oklch(0.967 0.0029 264.5419);
+  --muted-foreground: oklch(0.551 0.0234 264.3637);
 
   /* 强调色 */
-  --accent: 210 40% 96%;
-  --accent-foreground: 222 47% 11%;
+  --accent: oklch(0.9491 0 0);
+  --accent-foreground: oklch(0.2101 0.0318 264.6645);
 
   /* 危险色 */
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 100%;
+  --destructive: oklch(0.6368 0.2078 25.3313);
+  --destructive-foreground: oklch(0.9851 0 0);
 
   /* 边框和输入框 */
-  --border: 214 32% 91%;
-  --input: 214 32% 91%;
-  --ring: 24 95% 53%;
+  --border: oklch(0.9276 0.0058 264.5313);
+  --input: oklch(0.9276 0.0058 264.5313);
+  --ring: oklch(0.6716 0.1368 48.513);
 
   /* 圆角 */
   --radius: 0.75rem;
 }
 
-/* 暗色模式 */
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           暗色模式                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
 .dark {
-  --background: 222 47% 11%;
-  --foreground: 210 40% 98%;
+  --background: oklch(0.1797 0.0043 308.1928);
+  --foreground: oklch(0.8109 0 0);
 
-  --card: 222 47% 11%;
-  --card-foreground: 210 40% 98%;
+  --card: oklch(0.1822 0 0);
+  --card-foreground: oklch(0.8109 0 0);
 
-  --primary: 24 95% 60%;
-  --primary-foreground: 222 47% 11%;
+  --popover: oklch(0.1797 0.0043 308.1928);
+  --popover-foreground: oklch(0.8109 0 0);
 
-  --secondary: 217 33% 17%;
-  --secondary-foreground: 210 40% 98%;
+  --primary: oklch(0.7214 0.1337 49.9802);
+  --primary-foreground: oklch(0.1797 0.0043 308.1928);
 
-  --muted: 217 33% 17%;
-  --muted-foreground: 215 20% 65%;
+  --secondary: oklch(0.594 0.0443 196.0233);
+  --secondary-foreground: oklch(0.1797 0.0043 308.1928);
 
-  --accent: 217 33% 17%;
-  --accent-foreground: 210 40% 98%;
+  --muted: oklch(0.252 0 0);
+  --muted-foreground: oklch(0.6268 0 0);
 
-  --destructive: 0 62% 50%;
-  --destructive-foreground: 210 40% 98%;
+  --accent: oklch(0.3211 0 0);
+  --accent-foreground: oklch(0.8109 0 0);
 
-  --border: 217 33% 17%;
-  --input: 217 33% 17%;
-  --ring: 24 95% 60%;
+  --destructive: oklch(0.6368 0.2078 25.3313);
+  --destructive-foreground: oklch(0.9851 0 0);
+
+  --border: oklch(0.252 0 0);
+  --input: oklch(0.252 0 0);
+  --ring: oklch(0.7214 0.1337 49.9802);
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           基础样式                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 * {
-  border-color: hsl(var(--border));
+  border-color: var(--border);
 }
 
 body {
-  background-color: hsl(var(--background));
-  color: hsl(var(--foreground));
+  background-color: var(--background);
+  color: var(--foreground);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: "rlig" 1, "calt" 1;
@@ -108,12 +118,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: hsl(var(--border));
+  background-color: var(--border);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: hsl(var(--muted-foreground) / 0.3);
+  background-color: var(--muted-foreground);
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -125,49 +135,48 @@ body {
     @apply inline-flex items-center justify-center rounded-lg text-sm font-medium
            transition-colors focus-visible:outline-none focus-visible:ring-2
            focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
-    --tw-ring-color: hsl(var(--ring));
   }
 
   .btn-primary {
     @apply btn;
-    background-color: hsl(var(--primary));
-    color: hsl(var(--primary-foreground));
+    background-color: var(--primary);
+    color: var(--primary-foreground);
   }
   .btn-primary:hover {
-    background-color: hsl(var(--primary-600));
+    background-color: var(--primary-600);
   }
 
   .btn-secondary {
     @apply btn;
-    background-color: hsl(var(--secondary));
-    color: hsl(var(--secondary-foreground));
+    background-color: var(--secondary);
+    color: var(--secondary-foreground);
   }
   .btn-secondary:hover {
-    background-color: hsl(var(--secondary) / 0.8);
+    opacity: 0.8;
   }
 
   .btn-ghost {
     @apply btn;
   }
   .btn-ghost:hover {
-    background-color: hsl(var(--accent));
-    color: hsl(var(--accent-foreground));
+    background-color: var(--accent);
+    color: var(--accent-foreground);
   }
 
   .btn-destructive {
     @apply btn;
-    background-color: hsl(var(--destructive));
-    color: hsl(var(--destructive-foreground));
+    background-color: var(--destructive);
+    color: var(--destructive-foreground);
   }
   .btn-destructive:hover {
-    background-color: hsl(var(--destructive) / 0.9);
+    opacity: 0.9;
   }
 
   /* 卡片样式 */
   .card {
     @apply rounded-xl border shadow-sm;
-    background-color: hsl(var(--card));
-    color: hsl(var(--card-foreground));
+    background-color: var(--card);
+    color: var(--card-foreground);
   }
 
   .card-hover {
@@ -179,13 +188,11 @@ body {
     @apply flex h-10 w-full rounded-lg border px-3 py-2 text-sm
            focus-visible:outline-none focus-visible:ring-2
            disabled:cursor-not-allowed disabled:opacity-50;
-    border-color: hsl(var(--input));
-    background-color: hsl(var(--background));
-    --tw-ring-offset-color: hsl(var(--background));
-    --tw-ring-color: hsl(var(--ring));
+    border-color: var(--input);
+    background-color: var(--background);
   }
   .input::placeholder {
-    color: hsl(var(--muted-foreground));
+    color: var(--muted-foreground);
   }
 
   /* 徽章样式 */
@@ -195,8 +202,8 @@ body {
 
   .badge-primary {
     @apply badge;
-    background-color: hsl(var(--primary) / 0.1);
-    color: hsl(var(--primary));
+    background-color: color-mix(in oklch, var(--primary) 10%, transparent);
+    color: var(--primary);
   }
 
   .badge-success {
@@ -238,7 +245,7 @@ body {
 
   /* 渐变文字 */
   .text-gradient {
-    background: linear-gradient(to right, hsl(var(--primary)), hsl(var(--primary-600)));
+    background: linear-gradient(to right, var(--primary), var(--primary-600));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -246,7 +253,7 @@ body {
 
   /* 玻璃效果 */
   .glass {
-    background-color: hsl(var(--background) / 0.8);
+    background-color: color-mix(in oklch, var(--background) 80%, transparent);
     backdrop-filter: blur(4px);
   }
 
@@ -259,56 +266,116 @@ body {
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+
+  /* 入场动画 */
+  .animate-in {
+    animation-duration: 0.2s;
+    animation-timing-function: ease-out;
+    animation-fill-mode: both;
+  }
+
+  .fade-in {
+    animation-name: fade-in;
+  }
+
+  .slide-in-from-bottom-1 {
+    animation-name: slide-in-from-bottom-1;
+  }
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                      语义化颜色工具类                                      │
- * │  由于 Tailwind @apply 不支持自定义颜色，这里提供直接的 CSS 类               │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-.bg-background { background-color: hsl(var(--background)); }
-.bg-foreground { background-color: hsl(var(--foreground)); }
-.bg-card { background-color: hsl(var(--card)); }
-.bg-primary { background-color: hsl(var(--primary)); }
-.bg-secondary { background-color: hsl(var(--secondary)); }
-.bg-muted { background-color: hsl(var(--muted)); }
-.bg-accent { background-color: hsl(var(--accent)); }
-.bg-destructive { background-color: hsl(var(--destructive)); }
+.bg-background { background-color: var(--background); }
+.bg-foreground { background-color: var(--foreground); }
+.bg-card { background-color: var(--card); }
+.bg-primary { background-color: var(--primary); }
+.bg-secondary { background-color: var(--secondary); }
+.bg-muted { background-color: var(--muted); }
+.bg-accent { background-color: var(--accent); }
+.bg-destructive { background-color: var(--destructive); }
 
-.text-foreground { color: hsl(var(--foreground)); }
-.text-card-foreground { color: hsl(var(--card-foreground)); }
-.text-primary { color: hsl(var(--primary)); }
-.text-primary-foreground { color: hsl(var(--primary-foreground)); }
-.text-secondary-foreground { color: hsl(var(--secondary-foreground)); }
-.text-muted-foreground { color: hsl(var(--muted-foreground)); }
-.text-accent-foreground { color: hsl(var(--accent-foreground)); }
-.text-destructive { color: hsl(var(--destructive)); }
-.text-destructive-foreground { color: hsl(var(--destructive-foreground)); }
+.text-foreground { color: var(--foreground); }
+.text-card-foreground { color: var(--card-foreground); }
+.text-primary { color: var(--primary); }
+.text-primary-foreground { color: var(--primary-foreground); }
+.text-secondary-foreground { color: var(--secondary-foreground); }
+.text-muted-foreground { color: var(--muted-foreground); }
+.text-accent-foreground { color: var(--accent-foreground); }
+.text-destructive { color: var(--destructive); }
+.text-destructive-foreground { color: var(--destructive-foreground); }
 
-.border-border { border-color: hsl(var(--border)); }
-.border-input { border-color: hsl(var(--input)); }
-.border-primary { border-color: hsl(var(--primary)); }
+.border-border { border-color: var(--border); }
+.border-input { border-color: var(--input); }
+.border-primary { border-color: var(--primary); }
 
 /* 带透明度的变体 */
-.bg-muted\/30 { background-color: hsl(var(--muted) / 0.3); }
-.bg-muted\/50 { background-color: hsl(var(--muted) / 0.5); }
-.bg-primary\/10 { background-color: hsl(var(--primary) / 0.1); }
-.bg-primary\/20 { background-color: hsl(var(--primary) / 0.2); }
-.bg-destructive\/10 { background-color: hsl(var(--destructive) / 0.1); }
+.bg-muted\/30 { background-color: color-mix(in oklch, var(--muted) 30%, transparent); }
+.bg-muted\/50 { background-color: color-mix(in oklch, var(--muted) 50%, transparent); }
+.bg-primary\/10 { background-color: color-mix(in oklch, var(--primary) 10%, transparent); }
+.bg-primary\/20 { background-color: color-mix(in oklch, var(--primary) 20%, transparent); }
+.bg-destructive\/10 { background-color: color-mix(in oklch, var(--destructive) 10%, transparent); }
+.bg-accent\/20 { background-color: color-mix(in oklch, var(--accent) 20%, transparent); }
+.bg-accent\/30 { background-color: color-mix(in oklch, var(--accent) 30%, transparent); }
 
-.border-primary\/20 { border-color: hsl(var(--primary) / 0.2); }
-.border-destructive\/20 { border-color: hsl(var(--destructive) / 0.2); }
+.border-border\/40 { border-color: color-mix(in oklch, var(--border) 40%, transparent); }
+.border-border\/50 { border-color: color-mix(in oklch, var(--border) 50%, transparent); }
+.border-primary\/20 { border-color: color-mix(in oklch, var(--primary) 20%, transparent); }
+.border-destructive\/20 { border-color: color-mix(in oklch, var(--destructive) 20%, transparent); }
 
 /* hover 状态 */
-.hover\:bg-primary\/80:hover { background-color: hsl(var(--primary) / 0.8); }
-.hover\:bg-accent:hover { background-color: hsl(var(--accent)); }
-.hover\:text-foreground:hover { color: hsl(var(--foreground)); }
-.hover\:text-primary:hover { color: hsl(var(--primary)); }
-.hover\:text-primary\/80:hover { color: hsl(var(--primary) / 0.8); }
-.hover\:text-destructive\/80:hover { color: hsl(var(--destructive) / 0.8); }
+.hover\:bg-primary\/80:hover { background-color: color-mix(in oklch, var(--primary) 80%, transparent); }
+.hover\:bg-accent:hover { background-color: var(--accent); }
+.hover\:bg-accent\/30:hover { background-color: color-mix(in oklch, var(--accent) 30%, transparent); }
+.hover\:text-foreground:hover { color: var(--foreground); }
+.hover\:text-primary:hover { color: var(--primary); }
+.hover\:text-primary\/80:hover { color: color-mix(in oklch, var(--primary) 80%, var(--background)); }
+.hover\:text-destructive:hover { color: var(--destructive); }
+.hover\:text-destructive\/80:hover { color: color-mix(in oklch, var(--destructive) 80%, var(--background)); }
 
 /* ring 颜色 */
-.ring-ring { --tw-ring-color: hsl(var(--ring)); }
-.ring-offset-background { --tw-ring-offset-color: hsl(var(--background)); }
+.ring-ring { --tw-ring-color: var(--ring); }
+.ring-offset-background { --tw-ring-offset-color: var(--background); }
 
 /* placeholder 颜色 */
-.placeholder\:text-muted-foreground::placeholder { color: hsl(var(--muted-foreground)); }
+.placeholder\:text-muted-foreground::placeholder { color: var(--muted-foreground); }
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           动画关键帧                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-in-from-bottom-1 {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes grid-pattern {
+  0% { background-position: 0 0; }
+  100% { background-position: 40px 40px; }
+}
+
+@keyframes ripple {
+  0% { transform: scale(0); opacity: 0.5; }
+  100% { transform: scale(4); opacity: 0; }
+}
+
+@keyframes meteor {
+  0% { transform: rotate(215deg) translateX(0); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: rotate(215deg) translateX(-500px); opacity: 0; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

@@ -5,8 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
-
-const API_BASE = '/api'
+import { API_BASE, parseErrorMessage } from '../config'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -74,7 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!res.ok) {
       const error = await res.json()
-      throw new Error(error.error || error.detail || '登录失败')
+      throw new Error(parseErrorMessage(error, '登录失败'))
     }
 
     const { access_token } = await res.json()
@@ -92,7 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!res.ok) {
       const error = await res.json()
-      throw new Error(error.error || error.detail || '注册失败')
+      throw new Error(parseErrorMessage(error, '注册失败'))
     }
 
     const { access_token } = await res.json()

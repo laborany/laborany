@@ -6,7 +6,9 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
-import { useAgent, TaskFile } from '../hooks/useAgent'
+import { useAgent } from '../hooks/useAgent'
+import type { TaskFile, Session, SessionDetail } from '../types'
+import { API_BASE } from '../config'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
 import {
@@ -18,32 +20,6 @@ import {
   getCategory,
   type FileArtifact,
 } from '../components/preview'
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           类型定义                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-interface Session {
-  id: string
-  skill_id: string
-  query: string
-  status: string
-  cost: number
-  created_at: string
-}
-
-interface MessageItem {
-  id: number
-  type: string  // 'user', 'assistant', 'tool_use', 'tool_result'
-  content: string | null
-  toolName: string | null
-  toolInput: unknown | null
-  toolResult: string | null
-  createdAt: string
-}
-
-interface SessionDetail extends Session {
-  messages: MessageItem[]
-}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           历史会话列表                                     │
@@ -59,7 +35,7 @@ export default function HistoryPage() {
   async function fetchSessions() {
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch('/api/sessions', {
+      const res = await fetch(`${API_BASE}/sessions`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       const data = await res.json()
@@ -184,7 +160,7 @@ export function SessionDetailPage() {
   async function fetchSessionDetail() {
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch(`/api/sessions/${sessionId}`, {
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error('获取会话详情失败')
@@ -201,7 +177,7 @@ export function SessionDetailPage() {
     if (!sessionId) return
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch(`/api/task/${sessionId}/files`, {
+      const res = await fetch(`${API_BASE}/task/${sessionId}/files`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) {
@@ -214,7 +190,7 @@ export function SessionDetailPage() {
   }
 
   const getFileUrl = useCallback(
-    (path: string) => `/api/task/${sessionId}/files/${path}`,
+    (path: string) => `${API_BASE}/task/${sessionId}/files/${path}`,
     [sessionId],
   )
 

@@ -7,6 +7,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
+from typing import Optional
 from uuid import uuid4
 import aiosqlite
 import json
@@ -36,6 +37,7 @@ router = APIRouter()
 class ExecuteRequest(BaseModel):
     skill_id: str
     query: str
+    sessionId: Optional[str] = None  # 支持会话续接
 
 
 class SaveFileRequest(BaseModel):
@@ -73,13 +75,16 @@ async def execute_skill(
     user_id: str = Depends(get_current_user_id),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    # 创建会话记录
-    session_id = str(uuid4())
-    await db.execute(
-        "INSERT INTO sessions (id, user_id, skill_id, query) VALUES (?, ?, ?, ?)",
-        (session_id, user_id, req.skill_id, req.query),
-    )
-    await db.commit()
+    # 支持会话续接：如果传入 sessionId 则复用，否则创建新会话
+    session_id = req.sessionId or str(uuid4())
+    is_new_session = req.sessionId is None
+
+    if is_new_session:
+        await db.execute(
+            "INSERT INTO sessions (id, user_id, skill_id, query) VALUES (?, ?, ?, ?)",
+            (session_id, user_id, req.skill_id, req.query),
+        )
+        await db.commit()
 
     async def event_stream():
         # 发送会话 ID

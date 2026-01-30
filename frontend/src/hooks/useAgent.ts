@@ -5,31 +5,13 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useCallback, useRef } from 'react'
-
-const API_BASE = '/api'
+import type { AgentMessage, TaskFile } from '../types'
+import { API_BASE } from '../config'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           类型定义                                        │
+ * │                           重新导出类型                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export interface AgentMessage {
-  id: string
-  type: 'user' | 'assistant' | 'tool' | 'error'
-  content: string
-  toolName?: string
-  toolInput?: Record<string, unknown>  // 原始工具输入
-  timestamp: Date
-}
-
-export interface TaskFile {
-  name: string
-  path: string
-  type: 'file' | 'folder'
-  ext?: string
-  size?: number
-  children?: TaskFile[]
-  stepIndex?: number    // 工作流步骤索引
-  stepName?: string     // 工作流步骤名称
-}
+export type { AgentMessage, TaskFile }
 
 interface AgentState {
   messages: AgentMessage[]
@@ -95,25 +77,28 @@ export function useAgent(skillId: string) {
         const headers: HeadersInit = {
           Authorization: `Bearer ${token}`,
         }
-        
+
         const currentSessionId = sessionIdRef.current
 
+        // 如果有文件，先上传文件获取 file_id 列表
+        let fileIds: string[] = []
         if (files && files.length > 0) {
-          const formData = new FormData()
-          formData.append('skillId', skillId)
-          formData.append('query', query)
-          if (currentSessionId) formData.append('sessionId', currentSessionId)
-          files.forEach(file => formData.append('files', file))
-          body = formData
-          // Content-Type header is handled by browser for FormData
-        } else {
-          headers['Content-Type'] = 'application/json'
-          body = JSON.stringify({ 
-            skill_id: skillId, 
-            query, 
-            sessionId: currentSessionId 
-          })
+          console.log('[useAgent] 上传文件:', files.map(f => f.name))
+          fileIds = await uploadFiles(files, token)
         }
+
+        // 构建查询（如果有文件，在查询中附加文件信息）
+        let finalQuery = query
+        if (fileIds.length > 0) {
+          finalQuery = `${query}\n\n[已上传文件 ID: ${fileIds.join(', ')}]`
+        }
+
+        headers['Content-Type'] = 'application/json'
+        body = JSON.stringify({
+          skill_id: skillId,
+          query: finalQuery,
+          sessionId: currentSessionId
+        })
 
         const res = await fetch(`${API_BASE}/skill/execute`, {
           method: 'POST',
@@ -275,8 +260,8 @@ export function useAgent(skillId: string) {
           workDir: data.workDir || null,
         }))
       }
-    } catch {
-      // 忽略错误
+    } catch (err) {
+      console.error('[useAgent] 获取任务文件失败:', err)
     }
   }, [state.sessionId])
 
@@ -297,4 +282,31 @@ export function useAgent(skillId: string) {
     fetchTaskFiles,
     getFileUrl,
   }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           文件上传辅助函数                                 │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+async function uploadFiles(files: File[], token: string): Promise<string[]> {
+  const fileIds: string[] = []
+
+  for (const file of files) {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const res = await fetch(`${API_BASE}/files/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    })
+
+    if (res.ok) {
+      const data = await res.json()
+      fileIds.push(data.id)
+    } else {
+      console.error('[useAgent] 文件上传失败:', file.name)
+    }
+  }
+
+  return fileIds
 }

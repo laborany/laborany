@@ -5,8 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useCallback } from 'react'
-
-const API_BASE = '/api'
+import { API_BASE, parseErrorMessage } from '../config'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -116,7 +115,7 @@ export function useWorkflowCRUD() {
       })
       if (!res.ok) {
         const err = await res.json()
-        throw new Error(err.detail || '创建失败')
+        throw new Error(parseErrorMessage(err, '创建失败'))
       }
       return await res.json()
     } catch (e) {
@@ -142,7 +141,7 @@ export function useWorkflowCRUD() {
       })
       if (!res.ok) {
         const err = await res.json()
-        throw new Error(err.detail || '更新失败')
+        throw new Error(parseErrorMessage(err, '更新失败'))
       }
       return await res.json()
     } catch (e) {
@@ -164,7 +163,7 @@ export function useWorkflowCRUD() {
       })
       if (!res.ok) {
         const err = await res.json()
-        throw new Error(err.detail || '删除失败')
+        throw new Error(parseErrorMessage(err, '删除失败'))
       }
       return true
     } catch (e) {
@@ -189,7 +188,7 @@ export function useWorkflowCRUD() {
       })
       if (!res.ok) {
         const err = await res.json()
-        throw new Error(err.error || '安装失败')
+        throw new Error(parseErrorMessage(err, '安装失败'))
       }
       const data = await res.json()
       return data.skillId as string

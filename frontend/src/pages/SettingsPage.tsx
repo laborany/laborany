@@ -5,6 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect } from 'react'
+import { API_BASE } from '../config'
 
 interface ConfigItem {
   value: string
@@ -17,8 +18,6 @@ interface ConfigTemplate {
   placeholder: string
   sensitive: boolean
 }
-
-const API_BASE = '/api'
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<Record<string, ConfigItem>>({})

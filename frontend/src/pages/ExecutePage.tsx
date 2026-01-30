@@ -5,12 +5,24 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useParams, Link } from 'react-router-dom'
-import { useEffect, useState } from 'react'
-import { useAgent, TaskFile } from '../hooks/useAgent'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { useAgent } from '../hooks/useAgent'
+import type { TaskFile } from '../types'
 import { useVitePreview } from '../hooks/useVitePreview'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
+import { CollapsibleSection } from '../components/shared/CollapsibleSection'
 import { ArtifactPreview, VitePreview, getExt, getCategory, isPreviewable } from '../components/preview'
+import { Tooltip } from '../components/ui'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '../components/ui'
+import { Button } from '../components/ui'
 import type { FileArtifact } from '../components/preview'
 
 export default function ExecutePage() {
@@ -32,6 +44,13 @@ export default function ExecutePage() {
   const [showFiles, setShowFiles] = useState(false)
   const [previewArtifact, setPreviewArtifact] = useState<FileArtifact | null>(null)
   const [showLivePreview, setShowLivePreview] = useState(false)
+  const [showClearDialog, setShowClearDialog] = useState(false)
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                       自动展开检测                                        │
+   * │  当检测到 artifacts 或文件操作时，自动打开预览面板（仅触发一次）              │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  const hasAutoExpandedRef = useRef(false)
 
   // Live Preview Hook
   const {
@@ -43,7 +62,7 @@ export default function ExecutePage() {
   } = useVitePreview(sessionId)
 
   // 打开预览
-  const openPreview = (file: TaskFile) => {
+  const openPreview = useCallback((file: TaskFile) => {
     const ext = getExt(file.name)
     setPreviewArtifact({
       name: file.name,
@@ -53,7 +72,7 @@ export default function ExecutePage() {
       size: file.size,
       url: getFileUrl(file.path),
     })
-  }
+  }, [getFileUrl])
 
   // 启动 Live Preview
   const handleStartLivePreview = () => {
@@ -69,6 +88,29 @@ export default function ExecutePage() {
       fetchTaskFiles()
     }
   }, [isRunning, sessionId, messages.length, fetchTaskFiles])
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                       自动展开预览面板                                    │
+   * │  检测到文件产出或文件操作时，自动打开侧边栏并预览第一个文件                   │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  useEffect(() => {
+    if (hasAutoExpandedRef.current) return
+
+    const hasArtifacts = taskFiles.length > 0
+    const hasFileOps = messages.some(
+      (m) => m.type === 'tool' && ['Read', 'Write', 'Edit', 'Bash'].includes(m.toolName || '')
+    )
+
+    if (hasArtifacts || hasFileOps) {
+      setShowFiles(true)
+      hasAutoExpandedRef.current = true
+      // 自动预览第一个可预览的文件
+      if (taskFiles.length > 0) {
+        const firstFile = findFirstFile(taskFiles)
+        if (firstFile) openPreview(firstFile)
+      }
+    }
+  }, [taskFiles, messages, openPreview])
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 h-[calc(100vh-64px)] flex flex-col">
@@ -87,33 +129,39 @@ export default function ExecutePage() {
         <div className="flex items-center gap-3">
           {/* Live Preview 按钮 */}
           {workDir && taskFiles.length > 0 && (
-            <button
-              onClick={() => setShowLivePreview(!showLivePreview)}
-              className={`text-sm flex items-center gap-1.5 transition-colors ${
-                showLivePreview ? 'text-green-500' : 'text-primary hover:text-primary/80'
-              }`}
-            >
-              🚀 Live Preview
-            </button>
+            <Tooltip content="在浏览器中实时预览" side="bottom">
+              <button
+                onClick={() => setShowLivePreview(!showLivePreview)}
+                className={`text-sm flex items-center gap-1.5 transition-colors ${
+                  showLivePreview ? 'text-green-500' : 'text-primary hover:text-primary/80'
+                }`}
+              >
+                🚀 Live Preview
+              </button>
+            </Tooltip>
           )}
           {taskFiles.length > 0 && (
-            <button
-              onClick={() => setShowFiles(!showFiles)}
-              className="text-sm text-primary hover:text-primary/80 flex items-center gap-1.5 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-              </svg>
-              产出文件 ({countFiles(taskFiles)})
-            </button>
+            <Tooltip content="查看任务产出的文件" side="bottom">
+              <button
+                onClick={() => setShowFiles(!showFiles)}
+                className="text-sm text-primary hover:text-primary/80 flex items-center gap-1.5 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+                产出文件 ({countFiles(taskFiles)})
+              </button>
+            </Tooltip>
           )}
           {messages.length > 0 && (
-            <button
-              onClick={clear}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              清空对话
-            </button>
+            <Tooltip content="清空当前对话记录" side="bottom">
+              <button
+                onClick={() => setShowClearDialog(true)}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                清空对话
+              </button>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -184,7 +232,7 @@ export default function ExecutePage() {
         {messages.length === 0 ? (
           <div className="h-full flex items-center justify-center text-muted-foreground">
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center animate-float">
                 <svg className="w-8 h-8 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                 </svg>
@@ -194,7 +242,7 @@ export default function ExecutePage() {
             </div>
           </div>
         ) : (
-          <MessageList messages={messages} />
+          <MessageList messages={messages} isRunning={isRunning} />
         )}
       </div>
 
@@ -209,6 +257,32 @@ export default function ExecutePage() {
             : '输入你的问题...'
         }
       />
+
+      {/* 清空对话确认框 */}
+      <Dialog open={showClearDialog} onClose={() => setShowClearDialog(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>确认清空对话</DialogTitle>
+            <DialogDescription>
+              清空后将删除当前所有对话记录，此操作不可恢复。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowClearDialog(false)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                clear()
+                setShowClearDialog(false)
+              }}
+            >
+              确认清空
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -257,6 +331,7 @@ function TaskFilesPanel({
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       按步骤分组展示文件                                   │
+ * │  使用 CollapsibleSection 实现可折叠的步骤分组                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function StepGroupedFiles({
   files,
@@ -267,37 +342,29 @@ function StepGroupedFiles({
   getFileUrl: (path: string) => string
   onPreview: (file: TaskFile) => void
 }) {
-  // 分离步骤目录和普通文件
   const stepDirs = files.filter(f => f.stepIndex !== undefined).sort((a, b) => (a.stepIndex ?? 0) - (b.stepIndex ?? 0))
   const otherFiles = files.filter(f => f.stepIndex === undefined)
 
   return (
-    <div className="space-y-3">
+    <div className="-mx-4">
       {stepDirs.map((stepDir) => (
-        <div key={stepDir.path} className="border border-border rounded-lg overflow-hidden">
-          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 text-sm font-medium text-foreground">
-            <span className="text-primary">📋</span>
-            <span>步骤 {(stepDir.stepIndex ?? 0) + 1}: {stepDir.stepName}</span>
-          </div>
-          <div className="px-3 py-2">
-            {stepDir.children && stepDir.children.length > 0 ? (
-              <FileTree files={stepDir.children} getFileUrl={getFileUrl} depth={0} onPreview={onPreview} />
-            ) : (
-              <span className="text-sm text-muted-foreground">无文件</span>
-            )}
-          </div>
-        </div>
+        <CollapsibleSection
+          key={stepDir.path}
+          title={`步骤 ${(stepDir.stepIndex ?? 0) + 1}: ${stepDir.stepName}`}
+          icon={<span className="text-primary">📋</span>}
+          badge={stepDir.children?.length}
+        >
+          {stepDir.children && stepDir.children.length > 0 ? (
+            <FileTree files={stepDir.children} getFileUrl={getFileUrl} depth={0} onPreview={onPreview} />
+          ) : (
+            <span className="text-sm text-muted-foreground">无文件</span>
+          )}
+        </CollapsibleSection>
       ))}
       {otherFiles.length > 0 && (
-        <div className="border border-border rounded-lg overflow-hidden">
-          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 text-sm font-medium text-foreground">
-            <span>📁</span>
-            <span>其他文件</span>
-          </div>
-          <div className="px-3 py-2">
-            <FileTree files={otherFiles} getFileUrl={getFileUrl} depth={0} onPreview={onPreview} />
-          </div>
-        </div>
+        <CollapsibleSection title="其他文件" icon={<span>📁</span>} badge={otherFiles.length}>
+          <FileTree files={otherFiles} getFileUrl={getFileUrl} depth={0} onPreview={onPreview} />
+        </CollapsibleSection>
       )}
     </div>
   )
@@ -305,6 +372,7 @@ function StepGroupedFiles({
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       文件树组件                                          │
+ * │  支持可折叠的文件夹展示                                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function FileTree({
   files,
@@ -322,27 +390,59 @@ function FileTree({
       {files.map((file) => (
         <div key={file.path} style={{ marginLeft: depth * 16 }}>
           {file.type === 'folder' ? (
-            <div>
-              <div className="flex items-center gap-2 py-1.5 text-sm text-muted-foreground">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                </svg>
-                <span>{file.name}</span>
-              </div>
-              {file.children && (
-                <FileTree
-                  files={file.children}
-                  getFileUrl={getFileUrl}
-                  depth={depth + 1}
-                  onPreview={onPreview}
-                />
-              )}
-            </div>
+            <FolderItem file={file} getFileUrl={getFileUrl} depth={depth} onPreview={onPreview} />
           ) : (
             <FileItem file={file} getFileUrl={getFileUrl} onPreview={onPreview} />
           )}
         </div>
       ))}
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       可折叠文件夹项                                       │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function FolderItem({
+  file,
+  getFileUrl,
+  depth,
+  onPreview,
+}: {
+  file: TaskFile
+  getFileUrl: (path: string) => string
+  depth: number
+  onPreview: (file: TaskFile) => void
+}) {
+  const [isExpanded, setIsExpanded] = useState(true)
+
+  return (
+    <div>
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="flex items-center gap-2 py-1.5 text-sm text-muted-foreground hover:text-foreground w-full text-left transition-colors"
+      >
+        <svg
+          className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+        </svg>
+        <span>{file.name}</span>
+      </button>
+      {isExpanded && file.children && (
+        <FileTree
+          files={file.children}
+          getFileUrl={getFileUrl}
+          depth={depth + 1}
+          onPreview={onPreview}
+        />
+      )}
     </div>
   )
 }
@@ -406,6 +506,20 @@ function countFiles(files: TaskFile[]): number {
     }
   }
   return count
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       递归查找第一个文件                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function findFirstFile(files: TaskFile[]): TaskFile | null {
+  for (const file of files) {
+    if (file.type === 'file') return file
+    if (file.children) {
+      const found = findFirstFile(file.children)
+      if (found) return found
+    }
+  }
+  return null
 }
 
 function getFileIcon(ext: string): string {

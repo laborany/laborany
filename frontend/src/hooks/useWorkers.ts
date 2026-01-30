@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Skill, DigitalWorker } from '../types'
 import { filterDisplayWorkers } from '../types'
+import { API_BASE } from '../config'
 
 interface UseWorkersResult {
   workers: DigitalWorker[]
@@ -26,7 +27,7 @@ export function useWorkers(): UseWorkersResult {
     setError(null)
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch('/api/skill/list', {
+      const res = await fetch(`${API_BASE}/skill/list`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       const data = await res.json()

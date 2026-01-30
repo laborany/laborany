@@ -22,6 +22,7 @@ from src.services.workflow_client import (
     delete_workflow as client_delete_workflow,
     execute_workflow as client_execute_workflow,
     stop_workflow as client_stop_workflow,
+    install_workflow_as_skill as client_install_workflow,
 )
 
 router = APIRouter()
@@ -464,3 +465,26 @@ async def stop_workflow_run(
         await db.commit()
 
     return {"success": success}
+
+
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │                           安装工作流为 Skill                               │
+# └──────────────────────────────────────────────────────────────────────────┘
+@router.post("/{workflow_id}/install")
+async def install_workflow(
+    workflow_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """将工作流安装为独立的 Skill"""
+    # 验证工作流存在
+    workflow = await client_get_workflow(workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="工作流不存在")
+
+    # 调用 Agent Service 安装
+    result = await client_install_workflow(workflow_id)
+    if not result:
+        raise HTTPException(status_code=400, detail="安装失败")
+
+    return {"skillId": result.get("skillId", result.get("id", workflow_id))}

@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import type { ChatMessage } from '../../types'
+import { parseErrorMessage, API_BASE } from '../../config'
 
 const INITIAL_MESSAGE: ChatMessage = {
   role: 'assistant',
@@ -43,7 +44,7 @@ export function CreateSkillChat() {
 
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch('/api/skill/create-chat', {
+      const response = await fetch(`${API_BASE}/skill/create-chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -56,7 +57,7 @@ export function CreateSkillChat() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: '请求失败' }))
-        throw new Error(errorData.error || errorData.detail || `HTTP ${response.status}`)
+        throw new Error(parseErrorMessage(errorData, `HTTP ${response.status}`))
       }
 
       const reader = response.body?.getReader()

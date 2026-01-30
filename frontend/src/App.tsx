@@ -8,6 +8,8 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './hooks/useAuth'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { API_BASE } from './config'
 import SetupPage from './pages/SetupPage'
 import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
@@ -215,7 +217,7 @@ export default function App() {
 
   async function checkSetupStatus() {
     try {
-      const res = await fetch('/api/setup/status')
+      const res = await fetch(`${API_BASE}/setup/status`)
       const data = await res.json()
       setSetupComplete(data.ready)
     } catch {
@@ -243,9 +245,10 @@ export default function App() {
 
   // 正常应用
   return (
-    <AuthProvider>
-      <AppLayout>
-        <Routes>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppLayout>
+          <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route
             path="/"
@@ -330,5 +333,6 @@ export default function App() {
         </Routes>
       </AppLayout>
     </AuthProvider>
+    </ErrorBoundary>
   )
 }

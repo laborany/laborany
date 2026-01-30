@@ -1,32 +1,331 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                         消息列表组件                                       ║
  * ║                                                                          ║
- * ║  渲染对话消息，支持 Markdown、工具调用友好展示                                ║
+ * ║  渲染对话消息，支持 Markdown、工具调用分组展示、可折叠任务组                    ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, useCallback, AnchorHTMLAttributes } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { AgentMessage } from '../../hooks/useAgent'
+import type { AgentMessage } from '../../types'
 
 interface MessageListProps {
   messages: AgentMessage[]
+  isRunning?: boolean
 }
 
-export default function MessageList({ messages }: MessageListProps) {
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           类型定义                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+type ToolWithResult = {
+  message: AgentMessage
+  globalIndex: number
+}
+
+type TaskMessageGroup = {
+  type: 'task'
+  title: string
+  tools: ToolWithResult[]
+  isCompleted: boolean
+}
+
+type OtherMessageGroup = {
+  type: 'other'
+  message: AgentMessage
+}
+
+type MessageGroup = TaskMessageGroup | OtherMessageGroup
+
+export default function MessageList({ messages, isRunning = false }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  if (messages.length === 0) return null
+
+  const groups = groupMessages(messages, isRunning)
+
   return (
-    <div className="space-y-3">
-      {messages.map((msg) => (
-        <MessageItem key={msg.id} message={msg} />
-      ))}
+    <div className="space-y-4">
+      {groups.map((group, index) => {
+        if (group.type === 'task') {
+          return (
+            <TaskGroupComponent
+              key={index}
+              title={group.title}
+              tools={group.tools}
+              isCompleted={group.isCompleted}
+              isRunning={isRunning}
+            />
+          )
+        }
+        return <MessageItem key={index} message={group.message} />
+      })}
       <div ref={bottomRef} />
     </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       消息分组逻辑                                        │
+ * │  将连续的工具调用合并为任务组，文本消息作为任务标题                           │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function groupMessages(messages: AgentMessage[], isRunning: boolean): MessageGroup[] {
+  const groups: MessageGroup[] = []
+  let currentGroup: TaskMessageGroup | null = null
+  let toolGlobalIndex = 0
+  let lastAssistantContent = ''
+
+  const pushCurrentGroup = (completed: boolean) => {
+    if (currentGroup && currentGroup.tools.length > 0) {
+      currentGroup.isCompleted = completed
+      groups.push(currentGroup)
+      currentGroup = null
+    }
+  }
+
+  for (const message of messages) {
+    if (message.type === 'assistant' && message.content) {
+      // 助手文本消息：结束当前工具组，开始新组
+      pushCurrentGroup(true)
+      lastAssistantContent = message.content
+      // 创建新的任务组，等待后续工具调用
+      currentGroup = {
+        type: 'task',
+        title: message.content.slice(0, 80) + (message.content.length > 80 ? '...' : ''),
+        tools: [],
+        isCompleted: false,
+      }
+    } else if (message.type === 'tool') {
+      // 工具调用：添加到当前组
+      if (!currentGroup) {
+        currentGroup = {
+          type: 'task',
+          title: '执行任务',
+          tools: [],
+          isCompleted: false,
+        }
+      }
+      currentGroup.tools.push({ message, globalIndex: toolGlobalIndex++ })
+    } else if (message.type === 'user') {
+      // 用户消息：结束当前组，单独渲染
+      pushCurrentGroup(true)
+      groups.push({ type: 'other', message })
+      lastAssistantContent = ''
+    } else if (message.type === 'error') {
+      pushCurrentGroup(true)
+      groups.push({ type: 'other', message })
+    }
+  }
+
+  // 处理剩余的组
+  if (currentGroup) {
+    if (currentGroup.tools.length > 0) {
+      pushCurrentGroup(!isRunning)
+    } else if (lastAssistantContent) {
+      // 只有文本没有工具调用，作为普通消息渲染
+      groups.push({
+        type: 'other',
+        message: {
+          id: 'text-' + Date.now(),
+          type: 'assistant',
+          content: lastAssistantContent,
+          timestamp: new Date(),
+        },
+      })
+    }
+  }
+
+  return groups
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       任务组组件                                          │
+ * │  显示任务标题 + 可折叠的工具调用列表                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function TaskGroupComponent({
+  title,
+  tools,
+  isCompleted,
+  isRunning,
+}: {
+  title: string
+  tools: ToolWithResult[]
+  isCompleted: boolean
+  isRunning: boolean
+}) {
+  // 运行中展开，完成后折叠
+  const [isExpanded, setIsExpanded] = useState(!isCompleted || isRunning)
+
+  // 任务完成时自动折叠
+  useEffect(() => {
+    if (isCompleted && !isRunning) {
+      setIsExpanded(false)
+    }
+  }, [isCompleted, isRunning])
+
+  return (
+    <div className="min-w-0 space-y-3 animate-in fade-in slide-in-from-bottom-1 duration-200">
+      {/* 任务标题 */}
+      <div className="flex min-w-0 items-start gap-2">
+        {isCompleted ? (
+          <svg className="mt-0.5 w-4 h-4 shrink-0 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ) : (
+          <div className="mt-0.5 flex w-4 h-4 shrink-0 items-center justify-center">
+            <div className="w-2 h-2 animate-pulse rounded-full bg-primary" />
+          </div>
+        )}
+        <span className="text-foreground line-clamp-2 min-w-0 text-sm font-medium break-words">
+          {title}
+        </span>
+      </div>
+
+      {/* 可折叠工具列表 */}
+      {tools.length > 0 && (
+        <div className="min-w-0 overflow-hidden rounded-xl border border-border/40 bg-accent/20">
+          {/* 折叠头部 */}
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="flex w-full cursor-pointer items-center gap-2 px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-accent/30 transition-colors"
+          >
+            <svg
+              className={`w-4 h-4 shrink-0 transition-transform ${!isExpanded ? '-rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+            <span className="flex-1 text-left">
+              {isExpanded ? '隐藏步骤' : `显示 ${tools.length} 个步骤`}
+            </span>
+          </button>
+
+          {/* 工具列表 */}
+          {isExpanded && (
+            <div className="px-2 pb-2 space-y-1">
+              {tools.map(({ message, globalIndex }) => (
+                <ToolItem key={globalIndex} message={message} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       单个工具调用项                                       │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function ToolItem({ message }: { message: AgentMessage }) {
+  const toolName = message.toolName || 'Tool'
+  const description = getToolDescription(toolName, message.toolInput)
+
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+      <ToolIcon name={toolName} />
+      <span className="font-medium">{toolName}</span>
+      {description && (
+        <span className="truncate opacity-70 max-w-md">{description}</span>
+      )}
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       单条消息渲染                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function MessageItem({ message }: { message: AgentMessage }) {
+  const isUser = message.type === 'user'
+  const isError = message.type === 'error'
+
+  // 用户消息
+  if (isUser) {
+    return (
+      <div className="flex justify-end animate-in fade-in slide-in-from-bottom-1 duration-200">
+        <div className="max-w-[85%] rounded-lg bg-primary px-4 py-3 text-primary-foreground">
+          <div className="whitespace-pre-wrap">{message.content}</div>
+        </div>
+      </div>
+    )
+  }
+
+  // 错误消息
+  if (isError) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive animate-in fade-in slide-in-from-bottom-1 duration-200">
+        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>{message.content}</span>
+      </div>
+    )
+  }
+
+  // 助手消息：Markdown 渲染
+  return (
+    <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
+      <div className="rounded-lg bg-card border border-border px-4 py-3">
+        <div className="prose prose-sm max-w-none dark:prose-invert">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              code({ className, children, ...props }) {
+                const isInline = !className
+                return isInline ? (
+                  <code className="px-1 py-0.5 bg-muted rounded text-sm" {...props}>
+                    {children}
+                  </code>
+                ) : (
+                  <code className="block p-3 bg-gray-900 text-gray-100 rounded-lg overflow-x-auto text-sm" {...props}>
+                    {children}
+                  </code>
+                )
+              },
+              pre({ children }) {
+                return <pre className="bg-transparent p-0 m-0">{children}</pre>
+              },
+              a: LinkRenderer,
+            }}
+          >
+            {message.content}
+          </ReactMarkdown>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       链接渲染器                                          │
+ * │  外部链接在新窗口打开，内部链接正常跳转                                       │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function LinkRenderer({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const handleClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!href) return
+
+    // 外部链接：在新窗口打开
+    if (href.startsWith('http://') || href.startsWith('https://')) {
+      e.preventDefault()
+      window.open(href, '_blank', 'noopener,noreferrer')
+    }
+    // 内部链接或锚点：默认行为
+  }, [href])
+
+  return (
+    <a
+      href={href}
+      onClick={handleClick}
+      className="text-primary hover:text-primary/80 underline underline-offset-2 transition-colors"
+      {...props}
+    >
+      {children}
+    </a>
   )
 }
 
@@ -146,84 +445,4 @@ function getToolDescription(name: string, input?: Record<string, unknown>): stri
     default:
       return ''
   }
-}
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           单条消息                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function MessageItem({ message }: { message: AgentMessage }) {
-  const isUser = message.type === 'user'
-  const isTool = message.type === 'tool'
-  const isError = message.type === 'error'
-
-  // 工具调用：简洁的一行展示
-  if (isTool) {
-    const toolName = message.toolName || 'Tool'
-    const description = getToolDescription(toolName, message.toolInput)
-
-    return (
-      <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm text-muted-foreground animate-in fade-in slide-in-from-bottom-1 duration-200">
-        <ToolIcon name={toolName} />
-        <span className="font-medium">{toolName}</span>
-        {description && (
-          <span className="truncate opacity-70 max-w-md">{description}</span>
-        )}
-      </div>
-    )
-  }
-
-  // 用户消息
-  if (isUser) {
-    return (
-      <div className="flex justify-end animate-in fade-in slide-in-from-bottom-1 duration-200">
-        <div className="max-w-[85%] rounded-lg bg-primary px-4 py-3 text-primary-foreground">
-          <div className="whitespace-pre-wrap">{message.content}</div>
-        </div>
-      </div>
-    )
-  }
-
-  // 错误消息
-  if (isError) {
-    return (
-      <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive animate-in fade-in slide-in-from-bottom-1 duration-200">
-        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <span>{message.content}</span>
-      </div>
-    )
-  }
-
-  // 助手消息：Markdown 渲染
-  return (
-    <div className="animate-in fade-in slide-in-from-bottom-1 duration-200">
-      <div className="rounded-lg bg-card border border-border px-4 py-3">
-        <div className="prose prose-sm max-w-none dark:prose-invert">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code({ className, children, ...props }) {
-                const isInline = !className
-                return isInline ? (
-                  <code className="px-1 py-0.5 bg-muted rounded text-sm" {...props}>
-                    {children}
-                  </code>
-                ) : (
-                  <code className="block p-3 bg-gray-900 text-gray-100 rounded-lg overflow-x-auto text-sm" {...props}>
-                    {children}
-                  </code>
-                )
-              },
-              pre({ children }) {
-                return <pre className="bg-transparent p-0 m-0">{children}</pre>
-              },
-            }}
-          >
-            {message.content}
-          </ReactMarkdown>
-        </div>
-      </div>
-    </div>
-  )
 }
