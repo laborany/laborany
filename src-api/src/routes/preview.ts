@@ -5,7 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Hono } from 'hono'
-import { getPreviewManager, isNodeAvailable } from '../services/preview.js'
+import { getPreviewManager, isNodeAvailable, getDiagnosticInfo } from '../services/preview.js'
 
 const preview = new Hono()
 
@@ -88,6 +88,13 @@ preview.get('/status/:taskId', (c) => {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 preview.get('/check', (c) => {
   return c.json({ available: isNodeAvailable() })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       GET /diagnostic - 路径诊断信息                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+preview.get('/diagnostic', (c) => {
+  return c.json(getDiagnosticInfo())
 })
 
 export default preview

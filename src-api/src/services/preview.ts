@@ -205,6 +205,74 @@ export function isNodeAvailable(): boolean {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       诊断信息（用于调试路径问题）                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export interface DiagnosticInfo {
+  platform: string
+  arch: string
+  execPath: string
+  exeDir: string
+  parentDir: string
+  dirname: string
+  cwd: string
+  bundledNode: BundledNode | null
+  candidates: Array<{
+    path: string
+    resolved: string
+    dirExists: boolean
+    nodeExists: boolean
+    npmExists: boolean
+    dirContents: string[]
+  }>
+}
+
+export function getDiagnosticInfo(): DiagnosticInfo {
+  const os = platform()
+  const exeDir = dirname(process.execPath)
+  const parentDir = dirname(exeDir)
+
+  const candidates = [
+    path.join(exeDir, '..', 'cli-bundle'),
+    path.join(parentDir, 'cli-bundle'),
+    path.join(exeDir, 'resources', 'cli-bundle'),
+    path.join(exeDir, '..', 'resources', 'cli-bundle'),
+    path.join(process.cwd(), 'cli-bundle'),
+    path.join(__dirname, '..', '..', 'cli-bundle'),
+    path.join(__dirname, '..', '..', '..', 'cli-bundle'),
+    path.join(exeDir, '..', 'app.asar.unpacked', 'cli-bundle'),
+  ]
+
+  const candidateInfo = candidates.map(bundleDir => {
+    const resolvedDir = path.resolve(bundleDir)
+    const nodeBin = os === 'win32'
+      ? path.join(resolvedDir, 'node.exe')
+      : path.join(resolvedDir, 'node')
+    const npmCli = path.join(resolvedDir, 'deps', 'npm', 'bin', 'npm-cli.js')
+
+    return {
+      path: bundleDir,
+      resolved: resolvedDir,
+      dirExists: fsSync.existsSync(resolvedDir),
+      nodeExists: fsSync.existsSync(nodeBin),
+      npmExists: fsSync.existsSync(npmCli),
+      dirContents: listDir(resolvedDir),
+    }
+  })
+
+  return {
+    platform: os,
+    arch: process.arch,
+    execPath: process.execPath,
+    exeDir,
+    parentDir,
+    dirname: __dirname,
+    cwd: process.cwd(),
+    bundledNode: getBundledNodePath(),
+    candidates: candidateInfo,
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       PreviewManager 类                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export class PreviewManager {
