@@ -443,15 +443,53 @@ export class PreviewManager {
     // vite.config.js
     await fs.writeFile(path.join(workDir, 'vite.config.js'), generateViteConfig(port))
 
-    // index.html
+    // index.html - 确保始终存在
     const indexPath = path.join(workDir, 'index.html')
     if (!fsSync.existsSync(indexPath)) {
       const files = await fs.readdir(workDir)
-      const html = files.find(f => f.endsWith('.html'))
-      if (html && html !== 'index.html') {
+      const htmlFiles = files.filter(f => f.endsWith('.html'))
+
+      if (htmlFiles.length > 0) {
+        /* ── 有其他 HTML 文件，创建重定向页面 ── */
+        const html = htmlFiles[0]
         await fs.writeFile(indexPath, `<!DOCTYPE html>
 <html><head><meta http-equiv="refresh" content="0; url='./${html}'"></head>
 <body><p>重定向到 <a href="./${html}">${html}</a>...</p></body></html>`)
+      } else {
+        /* ── 没有 HTML 文件，创建文件列表页面 ── */
+        const previewableExts = ['.js', '.css', '.json', '.txt', '.md', '.svg', '.png', '.jpg', '.gif']
+        const previewFiles = files.filter(f => {
+          const ext = path.extname(f).toLowerCase()
+          return previewableExts.includes(ext) || f.endsWith('.html')
+        })
+
+        const fileLinks = previewFiles.length > 0
+          ? previewFiles.map(f => `<li><a href="./${f}">${f}</a></li>`).join('\n')
+          : '<li>暂无可预览的文件</li>'
+
+        await fs.writeFile(indexPath, `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Preview</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+    h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+    a { color: #0066cc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .hint { color: #666; font-size: 14px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>📁 Live Preview</h1>
+  <p>工作目录中的文件：</p>
+  <ul>${fileLinks}</ul>
+  <p class="hint">提示：创建 index.html 文件后，此页面将自动显示您的内容。</p>
+</body>
+</html>`)
       }
     }
   }
