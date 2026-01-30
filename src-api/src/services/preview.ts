@@ -80,57 +80,87 @@ interface BundledNode {
 
 let cachedBundledNode: BundledNode | null | undefined = undefined
 
+/* ── 列出目录内容（用于调试） ── */
+function listDir(dir: string): string[] {
+  try {
+    if (fsSync.existsSync(dir)) {
+      return fsSync.readdirSync(dir)
+    }
+  } catch { /* ignore */ }
+  return []
+}
+
 function getBundledNodePath(): BundledNode | null {
   if (cachedBundledNode !== undefined) return cachedBundledNode
 
   const os = platform()
   const exeDir = dirname(process.execPath)
+  const parentDir = dirname(exeDir)
 
-  /* ── 候选路径：覆盖生产、开发、Tauri、Electron 多种环境 ── */
-  const candidates = [
-    // Tauri 生产环境路径
-    // macOS: /Applications/LaborAny.app/Contents/Resources/cli-bundle
-    // Windows: C:\Program Files\LaborAny\resources\cli-bundle
-    path.join(exeDir, '..', 'Resources', 'cli-bundle'),
-    path.join(exeDir, 'resources', 'cli-bundle'),
-    path.join(exeDir, '..', 'resources', 'cli-bundle'),
-
-    // 生产环境路径（打包后）
-    path.join(exeDir, '..', 'cli-bundle'),
-    path.join(exeDir, 'cli-bundle'),
-
-    // 开发环境路径
-    path.join(__dirname, '..', '..', 'cli-bundle'),
-    path.join(__dirname, '..', '..', '..', 'cli-bundle'),
-    path.join(process.cwd(), 'cli-bundle'),
-
-    // Electron 环境路径
-    path.join(exeDir, '..', 'app.asar.unpacked', 'cli-bundle'),
-  ]
-
-  console.log('[Preview] 检测 Node.js 路径...')
+  console.log('[Preview] ========== 检测 Node.js 路径 ==========')
+  console.log('[Preview] platform:', os)
+  console.log('[Preview] process.execPath:', process.execPath)
   console.log('[Preview] exeDir:', exeDir)
+  console.log('[Preview] parentDir:', parentDir)
   console.log('[Preview] __dirname:', __dirname)
   console.log('[Preview] cwd:', process.cwd())
 
-  for (const bundleDir of candidates) {
-    const nodeBin = os === 'win32'
-      ? path.join(bundleDir, 'node.exe')
-      : path.join(bundleDir, 'node')
-    const npmCli = path.join(bundleDir, 'deps', 'npm', 'bin', 'npm-cli.js')
+  /* ── 列出关键目录内容 ── */
+  console.log('[Preview] exeDir 内容:', listDir(exeDir))
+  console.log('[Preview] parentDir 内容:', listDir(parentDir))
 
+  /* ── 候选路径：覆盖 Electron 打包环境 ── */
+  const candidates = [
+    /* ═══════════════════════════════════════════════════════════════════════
+     *  Electron 生产环境（最重要）
+     *  API 运行位置: resources/api/laborany-api.exe
+     *  cli-bundle 位置: resources/cli-bundle/
+     * ═══════════════════════════════════════════════════════════════════════ */
+    path.join(exeDir, '..', 'cli-bundle'),
+
+    /* ── macOS Electron 路径 ── */
+    path.join(exeDir, '..', 'Resources', 'cli-bundle'),
+    path.join(parentDir, 'cli-bundle'),
+
+    /* ── Windows/Linux Electron 路径 ── */
+    path.join(exeDir, 'resources', 'cli-bundle'),
+    path.join(exeDir, '..', 'resources', 'cli-bundle'),
+
+    /* ── 开发环境路径 ── */
+    path.join(process.cwd(), 'cli-bundle'),
+    path.join(__dirname, '..', '..', 'cli-bundle'),
+    path.join(__dirname, '..', '..', '..', 'cli-bundle'),
+
+    /* ── Electron asar.unpacked 路径 ── */
+    path.join(exeDir, '..', 'app.asar.unpacked', 'cli-bundle'),
+  ]
+
+  for (const bundleDir of candidates) {
+    const resolvedDir = path.resolve(bundleDir)
+    const nodeBin = os === 'win32'
+      ? path.join(resolvedDir, 'node.exe')
+      : path.join(resolvedDir, 'node')
+    const npmCli = path.join(resolvedDir, 'deps', 'npm', 'bin', 'npm-cli.js')
+
+    const dirExists = fsSync.existsSync(resolvedDir)
     const nodeExists = fsSync.existsSync(nodeBin)
     const npmExists = fsSync.existsSync(npmCli)
-    console.log(`[Preview] 检查 ${bundleDir}: node=${nodeExists}, npm=${npmExists}`)
+
+    console.log(`[Preview] 检查: ${resolvedDir}`)
+    console.log(`[Preview]   目录存在: ${dirExists}, node: ${nodeExists}, npm: ${npmExists}`)
+
+    if (dirExists) {
+      console.log(`[Preview]   目录内容: ${listDir(resolvedDir).join(', ')}`)
+    }
 
     if (nodeExists && npmExists) {
-      console.log(`[Preview] 找到内置 Node.js: ${bundleDir}`)
+      console.log(`[Preview] ✓ 找到内置 Node.js: ${resolvedDir}`)
       cachedBundledNode = { node: nodeBin, npm: npmCli }
       return cachedBundledNode
     }
   }
 
-  console.log('[Preview] 未找到内置 Node.js，将回退到系统 Node.js')
+  console.log('[Preview] ✗ 未找到内置 Node.js，将回退到系统 Node.js')
   cachedBundledNode = null
   return null
 }
