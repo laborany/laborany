@@ -36,6 +36,10 @@ const API_BASE = '/api/preview'
 const POLL_INTERVAL = 2000
 const MAX_POLL_COUNT = 90  // 最大轮询次数 (90 * 2s = 3 分钟)
 
+/* ── 调试用：生成唯一调用 ID ── */
+let callCounter = 0
+const genCallId = () => `call-${++callCounter}-${Date.now()}`
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           Hook 实现                                       │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -48,6 +52,8 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
   const pollCountRef = useRef(0)
   const taskIdRef = useRef(taskId)
   const isStartingRef = useRef(false)  // 同步标记，防止重复启动
+
+  console.log('[useVitePreview] Hook 初始化/更新, taskId:', taskId, 'status:', status)
 
   // 同步 taskId
   useEffect(() => {
@@ -68,6 +74,7 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
    * 更新状态
    * ──────────────────────────────────────────────────────────────────────── */
   const updateFromResponse = useCallback((data: ApiResponse) => {
+    console.log('[useVitePreview] API 响应:', JSON.stringify(data))
     setStatus(data.status === 'stopped' ? 'idle' : data.status)
     setPreviewUrl(data.url || null)
     setError(data.error || null)
@@ -111,13 +118,29 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
    * 启动预览
    * ──────────────────────────────────────────────────────────────────────── */
   const startPreview = useCallback(async (workDir: string) => {
+    const callId = genCallId()
+    console.log(`[useVitePreview][${callId}] ========== startPreview 被调用 ==========`)
+    console.log(`[useVitePreview][${callId}] workDir: ${workDir}`)
+    console.log(`[useVitePreview][${callId}] taskIdRef.current: ${taskIdRef.current}`)
+    console.log(`[useVitePreview][${callId}] isStartingRef.current: ${isStartingRef.current}`)
+    console.log(`[useVitePreview][${callId}] status (from useState): ${status}`)
+
     /* ── 防止重复启动（使用 ref 同步检查） ── */
-    if (isStartingRef.current || status === 'starting' || status === 'running') {
-      console.log('[useVitePreview] 预览已在运行或启动中，跳过重复调用')
+    if (isStartingRef.current) {
+      console.log(`[useVitePreview][${callId}] ❌ 跳过: isStartingRef.current = true`)
+      return
+    }
+    if (status === 'starting') {
+      console.log(`[useVitePreview][${callId}] ❌ 跳过: status = 'starting'`)
+      return
+    }
+    if (status === 'running') {
+      console.log(`[useVitePreview][${callId}] ❌ 跳过: status = 'running'`)
       return
     }
 
     if (!taskIdRef.current) {
+      console.log(`[useVitePreview][${callId}] ❌ 错误: 缺少 taskId`)
       setError('缺少 taskId')
       setStatus('error')
       return
@@ -125,6 +148,7 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
 
     // 立即设置标记，防止并发调用
     isStartingRef.current = true
+    console.log(`[useVitePreview][${callId}] ✓ 设置 isStartingRef = true，准备发起请求`)
 
     // 清理现有轮询
     if (pollRef.current) {
@@ -134,22 +158,30 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
 
     setStatus('starting')
     setError(null)
+    console.log(`[useVitePreview][${callId}] 状态设置为 starting`)
 
     try {
-      console.log('[useVitePreview] 启动预览:', taskIdRef.current)
+      const url = `${API_BASE}/start`
+      const body = { taskId: taskIdRef.current, workDir }
+      console.log(`[useVitePreview][${callId}] 发送 POST ${url}`)
+      console.log(`[useVitePreview][${callId}] 请求体:`, JSON.stringify(body))
 
-      const res = await fetch(`${API_BASE}/start`, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId: taskIdRef.current, workDir }),
+        body: JSON.stringify(body),
       })
+
+      console.log(`[useVitePreview][${callId}] 响应状态: ${res.status} ${res.statusText}`)
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
+        console.log(`[useVitePreview][${callId}] ❌ 响应错误:`, err)
         throw new Error(err.error || `HTTP ${res.status}`)
       }
 
       const data: ApiResponse = await res.json()
+      console.log(`[useVitePreview][${callId}] ✓ 响应数据:`, JSON.stringify(data))
       updateFromResponse(data)
 
       // 非 starting 状态，重置标记

@@ -217,12 +217,21 @@ export function SessionDetailPage() {
 
   /* ── Live Preview 控制 ── */
   const handleToggleLivePreview = useCallback(async () => {
-    if (!session?.work_dir) return
+    console.log('[HistoryPage] handleToggleLivePreview 被调用')
+    console.log('[HistoryPage] session?.work_dir:', session?.work_dir)
+    console.log('[HistoryPage] preview.status:', preview.status)
+
+    if (!session?.work_dir) {
+      console.log('[HistoryPage] ❌ 没有 work_dir，退出')
+      return
+    }
 
     if (preview.status === 'running') {
+      console.log('[HistoryPage] 当前 running，调用 stopPreview')
       await preview.stopPreview()
       setShowLivePreview(false)
     } else {
+      console.log('[HistoryPage] 当前非 running，调用 startPreview')
       await preview.startPreview(session.work_dir)
       setShowLivePreview(true)
     }
