@@ -110,6 +110,12 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
    * 启动预览
    * ──────────────────────────────────────────────────────────────────────── */
   const startPreview = useCallback(async (workDir: string) => {
+    /* ── 防止重复启动 ── */
+    if (status === 'starting' || status === 'running') {
+      console.log('[useVitePreview] 预览已在运行或启动中，跳过重复调用')
+      return
+    }
+
     if (!taskIdRef.current) {
       setError('缺少 taskId')
       setStatus('error')
@@ -174,7 +180,7 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
       setStatus('error')
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [updateFromResponse])
+  }, [updateFromResponse, status])
 
   /* ────────────────────────────────────────────────────────────────────────
    * 停止预览

@@ -98,7 +98,7 @@ function getClaudeMdPath(): string | null {
   return findClaudeMd()
 }
 
-function getTaskDir(sessionId: string): string {
+export function getTaskDir(sessionId: string): string {
   return join(getTasksBaseDir(), sessionId)
 }
 

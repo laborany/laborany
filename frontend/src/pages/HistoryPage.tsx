@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useAgent } from '../hooks/useAgent'
+import { useVitePreview } from '../hooks/useVitePreview'
 import type { TaskFile, Session, SessionDetail } from '../types'
 import { API_BASE } from '../config'
 import ChatInput from '../components/shared/ChatInput'
@@ -146,9 +147,13 @@ export function SessionDetailPage() {
   const [taskFiles, setTaskFiles] = useState<TaskFile[]>([])
   const [showFiles, setShowFiles] = useState(false)
   const [previewArtifact, setPreviewArtifact] = useState<FileArtifact | null>(null)
+  const [showLivePreview, setShowLivePreview] = useState(false)
 
   // 用于继续对话的 agent hook
   const agent = useAgent(session?.skill_id || '')
+
+  // Live Preview hook
+  const preview = useVitePreview(sessionId || null)
 
   useEffect(() => {
     if (sessionId) {
@@ -209,6 +214,19 @@ export function SessionDetailPage() {
     },
     [getFileUrl],
   )
+
+  /* ── Live Preview 控制 ── */
+  const handleToggleLivePreview = useCallback(async () => {
+    if (!session?.work_dir) return
+
+    if (preview.status === 'running') {
+      await preview.stopPreview()
+      setShowLivePreview(false)
+    } else {
+      await preview.startPreview(session.work_dir)
+      setShowLivePreview(true)
+    }
+  }, [session?.work_dir, preview])
 
   // 将历史消息转换为 MessageList 需要的格式
   function convertMessages() {
@@ -327,6 +345,27 @@ export function SessionDetailPage() {
           </span>
         </div>
         <div className="flex items-center gap-4">
+          {/* Live Preview 按钮 */}
+          {session.work_dir && (
+            <button
+              onClick={handleToggleLivePreview}
+              disabled={preview.status === 'starting'}
+              className={`text-sm flex items-center gap-1.5 transition-colors ${
+                preview.status === 'running'
+                  ? 'text-green-500 hover:text-green-600'
+                  : preview.status === 'starting'
+                  ? 'text-yellow-500'
+                  : 'text-primary hover:text-primary/80'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              {preview.status === 'running' ? 'Live Preview' :
+               preview.status === 'starting' ? '启动中...' : 'Live Preview'}
+            </button>
+          )}
           {taskFiles.length > 0 && (
             <button
               onClick={() => setShowFiles(!showFiles)}
@@ -352,6 +391,39 @@ export function SessionDetailPage() {
           onClose={() => setShowFiles(false)}
           onPreview={openPreview}
         />
+      )}
+
+      {/* Live Preview 面板 */}
+      {showLivePreview && preview.status === 'running' && preview.previewUrl && (
+        <div className="mb-4 card overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <h3 className="font-medium text-foreground">Live Preview</h3>
+              <a
+                href={preview.previewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-primary hover:underline"
+              >
+                {preview.previewUrl}
+              </a>
+            </div>
+            <button
+              onClick={() => setShowLivePreview(false)}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <iframe
+            src={preview.previewUrl}
+            className="w-full h-96 border-0"
+            title="Live Preview"
+          />
+        </div>
       )}
 
       {/* 预览 Modal */}

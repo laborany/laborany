@@ -47,6 +47,7 @@ export interface Session {
 
 export interface SessionDetail extends Session {
   messages: HistoryMessage[]
+  work_dir?: string  // 工作目录，用于 Live Preview
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

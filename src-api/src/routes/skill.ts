@@ -251,11 +251,14 @@ skill.post('/execute', async (c) => {
   const abortController = new AbortController()
   sessionManager.register(sessionId, abortController)
 
+  // 获取工作目录
+  const workDir = ensureTaskDir(sessionId)
+
   // 保存会话到数据库（新会话）
   if (!existingSessionId) {
     dbHelper.run(
-      `INSERT INTO sessions (id, user_id, skill_id, query, status) VALUES (?, ?, ?, ?, ?)`,
-      [sessionId, 'default', skillId, query, 'running']
+      `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir) VALUES (?, ?, ?, ?, ?, ?)`,
+      [sessionId, 'default', skillId, query, 'running', workDir]
     )
     // 保存用户消息
     dbHelper.run(

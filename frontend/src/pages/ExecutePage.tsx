@@ -128,7 +128,7 @@ export default function ExecutePage() {
         </div>
         <div className="flex items-center gap-3">
           {/* Live Preview 按钮 */}
-          {workDir && taskFiles.length > 0 && (
+          {workDir && (
             <Tooltip content="在浏览器中实时预览" side="bottom">
               <button
                 onClick={() => setShowLivePreview(!showLivePreview)}

@@ -86,12 +86,27 @@ function getBundledNodePath(): BundledNode | null {
   const os = platform()
   const exeDir = dirname(process.execPath)
 
+  /* ── 候选路径：覆盖生产、开发、Electron 多种环境 ── */
   const candidates = [
+    // 生产环境路径（打包后）
     path.join(exeDir, '..', 'cli-bundle'),
     path.join(exeDir, '..', 'resources', 'cli-bundle'),
     path.join(exeDir, 'resources', 'cli-bundle'),
+
+    // 开发环境路径
     path.join(__dirname, '..', '..', 'cli-bundle'),
+    path.join(__dirname, '..', '..', '..', 'cli-bundle'),
+    path.join(process.cwd(), 'cli-bundle'),
+
+    // Electron 环境路径（macOS / Windows）
+    path.join(exeDir, '..', 'app.asar.unpacked', 'cli-bundle'),
+    path.join(exeDir, '..', 'Resources', 'cli-bundle'),
   ]
+
+  console.log('[Preview] 检测 Node.js 路径...')
+  console.log('[Preview] exeDir:', exeDir)
+  console.log('[Preview] __dirname:', __dirname)
+  console.log('[Preview] cwd:', process.cwd())
 
   for (const bundleDir of candidates) {
     const nodeBin = os === 'win32'
@@ -99,13 +114,18 @@ function getBundledNodePath(): BundledNode | null {
       : path.join(bundleDir, 'node')
     const npmCli = path.join(bundleDir, 'deps', 'npm', 'bin', 'npm-cli.js')
 
-    if (fsSync.existsSync(nodeBin) && fsSync.existsSync(npmCli)) {
+    const nodeExists = fsSync.existsSync(nodeBin)
+    const npmExists = fsSync.existsSync(npmCli)
+    console.log(`[Preview] 检查 ${bundleDir}: node=${nodeExists}, npm=${npmExists}`)
+
+    if (nodeExists && npmExists) {
       console.log(`[Preview] 找到内置 Node.js: ${bundleDir}`)
       cachedBundledNode = { node: nodeBin, npm: npmCli }
       return cachedBundledNode
     }
   }
 
+  console.log('[Preview] 未找到内置 Node.js，将回退到系统 Node.js')
   cachedBundledNode = null
   return null
 }
