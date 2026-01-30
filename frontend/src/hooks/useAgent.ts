@@ -16,6 +16,7 @@ export interface AgentMessage {
   type: 'user' | 'assistant' | 'tool' | 'error'
   content: string
   toolName?: string
+  toolInput?: Record<string, unknown>  // 原始工具输入
   timestamp: Date
 }
 
@@ -214,8 +215,9 @@ export function useAgent(skillId: string) {
             {
               id: crypto.randomUUID(),
               type: 'tool',
-              content: JSON.stringify(event.toolInput, null, 2),
+              content: '',  // 不再存储 JSON 字符串
               toolName: event.toolName as string,
+              toolInput: event.toolInput as Record<string, unknown>,
               timestamp: new Date(),
             },
           ],
