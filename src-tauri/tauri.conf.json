@@ -37,6 +37,8 @@
     "macOS": {
       "entitlements": "entitlements.plist"
     },
-    "resources": []
+    "resources": [
+      "../cli-bundle"
+    ]
   }
 }

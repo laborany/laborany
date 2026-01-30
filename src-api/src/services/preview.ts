@@ -86,21 +86,26 @@ function getBundledNodePath(): BundledNode | null {
   const os = platform()
   const exeDir = dirname(process.execPath)
 
-  /* ── 候选路径：覆盖生产、开发、Electron 多种环境 ── */
+  /* ── 候选路径：覆盖生产、开发、Tauri、Electron 多种环境 ── */
   const candidates = [
+    // Tauri 生产环境路径
+    // macOS: /Applications/LaborAny.app/Contents/Resources/cli-bundle
+    // Windows: C:\Program Files\LaborAny\resources\cli-bundle
+    path.join(exeDir, '..', 'Resources', 'cli-bundle'),
+    path.join(exeDir, 'resources', 'cli-bundle'),
+    path.join(exeDir, '..', 'resources', 'cli-bundle'),
+
     // 生产环境路径（打包后）
     path.join(exeDir, '..', 'cli-bundle'),
-    path.join(exeDir, '..', 'resources', 'cli-bundle'),
-    path.join(exeDir, 'resources', 'cli-bundle'),
+    path.join(exeDir, 'cli-bundle'),
 
     // 开发环境路径
     path.join(__dirname, '..', '..', 'cli-bundle'),
     path.join(__dirname, '..', '..', '..', 'cli-bundle'),
     path.join(process.cwd(), 'cli-bundle'),
 
-    // Electron 环境路径（macOS / Windows）
+    // Electron 环境路径
     path.join(exeDir, '..', 'app.asar.unpacked', 'cli-bundle'),
-    path.join(exeDir, '..', 'Resources', 'cli-bundle'),
   ]
 
   console.log('[Preview] 检测 Node.js 路径...')
