@@ -2,13 +2,15 @@
  * ║                       Live Preview 服务                                   ║
  * ║                                                                          ║
  * ║  管理 Vite 开发服务器实例，支持 HMR 热更新预览                               ║
- * ║  前置条件：系统需安装 Node.js                                              ║
+ * ║  优先使用内置 Node.js，无需系统安装                                         ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { execSync, spawn, type ChildProcess } from 'child_process'
 import * as fs from 'fs/promises'
 import * as fsSync from 'fs'
 import * as path from 'path'
+import { platform } from 'os'
+import { dirname } from 'path'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           配置常量                                        │
@@ -68,9 +70,51 @@ const generateViteConfig = (port: number): string => `export default {
 }`
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       Node.js 检测                                        │
+ * │                       内置 Node.js 路径检测                               │
+ * │  优先使用打包的 Node.js，避免依赖系统安装                                  │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+interface BundledNode {
+  node: string
+  npm: string
+}
+
+let cachedBundledNode: BundledNode | null | undefined = undefined
+
+function getBundledNodePath(): BundledNode | null {
+  if (cachedBundledNode !== undefined) return cachedBundledNode
+
+  const os = platform()
+  const exeDir = dirname(process.execPath)
+
+  const candidates = [
+    path.join(exeDir, '..', 'cli-bundle'),
+    path.join(exeDir, '..', 'resources', 'cli-bundle'),
+    path.join(exeDir, 'resources', 'cli-bundle'),
+    path.join(__dirname, '..', '..', 'cli-bundle'),
+  ]
+
+  for (const bundleDir of candidates) {
+    const nodeBin = os === 'win32'
+      ? path.join(bundleDir, 'node.exe')
+      : path.join(bundleDir, 'node')
+    const npmCli = path.join(bundleDir, 'deps', 'npm', 'bin', 'npm-cli.js')
+
+    if (fsSync.existsSync(nodeBin) && fsSync.existsSync(npmCli)) {
+      console.log(`[Preview] 找到内置 Node.js: ${bundleDir}`)
+      cachedBundledNode = { node: nodeBin, npm: npmCli }
+      return cachedBundledNode
+    }
+  }
+
+  cachedBundledNode = null
+  return null
+}
+
 export function isNodeAvailable(): boolean {
+  // 优先检查内置 Node.js
+  if (getBundledNodePath()) return true
+
+  // 回退到系统 Node.js
   try {
     execSync('node --version', { stdio: 'pipe' })
     execSync('npm --version', { stdio: 'pipe' })
@@ -190,15 +234,26 @@ export class PreviewManager {
       await this.runNpmInstall(workDir)
     }
 
-    // 启动 Vite
+    // 启动 Vite（优先使用内置 Node.js）
     const viteCli = path.join(workDir, 'node_modules', 'vite', 'bin', 'vite.js')
-    const [cmd, args] = fsSync.existsSync(viteCli)
-      ? ['node', [viteCli]]
-      : ['npx', ['vite']]
+    const bundled = getBundledNodePath()
+
+    let cmd: string
+    let args: string[]
+    if (fsSync.existsSync(viteCli) && bundled) {
+      cmd = bundled.node
+      args = [viteCli]
+    } else if (fsSync.existsSync(viteCli)) {
+      cmd = 'node'
+      args = [viteCli]
+    } else {
+      cmd = 'npx'
+      args = ['vite']
+    }
 
     const proc = spawn(cmd, args, {
       cwd: workDir,
-      shell: true,
+      shell: !bundled,
       stdio: 'pipe',
       env: { ...process.env, FORCE_COLOR: '0' },
     })
@@ -239,11 +294,18 @@ export class PreviewManager {
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   * 私有方法：运行 npm install
+   * 私有方法：运行 npm install（优先使用内置 Node.js）
    * ──────────────────────────────────────────────────────────────────────── */
   private runNpmInstall(workDir: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const proc = spawn('npm', ['install'], { cwd: workDir, shell: true, stdio: 'pipe' })
+      const bundled = getBundledNodePath()
+
+      let proc
+      if (bundled) {
+        proc = spawn(bundled.node, [bundled.npm, 'install'], { cwd: workDir, stdio: 'pipe' })
+      } else {
+        proc = spawn('npm', ['install'], { cwd: workDir, shell: true, stdio: 'pipe' })
+      }
       let stderr = ''
 
       proc.stdout?.on('data', d => console.log(`[Preview:npm] ${d.toString().trim()}`))

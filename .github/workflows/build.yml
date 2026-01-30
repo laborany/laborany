@@ -37,6 +37,7 @@ jobs:
         with:
           name: LaborAny-Windows
           path: release/*Setup*.exe
+          retention-days: 3
 
   # ╔══════════════════════════════════════════════════════════════════════════╗
   # ║                         macOS 构建 (Intel x64)                           ║
@@ -75,6 +76,7 @@ jobs:
         with:
           name: LaborAny-Mac-x64
           path: release/*.dmg
+          retention-days: 3
 
   # ╔══════════════════════════════════════════════════════════════════════════╗
   # ║                         macOS 构建 (Apple Silicon arm64)                 ║
@@ -113,6 +115,7 @@ jobs:
         with:
           name: LaborAny-Mac-arm64
           path: release/*.dmg
+          retention-days: 3
 
   # ╔══════════════════════════════════════════════════════════════════════════╗
   # ║                         Linux 构建                                        ║
@@ -153,6 +156,7 @@ jobs:
           path: |
             release/*.AppImage
             release/*.deb
+          retention-days: 3
 
   # ╔══════════════════════════════════════════════════════════════════════════╗
   # ║                         发布 Release                                      ║

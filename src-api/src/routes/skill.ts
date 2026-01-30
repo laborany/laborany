@@ -226,18 +226,26 @@ skill.post('/execute', async (c) => {
   const sessionId = existingSessionId || uuid()
   
   // 保存上传的文件
+  const uploadedFilePaths: string[] = []
   if (files.length > 0) {
     try {
       const taskDir = ensureTaskDir(sessionId)
       for (const file of files) {
         const arrayBuffer = await file.arrayBuffer()
-        await writeFile(join(taskDir, file.name), Buffer.from(arrayBuffer))
+        const filePath = join(taskDir, file.name)
+        await writeFile(filePath, Buffer.from(arrayBuffer))
+        uploadedFilePaths.push(filePath)
       }
     } catch (err) {
       console.error('保存文件失败:', err)
-      // 继续执行，不要因为文件保存失败而完全中断（或者应该中断？）
-      // 这里的选择是继续，但记录错误
     }
+  }
+
+  // 如果有上传文件，将文件路径信息附加到 query
+  let finalQuery = query
+  if (uploadedFilePaths.length > 0) {
+    const fileList = uploadedFilePaths.map(p => `- ${p}`).join('\n')
+    finalQuery = `${query}\n\n【用户上传的文件】\n${fileList}\n\n请先读取这些文件，然后根据用户的问题进行处理。`
   }
 
   const abortController = new AbortController()
@@ -271,7 +279,7 @@ skill.post('/execute', async (c) => {
     try {
       await executeAgent({
         skill: skillData,
-        query,
+        query: finalQuery,
         sessionId,
         signal: abortController.signal,
         onEvent: async (event) => {
