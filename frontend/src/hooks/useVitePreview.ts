@@ -47,6 +47,7 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollCountRef = useRef(0)
   const taskIdRef = useRef(taskId)
+  const isStartingRef = useRef(false)  // 同步标记，防止重复启动
 
   // 同步 taskId
   useEffect(() => {
@@ -110,8 +111,8 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
    * 启动预览
    * ──────────────────────────────────────────────────────────────────────── */
   const startPreview = useCallback(async (workDir: string) => {
-    /* ── 防止重复启动 ── */
-    if (status === 'starting' || status === 'running') {
+    /* ── 防止重复启动（使用 ref 同步检查） ── */
+    if (isStartingRef.current || status === 'starting' || status === 'running') {
       console.log('[useVitePreview] 预览已在运行或启动中，跳过重复调用')
       return
     }
@@ -121,6 +122,9 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
       setStatus('error')
       return
     }
+
+    // 立即设置标记，防止并发调用
+    isStartingRef.current = true
 
     // 清理现有轮询
     if (pollRef.current) {
@@ -148,6 +152,11 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
       const data: ApiResponse = await res.json()
       updateFromResponse(data)
 
+      // 非 starting 状态，重置标记
+      if (data.status !== 'starting') {
+        isStartingRef.current = false
+      }
+
       // starting 状态开始轮询
       if (data.status === 'starting') {
         pollCountRef.current = 0
@@ -161,6 +170,7 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
             pollRef.current = null
             setStatus('error')
             setError('启动超时，请重试')
+            isStartingRef.current = false
             return
           }
 
@@ -169,6 +179,10 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
             if (statusRes.ok) {
               const statusData: ApiResponse = await statusRes.json()
               updateFromResponse(statusData)
+              // 非 starting 状态，重置标记
+              if (statusData.status !== 'starting') {
+                isStartingRef.current = false
+              }
             }
           } catch (err) {
             console.error('[useVitePreview] 轮询错误:', err)
@@ -179,6 +193,7 @@ export function useVitePreview(taskId: string | null): UseVitePreviewReturn {
       console.error('[useVitePreview] 启动失败:', err)
       setStatus('error')
       setError(err instanceof Error ? err.message : String(err))
+      isStartingRef.current = false
     }
   }, [updateFromResponse, status])
 

@@ -226,7 +226,7 @@ export function SessionDetailPage() {
       await preview.startPreview(session.work_dir)
       setShowLivePreview(true)
     }
-  }, [session?.work_dir, preview])
+  }, [session?.work_dir, preview.status, preview.startPreview, preview.stopPreview])
 
   // 将历史消息转换为 MessageList 需要的格式
   function convertMessages() {
