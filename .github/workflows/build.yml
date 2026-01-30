@@ -218,18 +218,24 @@ jobs:
         run: |
           # ═════════════════════════════════════════════════════════════════════
           #  删除旧 release 中的所有 assets，避免上传同名文件冲突
-          #  ═════════════════════════════════════════════════════════════════════
-          echo "Checking release tag: $GITHUB_REF"
+          # ═════════════════════════════════════════════════════════════════════
+
+          # 从 refs/tags/v0.2.8 提取 tag 名称 v0.2.8
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          echo "Tag name: $TAG_NAME"
 
           # 尝试获取 release 的 asset 列表，如果 release 不存在则跳过
-          ASSETS=$(gh release view "$GITHUB_REF" --json assets -q '.assets[] | .name' 2>/dev/null || true)
+          ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets[].name' 2>/dev/null || true)
 
           if [ -n "$ASSETS" ]; then
-            echo "Deleting old assets..."
+            echo "Found existing assets, deleting all..."
             echo "$ASSETS" | while IFS= read -r asset; do
-              echo "Deleting: $asset"
-              gh release delete-asset "$GITHUB_REF" "$asset" || true
+              if [ -n "$asset" ]; then
+                echo "Deleting: $asset"
+                gh release delete-asset "$TAG_NAME" "$asset" --yes || true
+              fi
             done
+            echo "All old assets deleted"
           else
             echo "No existing assets found (or release does not exist yet)"
           fi
