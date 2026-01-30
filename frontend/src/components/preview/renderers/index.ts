@@ -1,49 +1,27 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                       Preview 模块导出入口                                ║
+ * ║                       渲染器模块导出入口                                   ║
  * ║                                                                          ║
  * ║  设计哲学：                                                               ║
- * ║  1. 统一导出，让消费者按需引入                                              ║
- * ║  2. 组件、渲染器、工具函数、类型分层导出                                     ║
+ * ║  1. 按类型分组：document、media、text                                      ║
+ * ║  2. 统一导出，让消费者按需引入                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           主组件                                          │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-export { ArtifactPreview } from './ArtifactPreview'
-export { ArtifactPreviewCore } from './ArtifactPreviewCore'
-export { PreviewModal } from './PreviewModal'
-export { VitePreview } from './VitePreview'
+ * │                           文档类渲染器                                    │
+ * └───────────────────────────────��──────────────────────────────────────────┘ */
+export { PdfRenderer, DocxRenderer, ExcelRenderer, PptxRenderer } from './document'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           渲染器（供高级用法）                              │
+ * │                           媒体类渲染器                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export {
-  CodeRenderer,
-  MarkdownRenderer,
-  ImageRenderer,
-  HtmlRenderer,
-  PdfRenderer,
-  AudioRenderer,
-  VideoRenderer,
-  ExcelRenderer,
-  DocxRenderer,
-  PptxRenderer,
-  FontRenderer,
-  FallbackRenderer,
-} from './renderers'
+export { ImageRenderer, AudioRenderer, VideoRenderer, FontRenderer } from './media'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           辅助组件                                        │
+ * │                           文本类渲染器                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export { FileTooLarge } from './FileTooLarge'
+export { CodeRenderer, MarkdownRenderer, HtmlRenderer } from './text'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           工具函数                                        │
+ * │                           回退渲染器                                      │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export { getExt, getCategory, getLang, isPreviewable, formatSize, getFileIcon, openFileExternal } from './utils'
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           类型                                            │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-export type { FileArtifact, FileCategory, PreviewProps, RendererProps, PptxSlide } from './types'
-export { MAX_PREVIEW_SIZE } from './types'
+export { FallbackRenderer } from './FallbackRenderer'

@@ -8,8 +8,8 @@ import { useState, useEffect } from 'react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
-import type { RendererProps } from '../types'
-import { getLang } from '../utils'
+import type { RendererProps } from '../../types'
+import { getLang } from '../../utils'
 
 export function CodeRenderer({ artifact }: RendererProps) {
   const [content, setContent] = useState<string>('')

@@ -91,7 +91,7 @@ export default function ExecutePage() {
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                       自动展开预览面板                                    │
-   * │  检测到文件产出或文件操作时，自动打开侧边栏并预览第一个文件                   │
+   * │  检测到文件产出或文件操作时，自动打开侧边栏并预览第一个可预览文件              │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   useEffect(() => {
     if (hasAutoExpandedRef.current) return
@@ -106,7 +106,7 @@ export default function ExecutePage() {
       hasAutoExpandedRef.current = true
       // 自动预览第一个可预览的文件
       if (taskFiles.length > 0) {
-        const firstFile = findFirstFile(taskFiles)
+        const firstFile = findFirstPreviewableFile(taskFiles)
         if (firstFile) openPreview(firstFile)
       }
     }
@@ -163,6 +163,20 @@ export default function ExecutePage() {
               </button>
             </Tooltip>
           )}
+          {/* 预览按钮：有可预览文件时显示 */}
+          {!previewArtifact && taskFiles.length > 0 && (() => {
+            const firstFile = findFirstPreviewableFile(taskFiles)
+            return firstFile ? (
+              <Tooltip content="预览第一个文件" side="bottom">
+                <button
+                  onClick={() => openPreview(firstFile)}
+                  className="text-sm text-primary hover:text-primary/80 flex items-center gap-1.5 transition-colors"
+                >
+                  👁️ 预览
+                </button>
+              </Tooltip>
+            ) : null
+          })()}
         </div>
       </div>
 
@@ -276,6 +290,10 @@ export default function ExecutePage() {
               onClick={() => {
                 clear()
                 setShowClearDialog(false)
+                setPreviewArtifact(null)
+                setShowFiles(false)
+                setShowLivePreview(false)
+                hasAutoExpandedRef.current = false  // 重置自动展开标记
               }}
             >
               确认清空
@@ -509,13 +527,13 @@ function countFiles(files: TaskFile[]): number {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       递归查找第一个文件                                   │
+ * │                       递归查找第一个可预览文件                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function findFirstFile(files: TaskFile[]): TaskFile | null {
+function findFirstPreviewableFile(files: TaskFile[]): TaskFile | null {
   for (const file of files) {
-    if (file.type === 'file') return file
+    if (file.type === 'file' && isPreviewable(file.ext || '')) return file
     if (file.children) {
-      const found = findFirstFile(file.children)
+      const found = findFirstPreviewableFile(file.children)
       if (found) return found
     }
   }

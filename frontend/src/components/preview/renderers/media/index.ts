@@ -1,19 +1,10 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                         PDF 预览渲染器                                    ║
+ * ║                       媒体类渲染器导出入口                                 ║
  * ║                                                                          ║
- * ║  使用浏览器原生 PDF 渲染能力，通过 iframe 嵌入                              ║
+ * ║  包含：图片、音频、视频、字体                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import type { RendererProps } from '../types'
-
-export function PdfRenderer({ artifact }: RendererProps) {
-  return (
-    <div className="h-full w-full">
-      <iframe
-        src={artifact.url}
-        title={artifact.name}
-        className="h-full w-full border-0"
-      />
-    </div>
-  )
-}
+export { ImageRenderer } from './ImageRenderer'
+export { AudioRenderer } from './AudioRenderer'
+export { VideoRenderer } from './VideoRenderer'
+export { FontRenderer } from './FontRenderer'

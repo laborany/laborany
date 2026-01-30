@@ -8,7 +8,7 @@ import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-import type { RendererProps } from '../types'
+import type { RendererProps } from '../../types'
 
 export function MarkdownRenderer({ artifact }: RendererProps) {
   const [content, setContent] = useState<string>('')

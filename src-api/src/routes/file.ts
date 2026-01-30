@@ -12,6 +12,7 @@ import { existsSync, createWriteStream } from 'fs'
 import { homedir } from 'os'
 import { v4 as uuid } from 'uuid'
 import { Readable } from 'stream'
+import { exec } from 'child_process'
 import busboy from 'busboy'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -365,3 +366,38 @@ file.get('/files/:fileId', async (c) => {
 })
 
 export default file
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       用系统默认应用打开文件                               │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+file.post('/files/open', async (c) => {
+  const body = await c.req.json<{ path: string }>()
+  const filePath = body.path
+
+  if (!filePath) {
+    return c.json({ error: '缺少文件路径' }, 400)
+  }
+
+  if (!existsSync(filePath)) {
+    return c.json({ error: '文件不存在' }, 404)
+  }
+
+  console.log(`[File] Opening file: ${filePath}`)
+
+  const command = process.platform === 'win32'
+    ? `start "" "${filePath}"`
+    : process.platform === 'darwin'
+      ? `open "${filePath}"`
+      : `xdg-open "${filePath}"`
+
+  return new Promise<Response>((resolve) => {
+    exec(command, (err) => {
+      if (err) {
+        console.error('[File] Failed to open file:', err)
+        resolve(c.json({ error: '打开文件失败', detail: err.message }, 500))
+      } else {
+        resolve(c.json({ success: true }))
+      }
+    })
+  })
+})
