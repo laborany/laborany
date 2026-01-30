@@ -86,6 +86,58 @@ function download(url, dest) {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       递归复制目录                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function copyDirRecursive(src, dest) {
+  fs.mkdirSync(dest, { recursive: true })
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name)
+    const destPath = path.join(dest, entry.name)
+    entry.isDirectory()
+      ? copyDirRecursive(srcPath, destPath)
+      : fs.copyFileSync(srcPath, destPath)
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       解压 Node.js（不含 npm）                            │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function extractNode(platform, cacheFile, tempDir) {
+  if (platform === 'win') {
+    execSync(`powershell -Command "Expand-Archive -Path '${cacheFile}' -DestinationPath '${tempDir}' -Force"`)
+    const nodeDir = fs.readdirSync(tempDir).find(d => d.startsWith('node-'))
+    fs.copyFileSync(
+      path.join(tempDir, nodeDir, 'node.exe'),
+      path.join(BUNDLE_DIR, 'node.exe')
+    )
+    return nodeDir
+  } else {
+    execSync(`tar -xzf "${cacheFile}" -C "${tempDir}"`)
+    const nodeDir = fs.readdirSync(tempDir).find(d => d.startsWith('node-'))
+    fs.copyFileSync(
+      path.join(tempDir, nodeDir, 'bin', 'node'),
+      path.join(BUNDLE_DIR, 'node')
+    )
+    fs.chmodSync(path.join(BUNDLE_DIR, 'node'), 0o755)
+    return nodeDir
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       复制 npm 到 deps 目录                               │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function copyNpmFromNodeDist(platform, tempDir, nodeDir) {
+  const nodeDirPath = path.join(tempDir, nodeDir)
+  const npmSrc = platform === 'win'
+    ? path.join(nodeDirPath, 'node_modules', 'npm')
+    : path.join(nodeDirPath, 'lib', 'node_modules', 'npm')
+  const npmDest = path.join(BUNDLE_DIR, 'deps', 'npm')
+
+  copyDirRecursive(npmSrc, npmDest)
+  log('已复制 npm 到 deps/npm（Live Preview 需要）')
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           主流程                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 async function main() {
@@ -118,27 +170,7 @@ async function main() {
   const tempDir = path.join(os.tmpdir(), `node-extract-${Date.now()}`)
   fs.mkdirSync(tempDir, { recursive: true })
 
-  if (platform === 'win') {
-    // Windows: 使用 PowerShell 解压 zip
-    execSync(`powershell -Command "Expand-Archive -Path '${cacheFile}' -DestinationPath '${tempDir}' -Force"`)
-    const nodeDir = fs.readdirSync(tempDir).find(d => d.startsWith('node-'))
-    fs.copyFileSync(
-      path.join(tempDir, nodeDir, 'node.exe'),
-      path.join(BUNDLE_DIR, 'node.exe')
-    )
-  } else {
-    // Unix: 使用 tar 解压
-    execSync(`tar -xzf "${cacheFile}" -C "${tempDir}"`)
-    const nodeDir = fs.readdirSync(tempDir).find(d => d.startsWith('node-'))
-    fs.copyFileSync(
-      path.join(tempDir, nodeDir, 'bin', 'node'),
-      path.join(BUNDLE_DIR, 'node')
-    )
-    fs.chmodSync(path.join(BUNDLE_DIR, 'node'), 0o755)
-  }
-
-  // 清理临时目录
-  fs.rmSync(tempDir, { recursive: true })
+  const nodeDir = extractNode(platform, cacheFile, tempDir)
   log('Node.js 已准备好')
 
   // 创建 package.json
@@ -189,6 +221,14 @@ async function main() {
   const nodeModulesDir = path.join(BUNDLE_DIR, 'node_modules')
   const depsDir = path.join(BUNDLE_DIR, 'deps')
   fs.renameSync(nodeModulesDir, depsDir)
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │  复制 npm 到 deps（Live Preview 需要）                                    │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  copyNpmFromNodeDist(platform, tempDir, nodeDir)
+
+  // 清理临时目录
+  fs.rmSync(tempDir, { recursive: true })
 
   log(`完成！输出目录: ${BUNDLE_DIR}`)
 }
