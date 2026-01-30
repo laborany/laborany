@@ -90,6 +90,25 @@ function listDir(dir: string): string[] {
   return []
 }
 
+/* ── 确保二进制文件有执行权限（macOS/Linux） ── */
+function ensureExecutable(filePath: string): boolean {
+  if (platform() === 'win32') return true
+
+  try {
+    const stats = fsSync.statSync(filePath)
+    const isExecutable = (stats.mode & 0o111) !== 0
+
+    if (!isExecutable) {
+      console.log(`[Preview] 修复执行权限: ${filePath}`)
+      fsSync.chmodSync(filePath, 0o755)
+    }
+    return true
+  } catch (err) {
+    console.error(`[Preview] 无法设置执行权限: ${filePath}`, err)
+    return false
+  }
+}
+
 function getBundledNodePath(): BundledNode | null {
   if (cachedBundledNode !== undefined) return cachedBundledNode
 
@@ -113,13 +132,13 @@ function getBundledNodePath(): BundledNode | null {
   const candidates = [
     /* ═══════════════════════════════════════════════════════════════════════
      *  Electron 生产环境（最重要）
-     *  API 运行位置: resources/api/laborany-api.exe
+     *  API 运行位置: resources/api/laborany-api.exe (Windows)
+     *  API 运行位置: resources/api/laborany-api (macOS/Linux)
      *  cli-bundle 位置: resources/cli-bundle/
      * ═══════════════════════════════════════════════════════════════════════ */
     path.join(exeDir, '..', 'cli-bundle'),
 
-    /* ── macOS Electron 路径 ── */
-    path.join(exeDir, '..', 'Resources', 'cli-bundle'),
+    /* ── macOS Electron 路径（Resources 目录） ── */
     path.join(parentDir, 'cli-bundle'),
 
     /* ── Windows/Linux Electron 路径 ── */
@@ -154,6 +173,12 @@ function getBundledNodePath(): BundledNode | null {
     }
 
     if (nodeExists && npmExists) {
+      /* ── 确保 node 二进制有执行权限（macOS/Linux 打包后可能丢失） ── */
+      if (!ensureExecutable(nodeBin)) {
+        console.log(`[Preview] ✗ 无法设置 node 执行权限，跳过此路径`)
+        continue
+      }
+
       console.log(`[Preview] ✓ 找到内置 Node.js: ${resolvedDir}`)
       cachedBundledNode = { node: nodeBin, npm: npmCli }
       return cachedBundledNode
@@ -320,6 +345,18 @@ export class PreviewManager {
       args = [viteCli]
       useShell = false
       console.log(`[Preview] 使用内置 Node.js 启动 Vite`)
+
+      /* ── 验证 node 二进制可执行（macOS 诊断） ── */
+      if (platform() !== 'win32') {
+        try {
+          const stats = fsSync.statSync(cmd)
+          const mode = stats.mode.toString(8)
+          console.log(`[Preview] node 文件权限: ${mode}`)
+          console.log(`[Preview] node 文件大小: ${stats.size} bytes`)
+        } catch (err) {
+          console.error(`[Preview] 无法读取 node 文件状态:`, err)
+        }
+      }
     } else if (viteCliExists) {
       cmd = 'node'
       args = [viteCli]
@@ -350,9 +387,22 @@ export class PreviewManager {
 
     proc.on('close', code => {
       console.log(`[Preview] Vite 进程关闭, code=${code}, 当前状态=${instance.status}`)
+
+      /* ── code=127 特殊诊断（命令未找到） ── */
+      if (code === 127) {
+        console.error(`[Preview] ✗ Exit code 127: 命令未找到`)
+        console.error(`[Preview]   可能原因:`)
+        console.error(`[Preview]   1. node 二进制不存在或路径错误`)
+        console.error(`[Preview]   2. node 二进制没有执行权限`)
+        console.error(`[Preview]   3. node 二进制架构不匹配 (x64 vs arm64)`)
+        console.error(`[Preview]   执行的命令: ${cmd}`)
+      }
+
       if (instance.status === 'running' || instance.status === 'starting') {
         instance.status = 'error'
-        instance.error = `Vite 进程异常退出 (code=${code})`
+        instance.error = code === 127
+          ? `命令未找到 (code=127): 请检查 Node.js 二进制是否正确打包`
+          : `Vite 进程异常退出 (code=${code})`
         // 清理资源但保留实例，让前端能获取错误信息
         if (instance.healthCheck) {
           clearInterval(instance.healthCheck)
