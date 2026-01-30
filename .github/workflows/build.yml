@@ -112,7 +112,17 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
 
       - name: Install dependencies
-        run: npm run install:all
+        run: |
+          # 清理 npm 缓存，避免 SSL 缓存问题
+          npm cache clean --force
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npm run install:all && break
+            echo "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
+            npm cache clean --force
+            sleep 10
+          done
 
       - name: Build API and CLI bundle
         run: |
@@ -169,7 +179,17 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
 
       - name: Install dependencies
-        run: npm run install:all
+        run: |
+          # 清理 npm 缓存，避免 SSL 缓存问题
+          npm cache clean --force
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npm run install:all && break
+            echo "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
+            npm cache clean --force
+            sleep 10
+          done
 
       - name: Build API and CLI bundle
         run: |
@@ -226,7 +246,17 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
 
       - name: Install dependencies
-        run: npm run install:all
+        run: |
+          # 清理 npm 缓存，避免 SSL 缓存问题
+          npm cache clean --force
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npm run install:all && break
+            echo "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
+            npm cache clean --force
+            sleep 10
+          done
 
       - name: Build API and CLI bundle
         run: |
