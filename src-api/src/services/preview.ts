@@ -72,6 +72,7 @@ const generateViteConfig = (port: number): string => `export default {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       内置 Node.js 路径检测                               │
  * │  优先使用打包的 Node.js，避免依赖系统安装                                  │
+ * │  支持 Mac Universal：根据架构选择 arm64 或 x64 版本                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 interface BundledNode {
   node: string
@@ -109,6 +110,25 @@ function ensureExecutable(filePath: string): boolean {
   }
 }
 
+/* ── 获取架构特定的 bundle 目录名 ── */
+function getArchSpecificBundleDirs(): string[] {
+  const arch = process.arch
+  const os = platform()
+
+  if (os === 'darwin') {
+    /* ═══════════════════════════════════════════════════════════════════════
+     *  macOS: 优先使用架构特定目录，回退到通用目录
+     *  arm64 Mac: cli-bundle-arm64 > cli-bundle
+     *  x64 Mac:   cli-bundle-x64 > cli-bundle
+     * ═══════════════════════════════════════════════════════════════════════ */
+    const archDir = arch === 'arm64' ? 'cli-bundle-arm64' : 'cli-bundle-x64'
+    return [archDir, 'cli-bundle']
+  }
+
+  // Windows/Linux: 只使用通用目录
+  return ['cli-bundle']
+}
+
 function getBundledNodePath(): BundledNode | null {
   if (cachedBundledNode !== undefined) return cachedBundledNode
 
@@ -118,6 +138,7 @@ function getBundledNodePath(): BundledNode | null {
 
   console.log('[Preview] ========== 检测 Node.js 路径 ==========')
   console.log('[Preview] platform:', os)
+  console.log('[Preview] arch:', process.arch)
   console.log('[Preview] process.execPath:', process.execPath)
   console.log('[Preview] exeDir:', exeDir)
   console.log('[Preview] parentDir:', parentDir)
@@ -128,31 +149,35 @@ function getBundledNodePath(): BundledNode | null {
   console.log('[Preview] exeDir 内容:', listDir(exeDir))
   console.log('[Preview] parentDir 内容:', listDir(parentDir))
 
+  /* ── 获取架构特定的 bundle 目录名列表 ── */
+  const bundleDirNames = getArchSpecificBundleDirs()
+  console.log('[Preview] 查找 bundle 目录:', bundleDirNames)
+
   /* ── 候选路径：覆盖 Electron 打包环境 ── */
-  const candidates = [
+  const basePaths = [
     /* ═══════════════════════════════════════════════════════════════════════
      *  Electron 生产环境（最重要）
      *  API 运行位置: resources/api/laborany-api.exe (Windows)
      *  API 运行位置: resources/api/laborany-api (macOS/Linux)
-     *  cli-bundle 位置: resources/cli-bundle/
+     *  cli-bundle 位置: resources/cli-bundle/ 或 resources/cli-bundle-{arch}/
      * ═══════════════════════════════════════════════════════════════════════ */
-    path.join(exeDir, '..', 'cli-bundle'),
-
-    /* ── macOS Electron 路径（Resources 目录） ── */
-    path.join(parentDir, 'cli-bundle'),
-
-    /* ── Windows/Linux Electron 路径 ── */
-    path.join(exeDir, 'resources', 'cli-bundle'),
-    path.join(exeDir, '..', 'resources', 'cli-bundle'),
-
-    /* ── 开发环境路径 ── */
-    path.join(process.cwd(), 'cli-bundle'),
-    path.join(__dirname, '..', '..', 'cli-bundle'),
-    path.join(__dirname, '..', '..', '..', 'cli-bundle'),
-
-    /* ── Electron asar.unpacked 路径 ── */
-    path.join(exeDir, '..', 'app.asar.unpacked', 'cli-bundle'),
+    path.join(exeDir, '..'),
+    parentDir,
+    path.join(exeDir, 'resources'),
+    path.join(exeDir, '..', 'resources'),
+    process.cwd(),
+    path.join(__dirname, '..', '..'),
+    path.join(__dirname, '..', '..', '..'),
+    path.join(exeDir, '..', 'app.asar.unpacked'),
   ]
+
+  /* ── 生成所有候选路径 ── */
+  const candidates: string[] = []
+  for (const basePath of basePaths) {
+    for (const bundleDirName of bundleDirNames) {
+      candidates.push(path.join(basePath, bundleDirName))
+    }
+  }
 
   for (const bundleDir of candidates) {
     const resolvedDir = path.resolve(bundleDir)
@@ -215,6 +240,7 @@ export interface DiagnosticInfo {
   parentDir: string
   dirname: string
   cwd: string
+  bundleDirNames: string[]
   bundledNode: BundledNode | null
   candidates: Array<{
     path: string
@@ -230,17 +256,25 @@ export function getDiagnosticInfo(): DiagnosticInfo {
   const os = platform()
   const exeDir = dirname(process.execPath)
   const parentDir = dirname(exeDir)
+  const bundleDirNames = getArchSpecificBundleDirs()
 
-  const candidates = [
-    path.join(exeDir, '..', 'cli-bundle'),
-    path.join(parentDir, 'cli-bundle'),
-    path.join(exeDir, 'resources', 'cli-bundle'),
-    path.join(exeDir, '..', 'resources', 'cli-bundle'),
-    path.join(process.cwd(), 'cli-bundle'),
-    path.join(__dirname, '..', '..', 'cli-bundle'),
-    path.join(__dirname, '..', '..', '..', 'cli-bundle'),
-    path.join(exeDir, '..', 'app.asar.unpacked', 'cli-bundle'),
+  const basePaths = [
+    path.join(exeDir, '..'),
+    parentDir,
+    path.join(exeDir, 'resources'),
+    path.join(exeDir, '..', 'resources'),
+    process.cwd(),
+    path.join(__dirname, '..', '..'),
+    path.join(__dirname, '..', '..', '..'),
+    path.join(exeDir, '..', 'app.asar.unpacked'),
   ]
+
+  const candidates: string[] = []
+  for (const basePath of basePaths) {
+    for (const bundleDirName of bundleDirNames) {
+      candidates.push(path.join(basePath, bundleDirName))
+    }
+  }
 
   const candidateInfo = candidates.map(bundleDir => {
     const resolvedDir = path.resolve(bundleDir)
@@ -267,6 +301,7 @@ export function getDiagnosticInfo(): DiagnosticInfo {
     parentDir,
     dirname: __dirname,
     cwd: process.cwd(),
+    bundleDirNames,
     bundledNode: getBundledNodePath(),
     candidates: candidateInfo,
   }
