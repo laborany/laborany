@@ -29,8 +29,23 @@ jobs:
       - name: Install dependencies
         run: npm run install:all
 
-      - name: Build Windows
-        run: npm run build:electron
+      - name: Build API and CLI bundle
+        run: |
+          npm run bundle:all:win
+          npm run build
+
+      - name: Build Electron
+        shell: pwsh
+        run: |
+          # 重试机制：最多尝试 3 次
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "Attempt $i of 3..."
+            npx electron-builder --win --publish never
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "Attempt $i failed, retrying in 10 seconds..."
+            Start-Sleep -Seconds 10
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -69,7 +84,14 @@ jobs:
         run: npm run build:frontend
 
       - name: Build Electron
-        run: npx electron-builder --mac --x64 --publish never
+        run: |
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npx electron-builder --mac --x64 --publish never && break
+            echo "Attempt $i failed, retrying in 10 seconds..."
+            sleep 10
+          done
 
       - name: Upload Mac x64 artifact
         uses: actions/upload-artifact@v4
@@ -108,7 +130,14 @@ jobs:
         run: npm run build:frontend
 
       - name: Build Electron
-        run: npx electron-builder --mac --arm64 --publish never
+        run: |
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npx electron-builder --mac --arm64 --publish never && break
+            echo "Attempt $i failed, retrying in 10 seconds..."
+            sleep 10
+          done
 
       - name: Upload Mac arm64 artifact
         uses: actions/upload-artifact@v4
@@ -147,7 +176,14 @@ jobs:
         run: npm run build:frontend
 
       - name: Build Electron
-        run: npx electron-builder --linux --publish never
+        run: |
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npx electron-builder --linux --publish never && break
+            echo "Attempt $i failed, retrying in 10 seconds..."
+            sleep 10
+          done
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
