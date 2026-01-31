@@ -1,5 +1,5 @@
 ---
-name: data-transfer
+name: 数据搬运工
 description: 通用数据迁移与格式转换工具，支持多种文件格式互转及简单的数据清洗。当用户需要转换文件格式、提取数据或进行数据迁移时调用。
 icon: 📋
 category: 工具

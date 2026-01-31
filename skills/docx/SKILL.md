@@ -2,6 +2,8 @@
 name: Word文档助手
 description: "创建、编辑和分析 Word 文档（.docx），支持修订追踪、批注、格式保留和文本提取"
 license: Proprietary. LICENSE.txt has complete terms
+icon: 📝
+category: 办公
 ---
 
 # DOCX creation, editing, and analysis

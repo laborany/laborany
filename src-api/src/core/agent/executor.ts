@@ -11,6 +11,7 @@ import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import type { Skill } from './skill-loader.js'
+import { loadSkill } from './skill-loader.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -430,8 +431,26 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     args.push('--model', process.env.ANTHROPIC_MODEL)
   }
 
+  /* ═══════════════════════════════════════════════════════════════════════════
+   * 构建完整 prompt
+   * 如果存在 frontend-design skill，自动注入其设计原则
+   * ═══════════════════════════════════════════════════════════════════════════ */
+  let basePrompt = skill.systemPrompt
+
+  // 尝试加载 frontend-design 的设计原则（仅对非 frontend-design 的 skill 注入）
+  if (skill.meta.id !== 'frontend-design') {
+    try {
+      const frontendDesignSkill = await loadSkill.byId('frontend-design')
+      if (frontendDesignSkill) {
+        basePrompt = `${frontendDesignSkill.systemPrompt}\n\n---\n\n${skill.systemPrompt}`
+      }
+    } catch {
+      /* 加载失败，使用原始 prompt */
+    }
+  }
+
   const prompt = isNewSession
-    ? `${skill.systemPrompt}\n\n---\n\n用户问题：${userQuery}`
+    ? `${basePrompt}\n\n---\n\n用户问题：${userQuery}`
     : userQuery
 
   console.log(`[Agent] Args: ${args.join(' ')}`)

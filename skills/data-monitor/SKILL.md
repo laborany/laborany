@@ -1,5 +1,5 @@
 ---
-name: data-monitor
+name: 数据监控员
 description: 实时监控关键业务指标和系统状态，提供异常检测和自动告警服务。当用户需要监控数据变化、设置阈值提醒或查询实时状态时调用。
 icon: 📈
 category: 数据

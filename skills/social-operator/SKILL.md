@@ -1,5 +1,5 @@
 ---
-name: social-operator
+name: 运营分身
 description: 社交媒体内容创作助手，自动生成多平台风格文案并优化排版。当用户需要撰写社交媒体帖子、调整文案风格或管理互动评论时调用。
 icon: 📱
 category: 运营
