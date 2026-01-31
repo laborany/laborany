@@ -464,7 +464,8 @@ file.post('/convert/pdf', async (c) => {
 
 file.get('/convert/pdf/*', async (c) => {
   /* 提供转换后的 PDF 文件访问 */
-  const pdfPath = c.req.path.replace('/api/convert/pdf/', '')
+  const rawPath = c.req.path.replace('/api/convert/pdf/', '')
+  const pdfPath = decodeURIComponent(rawPath)
 
   if (!existsSync(pdfPath)) {
     return c.json({ error: 'PDF 文件不存在' }, 404)
