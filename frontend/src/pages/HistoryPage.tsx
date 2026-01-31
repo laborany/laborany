@@ -152,12 +152,20 @@ function findFirstPreviewableFile(files: TaskFile[]): TaskFile | null {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                      TaskFile → FileArtifact 转换                         │
+ * │                                                                          │
+ * │  注意：path 字段需要是绝对路径，用于 PDF 转换等需要文件系统路径的场景         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function toFileArtifact(file: TaskFile, getFileUrl: (path: string) => string): FileArtifact {
+function toFileArtifact(
+  file: TaskFile,
+  getFileUrl: (path: string) => string,
+  workDir: string | null,
+): FileArtifact {
   const ext = file.ext || getExt(file.name)
+  // 构建绝对路径：workDir + 相对路径
+  const fullPath = workDir ? `${workDir}/${file.path}`.replace(/\\/g, '/') : file.path
   return {
     name: file.name,
-    path: file.path,
+    path: fullPath,
     ext,
     category: getCategory(ext),
     size: file.size,
@@ -297,8 +305,8 @@ export function SessionDetailPage() {
     const firstFile = findFirstPreviewableFile(taskFiles)
     if (!firstFile) return
 
-    handleSelectArtifact(toFileArtifact(firstFile, getFileUrl))
-  }, [taskFiles, handleSelectArtifact, getFileUrl])
+    handleSelectArtifact(toFileArtifact(firstFile, getFileUrl, session?.work_dir || null))
+  }, [taskFiles, handleSelectArtifact, getFileUrl, session?.work_dir])
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      关闭预览                                            │
@@ -552,6 +560,7 @@ export function SessionDetailPage() {
             selectedArtifact={selectedArtifact}
             onSelectArtifact={handleSelectArtifact}
             getFileUrl={getFileUrl}
+            workDir={session?.work_dir || null}
           />
         </div>
       )}

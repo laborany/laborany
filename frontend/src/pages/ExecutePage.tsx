@@ -46,12 +46,20 @@ function findFirstPreviewableFile(files: TaskFile[]): TaskFile | null {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                      TaskFile → FileArtifact 转换                         │
+ * │                                                                          │
+ * │  注意：path 字段需要是绝对路径，用于 PDF 转换等需要文件系统路径的场景         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function toFileArtifact(file: TaskFile, getFileUrl: (path: string) => string): FileArtifact {
+function toFileArtifact(
+  file: TaskFile,
+  getFileUrl: (path: string) => string,
+  workDir: string | null,
+): FileArtifact {
   const ext = file.ext || getExt(file.name)
+  // 构建绝对路径：workDir + 相对路径
+  const fullPath = workDir ? `${workDir}/${file.path}`.replace(/\\/g, '/') : file.path
   return {
     name: file.name,
-    path: file.path,
+    path: fullPath,
     ext,
     category: getCategory(ext),
     size: file.size,
@@ -169,8 +177,8 @@ export default function ExecutePage() {
     const firstFile = findFirstPreviewableFile(taskFiles)
     if (!firstFile) return
 
-    handleSelectArtifact(toFileArtifact(firstFile, getFileUrl))
-  }, [taskFiles, messages, handleSelectArtifact, getFileUrl])
+    handleSelectArtifact(toFileArtifact(firstFile, getFileUrl, workDir))
+  }, [taskFiles, messages, handleSelectArtifact, getFileUrl, workDir])
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      文件更新时自动刷新预览                                │
@@ -199,9 +207,9 @@ export default function ExecutePage() {
 
     const currentFile = findFile(taskFiles, selectedPathRef.current)
     if (currentFile) {
-      setSelectedArtifact(toFileArtifact(currentFile, getFileUrl))
+      setSelectedArtifact(toFileArtifact(currentFile, getFileUrl, workDir))
     }
-  }, [filesVersion, taskFiles, getFileUrl])
+  }, [filesVersion, taskFiles, getFileUrl, workDir])
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      清空对话                                            │
@@ -411,6 +419,7 @@ export default function ExecutePage() {
             selectedArtifact={selectedArtifact}
             onSelectArtifact={handleSelectArtifact}
             getFileUrl={getFileUrl}
+            workDir={workDir}
           />
         </div>
       )}

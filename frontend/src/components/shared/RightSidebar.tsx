@@ -24,6 +24,7 @@ interface RightSidebarProps {
   selectedArtifact: FileArtifact | null
   onSelectArtifact: (artifact: FileArtifact) => void
   getFileUrl: (path: string) => string
+  workDir: string | null
 }
 
 interface ToolUsage {
@@ -91,12 +92,20 @@ function toTreeFile(file: TaskFile): TreeFile {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                      TaskFile → FileArtifact 转换                         │
+ * │                                                                          │
+ * │  注意：path 字段需要是绝对路径，用于 PDF 转换等需要文件系统路径的场景         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function toFileArtifact(file: TaskFile, getFileUrl: (path: string) => string): FileArtifact {
+function toFileArtifact(
+  file: TaskFile,
+  getFileUrl: (path: string) => string,
+  workDir: string | null,
+): FileArtifact {
   const ext = file.ext || getExt(file.name)
+  // 构建绝对路径：workDir + 相对路径
+  const fullPath = workDir ? `${workDir}/${file.path}`.replace(/\\/g, '/') : file.path
   return {
     name: file.name,
-    path: file.path,
+    path: fullPath,
     ext,
     category: getCategory(ext),
     size: file.size,
@@ -202,6 +211,7 @@ export function RightSidebar({
   selectedArtifact,
   onSelectArtifact,
   getFileUrl,
+  workDir,
 }: RightSidebarProps) {
   const [showAllTools, setShowAllTools] = useState(false)
 
@@ -222,9 +232,9 @@ export function RightSidebar({
         ext: file.ext,
         size: file.size,
       }
-      onSelectArtifact(toFileArtifact(taskFile, getFileUrl))
+      onSelectArtifact(toFileArtifact(taskFile, getFileUrl, workDir))
     },
-    [onSelectArtifact, getFileUrl]
+    [onSelectArtifact, getFileUrl, workDir]
   )
 
   return (
@@ -242,7 +252,7 @@ export function RightSidebar({
                 key={file.path}
                 file={file}
                 isSelected={selectedArtifact?.path === file.path}
-                onClick={() => onSelectArtifact(toFileArtifact(file, getFileUrl))}
+                onClick={() => onSelectArtifact(toFileArtifact(file, getFileUrl, workDir))}
               />
             ))}
           </div>
