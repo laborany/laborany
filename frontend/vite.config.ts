@@ -33,6 +33,25 @@ export default defineConfig({
     outDir: 'dist',
     // 生成 sourcemap 便于调试
     sourcemap: process.env.NODE_ENV !== 'production',
+    // 代码分割配置
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // React 核心
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          // Markdown 渲染
+          'vendor-markdown': ['react-markdown', 'remark-gfm'],
+          // 代码高亮
+          'vendor-highlight': ['react-syntax-highlighter'],
+          // Excel 处理
+          'vendor-xlsx': ['xlsx'],
+          // 流程图
+          'vendor-xyflow': ['@xyflow/react'],
+        },
+      },
+    },
+    // 提高 chunk 大小警告阈值
+    chunkSizeWarningLimit: 600,
   },
   // 环境变量前缀
   envPrefix: ['VITE_', 'TAURI_'],

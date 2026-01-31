@@ -60,3 +60,9 @@ export interface PreviewProps {
 export interface RendererProps {
   artifact: FileArtifact
 }
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           预览模式                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export type PreviewMode = 'static' | 'live'
+export type ViewMode = 'preview' | 'code'

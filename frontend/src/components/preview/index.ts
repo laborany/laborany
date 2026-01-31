@@ -45,5 +45,5 @@ export { getExt, getCategory, getLang, isPreviewable, formatSize, getFileIcon, o
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型                                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export type { FileArtifact, FileCategory, PreviewProps, RendererProps, PptxSlide } from './types'
+export type { FileArtifact, FileCategory, PreviewProps, RendererProps, PptxSlide, PreviewMode, ViewMode } from './types'
 export { MAX_PREVIEW_SIZE } from './types'

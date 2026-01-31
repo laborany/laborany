@@ -139,7 +139,7 @@ app.get('/tasks/:sessionId/files', async (req: Request, res: Response) => {
 
   try {
     const files = await listTaskFiles(taskDir, '')
-    res.json({ files })
+    res.json({ files, workDir: taskDir })
   } catch (error) {
     res.status(500).json({ error: '获取文件列表失败' })
   }
@@ -147,6 +147,7 @@ app.get('/tasks/:sessionId/files', async (req: Request, res: Response) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       递归列出任务目录文件                                  │
+ * │  支持工作流步骤目录识别（step-N-name 格式）                                  │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 interface TaskFile {
   name: string
@@ -155,6 +156,18 @@ interface TaskFile {
   ext?: string
   size?: number
   children?: TaskFile[]
+  stepIndex?: number    // 工作流步骤索引
+  stepName?: string     // 工作流步骤名称
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       解析步骤目录名称                                     │
+ * │  格式：step-N-name → { index: N, name: name }                             │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function parseStepDir(dirName: string): { index: number; name: string } | null {
+  const match = dirName.match(/^step-(\d+)-(.+)$/)
+  if (!match) return null
+  return { index: parseInt(match[1], 10), name: match[2] }
 }
 
 async function listTaskFiles(baseDir: string, relativePath: string): Promise<TaskFile[]> {
@@ -184,11 +197,13 @@ async function listTaskFiles(baseDir: string, relativePath: string): Promise<Tas
     } else if (entry.isDirectory()) {
       const children = await listTaskFiles(baseDir, entryPath)
       if (children.length > 0) {
+        const stepInfo = parseStepDir(entry.name)
         files.push({
           name: entry.name,
           path: entryPath,
           type: 'folder',
           children,
+          ...(stepInfo && { stepIndex: stepInfo.index, stepName: stepInfo.name }),
         })
       }
     }
