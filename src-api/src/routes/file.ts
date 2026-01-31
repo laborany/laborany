@@ -14,6 +14,18 @@ import { v4 as uuid } from 'uuid'
 import { Readable } from 'stream'
 import { exec } from 'child_process'
 import busboy from 'busboy'
+import {
+  isLibreOfficeAvailable,
+  convertToPdf,
+  getDiagnosticInfo as getConverterDiagnostic,
+  resetLibreOfficeCache,
+} from '../services/office-converter.js'
+import {
+  downloadLibreOffice,
+  getDownloadProgress,
+  isLibreOfficeDownloaded,
+  getDownloaderDiagnostic,
+} from '../services/libreoffice-downloader.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -400,4 +412,95 @@ file.post('/files/open', async (c) => {
       }
     })
   })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       Office 文档转换 API                                 │
+ * │                                                                          │
+ * │  将 PPTX/DOCX 转换为 PDF，用于高质量预览                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+
+file.get('/convert/check', (c) => {
+  return c.json({
+    available: isLibreOfficeAvailable(),
+    ...getConverterDiagnostic(),
+  })
+})
+
+file.post('/convert/pdf', async (c) => {
+  const body = await c.req.json<{ path: string }>()
+  const inputPath = body.path
+
+  if (!inputPath) {
+    return c.json({ error: '缺少文件路径' }, 400)
+  }
+
+  if (!existsSync(inputPath)) {
+    return c.json({ error: '文件不存在' }, 404)
+  }
+
+  if (!isLibreOfficeAvailable()) {
+    return c.json({ error: 'LibreOffice 未安装，无法转换' }, 503)
+  }
+
+  console.log(`[File] Converting to PDF: ${inputPath}`)
+  const result = await convertToPdf(inputPath)
+
+  if (!result.success) {
+    return c.json({ error: result.error || '转换失败' }, 500)
+  }
+
+  return c.json({
+    success: true,
+    pdfPath: result.outputPath,
+    cached: result.cached,
+  })
+})
+
+file.get('/convert/pdf/*', async (c) => {
+  /* 提供转换后的 PDF 文件访问 */
+  const pdfPath = c.req.path.replace('/api/convert/pdf/', '')
+
+  if (!existsSync(pdfPath)) {
+    return c.json({ error: 'PDF 文件不存在' }, 404)
+  }
+
+  const content = await readFile(pdfPath)
+  return new Response(content, {
+    headers: { 'Content-Type': 'application/pdf' },
+  })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       LibreOffice 下载 API                                │
+ * │                                                                          │
+ * │  首次使用时自动下载 LibreOffice，支持全平台                                 │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+
+file.get('/libreoffice/status', (c) => {
+  return c.json({
+    installed: isLibreOfficeDownloaded(),
+    systemAvailable: isLibreOfficeAvailable(),
+    progress: getDownloadProgress(),
+    ...getDownloaderDiagnostic(),
+  })
+})
+
+file.post('/libreoffice/download', async (c) => {
+  console.log('[File] Starting LibreOffice download...')
+
+  /* 异步启动下载，立即返回 */
+  downloadLibreOffice().then(() => {
+    /* 下载完成后重置检测缓存 */
+    resetLibreOfficeCache()
+  })
+
+  return c.json({
+    message: '下载已开始',
+    progress: getDownloadProgress(),
+  })
+})
+
+file.get('/libreoffice/progress', (c) => {
+  return c.json(getDownloadProgress())
 })
