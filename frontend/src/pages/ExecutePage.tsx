@@ -4,7 +4,7 @@
  * ║  设计哲学：                                                               ║
  * ║  1. 三面板布局 —— 聊天 | 预览 | 侧边栏                                      ║
  * ║  2. 主动预览 —— 检测到产物时自动展开预览面板                                  ║
- * ║  3. 响应式设计 —— 小屏幕时隐藏侧边栏                                        ║
+ * ║  3. 可拖拽分隔条 —— 用户可自由调整面板宽度                                   ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useParams, Link } from 'react-router-dom'
@@ -15,6 +15,7 @@ import { useVitePreview } from '../hooks/useVitePreview'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
 import { RightSidebar } from '../components/shared/RightSidebar'
+import { ResizeHandle, useResizablePanel } from '../components/shared/ResizeHandle'
 import { ArtifactPreview, VitePreview, getExt, getCategory, isPreviewable } from '../components/preview'
 import { Tooltip } from '../components/ui'
 import {
@@ -57,6 +58,14 @@ function toFileArtifact(file: TaskFile, getFileUrl: (path: string) => string): F
   }
 }
 
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                      布局常量                                             │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const CHAT_PANEL_MIN = 300
+const CHAT_PANEL_MAX = 800
+const CHAT_PANEL_DEFAULT = 450
+const SIDEBAR_WIDTH = 280
+
 export default function ExecutePage() {
   const { skillId } = useParams<{ skillId: string }>()
   const {
@@ -85,6 +94,18 @@ export default function ExecutePage() {
   // 自动展开标记（只触发一次）
   const hasAutoExpandedRef = useRef(false)
 
+  // 可拖拽面板宽度
+  const {
+    width: chatPanelWidth,
+    handleResize: handleChatResize,
+    handleResizeEnd: handleChatResizeEnd,
+  } = useResizablePanel({
+    initialWidth: CHAT_PANEL_DEFAULT,
+    minWidth: CHAT_PANEL_MIN,
+    maxWidth: CHAT_PANEL_MAX,
+    storageKey: 'laborany-chat-panel-width',
+  })
+
   // Live Preview Hook
   const {
     status: liveStatus,
@@ -100,7 +121,7 @@ export default function ExecutePage() {
   const handleSelectArtifact = useCallback((artifact: FileArtifact) => {
     setSelectedArtifact(artifact)
     setIsPreviewVisible(true)
-    setShowLivePreview(false) // 切换到静态预览
+    setShowLivePreview(false)
   }, [])
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -125,7 +146,6 @@ export default function ExecutePage() {
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      自动展开预览面板                                     │
-   * │  检测到文件产出或文件操作时，自动打开侧边栏并预览第一个可预览文件              │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   useEffect(() => {
     if (hasAutoExpandedRef.current) return
@@ -170,14 +190,24 @@ export default function ExecutePage() {
     setShowLivePreview(false)
   }, [])
 
+  // 计算是否显示分隔条
+  const showResizeHandle = isPreviewVisible || isRightSidebarVisible
+
   return (
     <div className="flex h-[calc(100vh-64px)]">
       {/* ════════════════════════════════════════════════════════════════════
        * 左侧：聊天面板
        * ════════════════════════════════════════════════════════════════════ */}
-      <div className={`flex flex-col ${isPreviewVisible || isRightSidebarVisible ? 'w-1/2 min-w-[400px]' : 'flex-1 max-w-4xl mx-auto'} px-4 py-6`}>
+      <div
+        className="flex flex-col px-4 py-6 overflow-hidden"
+        style={{
+          width: showResizeHandle ? chatPanelWidth : '100%',
+          maxWidth: showResizeHandle ? undefined : '56rem',
+          margin: showResizeHandle ? undefined : '0 auto',
+        }}
+      >
         {/* 顶部导航 */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 shrink-0">
           <div className="flex items-center gap-4">
             <Link to="/" className="text-muted-foreground hover:text-foreground transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -233,7 +263,7 @@ export default function ExecutePage() {
 
         {/* 错误提示 */}
         {error && (
-          <div className="mb-4 p-3 bg-destructive/10 text-destructive rounded-lg text-sm flex items-center gap-2">
+          <div className="mb-4 p-3 bg-destructive/10 text-destructive rounded-lg text-sm flex items-center gap-2 shrink-0">
             <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
@@ -242,7 +272,7 @@ export default function ExecutePage() {
         )}
 
         {/* 消息列表 */}
-        <div className="flex-1 overflow-y-auto mb-4">
+        <div className="flex-1 overflow-y-auto mb-4 min-h-0">
           {messages.length === 0 ? (
             <div className="h-full flex items-center justify-center text-muted-foreground">
               <div className="text-center">
@@ -261,23 +291,36 @@ export default function ExecutePage() {
         </div>
 
         {/* 输入框 */}
-        <ChatInput
-          onSubmit={execute}
-          onStop={stop}
-          isRunning={isRunning}
-          placeholder={
-            skillId === 'financial-report'
-              ? '例如：分析腾讯 2023 年财报的营收增长情况'
-              : '输入你的问题...'
-          }
-        />
+        <div className="shrink-0">
+          <ChatInput
+            onSubmit={execute}
+            onStop={stop}
+            isRunning={isRunning}
+            placeholder={
+              skillId === 'financial-report'
+                ? '例如：分析腾讯 2023 年财报的营收增长情况'
+                : '输入你的问题...'
+            }
+          />
+        </div>
       </div>
+
+      {/* ════════════════════════════════════════════════════════════════════
+       * 分隔条（聊天面板和预览面板之间）
+       * ════════════════════════════════════════════════════════════════════ */}
+      {showResizeHandle && (
+        <ResizeHandle
+          onResize={handleChatResize}
+          onResizeEnd={handleChatResizeEnd}
+          direction="horizontal"
+        />
+      )}
 
       {/* ════════════════════════════════════════════════════════════════════
        * 中间：预览面板
        * ════════════════════════════════════════════════════════════════════ */}
       {isPreviewVisible && (
-        <div className="flex-1 min-w-[400px] border-l border-border">
+        <div className="flex-1 min-w-[300px] border-l border-border">
           {showLivePreview ? (
             /* Live Preview */
             <div className="flex h-full flex-col">
@@ -318,7 +361,7 @@ export default function ExecutePage() {
        * 右侧：侧边栏
        * ════════════════════════════════════════════════════════════════════ */}
       {isRightSidebarVisible && (
-        <div className="w-[280px] shrink-0">
+        <div style={{ width: SIDEBAR_WIDTH }} className="shrink-0">
           <RightSidebar
             messages={messages}
             isRunning={isRunning}

@@ -13,6 +13,7 @@ import { API_BASE } from '../config'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
 import { RightSidebar } from '../components/shared/RightSidebar'
+import { ResizeHandle, useResizablePanel } from '../components/shared/ResizeHandle'
 import {
   ArtifactPreview,
   VitePreview,
@@ -165,6 +166,14 @@ function toFileArtifact(file: TaskFile, getFileUrl: (path: string) => string): F
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                      布局常量                                             │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const CHAT_PANEL_MIN = 300
+const CHAT_PANEL_MAX = 800
+const CHAT_PANEL_DEFAULT = 450
+const SIDEBAR_WIDTH = 280
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           会话详情页面                                     │
  * │  显示历史消息，支持继续对话，对齐 ExecutePage 的三面板布局                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -186,6 +195,18 @@ export function SessionDetailPage() {
 
   // 自动展开标记
   const hasAutoExpandedRef = useRef(false)
+
+  // 可拖拽面板宽度
+  const {
+    width: chatPanelWidth,
+    handleResize: handleChatResize,
+    handleResizeEnd: handleChatResizeEnd,
+  } = useResizablePanel({
+    initialWidth: CHAT_PANEL_DEFAULT,
+    minWidth: CHAT_PANEL_MIN,
+    maxWidth: CHAT_PANEL_MAX,
+    storageKey: 'laborany-history-chat-panel-width',
+  })
 
   // 用于继续对话的 agent hook
   const agent = useAgent(session?.skill_id || '')
@@ -377,14 +398,24 @@ export function SessionDetailPage() {
   const historyMessages = convertMessages()
   const allMessages = continuing ? [...historyMessages, ...agent.messages] : historyMessages
 
+  // 计算是否显示分隔条
+  const showResizeHandle = isPreviewVisible || isRightSidebarVisible
+
   return (
     <div className="flex h-[calc(100vh-64px)]">
       {/* ════════════════════════════════════════════════════════════════════
        * 左侧：聊天面板
        * ════════════════════════════════════════════════════════════════════ */}
-      <div className={`flex flex-col ${isPreviewVisible || isRightSidebarVisible ? 'w-1/2 min-w-[400px]' : 'flex-1 max-w-4xl mx-auto'} px-4 py-6`}>
+      <div
+        className="flex flex-col px-4 py-6 overflow-hidden"
+        style={{
+          width: showResizeHandle ? chatPanelWidth : '100%',
+          maxWidth: showResizeHandle ? undefined : '56rem',
+          margin: showResizeHandle ? undefined : '0 auto',
+        }}
+      >
         {/* 顶部导航 */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 shrink-0">
           <div className="flex items-center gap-4">
             <Link to="/history" className="text-muted-foreground hover:text-foreground transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -441,12 +472,12 @@ export function SessionDetailPage() {
         </div>
 
         {/* 消息列表 */}
-        <div className="flex-1 overflow-y-auto mb-4">
+        <div className="flex-1 overflow-y-auto mb-4 min-h-0">
           <MessageList messages={allMessages} isRunning={agent.isRunning} />
         </div>
 
         {/* 继续对话输入框 */}
-        <div className="border-t border-border pt-4">
+        <div className="border-t border-border pt-4 shrink-0">
           <p className="text-sm text-muted-foreground mb-2">继续对话：</p>
           <ChatInput
             onSubmit={handleContinue}
@@ -458,10 +489,21 @@ export function SessionDetailPage() {
       </div>
 
       {/* ════════════════════════════════════════════════════════════════════
+       * 分隔条（聊天面板和预览面板之间）
+       * ════════════════════════════════════════════════════════════════════ */}
+      {showResizeHandle && (
+        <ResizeHandle
+          onResize={handleChatResize}
+          onResizeEnd={handleChatResizeEnd}
+          direction="horizontal"
+        />
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════
        * 中间：预览面板
        * ════════════════════════════════════════════════════════════════════ */}
       {isPreviewVisible && (
-        <div className="flex-1 min-w-[400px] border-l border-border">
+        <div className="flex-1 min-w-[300px] border-l border-border">
           {showLivePreview ? (
             /* Live Preview */
             <div className="flex h-full flex-col">
@@ -502,7 +544,7 @@ export function SessionDetailPage() {
        * 右侧：侧边栏
        * ════════════════════════════════════════════════════════════════════ */}
       {isRightSidebarVisible && (
-        <div className="w-[280px] shrink-0">
+        <div style={{ width: SIDEBAR_WIDTH }} className="shrink-0">
           <RightSidebar
             messages={allMessages}
             isRunning={agent.isRunning}
