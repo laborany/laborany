@@ -37,18 +37,33 @@ interface PlatformConfig {
  * │                       LibreOffice 版本配置                                │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-const LIBREOFFICE_VERSION = '24.8.4'
-const BASE_URL = 'https://download.documentfoundation.org/libreoffice/stable'
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │  版本配置说明                                                             │
+ * │  - Portable 版本在 /libreoffice/portable/ 目录下                          │
+ * │  - 标准版本在 /libreoffice/stable/ 目录下                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const PORTABLE_VERSION = '25.2.3'
+const LIBREOFFICE_VERSION = '25.8.4'
+const BASE_URL = 'https://download.documentfoundation.org/libreoffice'
+
+/* Windows 下载源配置 */
+const WINDOWS_SOURCES = [
+  /* 官方 Portable 版本（在 portable 目录下） */
+  {
+    url: `${BASE_URL}/portable/${PORTABLE_VERSION}/LibreOfficePortable_${PORTABLE_VERSION}_MultilingualStandard.paf.exe`,
+    filename: `LibreOfficePortable_${PORTABLE_VERSION}.paf.exe`,
+  },
+]
 
 function getPlatformConfig(): PlatformConfig | null {
   const os = platform()
   const cpuArch = arch()
 
-  /* Windows */
+  /* Windows - 使用官方 Portable 版本 */
   if (os === 'win32') {
     return {
-      url: `${BASE_URL}/${LIBREOFFICE_VERSION}/win/x86_64/LibreOffice_${LIBREOFFICE_VERSION}_Win_x86-64_portable.paf.exe`,
-      filename: `LibreOffice_${LIBREOFFICE_VERSION}_portable.exe`,
+      url: WINDOWS_SOURCES[0].url,
+      filename: WINDOWS_SOURCES[0].filename,
       binaryPath: 'LibreOfficePortable/App/libreoffice/program/soffice.exe',
     }
   }
@@ -57,7 +72,7 @@ function getPlatformConfig(): PlatformConfig | null {
   if (os === 'darwin') {
     const archSuffix = cpuArch === 'arm64' ? 'aarch64' : 'x86_64'
     return {
-      url: `${BASE_URL}/${LIBREOFFICE_VERSION}/mac/${archSuffix}/LibreOffice_${LIBREOFFICE_VERSION}_MacOS_${archSuffix}.dmg`,
+      url: `${BASE_URL}/stable/${LIBREOFFICE_VERSION}/mac/${archSuffix}/LibreOffice_${LIBREOFFICE_VERSION}_MacOS_${archSuffix}.dmg`,
       filename: `LibreOffice_${LIBREOFFICE_VERSION}_${archSuffix}.dmg`,
       binaryPath: 'LibreOffice.app/Contents/MacOS/soffice',
     }
@@ -66,7 +81,7 @@ function getPlatformConfig(): PlatformConfig | null {
   /* Linux */
   if (os === 'linux') {
     return {
-      url: `${BASE_URL}/${LIBREOFFICE_VERSION}/deb/x86_64/LibreOffice_${LIBREOFFICE_VERSION}_Linux_x86-64_deb.tar.gz`,
+      url: `${BASE_URL}/stable/${LIBREOFFICE_VERSION}/deb/x86_64/LibreOffice_${LIBREOFFICE_VERSION}_Linux_x86-64_deb.tar.gz`,
       filename: `LibreOffice_${LIBREOFFICE_VERSION}_Linux.tar.gz`,
       binaryPath: 'usr/lib/libreoffice/program/soffice',
     }
