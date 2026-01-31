@@ -1,0 +1,71 @@
+{
+  "name": "academic",
+  "displayName": "学术主题",
+  "description": "简洁严谨风格，适合学术报告和论文答辩",
+
+  "colors": {
+    "primary": "1a202c",
+    "secondary": "4a5568",
+    "accent": "2b6cb0",
+    "background": "ffffff",
+    "surface": "f7fafc",
+    "text": "1a202c",
+    "textLight": "718096",
+    "border": "cbd5e0"
+  },
+
+  "fonts": {
+    "title": {
+      "face": "宋体",
+      "size": 32,
+      "bold": true,
+      "color": "primary"
+    },
+    "subtitle": {
+      "face": "宋体",
+      "size": 20,
+      "bold": false,
+      "color": "secondary"
+    },
+    "body": {
+      "face": "宋体",
+      "size": 16,
+      "bold": false,
+      "color": "text"
+    },
+    "caption": {
+      "face": "宋体",
+      "size": 12,
+      "bold": false,
+      "color": "textLight"
+    }
+  },
+
+  "layouts": {
+    "title": {
+      "background": "background",
+      "titleColor": "primary",
+      "subtitleColor": "secondary"
+    },
+    "section": {
+      "background": "surface",
+      "titleColor": "primary"
+    },
+    "content": {
+      "background": "background",
+      "titleColor": "primary",
+      "bodyColor": "text"
+    },
+    "end": {
+      "background": "background",
+      "titleColor": "primary",
+      "subtitleColor": "secondary"
+    }
+  },
+
+  "chart": {
+    "colors": ["2b6cb0", "4299e1", "63b3ed", "90cdf4"],
+    "gridColor": "e2e8f0",
+    "labelColor": "4a5568"
+  }
+}
