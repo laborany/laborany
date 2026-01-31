@@ -7,7 +7,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { execSync, spawn } from 'child_process'
-import { existsSync, mkdirSync, readdirSync, unlinkSync, statSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, unlinkSync, statSync, renameSync } from 'fs'
 import { join, dirname, basename, extname } from 'path'
 import { platform, homedir, tmpdir } from 'os'
 import { createHash } from 'crypto'
@@ -196,7 +196,6 @@ export async function convertToPdf(inputPath: string): Promise<ConversionResult>
 
         if (existsSync(originalOutput)) {
           try {
-            const { renameSync } = require('fs')
             renameSync(originalOutput, hashedOutput)
             console.log('[OfficeConverter] PDF created:', hashedOutput)
             resolve({ success: true, outputPath: hashedOutput })

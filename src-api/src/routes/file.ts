@@ -428,33 +428,38 @@ file.get('/convert/check', (c) => {
 })
 
 file.post('/convert/pdf', async (c) => {
-  const body = await c.req.json<{ path: string }>()
-  const inputPath = body.path
+  try {
+    const body = await c.req.json<{ path: string }>()
+    const inputPath = body.path
 
-  if (!inputPath) {
-    return c.json({ error: '缺少文件路径' }, 400)
+    if (!inputPath) {
+      return c.json({ error: '缺少文件路径' }, 400)
+    }
+
+    if (!existsSync(inputPath)) {
+      return c.json({ error: '文件不存在' }, 404)
+    }
+
+    if (!isLibreOfficeAvailable()) {
+      return c.json({ error: 'LibreOffice 未安装，无法转换' }, 503)
+    }
+
+    console.log(`[File] Converting to PDF: ${inputPath}`)
+    const result = await convertToPdf(inputPath)
+
+    if (!result.success) {
+      return c.json({ error: result.error || '转换失败' }, 500)
+    }
+
+    return c.json({
+      success: true,
+      pdfPath: result.outputPath,
+      cached: result.cached,
+    })
+  } catch (err) {
+    console.error('[File] Convert PDF error:', err)
+    return c.json({ error: err instanceof Error ? err.message : '转换失败' }, 500)
   }
-
-  if (!existsSync(inputPath)) {
-    return c.json({ error: '文件不存在' }, 404)
-  }
-
-  if (!isLibreOfficeAvailable()) {
-    return c.json({ error: 'LibreOffice 未安装，无法转换' }, 503)
-  }
-
-  console.log(`[File] Converting to PDF: ${inputPath}`)
-  const result = await convertToPdf(inputPath)
-
-  if (!result.success) {
-    return c.json({ error: result.error || '转换失败' }, 500)
-  }
-
-  return c.json({
-    success: true,
-    pdfPath: result.outputPath,
-    cached: result.cached,
-  })
 })
 
 file.get('/convert/pdf/*', async (c) => {
