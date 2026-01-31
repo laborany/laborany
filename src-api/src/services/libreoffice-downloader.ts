@@ -92,21 +92,27 @@ function getPlatformConfig(): PlatformConfig | null {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       安装目录管理                                        │
+ * │  注意：各平台安装行为不同                                                  │
+ * │  - Windows: PortableApps 安装器会追加 "LibreOfficePortable" 到目标路径     │
+ * │  - macOS: DMG 挂载后复制 .app 到目标目录                                   │
+ * │  - Linux: tar.gz 解压到目标目录                                           │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 function getInstallDir(): string {
   const os = platform()
-  let baseDir: string
+  let installDir: string
 
   if (os === 'win32') {
-    baseDir = join(homedir(), 'AppData', 'Local', 'LaborAny')
+    /* Windows: 返回基础目录，安装器会追加 LibreOfficePortable */
+    installDir = join(homedir(), 'AppData', 'Local', 'LaborAny')
   } else if (os === 'darwin') {
-    baseDir = join(homedir(), 'Library', 'Application Support', 'LaborAny')
+    /* macOS: 返回 libreoffice 子目录 */
+    installDir = join(homedir(), 'Library', 'Application Support', 'LaborAny', 'libreoffice')
   } else {
-    baseDir = join(homedir(), '.local', 'share', 'laborany')
+    /* Linux: 返回 libreoffice 子目录 */
+    installDir = join(homedir(), '.local', 'share', 'laborany', 'libreoffice')
   }
 
-  const installDir = join(baseDir, 'libreoffice')
   if (!existsSync(installDir)) {
     mkdirSync(installDir, { recursive: true })
   }
@@ -142,9 +148,30 @@ export function getDownloadedLibreOfficePath(): string | null {
   const config = getPlatformConfig()
   if (!config) return null
 
+  const os = platform()
   const installDir = getInstallDir()
-  const binaryPath = join(installDir, config.binaryPath)
 
+  /* Windows: 检查多个可能的路径（兼容旧安装） */
+  if (os === 'win32') {
+    const possiblePaths = [
+      /* 新路径：LaborAny/LibreOfficePortable/... */
+      join(installDir, config.binaryPath),
+      /* 旧路径：LaborAny/libreofficeLibreOfficePortable/... (旧版本的错误路径) */
+      join(installDir, 'libreofficeLibreOfficePortable', 'App', 'libreoffice', 'program', 'soffice.exe'),
+      /* 另一个旧路径：LaborAny/libreoffice/LibreOfficePortable/... */
+      join(installDir, 'libreoffice', 'LibreOfficePortable', 'App', 'libreoffice', 'program', 'soffice.exe'),
+    ]
+
+    for (const path of possiblePaths) {
+      if (existsSync(path)) {
+        return path
+      }
+    }
+    return null
+  }
+
+  /* macOS/Linux: 使用标准路径 */
+  const binaryPath = join(installDir, config.binaryPath)
   if (existsSync(binaryPath)) {
     return binaryPath
   }
