@@ -38,7 +38,7 @@ export function ScenarioCards() {
        * 编辑模式 / 展示模式
        * ═══════════════════════════════════════════════════════════════════════ */}
       {isEditing ? (
-        <QuickStartEditor onClose={() => setIsEditing(false)} />
+        <QuickStartEditor />
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {scenarios.map((scenario) => (

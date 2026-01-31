@@ -8,14 +8,10 @@
 import { useQuickStart, QuickStartItem } from '../../hooks/useQuickStart'
 import { useWorkers } from '../../hooks/useWorkers'
 
-interface Props {
-  onClose: () => void
-}
-
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           主组件                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export function QuickStartEditor({ onClose }: Props) {
+export function QuickStartEditor() {
   const {
     scenarios,
     addScenario,
