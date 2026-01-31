@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{PAPER_TITLE}</title>
+    <style>
+        /* ============================================================
+         * 基础重置与变量
+         * ============================================================ */
+        :root {
+            --primary-color: #2c3e50;
+            --accent-color: #3498db;
+            --text-color: #333333;
+            --text-light: #666666;
+            --border-color: #e0e0e0;
+            --bg-color: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --font-serif: "Georgia", "Times New Roman", serif;
+            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            --priority-high: #e74c3c;
+            --priority-medium: #f39c12;
+            --priority-low: #3498db;
+        }
+        :root {
+            --primary-color: #2c3e50;
+            --accent-color: #3498db;
+            --text-color: #333333;
+            --text-light: #666666;
+            --border-color: #e0e0e0;
+            --bg-color: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --font-serif: "Georgia", "Times New Roman", serif;
+            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            font-size: 16px;
+            scroll-behavior: smooth;
+        }
+
+        /* ============================================================
+         * 布局容器
+         * ============================================================ */
+        body {
+            font-family: var(--font-serif);
+            line-height: 1.8;
+            color: var(--text-color);
+            background: var(--bg-secondary);
+        }
+
+        .paper-container {
+            max-width: 850px;
+            margin: 0 auto;
+            padding: 40px 30px;
+            background: var(--bg-color);
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.05);
+        }
+
+        /* ============================================================
+         * 标题样式
+         * ============================================================ */
+        .paper-title {
+            font-family: var(--font-sans);
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            text-align: center;
+            margin: 0 0 15px 0;
+            line-height: 1.4;
+        }
+
+        .paper-meta {
+            font-family: var(--font-sans);
+            font-size: 0.95rem;
+            color: var(--text-light);
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        /* ============================================================
+         * 章节标题
+         * ============================================================ */
+        .section {
+            margin-top: 35px;
+        }
+
+        .section-title {
+            font-family: var(--font-sans);
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary-color);
+            margin: 0 0 20px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .subsection-title {
+            font-family: var(--font-sans);
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--primary-color);
+            margin: 25px 0 15px 0;
+        }
+
+        /* ============================================================
+         * 段落与文本
+         * ============================================================ */
+        .paragraph {
+            margin-bottom: 18px;
+            text-align: justify;
+            text-indent: 2em;
+        }
+
+        .paragraph.no-indent {
+            text-indent: 0;
+        }
+
+        .abstract-text {
+            background: var(--bg-secondary);
+            padding: 20px 25px;
+            border-left: 4px solid var(--accent-color);
+            margin-bottom: 30px;
+            font-size: 0.95rem;
+            line-height: 1.7;
+        }
+
+        /* ============================================================
+         * 列表
+         * ============================================================ */
+        .list {
+            margin: 15px 0 15px 30px;
+        }
+
+        .list li {
+            margin-bottom: 8px;
+        }
+
+        .list-ordered {
+            list-style-type: decimal;
+        }
+
+        .list-unordered {
+            list-style-type: disc;
+        }
+
+        /* ============================================================
+         * 表格
+         * ============================================================ */
+        .table-wrapper {
+            margin: 25px 0;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: var(--font-sans);
+            font-size: 0.9rem;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+
+        tr:hover {
+            background: rgba(52, 152, 219, 0.05);
+        }
+
+        /* ============================================================
+         * 公式
+         * ============================================================ */
+        .formula {
+            font-family: "Times New Roman", serif;
+            text-align: center;
+            margin: 25px 0;
+            font-size: 1.1rem;
+            padding: 15px;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+        }
+
+        .inline-formula {
+            font-family: "Times New Roman", serif;
+            font-style: italic;
+        }
+
+        /* ============================================================
+         * 代码块
+         * ============================================================ */
+        .code-block {
+            background: #f4f4f4;
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+            border-left: 3px solid var(--accent-color);
+            font-family: "Courier New", monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+        }
+
+        /* ============================================================
+         * 修改意见区域
+         * ============================================================ */
+        .review-notes {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 30px 25px;
+            border-radius: 12px;
+            margin-bottom: 35px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .review-title {
+            font-family: var(--font-sans);
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: white;
+            margin: 0 0 20px 0;
+            text-align: center;
+            padding-bottom: 15px;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .review-section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-bottom: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .review-section.priority-high {
+            border-left: 5px solid var(--priority-high);
+        }
+
+        .review-section.priority-medium {
+            border-left: 5px solid var(--priority-medium);
+        }
+
+        .review-section.priority-low {
+            border-left: 5px solid var(--priority-low);
+        }
+
+        .priority-heading {
+            font-family: var(--font-sans);
+            font-size: 0.95rem;
+            font-weight: 700;
+            margin: 0 0 10px 0;
+            color: var(--primary-color);
+        }
+
+        .review-section.priority-high .priority-heading {
+            color: var(--priority-high);
+        }
+
+        .review-section.priority-medium .priority-heading {
+            color: var(--priority-medium);
+        }
+
+        .review-section.priority-low .priority-heading {
+            color: var(--priority-low);
+        }
+
+        .review-note {
+            font-family: var(--font-sans);
+            font-size: 0.9rem;
+            line-height: 1.6;
+            margin-bottom: 10px;
+            color: var(--text-color);
+        }
+
+        .review-note:last-child {
+            margin-bottom: 0;
+        }
+
+        .note-id {
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-right: 6px;
+        }
+
+        .note-content {
+            color: var(--text-color);
+        }
+
+        .note-location {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-light);
+            margin-top: 4px;
+            padding-left: 26px;
+        }
+
+        /* ============================================================
+         * 引用
+         * ============================================================ */
+        .citation {
+            font-size: 0.8rem;
+            color: var(--accent-color);
+            vertical-align: super;
+        }
+
+        .reference-section {
+            margin-top: 40px;
+        }
+
+        .reference-item {
+            margin-bottom: 10px;
+            font-size: 0.9rem;
+            text-indent: -2em;
+            padding-left: 2em;
+        }
+
+        /* ============================================================
+         * 响应式设计
+         * ============================================================ */
+        @media (max-width: 768px) {
+            .paper-container {
+                padding: 20px 15px;
+            }
+
+            .paper-title {
+                font-size: 1.6rem;
+            }
+
+            .section-title {
+                font-size: 1.3rem;
+            }
+
+            .abstract-text {
+                padding: 15px;
+            }
+
+            .review-notes {
+                padding: 20px 15px;
+            }
+
+            .review-title {
+                font-size: 1.2rem;
+            }
+
+            .review-section {
+                padding: 12px 15px;
+            }
+
+            .diff-toggle button {
+                padding: 6px 14px;
+                font-size: 0.75rem;
+            }
+        }
+
+        /* ============================================================
+         * Diff/修改痕迹样式
+         * ============================================================ */
+        .diff-toggle-container {
+            position: sticky;
+            top: 10px;
+            z-index: 100;
+            text-align: center;
+            margin: 10px 0 20px 0;
+        }
+
+        .diff-toggle {
+            display: inline-flex;
+            background: white;
+            border-radius: 25px;
+            padding: 4px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            font-family: var(--font-sans);
+            font-size: 0.85rem;
+        }
+
+        .diff-toggle button {
+            padding: 8px 20px;
+            border: none;
+            background: transparent;
+            color: var(--text-light);
+            cursor: pointer;
+            border-radius: 20px;
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+
+        .diff-toggle button:hover {
+            background: rgba(52, 152, 219, 0.1);
+        }
+
+        .diff-toggle button.active {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        /* Diff 样式控制 - 默认隐藏 */
+        .del-text {
+            display: none;
+            text-decoration: line-through;
+            color: #e74c3c;
+            opacity: 0.6;
+        }
+
+        .add-text {
+            display: none;
+            background: rgba(46, 204, 113, 0.2);
+            padding: 2px 4px;
+            border-radius: 2px;
+            color: #27ae60;
+        }
+
+        .add-text.no-highlight {
+            background: none;
+            color: inherit;
+        }
+
+        /* Diff 模式激活时显示 */
+        body.show-diff .del-text {
+            display: inline;
+        }
+
+        body.show-diff .add-text {
+            display: inline;
+        }
+
+        /* 混合模式：只显示新增的高亮 */
+        body.show-changes .add-text {
+            display: inline;
+        }
+
+        body.show-changes .del-text {
+            display: inline;
+        }
+
+        /* 打印样式
+         * ============================================================ */
+        @media print {
+            body {
+                background: white;
+            }
+
+            .paper-container {
+                box-shadow: none;
+                padding: 0;
+            }
+
+            .section-title {
+                page-break-before: auto;
+            }
+
+            .diff-toggle-container {
+                display: none;
+            }
+
+            .review-notes {
+                background: none !important;
+                border: 1px solid var(--border-color) !important;
+                padding: 15px !important;
+            }
+
+            .review-title {
+                color: var(--primary-color) !important;
+                border-bottom: 1px solid var(--border-color) !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="paper-container">
+        <!-- Diff 切换开关 -->
+        <div class="diff-toggle-container">
+            <div class="diff-toggle">
+                <button id="btn-clean" class="active" onclick="setDiffMode('clean')">纯净版</button>
+                <button id="btn-changes" onclick="setDiffMode('changes')">修改痕迹</button>
+                <button id="btn-diff" onclick="setDiffMode('diff')">完整 Diff</button>
+            </div>
+        </div>
+        <!-- 修改意见区域 -->
+        {REVIEW_NOTES}
+        <!-- 论文内容 -->
+        {PAPER_CONTENT}
+    </div>
+
+    <script>
+        function setDiffMode(mode) {
+            document.body.classList.remove('show-diff', 'show-changes');
+            document.querySelectorAll('.diff-toggle button').forEach(btn => btn.classList.remove('active'));
+
+            if (mode === 'diff') {
+                document.body.classList.add('show-diff');
+                document.getElementById('btn-diff').classList.add('active');
+            } else if (mode === 'changes') {
+                document.body.classList.add('show-changes');
+                document.getElementById('btn-changes').classList.add('active');
+            } else {
+                document.getElementById('btn-clean').classList.add('active');
+            }
+        }
+    </script>
+</body>
+</html>
