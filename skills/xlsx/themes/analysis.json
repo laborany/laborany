@@ -1,0 +1,81 @@
+{
+  "name": "analysis",
+  "description": "数据分析主题 - 适用于数据分析、统计报告、仪表板",
+  "colors": {
+    "primary": "4472C4",
+    "secondary": "ED7D31",
+    "accent1": "A5A5A5",
+    "accent2": "FFC000",
+    "accent3": "5B9BD5",
+    "accent4": "70AD47",
+    "header": "4472C4",
+    "headerText": "FFFFFF",
+    "highlight": "FFEB9C",
+    "lowValue": "F8696B",
+    "midValue": "FFEB84",
+    "highValue": "63BE7B"
+  },
+  "numberFormats": {
+    "number": "#,##0",
+    "decimal": "#,##0.00",
+    "percentage": "0.0%",
+    "scientific": "0.00E+00"
+  },
+  "fonts": {
+    "header": {
+      "name": "微软雅黑",
+      "size": 11,
+      "bold": true,
+      "color": "FFFFFF"
+    },
+    "body": {
+      "name": "微软雅黑",
+      "size": 10,
+      "bold": false,
+      "color": "000000"
+    },
+    "metric": {
+      "name": "微软雅黑",
+      "size": 14,
+      "bold": true,
+      "color": "4472C4"
+    }
+  },
+  "conditionalFormats": {
+    "dataBar": {
+      "type": "dataBar",
+      "color": "4472C4",
+      "showValue": true
+    },
+    "colorScale": {
+      "type": "colorScale",
+      "colors": ["F8696B", "FFEB84", "63BE7B"]
+    },
+    "iconSet": {
+      "type": "iconSet",
+      "iconStyle": "3Arrows"
+    }
+  },
+  "chartColors": [
+    "4472C4",
+    "ED7D31",
+    "A5A5A5",
+    "FFC000",
+    "5B9BD5",
+    "70AD47"
+  ],
+  "styles": {
+    "header": {
+      "font": "header",
+      "fill": "header",
+      "alignment": {"horizontal": "center", "vertical": "center"}
+    },
+    "metric": {
+      "font": "metric",
+      "alignment": {"horizontal": "center"}
+    },
+    "highlight": {
+      "fill": "highlight"
+    }
+  }
+}

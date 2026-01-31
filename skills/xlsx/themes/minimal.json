@@ -1,0 +1,76 @@
+{
+  "name": "minimal",
+  "description": "极简主题 - 黑白配色，适合打印和正式文档",
+  "colors": {
+    "primary": "000000",
+    "secondary": "666666",
+    "header": "000000",
+    "headerText": "FFFFFF",
+    "alternateRow": "F5F5F5",
+    "border": "000000"
+  },
+  "numberFormats": {
+    "number": "#,##0",
+    "decimal": "#,##0.00",
+    "percentage": "0%",
+    "date": "YYYY-MM-DD"
+  },
+  "fonts": {
+    "header": {
+      "name": "微软雅黑",
+      "size": 11,
+      "bold": true,
+      "color": "FFFFFF"
+    },
+    "body": {
+      "name": "微软雅黑",
+      "size": 10,
+      "bold": false,
+      "color": "000000"
+    },
+    "title": {
+      "name": "微软雅黑",
+      "size": 14,
+      "bold": true,
+      "color": "000000"
+    }
+  },
+  "borders": {
+    "all": {
+      "top": {"style": "thin", "color": "000000"},
+      "bottom": {"style": "thin", "color": "000000"},
+      "left": {"style": "thin", "color": "000000"},
+      "right": {"style": "thin", "color": "000000"}
+    },
+    "header": {
+      "bottom": {"style": "medium", "color": "000000"}
+    },
+    "none": {}
+  },
+  "styles": {
+    "title": {
+      "font": "title",
+      "alignment": {"horizontal": "left"}
+    },
+    "header": {
+      "font": "header",
+      "fill": "header",
+      "border": "header",
+      "alignment": {"horizontal": "center", "vertical": "center"}
+    },
+    "body": {
+      "font": "body",
+      "border": "all"
+    },
+    "bodyAlternate": {
+      "font": "body",
+      "fill": "alternateRow",
+      "border": "all"
+    }
+  },
+  "printSettings": {
+    "fitToPage": true,
+    "gridLines": false,
+    "blackAndWhite": true
+  }
+}

@@ -24,9 +24,11 @@ def recalc(input_path: str, output_path: str) -> None:
     if not input_file.exists():
         raise FileNotFoundError(f"文件不存在: {input_file}")
 
-    # 复制到临时位置
-    temp_dir = Path('/tmp/xlsx_recalc')
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    # ─────────────────────────────────────────────────────────────────────────
+    #  复制到临时位置（跨平台兼容）
+    # ─────────────────────────────────────────────────────────────────────────
+    import tempfile
+    temp_dir = Path(tempfile.mkdtemp(prefix="xlsx_recalc_"))
     temp_file = temp_dir / input_file.name
 
     shutil.copy(input_file, temp_file)
@@ -46,8 +48,11 @@ def recalc(input_path: str, output_path: str) -> None:
     if result.returncode != 0:
         raise RuntimeError(f"LibreOffice 执行失败: {result.stderr}")
 
-    # 移动到目标位置
+    # ─────────────────────────────────────────────────────────────────────────
+    #  移动到目标位置并清理临时目录
+    # ─────────────────────────────────────────────────────────────────────────
     shutil.move(temp_file, output_file)
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
     print(f"[重算完成] {input_file} -> {output_file}")
 

@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  样式模板 - styles.xml                                                         ║
+║  SpreadsheetML 样式定义                                                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+-->
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+            xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac"
+            mc:Ignorable="x14ac">
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       数字格式
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <numFmts count="2">
+    <numFmt numFmtId="164" formatCode="¥#,##0.00"/>
+    <numFmt numFmtId="165" formatCode="0.00%"/>
+  </numFmts>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       字体
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <fonts count="3" x14ac:knownFonts="1">
+    <!-- 默认字体 -->
+    <font>
+      <sz val="11"/>
+      <color theme="1"/>
+      <name val="等线"/>
+      <family val="2"/>
+      <charset val="134"/>
+      <scheme val="minor"/>
+    </font>
+    <!-- 加粗字体 -->
+    <font>
+      <b/>
+      <sz val="11"/>
+      <color theme="1"/>
+      <name val="等线"/>
+      <family val="2"/>
+      <charset val="134"/>
+      <scheme val="minor"/>
+    </font>
+    <!-- 表头字体（白色） -->
+    <font>
+      <b/>
+      <sz val="11"/>
+      <color rgb="FFFFFFFF"/>
+      <name val="等线"/>
+      <family val="2"/>
+      <charset val="134"/>
+      <scheme val="minor"/>
+    </font>
+  </fonts>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       填充
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <fills count="4">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <!-- 表头填充（深蓝） -->
+    <fill>
+      <patternFill patternType="solid">
+        <fgColor rgb="FF4472C4"/>
+        <bgColor indexed="64"/>
+      </patternFill>
+    </fill>
+    <!-- 交替行填充（浅灰） -->
+    <fill>
+      <patternFill patternType="solid">
+        <fgColor rgb="FFF2F2F2"/>
+        <bgColor indexed="64"/>
+      </patternFill>
+    </fill>
+  </fills>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       边框
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <borders count="2">
+    <border>
+      <left/><right/><top/><bottom/><diagonal/>
+    </border>
+    <!-- 细边框 -->
+    <border>
+      <left style="thin"><color indexed="64"/></left>
+      <right style="thin"><color indexed="64"/></right>
+      <top style="thin"><color indexed="64"/></top>
+      <bottom style="thin"><color indexed="64"/></bottom>
+      <diagonal/>
+    </border>
+  </borders>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       单元格样式格式
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <cellStyleXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+  </cellStyleXfs>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       单元格格式
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <cellXfs count="4">
+    <!-- 0: 默认 -->
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <!-- 1: 表头 -->
+    <xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">
+      <alignment horizontal="center" vertical="center"/>
+    </xf>
+    <!-- 2: 货币 -->
+    <xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>
+    <!-- 3: 百分比 -->
+    <xf numFmtId="165" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>
+  </cellXfs>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       单元格样式
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <cellStyles count="1">
+    <cellStyle name="常规" xfId="0" builtinId="0"/>
+  </cellStyles>
+
+  <dxfs count="0"/>
+  <tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>
+
+</styleSheet>

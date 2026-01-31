@@ -1,0 +1,80 @@
+{
+  "name": "financial",
+  "description": "财务报表主题 - 适用于财务报表、预算表、损益表",
+  "colors": {
+    "primary": "1F4E79",
+    "secondary": "2E75B6",
+    "positive": "006400",
+    "negative": "8B0000",
+    "header": "1F4E79",
+    "headerText": "FFFFFF",
+    "alternateRow": "D6DCE4"
+  },
+  "numberFormats": {
+    "currency": "¥#,##0.00",
+    "currencyNegative": "¥#,##0.00;[Red]-¥#,##0.00",
+    "percentage": "0.00%",
+    "percentageNegative": "0.00%;[Red]-0.00%",
+    "accounting": "_ ¥* #,##0.00_ ;_ ¥* -#,##0.00_ ;_ ¥* \"-\"??_ ;_ @_ "
+  },
+  "fonts": {
+    "header": {
+      "name": "微软雅黑",
+      "size": 11,
+      "bold": true,
+      "color": "FFFFFF"
+    },
+    "body": {
+      "name": "微软雅黑",
+      "size": 10,
+      "bold": false,
+      "color": "000000"
+    },
+    "total": {
+      "name": "微软雅黑",
+      "size": 10,
+      "bold": true,
+      "color": "000000"
+    }
+  },
+  "borders": {
+    "header": {
+      "bottom": {"style": "medium", "color": "1F4E79"}
+    },
+    "body": {
+      "bottom": {"style": "thin", "color": "D6DCE4"}
+    },
+    "total": {
+      "top": {"style": "thin", "color": "000000"},
+      "bottom": {"style": "double", "color": "000000"}
+    }
+  },
+  "styles": {
+    "header": {
+      "font": "header",
+      "fill": "header",
+      "border": "header",
+      "alignment": {"horizontal": "center", "vertical": "center"}
+    },
+    "currency": {
+      "font": "body",
+      "numberFormat": "currency",
+      "alignment": {"horizontal": "right"}
+    },
+    "currencyNegative": {
+      "font": "body",
+      "numberFormat": "currencyNegative",
+      "alignment": {"horizontal": "right"}
+    },
+    "percentage": {
+      "font": "body",
+      "numberFormat": "percentage",
+      "alignment": {"horizontal": "right"}
+    },
+    "total": {
+      "font": "total",
+      "border": "total",
+      "numberFormat": "currency"
+    }
+  }
+}
