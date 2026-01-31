@@ -204,25 +204,60 @@ async function downloadFile(url: string, destPath: string): Promise<void> {
  * │                       平台特定的安装逻辑                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
+/* 等待文件可用（杀毒软件扫描等） */
+async function waitForFile(filePath: string, maxRetries = 5): Promise<void> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const { accessSync, constants } = await import('fs')
+      accessSync(filePath, constants.R_OK | constants.X_OK)
+      return
+    } catch {
+      updateProgress({ message: `等待文件就绪... (${i + 1}/${maxRetries})` })
+      await new Promise(r => setTimeout(r, 2000))
+    }
+  }
+}
+
 async function installWindows(downloadPath: string, installDir: string): Promise<void> {
-  updateProgress({ status: 'extracting', progress: 96, message: '正在解压 LibreOffice Portable...' })
+  updateProgress({ status: 'extracting', progress: 96, message: '正在准备安装...' })
 
-  /* 运行 PortableApps 安装器（静默模式） */
-  return new Promise((resolve, reject) => {
-    const proc = spawn(downloadPath, ['/DESTINATION=' + installDir, '/SILENT'], {
-      windowsHide: true,
-    })
+  /* 等待文件可用（杀毒软件扫描可能需要几秒） */
+  await waitForFile(downloadPath)
 
-    proc.on('close', (code) => {
-      if (code === 0) {
-        resolve()
-      } else {
-        reject(new Error(`安装失败，退出码: ${code}`))
+  updateProgress({ message: '正在解压 LibreOffice Portable...' })
+
+  /* 运行 PortableApps 安装器（静默模式），带重试 */
+  const maxRetries = 3
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(downloadPath, ['/DESTINATION=' + installDir, '/SILENT'], {
+          windowsHide: true,
+        })
+
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve()
+          } else {
+            reject(new Error(`安装失败，退出码: ${code}`))
+          }
+        })
+
+        proc.on('error', reject)
+      })
+      return /* 成功则退出 */
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      if (attempt < maxRetries - 1) {
+        updateProgress({ message: `安装重试中... (${attempt + 2}/${maxRetries})` })
+        await new Promise(r => setTimeout(r, 3000))
       }
-    })
+    }
+  }
 
-    proc.on('error', reject)
-  })
+  throw lastError || new Error('安装失败')
 }
 
 async function installMacOS(downloadPath: string, installDir: string): Promise<void> {
