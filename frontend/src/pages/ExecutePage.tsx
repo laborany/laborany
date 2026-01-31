@@ -14,6 +14,7 @@ import type { TaskFile } from '../types'
 import { useVitePreview } from '../hooks/useVitePreview'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
+import { QuestionInput } from '../components/shared/QuestionInput'
 import { RightSidebar } from '../components/shared/RightSidebar'
 import { ResizeHandle, useResizablePanel } from '../components/shared/ResizeHandle'
 import { ArtifactPreview, VitePreview, getExt, getCategory, isPreviewable } from '../components/preview'
@@ -75,11 +76,13 @@ export default function ExecutePage() {
     sessionId,
     taskFiles,
     workDir,
+    pendingQuestion,
     execute,
     stop,
     clear,
     fetchTaskFiles,
     getFileUrl,
+    respondToQuestion,
   } = useAgent(skillId || '')
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -289,6 +292,13 @@ export default function ExecutePage() {
             <MessageList messages={messages} isRunning={isRunning} />
           )}
         </div>
+
+        {/* 问题输入（当有待回答问题时显示） */}
+        {pendingQuestion && (
+          <div className="shrink-0 mb-4">
+            <QuestionInput pendingQuestion={pendingQuestion} onSubmit={respondToQuestion} />
+          </div>
+        )}
 
         {/* 输入框 */}
         <div className="shrink-0">

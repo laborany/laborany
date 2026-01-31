@@ -13,6 +13,27 @@ import { API_BASE } from '../config'
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export type { AgentMessage, TaskFile }
 
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                      AskUserQuestion 相关类型                             │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export interface QuestionOption {
+  label: string
+  description: string
+}
+
+export interface AgentQuestion {
+  question: string
+  header: string
+  options: QuestionOption[]
+  multiSelect: boolean
+}
+
+export interface PendingQuestion {
+  id: string
+  toolUseId: string
+  questions: AgentQuestion[]
+}
+
 interface AgentState {
   messages: AgentMessage[]
   isRunning: boolean
@@ -20,6 +41,7 @@ interface AgentState {
   error: string | null
   taskFiles: TaskFile[]
   workDir: string | null
+  pendingQuestion: PendingQuestion | null
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -33,6 +55,7 @@ export function useAgent(skillId: string) {
     error: null,
     taskFiles: [],
     workDir: null,
+    pendingQuestion: null,
   })
 
   const abortRef = useRef<AbortController | null>(null)
@@ -193,6 +216,32 @@ export function useAgent(skillId: string) {
         break
 
       case 'tool_use':
+        const toolName = event.toolName as string
+        const toolInput = event.toolInput as Record<string, unknown>
+
+        // 检测 AskUserQuestion 工具调用
+        if (toolName === 'AskUserQuestion' && toolInput.questions) {
+          setState((s) => ({
+            ...s,
+            isRunning: false,
+            pendingQuestion: {
+              id: `question_${Date.now()}`,
+              toolUseId: (event.toolUseId as string) || `tool_${Date.now()}`,
+              questions: toolInput.questions as AgentQuestion[],
+            },
+          }))
+          abortRef.current?.abort()
+          // 通知后端停止
+          if (sessionIdRef.current) {
+            const token = localStorage.getItem('token')
+            fetch(`${API_BASE}/skill/stop/${sessionIdRef.current}`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+            })
+          }
+          return
+        }
+
         setState((s) => ({
           ...s,
           messages: [
@@ -200,9 +249,9 @@ export function useAgent(skillId: string) {
             {
               id: crypto.randomUUID(),
               type: 'tool',
-              content: '',  // 不再存储 JSON 字符串
-              toolName: event.toolName as string,
-              toolInput: event.toolInput as Record<string, unknown>,
+              content: '',
+              toolName,
+              toolInput,
               timestamp: new Date(),
             },
           ],
@@ -240,6 +289,7 @@ export function useAgent(skillId: string) {
       error: null,
       taskFiles: [],
       workDir: null,
+      pendingQuestion: null,
     })
   }, [])
 
@@ -265,13 +315,41 @@ export function useAgent(skillId: string) {
     }
   }, [state.sessionId])
 
-  // 获取文件下载/预览 URL
+  // 获取文件下载/预览 URL（添加时间戳破坏缓存）
   const getFileUrl = useCallback(
     (filePath: string) => {
       if (!state.sessionId) return ''
-      return `${API_BASE}/task/${state.sessionId}/files/${filePath}`
+      const timestamp = Date.now()
+      return `${API_BASE}/task/${state.sessionId}/files/${filePath}?t=${timestamp}`
     },
     [state.sessionId],
+  )
+
+  // 响应用户问题
+  const respondToQuestion = useCallback(
+    async (_questionId: string, answers: Record<string, string>) => {
+      if (!state.pendingQuestion) return
+
+      const answerText = Object.entries(answers)
+        .map(([q, a]) => `${q}: ${a}`)
+        .join('\n')
+
+      // 清除待回答问题
+      setState((s) => ({ ...s, pendingQuestion: null }))
+
+      // 添加用户回答到消息
+      const userMessage: AgentMessage = {
+        id: crypto.randomUUID(),
+        type: 'user',
+        content: answerText,
+        timestamp: new Date(),
+      }
+      setState((s) => ({ ...s, messages: [...s.messages, userMessage] }))
+
+      // 继续对话
+      await execute(answerText)
+    },
+    [state.pendingQuestion, execute],
   )
 
   return {
@@ -281,6 +359,7 @@ export function useAgent(skillId: string) {
     clear,
     fetchTaskFiles,
     getFileUrl,
+    respondToQuestion,
   }
 }
 

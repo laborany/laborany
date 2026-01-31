@@ -616,7 +616,7 @@ class Document:
         self,
         unpacked_dir,
         rsid=None,
-        track_revisions=False,
+        track_revisions=True,
         author="Claude",
         initials="C",
     ):
@@ -627,7 +627,7 @@ class Document:
         Args:
             unpacked_dir: Path to unpacked DOCX directory (must contain word/ subdirectory)
             rsid: Optional RSID to use for all comment elements. If not provided, one will be generated.
-            track_revisions: If True, enables track revisions in settings.xml (default: False)
+            track_revisions: If True, enables track revisions in settings.xml (default: True)
             author: Default author name for comments (default: "Claude")
             initials: Default author initials for comments (default: "C")
         """
