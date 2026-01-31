@@ -77,6 +77,7 @@ export default function ExecutePage() {
     taskFiles,
     workDir,
     pendingQuestion,
+    filesVersion,
     execute,
     stop,
     clear,
@@ -170,6 +171,37 @@ export default function ExecutePage() {
 
     handleSelectArtifact(toFileArtifact(firstFile, getFileUrl))
   }, [taskFiles, messages, handleSelectArtifact, getFileUrl])
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                      文件更新时自动刷新预览                                │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  const selectedPathRef = useRef<string | null>(null)
+
+  // 记录当前选中的文件路径
+  useEffect(() => {
+    selectedPathRef.current = selectedArtifact?.path || null
+  }, [selectedArtifact?.path])
+
+  // 当 filesVersion 变化时，刷新当前选中的 artifact
+  useEffect(() => {
+    if (filesVersion === 0 || !selectedPathRef.current || taskFiles.length === 0) return
+
+    const findFile = (files: TaskFile[], path: string): TaskFile | null => {
+      for (const file of files) {
+        if (file.path === path) return file
+        if (file.children) {
+          const found = findFile(file.children, path)
+          if (found) return found
+        }
+      }
+      return null
+    }
+
+    const currentFile = findFile(taskFiles, selectedPathRef.current)
+    if (currentFile) {
+      setSelectedArtifact(toFileArtifact(currentFile, getFileUrl))
+    }
+  }, [filesVersion, taskFiles, getFileUrl])
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      清空对话                                            │

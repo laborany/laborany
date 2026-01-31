@@ -42,6 +42,7 @@ interface AgentState {
   taskFiles: TaskFile[]
   workDir: string | null
   pendingQuestion: PendingQuestion | null
+  filesVersion: number
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -56,6 +57,7 @@ export function useAgent(skillId: string) {
     taskFiles: [],
     workDir: null,
     pendingQuestion: null,
+    filesVersion: 0,
   })
 
   const abortRef = useRef<AbortController | null>(null)
@@ -290,6 +292,7 @@ export function useAgent(skillId: string) {
       taskFiles: [],
       workDir: null,
       pendingQuestion: null,
+      filesVersion: 0,
     })
   }, [])
 
@@ -308,6 +311,7 @@ export function useAgent(skillId: string) {
           ...s,
           taskFiles: data.files || [],
           workDir: data.workDir || null,
+          filesVersion: s.filesVersion + 1,
         }))
       }
     } catch (err) {
@@ -315,14 +319,13 @@ export function useAgent(skillId: string) {
     }
   }, [state.sessionId])
 
-  // 获取文件下载/预览 URL（添加时间戳破坏缓存）
+  // 获取文件下载/预览 URL（使用 filesVersion 破坏缓存）
   const getFileUrl = useCallback(
     (filePath: string) => {
       if (!state.sessionId) return ''
-      const timestamp = Date.now()
-      return `${API_BASE}/task/${state.sessionId}/files/${filePath}?t=${timestamp}`
+      return `${API_BASE}/task/${state.sessionId}/files/${filePath}?v=${state.filesVersion}`
     },
-    [state.sessionId],
+    [state.sessionId, state.filesVersion],
   )
 
   // 响应用户问题
