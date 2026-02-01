@@ -13,6 +13,23 @@ category: 办公
 
 # Draw.io 智能图表助手
 
+## ⚠️ 强制要求
+
+> **必须使用内置脚本**：本 Skill 目录下的 `scripts/` 包含完整的图表生成和导出功能。
+> **禁止**：自己编写 XML 生成代码、自己下载 draw.io、询问用户是否安装。
+> **必须**：直接 import 并使用 `scripts.diagram.Diagram` 和 `scripts.exporter.export_png`。
+
+```python
+# 正确用法 - 必须这样使用
+from scripts.diagram import Diagram
+from scripts.exporter import export_png
+
+diagram = Diagram(title="标题")
+diagram.add_node("n1", "节点1")
+diagram.save("output.drawio")
+export_png("output.drawio", "output.png")  # CLI 自动安装，无需询问
+```
+
 ## 核心原则
 
 1. **五阶段工作流**: 需求理解 → 结构规划 → 样式设计 → 生成图表 → 迭代修改
@@ -219,12 +236,15 @@ diagram.add_edge("n2", "n3", label="新连线")
 
 ### 创建新图表
 
+> **强制**：必须使用 `scripts/diagram.py` 中的 Diagram 类，禁止自己生成 XML。
+
 使用 **Diagram 类** 创建新图表。
 
 **Workflow**
-1. **MANDATORY - READ ENTIRE FILE**: Read [`references/xml-format.md`](references/xml-format.md) completely
-2. Create a Python script using Diagram API
-3. Export as .drawio and .png
+1. Import: `from scripts.diagram import Diagram`
+2. Create diagram and add nodes/edges
+3. Save: `diagram.save("output.drawio")`
+4. Export PNG: `from scripts.exporter import export_png; export_png("output.drawio", "output.png")`
 
 ### 编辑现有图表
 
@@ -237,13 +257,11 @@ diagram.add_edge("n2", "n3", label="新连线")
 
 ### 导出图片
 
-使用 **draw.io CLI** 导出 PNG/SVG。
-
-> **重要**: draw.io CLI 安装是**完全自动化**的，**禁止询问用户是否安装**。
-> 调用 `ensure_drawio_cli()` 会自动检测并安装，无需任何用户交互。
+> **强制**：必须使用 `scripts/exporter.py`，禁止自己下载或安装 draw.io CLI。
+> CLI 安装是**完全自动化**的，**禁止询问用户**。
 
 **Workflow**
-1. 直接调用导出函数，CLI 会自动安装
+1. Import: `from scripts.exporter import export_png`
 2. Export: `export_png("input.drawio", "output.png", scale=2)`
 3. 如果导出失败，静默降级为仅提供 .drawio 文件
 

@@ -239,21 +239,30 @@ def get_latest_release() -> Tuple[Optional[str], dict]:
 
 def select_asset(os_name: str, arch: str, assets: dict) -> Optional[str]:
     """选择合适的下载文件"""
+    # Windows 优先使用 zip 版本（portable，无需安装）
+    # Linux 使用 AppImage
     patterns = {
-        ("windows", "x64"): ["windows-installer.exe", "win-installer.exe", "windows-no-installer.exe"],
-        ("windows", "arm64"): ["windows-installer.exe", "win-installer.exe", "windows-no-installer.exe"],
-        ("linux", "x64"): ["x86_64.AppImage", "amd64.AppImage", "linux-x64"],
-        ("linux", "arm64"): ["arm64.AppImage", "aarch64.AppImage", "linux-arm64"],
-        ("darwin", "x64"): ["mac-x64.dmg", "darwin-x64"],
-        ("darwin", "arm64"): ["mac-arm64.dmg", "darwin-arm64"],
+        ("windows", "x64"): ["windows.zip", "windows-installer.exe"],
+        ("windows", "arm64"): ["windows-arm64-no-installer.exe", "windows-arm64-installer.exe"],
+        ("linux", "x64"): ["x86_64", "amd64"],
+        ("linux", "arm64"): ["arm64"],
+        ("darwin", "x64"): ["mac-x64.dmg"],
+        ("darwin", "arm64"): ["mac-arm64.dmg"],
     }
 
     search_patterns = patterns.get((os_name, arch), [])
 
-    for pattern in search_patterns:
-        for name in assets:
-            if pattern in name:
-                return name
+    # 对于 Linux，只匹配 AppImage 文件
+    if os_name == "linux":
+        for pattern in search_patterns:
+            for name in assets:
+                if pattern in name and name.endswith(".AppImage"):
+                    return name
+    else:
+        for pattern in search_patterns:
+            for name in assets:
+                if pattern in name:
+                    return name
 
     return None
 
@@ -266,7 +275,7 @@ def install_windows(url: str) -> Optional[str]:
     """
     Windows 安装
 
-    draw.io Windows 版本是 NSIS 安装包，需要静默安装到指定目录
+    优先使用 zip 版本（portable），如果是 installer 则静默安装
     """
     exe_path = INSTALL_DIR / "draw.io.exe"
 
@@ -275,44 +284,68 @@ def install_windows(url: str) -> Optional[str]:
         return str(exe_path)
 
     try:
-        # 下载安装包
-        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as tmp:
-            tmp_path = tmp.name
+        # 创建安装目录
+        INSTALL_DIR.mkdir(parents=True, exist_ok=True)
 
-        download_file(url, Path(tmp_path))
+        if url.endswith(".zip"):
+            # ZIP 版本：下载并解压
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+                tmp_path = tmp.name
 
-        # 静默安装到指定目录
-        # NSIS 安装包支持 /S 静默安装和 /D 指定目录
-        install_dir_str = str(INSTALL_DIR)
+            download_file(url, Path(tmp_path))
 
-        try:
-            subprocess.run(
-                [tmp_path, "/S", f"/D={install_dir_str}"],
-                capture_output=True,
-                timeout=120,
-            )
-        except Exception:
-            pass
+            # 解压到安装目录
+            with zipfile.ZipFile(tmp_path, 'r') as zf:
+                zf.extractall(INSTALL_DIR)
 
-        # 清理临时文件
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
+            # 清理临时文件
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+            # 查找 exe 文件
+            for f in INSTALL_DIR.rglob("draw.io.exe"):
+                return str(f)
+
+            # 如果在子目录中
+            for subdir in INSTALL_DIR.iterdir():
+                if subdir.is_dir():
+                    candidate = subdir / "draw.io.exe"
+                    if candidate.exists():
+                        return str(candidate)
+
+        else:
+            # Installer 版本：静默安装
+            with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as tmp:
+                tmp_path = tmp.name
+
+            download_file(url, Path(tmp_path))
+
+            # NSIS 静默安装
+            try:
+                subprocess.run(
+                    [tmp_path, "/S", f"/D={str(INSTALL_DIR)}"],
+                    capture_output=True,
+                    timeout=120,
+                )
+            except Exception:
+                pass
+
+            # 清理
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
         # 检查安装结果
         if exe_path.exists():
             return str(exe_path)
 
-        # 尝试查找其他可能的安装位置
-        possible_paths = [
-            INSTALL_DIR / "draw.io.exe",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "draw.io" / "draw.io.exe",
-        ]
-
-        for p in possible_paths:
-            if p.exists():
-                return str(p)
+        # 检查系统安装位置
+        system_path = check_system_installed()
+        if system_path:
+            return system_path
 
         return None
 
