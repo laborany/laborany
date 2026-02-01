@@ -6,15 +6,16 @@
 ========================================================================
 
 功能：
-    - 计算原文与修改后论文之间的精确差异（词级/字符级）
+    - 计算原文与修改后论文之间的精确差异（智能分词）
     - 生成带 diff 标记的 HTML（del-text/add-text）
     - 内嵌 HTML 模板，无需外部模板文件
 
 核心思路：
-    1. 对原文和修改文进行字符级 diff
-    2. 遍历 diff 操作，生成混合 HTML（包含删除和新增内容）
-    3. 将混合文本转换为 Markdown 再转换为 HTML
-    4. 使用内嵌模板生成完整 HTML 文件
+    1. 自适应检测文本语言（中文/英文）
+    2. 英文使用词级 diff，中文使用字符级 diff
+    3. 遍历 diff 操作，生成混合 HTML（包含删除和新增内容）
+    4. 将混合文本转换为 Markdown 再转换为 HTML
+    5. 使用内嵌模板生成完整 HTML 文件
 
 用法：
     python calculate_diff.py original.txt modified.txt --output result.html
@@ -543,12 +544,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
 class DiffCalculator:
     """
-    Diff 计算器
+    Diff 计算器（智能分词版）
 
     核心思路：
-        1. 对原文和修改文进行字符级 diff
-        2. 生成混合文本，包含删除和新增标记
-        3. 转换为 HTML
+        1. 自适应检测语言类型（中文/英文）
+        2. 英文使用词级 diff，中文使用字符级 diff
+        3. 生成混合文本，包含删除和新增标记
+        4. 转换为 HTML
     """
 
     def __init__(self):
@@ -559,9 +561,9 @@ class DiffCalculator:
         计算两个 Markdown 文本之间的 diff，输出带标记的 HTML
         """
         # ============================================================
-        # 步骤 1：计算字符级 diff
+        # 步骤 1：计算智能 diff（英文词级，中文字符级）
         # ============================================================
-        diff_ops = self._compute_char_diff(original, modified)
+        diff_ops = self._compute_token_diff(original, modified)
 
         # ============================================================
         # 步骤 2：生成混合文本（带 diff 标记）
@@ -580,20 +582,89 @@ class DiffCalculator:
 
         return html, stats
 
-    def _compute_char_diff(self, original: str, modified: str) -> List[Dict]:
-        """计算字符级 diff"""
+    # ============================================================
+    # 语言检测与分词
+    # ============================================================
+
+    def _is_english_text(self, text: str) -> bool:
+        """
+        检测文本是否以英文为主
+
+        规则：ASCII 字母占比超过 40% 判定为英文文本
+        """
+        if not text:
+            return False
+        total_chars = len(text)
+        ascii_letters = sum(1 for c in text if c.isalpha() and ord(c) < 128)
+        return ascii_letters / max(total_chars, 1) > 0.4
+
+    def _tokenize_for_diff(self, text: str, is_english: bool) -> List[str]:
+        """
+        根据语言类型进行分词
+
+        英文：单词独立为 token，每个空格和标点作为独立 token
+        中文：单字符为 token
+
+        设计理念：
+            - 英文单词是语义单位，应整体比较
+            - 单个空格/标点作为独立 token，确保单词边界清晰
+            - 使用单词+空格交替的模式，让 diff 算法在单词级别工作
+        """
+        if is_english:
+            # 英文分词策略：单词为token，保留原始空格和标点
+            # 正则说明：
+            #   [a-zA-Z0-9']+      - 单词（包含字母、数字、撇号如 don't）
+            #   [^a-zA-Z0-9']      - 非单词字符（空格、标点等），每个单独一个 token
+            tokens = re.findall(r"[a-zA-Z0-9']+|[^a-zA-Z0-9']", text)
+            return tokens
+        else:
+            # 中文单字符作为 token
+            return list(text)
+
+    def _reconstruct_from_tokens(self, tokens: List[str]) -> str:
+        """从 token 列表重建原始字符串"""
+        return ''.join(tokens)
+
+    def _compute_token_diff(self, original: str, modified: str) -> List[Dict]:
+        """
+        智能 diff：英文词级，中文字符级
+
+        核心思路：
+            1. 检测文本语言类型
+            2. 根据语言选择合适的粒度进行 token 化
+            3. 在 token 级别进行 diff
+            4. 将 token 级别的操作映射回原始字符串
+        """
+        # 检测语言类型（以原文为准）
+        is_english = self._is_english_text(original)
+
+        # 分词
+        orig_tokens = self._tokenize_for_diff(original, is_english)
+        mod_tokens = self._tokenize_for_diff(modified, is_english)
+
+        # token 级 diff
         ops = []
-        matcher = SequenceMatcher(None, original, modified, autojunk=False)
+        matcher = SequenceMatcher(None, orig_tokens, mod_tokens, autojunk=False)
+
+        # 用于计算原始字符串中的位置
+        orig_pos = 0
+        mod_pos = 0
 
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            # 计算原始字符串中的实际位置
+            orig_start = sum(len(t) for t in orig_tokens[:i1])
+            orig_end = sum(len(t) for t in orig_tokens[:i2])
+            mod_start = sum(len(t) for t in mod_tokens[:j1])
+            mod_end = sum(len(t) for t in mod_tokens[:j2])
+
             ops.append({
                 'type': tag,
-                'orig_start': i1,
-                'orig_end': i2,
-                'mod_start': j1,
-                'mod_end': j2,
-                'orig_text': original[i1:i2],
-                'mod_text': modified[j1:j2]
+                'orig_start': orig_start,
+                'orig_end': orig_end,
+                'mod_start': mod_start,
+                'mod_end': mod_end,
+                'orig_text': original[orig_start:orig_end],
+                'mod_text': modified[mod_start:mod_end]
             })
 
         return ops
