@@ -1,20 +1,32 @@
 # Markdown 到 HTML 转换指南
 
-本文档说明如何将论文从 Markdown 格式转换为精美的 HTML 格式。
+本文档说明 `scripts/calculate_diff.py` 脚本如何将论文从 Markdown 格式转换为精美的 HTML 格式。
 
 ## 转换流程
 
-1. 读取模板：`assets/paper-template.html`
-2. 解析 Markdown 论文结构
-3. 替换模板占位符
-4. 输出 HTML 文件
+1. 脚本读取原文和修改后的论文
+2. 使用 `difflib.SequenceMatcher` 计算精确 diff
+3. 自动添加 diff 标记（`del-text`/`add-text`）
+4. 将 Markdown 转换为 HTML 结构
+5. 替换模板占位符并输出完整 HTML
 
-## 占位符说明
+## 脚本使用
 
-| 占位符 | 说明 | 示例 |
-|--------|------|------|
-| `{PAPER_TITLE}` | 论文标题（用于 `<title>` 和可选的 meta） | `深度学习在图像识别中的应用研究` |
-| `{PAPER_CONTENT}` | 论文完整 HTML 内容 | 包含标题、摘要、正文、参考文献的完整结构 |
+```bash
+python3 "/Users/lizhe/Library/Application Support/LaborAny/skills/paper-editor/scripts/calculate_diff.py" \
+    "$(pwd)/original.md" "$(pwd)/modified.md" --output "$(pwd)/result.html"
+```
+
+### 参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `original.md` | 原始论文文件（Markdown 格式） |
+| `modified.md` | 修改后的论文文件（Markdown 格式） |
+| `--output` | 输出 HTML 文件路径（**必需**） |
+| `--notes` | 修改意见 JSON 文件（可选） |
+
+**注意**：脚本已内嵌 HTML 模板，无需指定 `--template` 参数。
 
 ## Markdown 元素到 HTML 的映射
 
@@ -203,6 +215,18 @@ model = torch.nn.Sequential(...)</code></div>
     <div class="reference-item">[2] Krizhevsky A, Sutskever I, Hinton G E. ImageNet classification with deep convolutional neural networks[C]//Advances in neural information processing systems. 2012: 1097-1105.</div>
 </div>
 ```
+
+## Diff 标记（脚本自动生成）
+
+脚本会自动为修改内容添加以下 diff 标记：
+
+| 修改类型 | HTML 标签 | 显示效果 |
+|----------|-----------|----------|
+| 删除的原文 | `<span class="del-text">原文内容</span>` | 红色删除线 |
+| 新增内容 | `<span class="add-text">新内容</span>` | 绿色高亮 |
+| 未修改内容 | 无标签 | 正常显示 |
+
+**注意**：diff 标记由脚本自动计算生成，不需要手动添加。
 
 ## 完整转换示例
 
