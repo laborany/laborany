@@ -17,10 +17,63 @@ category: 办公
 
 > **必须使用内置脚本**：本 Skill 目录下的 `scripts/` 包含完整的图表生成和导出功能。
 > **禁止**：自己编写 XML 生成代码、自己下载 draw.io、询问用户是否安装。
-> **必须**：直接 import 并使用 `scripts.diagram.Diagram` 和 `scripts.exporter.export_png`。
+> **必须**：先设置 Python 路径，再 import `scripts.diagram.Diagram` 和 `scripts.exporter.export_png`。
+
+### 路径设置（每个脚本开头必须包含）
+
+由于工作目录可能不在 skill 目录下，**必须先动态查找并设置 Python 路径**：
 
 ```python
-# 正确用法 - 必须这样使用
+# ═══════════════════════════════════════════════════════════════
+# 路径设置 - 每个脚本开头必须包含这段代码
+# ═══════════════════════════════════════════════════════════════
+import sys
+from pathlib import Path
+
+def find_skill_dir(skill_name: str) -> Path:
+    """从当前目录向上搜索 skill 目录"""
+    current = Path.cwd()
+    while current != current.parent:
+        for base in ["skills", "laborany/skills"]:
+            skill_path = current / base / skill_name
+            if skill_path.exists():
+                return skill_path
+        current = current.parent
+    raise FileNotFoundError(f"找不到 {skill_name} skill 目录")
+
+skill_dir = find_skill_dir("drawio")
+sys.path.insert(0, str(skill_dir))
+# ═══════════════════════════════════════════════════════════════
+
+# 现在可以正常导入
+from scripts.diagram import Diagram
+from scripts.exporter import export_png
+```
+
+### 完整示例
+
+```python
+# ═══════════════════════════════════════════════════════════════
+# 路径设置
+# ═══════════════════════════════════════════════════════════════
+import sys
+from pathlib import Path
+
+def find_skill_dir(skill_name: str) -> Path:
+    """从当前目录向上搜索 skill 目录"""
+    current = Path.cwd()
+    while current != current.parent:
+        for base in ["skills", "laborany/skills"]:
+            skill_path = current / base / skill_name
+            if skill_path.exists():
+                return skill_path
+        current = current.parent
+    raise FileNotFoundError(f"找不到 {skill_name} skill 目录")
+
+skill_dir = find_skill_dir("drawio")
+sys.path.insert(0, str(skill_dir))
+# ═══════════════════════════════════════════════════════════════
+
 from scripts.diagram import Diagram
 from scripts.exporter import export_png
 
@@ -134,49 +187,64 @@ export_png("output.drawio", "output.png")  # CLI 自动安装，无需询问
 
 ### 阶段四：生成图表
 
-**1. 创建 Diagram 实例**
+**完整代码模板**（包含路径设置）：
 
 ```python
+# ═══════════════════════════════════════════════════════════════
+# 路径设置
+# ═══════════════════════════════════════════════════════════════
+import sys
+from pathlib import Path
+
+def find_skill_dir(skill_name: str) -> Path:
+    """从当前目录向上搜索 skill 目录"""
+    current = Path.cwd()
+    while current != current.parent:
+        for base in ["skills", "laborany/skills"]:
+            skill_path = current / base / skill_name
+            if skill_path.exists():
+                return skill_path
+        current = current.parent
+    raise FileNotFoundError(f"找不到 {skill_name} skill 目录")
+
+skill_dir = find_skill_dir("drawio")
+sys.path.insert(0, str(skill_dir))
+# ═══════════════════════════════════════════════════════════════
+
 from scripts.diagram import Diagram
+from scripts.exporter import export_png
 
+# ═══════════════════════════════════════════════════════════════
+# 1. 创建 Diagram 实例
+# ═══════════════════════════════════════════════════════════════
 diagram = Diagram(title="图表标题", theme="default")
-```
 
-**2. 添加节点和连线**
-
-```python
-# 添加节点
+# ═══════════════════════════════════════════════════════════════
+# 2. 添加节点和连线
+# ════════════════════���══════════════════════════════════════════
 diagram.add_node("n1", "开始", shape="ellipse")
 diagram.add_node("n2", "处理", shape="rectangle")
 diagram.add_node("n3", "判断", shape="rhombus")
 
-# 添加连线
 diagram.add_edge("n1", "n2", label="")
 diagram.add_edge("n2", "n3", label="")
-```
 
-**3. 自动布局**
-
-```python
+# ═══════════════════════════════════════════════════════════════
+# 3. 自动布局
+# ═══════════════════════════════════════════════════════════════
 diagram.auto_layout(direction="TB", spacing=(80, 60))
-```
 
-**4. 保存并自动导出 PNG**
+# ═══════════════════════════════════════════════════════════════
+# 4. 保存并导出 PNG
+# ═══════════════════════════════════════════════════════════════
+diagram.save("output.drawio")
+success = export_png("output.drawio", "output.png")
+if not success:
+    print("PNG 导出失败，请下载 .drawio 文件用 draw.io 打开")
+```
 
 > **重要**: 生成 .drawio 文件后，**必须自动导出 PNG 预览**，无需询问用户。
 > draw.io CLI 会自动安装，**不需要询问用户是否安装**。
-
-```python
-# 保存 .drawio 文件
-diagram.save("output.drawio")
-
-# 自动导出 PNG 预览（CLI 会自动安装，无需用户确认）
-from scripts.exporter import export_png
-success = export_png("output.drawio", "output.png")
-if not success:
-    # 如果导出失败，仅提供 .drawio 文件下载
-    print("PNG 导出失败，请下载 .drawio 文件用 draw.io 打开")
-```
 
 **自动化流程要求**：
 - 生成图表后必须自动尝试导出 PNG
@@ -195,6 +263,8 @@ if not success:
 **3. 增量更新**
 
 ```python
+# 路径设置已在脚本开头完成
+
 # 修改节点
 diagram.update_node("n2", label="数据处理")
 
@@ -203,6 +273,10 @@ diagram.remove_edge("e1")
 
 # 添加新连线
 diagram.add_edge("n2", "n3", label="新连线")
+
+# 保存并导出
+diagram.save("output.drawio")
+export_png("output.drawio", "output.png")
 ```
 
 **4. 生成修改摘要**
@@ -237,23 +311,24 @@ diagram.add_edge("n2", "n3", label="新连线")
 ### 创建新图表
 
 > **强制**：必须使用 `scripts/diagram.py` 中的 Diagram 类，禁止自己生成 XML。
-
-使用 **Diagram 类** 创建新图表。
+> **强制**：必须先设置 Python 路径（见上方"路径设置"部分）。
 
 **Workflow**
-1. Import: `from scripts.diagram import Diagram`
-2. Create diagram and add nodes/edges
-3. Save: `diagram.save("output.drawio")`
-4. Export PNG: `from scripts.exporter import export_png; export_png("output.drawio", "output.png")`
+1. 设置路径：`find_skill_dir("drawio")` + `sys.path.insert`
+2. Import: `from scripts.diagram import Diagram`
+3. Create diagram and add nodes/edges
+4. Save: `diagram.save("output.drawio")`
+5. Export PNG: `from scripts.exporter import export_png; export_png("output.drawio", "output.png")`
 
 ### 编辑现有图表
 
 使用 **Diagram.load()** 加载现有图表。
 
 **Workflow**
-1. Load the diagram: `diagram = Diagram.load("input.drawio")`
-2. Modify using Diagram API
-3. Save and export
+1. 设置路径（同上）
+2. Load the diagram: `diagram = Diagram.load("input.drawio")`
+3. Modify using Diagram API
+4. Save and export
 
 ### 导出图片
 
@@ -261,9 +336,10 @@ diagram.add_edge("n2", "n3", label="新连线")
 > CLI 安装是**完全自动化**的，**禁止询问用户**。
 
 **Workflow**
-1. Import: `from scripts.exporter import export_png`
-2. Export: `export_png("input.drawio", "output.png", scale=2)`
-3. 如果导出失败，静默降级为仅提供 .drawio 文件
+1. 设置路径（同上）
+2. Import: `from scripts.exporter import export_png`
+3. Export: `export_png("input.drawio", "output.png", scale=2)`
+4. 如果导出失败，静默降级为仅提供 .drawio 文件
 
 ---
 
