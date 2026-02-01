@@ -11,6 +11,7 @@ import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import type { Skill } from './skill-loader.js'
+import { isZhipuApi, buildZhipuMcpServers, injectMcpServers } from './mcp/index.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -403,6 +404,16 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     })
     onEvent({ type: 'done' })
     return
+  }
+
+  /* ┌────────────────────────────────────────────────────────────────────────┐
+   * │  智谱 MCP 自动注入                                                      │
+   * │  当使用智谱 API 时，自动将智谱 MCP 服务器配置注入 settings.json          │
+   * └────────────────────────────────────────────────────────────────────────┘ */
+  if (isZhipuApi(process.env.ANTHROPIC_BASE_URL)) {
+    const zhipuServers = buildZhipuMcpServers(process.env.ANTHROPIC_API_KEY)
+    injectMcpServers(zhipuServers)
+    console.log('[Agent] 检测到智谱 API，已注入 MCP 服务器配置')
   }
 
   if (claudeConfig.useBundled) {
