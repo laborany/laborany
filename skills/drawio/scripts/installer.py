@@ -13,6 +13,8 @@ import stat
 import subprocess
 import urllib.request
 import json
+import zipfile
+import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -23,6 +25,14 @@ from typing import Optional, Tuple
 
 INSTALL_DIR = Path.home() / ".laborany" / "tools" / "drawio"
 GITHUB_API = "https://api.github.com/repos/jgraph/drawio-desktop/releases/latest"
+
+# 备用直接下载链接（如果 GitHub API 失败）
+FALLBACK_VERSION = "24.7.17"
+FALLBACK_URLS = {
+    "windows": f"https://github.com/jgraph/drawio-desktop/releases/download/v{FALLBACK_VERSION}/draw.io-{FALLBACK_VERSION}-windows-installer.exe",
+    "linux_x64": f"https://github.com/jgraph/drawio-desktop/releases/download/v{FALLBACK_VERSION}/drawio-x86_64-{FALLBACK_VERSION}.AppImage",
+    "linux_arm64": f"https://github.com/jgraph/drawio-desktop/releases/download/v{FALLBACK_VERSION}/drawio-arm64-{FALLBACK_VERSION}.AppImage",
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -154,31 +164,51 @@ def install_drawio() -> Optional[str]:
     """
     os_name, arch = get_platform_info()
 
-    # 获取最新版本信息
-    version, assets = get_latest_release()
-    if not version:
-        return None
-
-    # 选择下载文件
-    asset_name = select_asset(os_name, arch, assets)
-    if not asset_name:
-        return None
-
-    download_url = assets.get(asset_name)
-    if not download_url:
-        return None
-
     # 创建安装目录
     INSTALL_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 下载并安装
-    if os_name == "windows":
-        return install_windows(download_url)
-    elif os_name == "linux":
-        return install_linux(download_url)
-    elif os_name == "darwin":
-        return install_macos_hint()
+    # 尝试从 GitHub API 获取最新版本
+    version, assets = get_latest_release()
 
+    if version and assets:
+        # 选择下载文件
+        asset_name = select_asset(os_name, arch, assets)
+        if asset_name:
+            download_url = assets.get(asset_name)
+            if download_url:
+                result = _do_install(os_name, arch, download_url)
+                if result:
+                    return result
+
+    # 如果 GitHub API 失败，使用备用链接
+    fallback_url = _get_fallback_url(os_name, arch)
+    if fallback_url:
+        return _do_install(os_name, arch, fallback_url)
+
+    return None
+
+
+def _get_fallback_url(os_name: str, arch: str) -> Optional[str]:
+    """获取备用下载链接"""
+    if os_name == "windows":
+        return FALLBACK_URLS.get("windows")
+    elif os_name == "linux":
+        key = f"linux_{arch}"
+        return FALLBACK_URLS.get(key)
+    return None
+
+
+def _do_install(os_name: str, arch: str, url: str) -> Optional[str]:
+    """执行安装"""
+    try:
+        if os_name == "windows":
+            return install_windows(url)
+        elif os_name == "linux":
+            return install_linux(url)
+        elif os_name == "darwin":
+            return install_macos_hint()
+    except Exception:
+        pass
     return None
 
 
@@ -210,12 +240,12 @@ def get_latest_release() -> Tuple[Optional[str], dict]:
 def select_asset(os_name: str, arch: str, assets: dict) -> Optional[str]:
     """选择合适的下载文件"""
     patterns = {
-        ("windows", "x64"): ["windows-no-installer.exe", "win32-x64"],
-        ("windows", "arm64"): ["windows-no-installer.exe", "win32-x64"],  # 兼容
-        ("linux", "x64"): ["x86_64.AppImage", "amd64.AppImage"],
-        ("linux", "arm64"): ["arm64.AppImage", "aarch64.AppImage"],
-        ("darwin", "x64"): ["mac-x64.dmg"],
-        ("darwin", "arm64"): ["mac-arm64.dmg"],
+        ("windows", "x64"): ["windows-installer.exe", "win-installer.exe", "windows-no-installer.exe"],
+        ("windows", "arm64"): ["windows-installer.exe", "win-installer.exe", "windows-no-installer.exe"],
+        ("linux", "x64"): ["x86_64.AppImage", "amd64.AppImage", "linux-x64"],
+        ("linux", "arm64"): ["arm64.AppImage", "aarch64.AppImage", "linux-arm64"],
+        ("darwin", "x64"): ["mac-x64.dmg", "darwin-x64"],
+        ("darwin", "arm64"): ["mac-arm64.dmg", "darwin-arm64"],
     }
 
     search_patterns = patterns.get((os_name, arch), [])
@@ -233,12 +263,59 @@ def select_asset(os_name: str, arch: str, assets: dict) -> Optional[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def install_windows(url: str) -> Optional[str]:
-    """Windows 安装（portable exe）"""
+    """
+    Windows 安装
+
+    draw.io Windows 版本是 NSIS 安装包，需要静默安装到指定目录
+    """
     exe_path = INSTALL_DIR / "draw.io.exe"
 
-    try:
-        download_file(url, exe_path)
+    # 如果已存在，直接返回
+    if exe_path.exists():
         return str(exe_path)
+
+    try:
+        # 下载安装包
+        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        download_file(url, Path(tmp_path))
+
+        # 静默安装到指定目录
+        # NSIS 安装包支持 /S 静默安装和 /D 指定目录
+        install_dir_str = str(INSTALL_DIR)
+
+        try:
+            subprocess.run(
+                [tmp_path, "/S", f"/D={install_dir_str}"],
+                capture_output=True,
+                timeout=120,
+            )
+        except Exception:
+            pass
+
+        # 清理临时文件
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+        # 检查安装结果
+        if exe_path.exists():
+            return str(exe_path)
+
+        # 尝试查找其他可能的安装位置
+        possible_paths = [
+            INSTALL_DIR / "draw.io.exe",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "draw.io" / "draw.io.exe",
+        ]
+
+        for p in possible_paths:
+            if p.exists():
+                return str(p)
+
+        return None
+
     except Exception:
         return None
 

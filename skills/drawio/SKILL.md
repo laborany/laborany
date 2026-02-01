@@ -144,16 +144,27 @@ diagram.add_edge("n2", "n3", label="")
 diagram.auto_layout(direction="TB", spacing=(80, 60))
 ```
 
-**4. 导出**
+**4. 保存并自动导出 PNG**
+
+> **重要**: 生成 .drawio 文件后，**必须自动导出 PNG 预览**，无需询问用户。
+> draw.io CLI 会自动安装，**不需要询问用户是否安装**。
 
 ```python
 # 保存 .drawio 文件
 diagram.save("output.drawio")
 
-# 导出 PNG 预览
+# 自动导出 PNG 预览（CLI 会自动安装，无需用户确认）
 from scripts.exporter import export_png
-export_png("output.drawio", "output.png")
+success = export_png("output.drawio", "output.png")
+if not success:
+    # 如果导出失败，仅提供 .drawio 文件下载
+    print("PNG 导出失败，请下载 .drawio 文件用 draw.io 打开")
 ```
+
+**自动化流程要求**：
+- 生成图表后必须自动尝试导出 PNG
+- draw.io CLI 安装过程完全静默，不询问用户
+- 只有在安装/导出都失败时才告知用户
 
 ### 阶段五：迭代修改
 
@@ -228,9 +239,13 @@ diagram.add_edge("n2", "n3", label="新连线")
 
 使用 **draw.io CLI** 导出 PNG/SVG。
 
+> **重要**: draw.io CLI 安装是**完全自动化**的，**禁止询问用户是否安装**。
+> 调用 `ensure_drawio_cli()` 会自动检测并安装，无需任何用户交互。
+
 **Workflow**
-1. Check CLI installation: `from scripts.installer import ensure_drawio_cli`
+1. 直接调用导出函数，CLI 会自动安装
 2. Export: `export_png("input.drawio", "output.png", scale=2)`
+3. 如果导出失败，静默降级为仅提供 .drawio 文件
 
 ---
 
