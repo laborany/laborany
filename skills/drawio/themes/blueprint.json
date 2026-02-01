@@ -1,0 +1,71 @@
+{
+  "name": "blueprint",
+  "displayName": "蓝图主题",
+  "description": "深蓝技术风格，适合技术架构和系统设计",
+
+  "colors": {
+    "primary": "0d47a1",
+    "secondary": "1565c0",
+    "accent": "1976d2",
+    "background": "e3f2fd",
+    "surface": "bbdefb",
+    "text": "0d47a1",
+    "textLight": "1565c0",
+    "border": "90caf9"
+  },
+
+  "fonts": {
+    "family": "Microsoft YaHei",
+    "size": 12,
+    "title": {
+      "size": 16,
+      "bold": true
+    }
+  },
+
+  "nodes": {
+    "default": {
+      "fillColor": "bbdefb",
+      "strokeColor": "1565c0",
+      "strokeWidth": 2,
+      "rounded": 0
+    },
+    "start": {
+      "fillColor": "c8e6c9",
+      "strokeColor": "388e3c"
+    },
+    "end": {
+      "fillColor": "ffcdd2",
+      "strokeColor": "d32f2f"
+    },
+    "process": {
+      "fillColor": "bbdefb",
+      "strokeColor": "1565c0"
+    },
+    "decision": {
+      "fillColor": "fff9c4",
+      "strokeColor": "f9a825"
+    },
+    "database": {
+      "fillColor": "e1bee7",
+      "strokeColor": "7b1fa2"
+    }
+  },
+
+  "edges": {
+    "default": {
+      "strokeColor": "1565c0",
+      "strokeWidth": 2,
+      "endArrow": "classic"
+    }
+  },
+
+  "groups": {
+    "default": {
+      "fillColor": "e3f2fd",
+      "strokeColor": "1565c0",
+      "strokeWidth": 2,
+      "dashed": 1
+    }
+  }
+}
