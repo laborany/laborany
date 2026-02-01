@@ -30,6 +30,7 @@ export const DEFAULT_SCENARIOS: QuickStartItem[] = [
   { skillId: 'xlsx', icon: '📈', name: 'Excel表格助手', description: '数据分析与可视化' },
   { skillId: 'paper-explainer', icon: '📚', name: '论文讲解助手', description: '深度解读学术论文' },
   { skillId: 'diagram', icon: '📐', name: '论文图表助手', description: '流程图、架构图、时序图' },
+  { skillId: 'video-creator', icon: '🎬', name: '视频创作助手', description: '动画视频、数据可视化' },
 ]
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
