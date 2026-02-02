@@ -5,9 +5,8 @@
  * ║  设计哲学：扁平化存储，避免 JSON 解析，便于查询和索引                       ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import Database from 'better-sqlite3'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import Database from './db.js'
+import { join } from 'path'
 import { mkdirSync, existsSync } from 'fs'
 import { v4 as uuid } from 'uuid'
 import {
@@ -22,9 +21,8 @@ import type {
   Schedule
 } from './types.js'
 import { computeNextRunAtMs, jobToSchedule } from './schedule.js'
+import { DATA_DIR } from '../paths.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = join(__dirname, '../../../data')
 const DB_PATH = join(DATA_DIR, 'cron.db')
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

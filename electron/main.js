@@ -181,7 +181,7 @@ function startAgentServer() {
   agentProcess = spawn(agentPath, [], {
     env: {
       ...process.env,
-      PORT: AGENT_PORT.toString(),
+      AGENT_PORT: AGENT_PORT.toString(),
       NODE_ENV: 'production'
     },
     stdio: ['ignore', 'pipe', 'pipe']

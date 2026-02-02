@@ -6,14 +6,11 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { readFile, readdir, mkdir, writeFile } from 'fs/promises'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import { join } from 'path'
 import { existsSync } from 'fs'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import type { WorkflowDefinition, WorkflowInputParam, WorkflowStep } from './types.js'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const WORKFLOWS_DIR = join(__dirname, '../../../workflows')
+import { WORKFLOWS_DIR } from '../paths.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           工作流缓存                                       │

@@ -106,6 +106,10 @@
         {
           "from": "agent-service/dist/laborany-agent.exe",
           "to": "agent/laborany-agent.exe"
+        },
+        {
+          "from": "agent-service/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+          "to": "agent/better_sqlite3.node"
         }
       ]
     },

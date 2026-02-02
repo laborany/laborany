@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/bundle.cjs --external:better-sqlite3",
+    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/bundle.cjs --external:better-sqlite3 --define:import.meta.url=__import_meta_url --banner:js=\"const __import_meta_url = require('url').pathToFileURL(__filename).href;\"",
     "build:pkg": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-win-x64 --output dist/laborany-agent --config pkg.json",
     "build:pkg:win": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-win-x64 --output dist/laborany-agent --config pkg.json",
     "build:pkg:mac": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-macos-x64 --output dist/laborany-agent-mac --config pkg.json",

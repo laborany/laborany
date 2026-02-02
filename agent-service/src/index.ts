@@ -35,10 +35,10 @@ import { taskManager } from './task-manager.js'
 import { loadWorkflow } from './workflow/loader.js'
 import { executeWorkflow, validateWorkflowInput } from './workflow/executor.js'
 import type { WorkflowEvent } from './workflow/types.js'
+import { SKILLS_DIR } from './paths.js'
 
 const app = express()
-const PORT = process.env.PORT || 3002
-const SKILLS_DIR = join(__dirname, '../../skills')
+const PORT = process.env.AGENT_PORT || 3002
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           中间件配置                                      │

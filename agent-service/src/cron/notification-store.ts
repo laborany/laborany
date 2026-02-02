@@ -5,13 +5,11 @@
  * ║  设计：从 store.ts 拆分，遵循单一职责原则                                  ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import Database from 'better-sqlite3'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import Database from './db.js'
+import { join } from 'path'
 import { mkdirSync, existsSync } from 'fs'
+import { DATA_DIR } from '../paths.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = join(__dirname, '../../../data')
 const DB_PATH = join(DATA_DIR, 'cron.db')
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
