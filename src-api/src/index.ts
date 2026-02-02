@@ -112,6 +112,40 @@ app.route('/api/preview', previewRoutes)
 app.route('/api', fileRoutes)
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     Agent Service 代理                                    │
+ * │  将 /agent-api/* 请求代理到 agent-service (端口 3002)                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const AGENT_SERVICE_URL = process.env.AGENT_SERVICE_URL || 'http://localhost:3002'
+
+app.all('/agent-api/*', async (c) => {
+  const path = c.req.path.replace('/agent-api', '')
+  const targetUrl = `${AGENT_SERVICE_URL}${path}`
+
+  try {
+    const headers = new Headers(c.req.raw.headers)
+    headers.delete('host')
+
+    const response = await fetch(targetUrl, {
+      method: c.req.method,
+      headers,
+      body: c.req.method !== 'GET' && c.req.method !== 'HEAD'
+        ? c.req.raw.body
+        : undefined,
+      // @ts-ignore - duplex is needed for streaming
+      duplex: 'half',
+    })
+
+    return new Response(response.body, {
+      status: response.status,
+      headers: response.headers,
+    })
+  } catch (error) {
+    console.error(`[Proxy] 代理请求失败: ${targetUrl}`, error)
+    return c.json({ error: 'Agent service unavailable' }, 503)
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       静态文件服务（生产模式）                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getStaticRoot(): string {
@@ -155,7 +189,9 @@ if (staticRoot) {
 
   // SPA 回退：所有非 API 请求返回 index.html
   app.get('*', async (c) => {
-    if (c.req.path.startsWith('/api')) return c.notFound()
+    if (c.req.path.startsWith('/api') || c.req.path.startsWith('/agent-api')) {
+      return c.notFound()
+    }
     const indexPath = join(staticRoot, 'index.html')
     if (existsSync(indexPath)) {
       const content = readFileSync(indexPath, 'utf-8')

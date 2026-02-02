@@ -15,7 +15,9 @@ const http = require('http')
  * └──────────────────────────────────────────────────────────────────────────┘ */
 let mainWindow = null
 let apiProcess = null
+let agentProcess = null
 const API_PORT = 3620
+const AGENT_PORT = 3002
 const isDev = !app.isPackaged
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -127,6 +129,55 @@ function startApiServer() {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           启动 Agent 服务                                 │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function startAgentServer() {
+  killProcessOnPort(AGENT_PORT)
+
+  const isWin = process.platform === 'win32'
+  const agentExeName = isWin ? 'laborany-agent.exe' : 'laborany-agent'
+
+  const agentPath = isDev
+    ? path.join(__dirname, '..', 'agent-service', 'dist', agentExeName)
+    : path.join(process.resourcesPath, 'agent', agentExeName)
+
+  if (!fs.existsSync(agentPath)) {
+    console.warn(`[Electron] Agent executable not found: ${agentPath}`)
+    console.warn('[Electron] Agent service will not be available')
+    return false
+  }
+
+  console.log(`[Electron] Starting Agent server: ${agentPath}`)
+
+  agentProcess = spawn(agentPath, [], {
+    env: {
+      ...process.env,
+      PORT: AGENT_PORT.toString(),
+      NODE_ENV: 'production'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+
+  agentProcess.stdout.on('data', (data) => {
+    console.log(`[Agent] ${data.toString().trim()}`)
+  })
+
+  agentProcess.stderr.on('data', (data) => {
+    console.error(`[Agent Error] ${data.toString().trim()}`)
+  })
+
+  agentProcess.on('close', (code) => {
+    console.log(`[Agent] Process exited with code ${code}`)
+  })
+
+  agentProcess.on('error', (err) => {
+    console.error(`[Agent] Failed to start: ${err.message}`)
+  })
+
+  return true
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           创建窗口                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function createWindow() {
@@ -179,34 +230,47 @@ function createWindow() {
 function forceCleanup() {
   console.log('[Electron] Force cleanup starting...')
   killProcessOnPort(API_PORT)
+  killProcessOnPort(AGENT_PORT)
 
-  if (process.platform === 'win32' && apiProcess && apiProcess.pid) {
+  if (process.platform === 'win32') {
     /* ┌──────────────────────────────────────────────────────────────────────────┐
      *  Windows 下强制杀死进程树
      *  /T - 杀死指定进程及其子进程
      *  /F - 强制终止
      * └──────────────────────────────────────────────────────────────────────────┘ */
-    try {
-      execSync(`taskkill /F /T /PID ${apiProcess.pid}`, { encoding: 'utf8', stdio: 'ignore' })
-      console.log(`[Electron] Killed API process tree: PID ${apiProcess.pid}`)
-    } catch (e) {
-      // 进程可能已经退出，忽略错误
-      console.log('[Electron] API process already exited')
+    if (apiProcess && apiProcess.pid) {
+      try {
+        execSync(`taskkill /F /T /PID ${apiProcess.pid}`, { encoding: 'utf8', stdio: 'ignore' })
+        console.log(`[Electron] Killed API process tree: PID ${apiProcess.pid}`)
+      } catch (e) {
+        console.log('[Electron] API process already exited')
+      }
     }
-  } else if (apiProcess) {
-    apiProcess.kill()
+    if (agentProcess && agentProcess.pid) {
+      try {
+        execSync(`taskkill /F /T /PID ${agentProcess.pid}`, { encoding: 'utf8', stdio: 'ignore' })
+        console.log(`[Electron] Killed Agent process tree: PID ${agentProcess.pid}`)
+      } catch (e) {
+        console.log('[Electron] Agent process already exited')
+      }
+    }
+  } else {
+    if (apiProcess) apiProcess.kill()
+    if (agentProcess) agentProcess.kill()
   }
 
   // 再次清理端口，确保子进程也被杀掉
   setTimeout(() => {
     killProcessOnPort(API_PORT)
+    killProcessOnPort(AGENT_PORT)
     console.log('[Electron] Force cleanup completed')
   }, 500)
 }
 app.whenReady().then(async () => {
-  const started = startApiServer()
+  const apiStarted = startApiServer()
+  startAgentServer()  // Agent 服务可选，不影响主流程
 
-  if (started) {
+  if (apiStarted) {
     // 等待 API 真正启动
     const ready = await waitForApi()
     if (ready) {

@@ -5,6 +5,11 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/bundle.cjs --external:better-sqlite3",
+    "build:pkg": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-win-x64 --output dist/laborany-agent --config pkg.json",
+    "build:pkg:win": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-win-x64 --output dist/laborany-agent --config pkg.json",
+    "build:pkg:mac": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-macos-x64 --output dist/laborany-agent-mac --config pkg.json",
+    "build:pkg:linux": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-linux-x64 --output dist/laborany-agent-linux --config pkg.json",
     "start": "node dist/index.js"
   },
   "dependencies": {
@@ -26,6 +31,8 @@
     "@types/node": "^20.10.0",
     "@types/nodemailer": "^7.0.9",
     "@types/uuid": "^9.0.7",
+    "@yao-pkg/pkg": "^5.15.0",
+    "esbuild": "^0.27.2",
     "tsx": "^4.6.0",
     "typescript": "^5.3.2"
   }

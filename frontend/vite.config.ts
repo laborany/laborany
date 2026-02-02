@@ -25,6 +25,12 @@ export default defineConfig({
         target: 'http://localhost:3620',
         changeOrigin: true,
       },
+      '/agent-api': {
+        // Agent Service 端口：3002
+        target: 'http://localhost:3002',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/agent-api/, ''),
+      },
     },
   },
   // 生产构建配置

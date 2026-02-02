@@ -9,17 +9,22 @@
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently -n api,frontend -c blue,green \"npm run dev:api\" \"npm run dev:frontend\"",
+    "dev": "concurrently -n api,agent,frontend -c blue,yellow,green \"npm run dev:api\" \"npm run dev:agent\" \"npm run dev:frontend\"",
     "dev:api": "cd src-api && npm run dev",
+    "dev:agent": "cd agent-service && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:electron": "electron .",
-    "build": "npm run build:api && npm run build:frontend",
+    "build": "npm run build:api && npm run build:agent && npm run build:frontend",
     "build:api": "cd src-api && npm run build",
     "build:api:win": "cd src-api && npm run build:win",
     "build:api:mac": "cd src-api && npm run build:mac",
     "build:api:mac-x64": "cd src-api && npm run build:mac-x64",
     "build:api:mac-arm64": "cd src-api && npm run build:mac-arm64",
     "build:api:linux": "cd src-api && npm run build:linux",
+    "build:agent": "cd agent-service && npm run build:pkg",
+    "build:agent:win": "cd agent-service && npm run build:pkg:win",
+    "build:agent:mac": "cd agent-service && npm run build:pkg:mac",
+    "build:agent:linux": "cd agent-service && npm run build:pkg:linux",
     "build:frontend": "cd frontend && npm run build",
     "bundle:cli": "node scripts/bundle-cli.js",
     "bundle:cli:win": "node scripts/bundle-cli.js win",
@@ -42,10 +47,10 @@
     "bundle:all:mac-arm64": "npm run bundle:cli:mac-arm64 && npm run bundle:uv:mac-arm64",
     "bundle:all:mac-universal": "npm run bundle:cli:mac-universal && npm run bundle:uv:mac-universal",
     "bundle:all:linux": "npm run bundle:cli:linux && npm run bundle:uv:linux",
-    "build:electron": "npm run bundle:all:win && npm run build && electron-builder --win --publish never",
-    "build:electron:mac": "npm run bundle:all:mac-universal && npm run build:api:mac && npm run build:frontend && electron-builder --mac --publish never",
-    "build:electron:linux": "npm run bundle:all:linux && npm run build:api:linux && npm run build:frontend && electron-builder --linux --publish never",
-    "install:all": "npm install && cd src-api && npm install && cd ../frontend && npm install"
+    "build:electron": "npm run bundle:all:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && electron-builder --win --publish never",
+    "build:electron:mac": "npm run bundle:all:mac-universal && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && electron-builder --mac --publish never",
+    "build:electron:linux": "npm run bundle:all:linux && npm run build:api:linux && npm run build:agent:linux && npm run build:frontend && electron-builder --linux --publish never",
+    "install:all": "npm install && cd src-api && npm install && cd ../agent-service && npm install && cd ../frontend && npm install"
   },
   "build": {
     "appId": "ai.thinkany.laborany",
@@ -97,6 +102,10 @@
         {
           "from": "src-api/dist/laborany-api.exe",
           "to": "api/laborany-api.exe"
+        },
+        {
+          "from": "agent-service/dist/laborany-agent.exe",
+          "to": "agent/laborany-agent.exe"
         }
       ]
     },
@@ -107,6 +116,10 @@
         {
           "from": "src-api/dist/laborany-api-mac",
           "to": "api/laborany-api"
+        },
+        {
+          "from": "agent-service/dist/laborany-agent-mac",
+          "to": "agent/laborany-agent"
         },
         {
           "from": "cli-bundle-arm64",
@@ -138,6 +151,10 @@
         {
           "from": "src-api/dist/laborany-api-linux",
           "to": "api/laborany-api"
+        },
+        {
+          "from": "agent-service/dist/laborany-agent-linux",
+          "to": "agent/laborany-agent"
         }
       ]
     },

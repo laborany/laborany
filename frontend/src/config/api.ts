@@ -13,9 +13,9 @@ export const API_BASE = import.meta.env.VITE_API_BASE || '/api'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           Agent Service API 基础路径                      │
- * │  直接访问 agent-service，用于 cron 等功能                                  │
+ * │  通过代理访问 agent-service，开发和生产环境统一使用相对路径                  │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export const AGENT_API_BASE = import.meta.env.VITE_AGENT_API_BASE || 'http://localhost:3002'
+export const AGENT_API_BASE = import.meta.env.VITE_AGENT_API_BASE || '/agent-api'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           错误解析工具                                    │
