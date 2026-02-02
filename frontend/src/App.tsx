@@ -10,6 +10,8 @@ import { useState, useEffect, Suspense, lazy } from 'react'
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { NotificationBell } from './components/notification/NotificationBell'
+import { RunningTasksIndicator } from './components/notification/RunningTasksIndicator'
 import { API_BASE } from './config'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -27,6 +29,7 @@ const CreatePage = lazy(() => import('./pages/CreatePage'))
 const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'))
 const WorkflowEditPage = lazy(() => import('./pages/WorkflowEditPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const CronPage = lazy(() => import('./pages/CronPage'))
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           加载占位组件                                     │
@@ -166,6 +169,14 @@ function AppLayout({ children }: { children: React.ReactNode }) {
               isCollapsed={sidebarCollapsed}
             />
             <NavItem
+              to="/cron"
+              icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>}
+              label="定时任务"
+              isCollapsed={sidebarCollapsed}
+            />
+            <NavItem
               to="/history"
               icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -212,6 +223,13 @@ function AppLayout({ children }: { children: React.ReactNode }) {
           user ? (sidebarCollapsed ? 'ml-16' : 'ml-56') : ''
         }`}
       >
+        {/* 顶部通知栏 */}
+        {user && (
+          <div className="fixed top-0 right-0 h-14 flex items-center gap-4 px-6 z-30">
+            <RunningTasksIndicator />
+            <NotificationBell />
+          </div>
+        )}
         {children}
       </main>
     </div>
@@ -331,6 +349,14 @@ export default function App() {
                 element={
                   <ProtectedRoute>
                     <WorkflowEditPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/cron"
+                element={
+                  <ProtectedRoute>
+                    <CronPage />
                   </ProtectedRoute>
                 }
               />

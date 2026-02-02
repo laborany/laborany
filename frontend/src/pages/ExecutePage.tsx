@@ -92,6 +92,8 @@ export default function ExecutePage() {
     fetchTaskFiles,
     getFileUrl,
     respondToQuestion,
+    checkRunningTask,
+    attachToSession,
   } = useAgent(skillId || '')
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -102,6 +104,8 @@ export default function ExecutePage() {
   const [selectedArtifact, setSelectedArtifact] = useState<FileArtifact | null>(null)
   const [showLivePreview, setShowLivePreview] = useState(false)
   const [showClearDialog, setShowClearDialog] = useState(false)
+  const [showResumeDialog, setShowResumeDialog] = useState(false)
+  const [runningSessionId, setRunningSessionId] = useState<string | null>(null)
 
   // 自动展开标记（只触发一次）
   const hasAutoExpandedRef = useRef(false)
@@ -126,6 +130,35 @@ export default function ExecutePage() {
     startPreview,
     stopPreview,
   } = useVitePreview(sessionId)
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                      页面加载时检查正在执行的任务                          │
+   * │                                                                          │
+   * │  支持断线重连：用户刷新页面后可以恢复查看正在执行的任务                      │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  useEffect(() => {
+    async function checkTask() {
+      const runningId = await checkRunningTask()
+      if (runningId) {
+        setRunningSessionId(runningId)
+        setShowResumeDialog(true)
+      }
+    }
+    checkTask()
+  }, [checkRunningTask])
+
+  const handleResumeTask = useCallback(() => {
+    if (runningSessionId) {
+      attachToSession(runningSessionId)
+    }
+    setShowResumeDialog(false)
+    setRunningSessionId(null)
+  }, [runningSessionId, attachToSession])
+
+  const handleDismissResume = useCallback(() => {
+    setShowResumeDialog(false)
+    setRunningSessionId(null)
+  }, [])
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      选中 artifact 时打开预览                             │
@@ -441,6 +474,28 @@ export default function ExecutePage() {
             </Button>
             <Button variant="destructive" onClick={handleClear}>
               确认清空
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ════════════════════════════════════════════════════════════════════
+       * 恢复任务确认框
+       * ════════════════════════════════════════════════════════════════════ */}
+      <Dialog open={showResumeDialog} onClose={handleDismissResume}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>任务还在运行中</DialogTitle>
+            <DialogDescription>
+              你有一个任务还在运行，要继续查看进度吗？
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={handleDismissResume}>
+              不用了
+            </Button>
+            <Button onClick={handleResumeTask}>
+              继续查看
             </Button>
           </DialogFooter>
         </DialogContent>
