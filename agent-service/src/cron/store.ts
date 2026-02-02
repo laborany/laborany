@@ -10,6 +10,10 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { mkdirSync, existsSync } from 'fs'
 import { v4 as uuid } from 'uuid'
+import {
+  flattenSchedule,
+  DEFAULT_RETRY_POLICY
+} from './types.js'
 import type {
   CronJob,
   CronRun,
@@ -17,8 +21,7 @@ import type {
   UpdateJobRequest,
   Schedule
 } from './types.js'
-import { flattenSchedule } from './types.js'
-import { computeNextRunAtMs } from './schedule.js'
+import { computeNextRunAtMs, jobToSchedule } from './schedule.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, '../../../data')
@@ -67,12 +70,17 @@ function initTables(db: Database.Database): void {
       target_id TEXT NOT NULL,
       target_query TEXT NOT NULL,
 
+      -- 重试配置
+      retry_max_retries INTEGER DEFAULT 0,
+      retry_backoff_ms INTEGER DEFAULT 1000,
+
       -- 运行状态
       next_run_at_ms INTEGER,
       last_run_at_ms INTEGER,
       last_status TEXT,
       last_error TEXT,
       running_session_id TEXT,
+      retry_count INTEGER DEFAULT 0,
 
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
@@ -117,6 +125,19 @@ function initTables(db: Database.Database): void {
     -- 索引：按已读状态查询
     CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
   `)
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  数据库迁移：添加重试相关字段（兼容旧数据库）
+   * ──────────────────────────────────────────────────────────────────────── */
+  try {
+    db.exec(`ALTER TABLE cron_jobs ADD COLUMN retry_max_retries INTEGER DEFAULT 0`)
+  } catch { /* 列已存在 */ }
+  try {
+    db.exec(`ALTER TABLE cron_jobs ADD COLUMN retry_backoff_ms INTEGER DEFAULT 1000`)
+  } catch { /* 列已存在 */ }
+  try {
+    db.exec(`ALTER TABLE cron_jobs ADD COLUMN retry_count INTEGER DEFAULT 0`)
+  } catch { /* 列已存在 */ }
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -141,14 +162,16 @@ export function createJob(req: CreateJobRequest): CronJob {
   const now = new Date().toISOString()
   const scheduleFields = flattenSchedule(req.schedule)
   const nextRunAtMs = computeNextRunAtMs(req.schedule)
+  const retry = req.retry ?? DEFAULT_RETRY_POLICY
 
   getDb().prepare(`
     INSERT INTO cron_jobs (
       id, name, description, enabled,
       schedule_kind, schedule_at_ms, schedule_every_ms, schedule_cron_expr, schedule_cron_tz,
       target_type, target_id, target_query,
+      retry_max_retries, retry_backoff_ms,
       next_run_at_ms, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     req.name,
@@ -162,6 +185,8 @@ export function createJob(req: CreateJobRequest): CronJob {
     req.target.type,
     req.target.id,
     req.target.query,
+    retry.maxRetries,
+    retry.backoffMs,
     nextRunAtMs,
     now,
     now
@@ -214,6 +239,11 @@ export function updateJob(id: string, req: UpdateJobRequest): CronJob | null {
     values.push(req.target.type, req.target.id, req.target.query)
   }
 
+  if (req.retry !== undefined) {
+    updates.push('retry_max_retries = ?', 'retry_backoff_ms = ?')
+    values.push(req.retry.maxRetries, req.retry.backoffMs)
+  }
+
   if (updates.length === 0) return existing
 
   updates.push('updated_at = ?')
@@ -257,6 +287,11 @@ export function markJobCompleted(
   const schedule = jobToSchedule(job)
   const nextRunAtMs = computeNextRunAtMs(schedule, now)
 
+  /* ────────────────────────────────────────────────────────────────────────
+   *  成功时重置重试计数，失败时保持（由 executor 处理重试逻辑）
+   * ──────────────────────────────────────────────────────────────────────── */
+  const newRetryCount = status === 'ok' ? 0 : job.retryCount
+
   getDb().prepare(`
     UPDATE cron_jobs
     SET running_session_id = NULL,
@@ -264,9 +299,30 @@ export function markJobCompleted(
         last_status = ?,
         last_error = ?,
         next_run_at_ms = ?,
+        retry_count = ?,
         updated_at = ?
     WHERE id = ?
-  `).run(now, status, error || null, nextRunAtMs, new Date().toISOString(), id)
+  `).run(now, status, error || null, nextRunAtMs, newRetryCount, new Date().toISOString(), id)
+}
+
+/** 标记任务需要重试（设置下次执行时间为退避后的时间） */
+export function scheduleRetry(id: string, retryCount: number): void {
+  const job = getJob(id)
+  if (!job) return
+
+  const backoffMs = job.retryBackoffMs * Math.pow(2, retryCount)
+  const nextRunAtMs = Date.now() + backoffMs
+
+  console.log(`[Cron] 任务 ${job.name} 将在 ${backoffMs}ms 后重试 (第 ${retryCount + 1} 次)`)
+
+  getDb().prepare(`
+    UPDATE cron_jobs
+    SET running_session_id = NULL,
+        retry_count = ?,
+        next_run_at_ms = ?,
+        updated_at = ?
+    WHERE id = ?
+  `).run(retryCount + 1, nextRunAtMs, new Date().toISOString(), id)
 }
 
 /** 获取待执行的任务（下次执行时间 <= 当前时间） */
@@ -281,6 +337,23 @@ export function getDueJobs(): CronJob[] {
     ORDER BY next_run_at_ms ASC
   `).all(now)
   return rows.map(rowToJob)
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           获取下次唤醒时间                                │
+ * │  返回最近一个待执行任务的执行时间（毫秒时间戳）                            │
+ * │  无任务时返回 null                                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export function getNextWakeTime(): number | null {
+  const row = getDb().prepare(`
+    SELECT MIN(next_run_at_ms) as next_at
+    FROM cron_jobs
+    WHERE enabled = 1
+      AND next_run_at_ms IS NOT NULL
+      AND running_session_id IS NULL
+  `).get() as { next_at: number | null } | undefined
+
+  return row?.next_at ?? null
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -340,11 +413,14 @@ function rowToJob(row: unknown): CronJob {
     targetType: r.target_type as CronJob['targetType'],
     targetId: r.target_id as string,
     targetQuery: r.target_query as string,
+    retryMaxRetries: (r.retry_max_retries as number) ?? 0,
+    retryBackoffMs: (r.retry_backoff_ms as number) ?? 1000,
     nextRunAtMs: r.next_run_at_ms as number | undefined,
     lastRunAtMs: r.last_run_at_ms as number | undefined,
     lastStatus: r.last_status as CronJob['lastStatus'],
     lastError: r.last_error as string | undefined,
     runningSessionId: r.running_session_id as string | undefined,
+    retryCount: (r.retry_count as number) ?? 0,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   }
@@ -364,90 +440,17 @@ function rowToRun(row: unknown): CronRun {
   }
 }
 
-function jobToSchedule(job: CronJob): Schedule {
-  if (job.scheduleKind === 'at') {
-    return { kind: 'at', atMs: job.scheduleAtMs! }
-  }
-  if (job.scheduleKind === 'every') {
-    return { kind: 'every', everyMs: job.scheduleEveryMs! }
-  }
-  return {
-    kind: 'cron',
-    expr: job.scheduleCronExpr!,
-    tz: job.scheduleCronTz
-  }
-}
-
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           通知系统                                        │
+ * │                           通知系统（重新导出）                             │
+ * │  通知功能已拆分到 notification-store.ts，此处保持向后兼容                  │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-export interface Notification {
-  id: number
-  type: 'cron_success' | 'cron_error' | 'task_success' | 'task_error'
-  title: string
-  content?: string
-  read: boolean
-  jobId?: string
-  sessionId?: string
-  createdAt: string
-}
-
-export interface CreateNotificationRequest {
-  type: 'cron_success' | 'cron_error' | 'task_success' | 'task_error'
-  title: string
-  content?: string
-  jobId?: string
-  sessionId?: string
-}
-
-/** 创建通知 */
-export function createNotification(req: CreateNotificationRequest): number {
-  const result = getDb().prepare(`
-    INSERT INTO notifications (type, title, content, job_id, session_id)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(req.type, req.title, req.content || null, req.jobId || null, req.sessionId || null)
-  return result.lastInsertRowid as number
-}
-
-/** 获取通知列表 */
-export function listNotifications(limit = 50): Notification[] {
-  const rows = getDb().prepare(`
-    SELECT * FROM notifications
-    ORDER BY created_at DESC
-    LIMIT ?
-  `).all(limit)
-  return rows.map(rowToNotification)
-}
-
-/** 获取未读通知数量 */
-export function getUnreadCount(): number {
-  const row = getDb().prepare('SELECT COUNT(*) as count FROM notifications WHERE read = 0').get() as { count: number }
-  return row.count
-}
-
-/** 标记单个通知为已读 */
-export function markNotificationRead(id: number): boolean {
-  const result = getDb().prepare('UPDATE notifications SET read = 1 WHERE id = ?').run(id)
-  return result.changes > 0
-}
-
-/** 标记所有通知为已读 */
-export function markAllNotificationsRead(): number {
-  const result = getDb().prepare('UPDATE notifications SET read = 1 WHERE read = 0').run()
-  return result.changes
-}
-
-function rowToNotification(row: unknown): Notification {
-  const r = row as Record<string, unknown>
-  return {
-    id: r.id as number,
-    type: r.type as Notification['type'],
-    title: r.title as string,
-    content: r.content as string | undefined,
-    read: r.read === 1,
-    jobId: r.job_id as string | undefined,
-    sessionId: r.session_id as string | undefined,
-    createdAt: r.created_at as string,
-  }
-}
+export {
+  createNotification,
+  listNotifications,
+  getUnreadCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  type Notification,
+  type CreateNotificationRequest
+} from './notification-store.js'

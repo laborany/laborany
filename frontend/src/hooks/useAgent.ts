@@ -49,6 +49,48 @@ interface AgentState {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           Hook 实现                                       │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+
+/* ════════════════════════════════════════════════════════════════════════════
+ *  带重试的 fetch 封装
+ *  503 错误时自动重试，使用指数退避策略
+ * ════════════════════════════════════════════════════════════════════════════ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 3
+): Promise<Response> {
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, options)
+
+      /* ────────────────────────────────────────────────────────────────────────
+       *  503 表示服务暂时不可用，等待后重试
+       *  其他状态码直接返回（包括其他错误码，由调用方处理）
+       * ──────────────────────────────────────────────────────────────────────── */
+      if (res.status !== 503) {
+        return res
+      }
+
+      const data = await res.clone().json().catch(() => ({}))
+      const retryAfter = (data.retryAfter || Math.pow(2, attempt)) * 1000
+
+      console.log(`[useAgent] 服务暂时不可用，${retryAfter / 1000}s 后重试 (${attempt + 1}/${maxRetries})`)
+      await new Promise(r => setTimeout(r, retryAfter))
+    } catch (err) {
+      lastError = err as Error
+      if ((err as Error).name === 'AbortError') throw err
+
+      const delay = Math.pow(2, attempt) * 1000
+      console.log(`[useAgent] 请求失败，${delay / 1000}s 后重试 (${attempt + 1}/${maxRetries})`)
+      await new Promise(r => setTimeout(r, delay))
+    }
+  }
+
+  throw lastError || new Error('请求失败，已达最大重试次数')
+}
+
 export function useAgent(skillId: string) {
   const [state, setState] = useState<AgentState>({
     messages: [],
@@ -374,15 +416,19 @@ export function useAgent(skillId: string) {
    * │                     检查是否有正在执行的任务                               │
    * │                                                                          │
    * │  用于页面加载时检测后台任务，支持断线重连                                   │
+   * │  增强：503 时自动重试                                                      │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   const checkRunningTask = useCallback(async (): Promise<string | null> => {
     const lastSessionId = localStorage.getItem(`lastSession_${skillId}`)
     if (!lastSessionId) return null
 
     try {
-      const res = await fetch(`${AGENT_API_BASE}/execute/status/${lastSessionId}`)
+      const res = await fetchWithRetry(
+        `${AGENT_API_BASE}/execute/status/${lastSessionId}`,
+        {},
+        2
+      )
       if (!res.ok) {
-        // 任务不存在，清理 localStorage
         localStorage.removeItem(`lastSession_${skillId}`)
         return null
       }
@@ -392,7 +438,6 @@ export function useAgent(skillId: string) {
         return lastSessionId
       }
 
-      // 任务已完成，清理 localStorage
       localStorage.removeItem(`lastSession_${skillId}`)
       return null
     } catch {
@@ -404,6 +449,7 @@ export function useAgent(skillId: string) {
    * │                     重新连接到正在执行的任务                               │
    * │                                                                          │
    * │  通过 SSE 重新订阅任务事件，会先重放历史事件                                │
+   * │  增强：503 时自动重试                                                      │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   const attachToSession = useCallback(
     async (targetSessionId: string) => {
@@ -427,9 +473,11 @@ export function useAgent(skillId: string) {
       currentTextRef.current = ''
 
       try {
-        const res = await fetch(`${AGENT_API_BASE}/execute/attach/${targetSessionId}`, {
-          signal: abortRef.current.signal,
-        })
+        const res = await fetchWithRetry(
+          `${AGENT_API_BASE}/execute/attach/${targetSessionId}`,
+          { signal: abortRef.current.signal },
+          3
+        )
 
         if (!res.ok) {
           throw new Error('无法连接到任务')

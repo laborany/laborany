@@ -47,6 +47,22 @@ export interface ExecutionTarget {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           重试策略定义                                    │
+ * │  支持失败后自动重试，使用指数退避算法                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+
+export interface RetryPolicy {
+  maxRetries: number      // 最大重试次数，0 表示不重试
+  backoffMs: number       // 退避基数（毫秒），实际延迟 = backoffMs * 2^retryCount
+}
+
+/** 默认重试策略：不重试 */
+export const DEFAULT_RETRY_POLICY: RetryPolicy = {
+  maxRetries: 0,
+  backoffMs: 1000
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           任务状态定义                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
@@ -76,12 +92,17 @@ export interface CronJob {
   targetId: string
   targetQuery: string
 
+  // 重试配置
+  retryMaxRetries: number
+  retryBackoffMs: number
+
   // 运行状态
   nextRunAtMs?: number
   lastRunAtMs?: number
   lastStatus?: JobStatus
   lastError?: string
   runningSessionId?: string  // 并发锁：正在执行的会话 ID
+  retryCount: number         // 当前重试次数
 
   createdAt: string
   updatedAt: string
@@ -109,6 +130,7 @@ export interface CreateJobRequest {
   schedule: Schedule
   target: ExecutionTarget
   enabled?: boolean
+  retry?: RetryPolicy  // 可选的重试策略
 }
 
 /** 更新任务请求 */
@@ -118,6 +140,7 @@ export interface UpdateJobRequest {
   schedule?: Schedule
   target?: ExecutionTarget
   enabled?: boolean
+  retry?: RetryPolicy
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

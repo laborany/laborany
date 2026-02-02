@@ -114,10 +114,51 @@ app.route('/api', fileRoutes)
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     Agent Service 代理                                    │
  * │  将 /agent-api/* 请求代理到 agent-service (端口 3002)                      │
+ * │  增强：健康检查缓存 + 友好错误提示                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const AGENT_SERVICE_URL = process.env.AGENT_SERVICE_URL || 'http://localhost:3002'
 
+/* ════════════════════════════════════════════════════════════════════════════
+ *  Agent 服务健康状态缓存
+ *  避免每次请求都检查健康状态，减少延迟
+ * ════════════════════════════════════════════════════════════════════════════ */
+let agentHealthy = false
+let lastHealthCheck = 0
+const HEALTH_CHECK_INTERVAL_MS = 3000
+
+async function checkAgentHealth(): Promise<boolean> {
+  const now = Date.now()
+  if (agentHealthy && now - lastHealthCheck < HEALTH_CHECK_INTERVAL_MS) {
+    return true
+  }
+
+  try {
+    const res = await fetch(`${AGENT_SERVICE_URL}/health`, {
+      signal: AbortSignal.timeout(2000)
+    })
+    agentHealthy = res.ok
+    lastHealthCheck = now
+    return agentHealthy
+  } catch {
+    agentHealthy = false
+    return false
+  }
+}
+
 app.all('/agent-api/*', async (c) => {
+  /* ────────────────────────────────────────────────────────────────────────
+   *  先检查 Agent 服务是否可用
+   *  不可用时返回友好的 503 响应，包含重试建议
+   * ──────────────────────────────────────────────────────────────────────── */
+  const isAvailable = await checkAgentHealth()
+  if (!isAvailable) {
+    return c.json({
+      error: 'Agent service is starting up',
+      message: 'Agent 服务正在启动中，请稍后重试',
+      retryAfter: 3
+    }, 503)
+  }
+
   const path = c.req.path.replace('/agent-api', '')
   const targetUrl = `${AGENT_SERVICE_URL}${path}`
 
@@ -141,7 +182,15 @@ app.all('/agent-api/*', async (c) => {
     })
   } catch (error) {
     console.error(`[Proxy] 代理请求失败: ${targetUrl}`, error)
-    return c.json({ error: 'Agent service unavailable' }, 503)
+    /* ────────────────────────────────────────────────────────────────────────
+     *  请求失败时标记 Agent 为不健康，触发下次健康检查
+     * ──────────────────────────────────────────────────────────────────────── */
+    agentHealthy = false
+    return c.json({
+      error: 'Agent service unavailable',
+      message: 'Agent 服务暂时不可用',
+      retryAfter: 3
+    }, 503)
   }
 })
 

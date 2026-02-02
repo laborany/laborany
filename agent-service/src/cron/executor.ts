@@ -14,6 +14,7 @@ import type { CronJob } from './types.js'
 import {
   markJobRunning,
   markJobCompleted,
+  scheduleRetry,
   createRun,
   completeRun
 } from './store.js'
@@ -24,7 +25,8 @@ import { notifyJobComplete } from './notifier.js'
  * │  1. 获取并发锁                                                            │
  * │  2. 记录执行开始                                                          │
  * │  3. 执行 Agent/Workflow                                                   │
- * │  4. 记录执行结果                                                          │
+ * │  4. 处理重试逻辑                                                          │
+ * │  5. 记录执行结果                                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 export async function runJob(job: CronJob): Promise<void> {
@@ -59,12 +61,22 @@ export async function runJob(job: CronJob): Promise<void> {
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     const durationMs = Date.now() - startTime
-    markJobCompleted(job.id, 'error', error)
     completeRun(runId, 'error', error, durationMs)
     console.error(`[Cron] 任务失败: ${job.name}`, error)
 
-    // 发送失败通知
-    await notifyJobComplete(job, 'error', sessionId, error)
+    /* ────────────────────────────────────────────────────────────────────────
+     *  重试逻辑：如果配置了重试且未达到最大次数，安排重试
+     * ──────────────────────────────────────────────────────────────────────── */
+    const canRetry = job.retryMaxRetries > 0 && job.retryCount < job.retryMaxRetries
+
+    if (canRetry) {
+      scheduleRetry(job.id, job.retryCount)
+      // 重试时不发送失败通知，等最终结果
+    } else {
+      markJobCompleted(job.id, 'error', error)
+      // 发送失败通知（已达到最大重试次数或未配置重试）
+      await notifyJobComplete(job, 'error', sessionId, error)
+    }
   }
 }
 
@@ -80,8 +92,10 @@ async function runSkillJob(job: CronJob, sessionId: string): Promise<void> {
 
   const abortController = new AbortController()
 
-  // 收集执行结果（定时任务不需要流式输出）
-  const events: string[] = []
+  /* ────────────────────────────────────────────────────────────────────────
+   *  使用结构化错误收集，避免依赖字符串前缀判断
+   * ──────────────────────────────────────────────────────────────────────── */
+  const errors: string[] = []
 
   await executeAgent({
     skill,
@@ -89,18 +103,15 @@ async function runSkillJob(job: CronJob, sessionId: string): Promise<void> {
     sessionId,
     signal: abortController.signal,
     onEvent: (event) => {
-      if (event.type === 'text' && event.content) {
-        events.push(event.content)
-      } else if (event.type === 'error' && event.content) {
-        events.push(`[错误] ${event.content}`)
+      // 通过 type === 'error' 或 isError 标记判断错误
+      if (event.type === 'error' && event.content) {
+        errors.push(event.content)
       }
     }
   })
 
-  // 检查是否有错误
-  const hasError = events.some(e => e.startsWith('[错误]'))
-  if (hasError) {
-    throw new Error(events.filter(e => e.startsWith('[错误]')).join('; '))
+  if (errors.length > 0) {
+    throw new Error(errors.join('; '))
   }
 }
 

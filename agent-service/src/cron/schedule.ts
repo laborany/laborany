@@ -53,7 +53,7 @@ export function computeNextRunFromJob(job: CronJob): number | null {
  * │  从扁平化的 Job 字段重建 Schedule 对象                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-function jobToSchedule(job: CronJob): Schedule {
+export function jobToSchedule(job: CronJob): Schedule {
   if (job.scheduleKind === 'at') {
     return { kind: 'at', atMs: job.scheduleAtMs! }
   }

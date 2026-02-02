@@ -80,6 +80,35 @@ async function waitForApi(maxAttempts = 30, interval = 500) {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           检查 Agent 是否就绪                             │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function checkAgentReady() {
+  return new Promise((resolve) => {
+    const req = http.get(`http://localhost:${AGENT_PORT}/health`, (res) => {
+      resolve(res.statusCode === 200)
+    })
+    req.on('error', () => resolve(false))
+    req.setTimeout(1000, () => {
+      req.destroy()
+      resolve(false)
+    })
+  })
+}
+
+async function waitForAgent(maxAttempts = 30, interval = 500) {
+  for (let i = 0; i < maxAttempts; i++) {
+    console.log(`[Electron] Waiting for Agent... (${i + 1}/${maxAttempts})`)
+    if (await checkAgentReady()) {
+      console.log('[Electron] Agent is ready!')
+      return true
+    }
+    await new Promise(r => setTimeout(r, interval))
+  }
+  console.warn('[Electron] Agent failed to start (non-critical)')
+  return false
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           启动 API 服务                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function startApiServer() {
@@ -268,17 +297,25 @@ function forceCleanup() {
 }
 app.whenReady().then(async () => {
   const apiStarted = startApiServer()
-  startAgentServer()  // Agent 服务可选，不影响主流程
+  const agentStarted = startAgentServer()
 
   if (apiStarted) {
-    // 等待 API 真正启动
-    const ready = await waitForApi()
-    if (ready) {
-      createWindow()
-    } else {
-      // API 启动失败，仍然尝试创建窗口（可能会显示错误）
-      createWindow()
+    /* ════════════════════════════════════════════════════════════════════════
+     *  并行等待 API 和 Agent 服务就绪
+     *  API 是必需的，Agent 是可选的（失败不阻塞）
+     * ════════════════════════════════════════════════════════════════════════ */
+    const [apiReady, agentReady] = await Promise.all([
+      waitForApi(),
+      agentStarted ? waitForAgent() : Promise.resolve(false)
+    ])
+
+    if (agentReady) {
+      console.log('[Electron] Both API and Agent services are ready')
+    } else if (apiReady) {
+      console.log('[Electron] API ready, Agent not available')
     }
+
+    createWindow()
   } else {
     // API 可执行文件不存在
     createWindow()
