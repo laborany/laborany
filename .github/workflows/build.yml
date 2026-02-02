@@ -24,7 +24,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Update version from tag
         shell: pwsh
@@ -93,7 +93,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Update version from tag
         run: |
@@ -129,8 +129,10 @@ jobs:
           npm run bundle:cli:mac-x64
           npm run bundle:uv:mac-x64
           npm run build:api:mac-x64
+          npm run build:agent:mac
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-mac
+          chmod +x agent-service/dist/laborany-agent-mac
           chmod +x cli-bundle/node
           chmod +x uv-bundle/uv
 
@@ -165,7 +167,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Update version from tag
         run: |
@@ -196,8 +198,10 @@ jobs:
           npm run bundle:cli:mac-arm64
           npm run bundle:uv:mac-arm64
           npm run build:api:mac-arm64
+          npm run build:agent:mac
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-mac
+          chmod +x agent-service/dist/laborany-agent-mac
           chmod +x cli-bundle/node
           chmod +x uv-bundle/uv
 
@@ -232,7 +236,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Update version from tag
         run: |
@@ -263,8 +267,10 @@ jobs:
           npm run bundle:cli:linux
           npm run bundle:uv:linux
           npm run build:api:linux
+          npm run build:agent:linux
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-linux
+          chmod +x agent-service/dist/laborany-agent-linux
           chmod +x cli-bundle/node
           chmod +x uv-bundle/uv
 

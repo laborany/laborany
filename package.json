@@ -126,6 +126,10 @@
           "to": "agent/laborany-agent"
         },
         {
+          "from": "agent-service/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+          "to": "agent/better_sqlite3.node"
+        },
+        {
           "from": "cli-bundle-arm64",
           "to": "cli-bundle-arm64",
           "filter": ["**/*"]
@@ -159,6 +163,10 @@
         {
           "from": "agent-service/dist/laborany-agent-linux",
           "to": "agent/laborany-agent"
+        },
+        {
+          "from": "agent-service/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+          "to": "agent/better_sqlite3.node"
         }
       ]
     },
