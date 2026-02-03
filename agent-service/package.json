@@ -9,6 +9,7 @@
     "build:pkg": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-win-x64 --output dist/laborany-agent --config pkg.json",
     "build:pkg:win": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-win-x64 --output dist/laborany-agent --config pkg.json",
     "build:pkg:mac": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-macos-x64 --output dist/laborany-agent-mac --config pkg.json",
+    "build:pkg:mac-arm64": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-macos-arm64 --output dist/laborany-agent-mac --config pkg.json",
     "build:pkg:linux": "npm run build:bundle && npx @yao-pkg/pkg dist/bundle.cjs --targets node20-linux-x64 --output dist/laborany-agent-linux --config pkg.json",
     "start": "node dist/index.js"
   },

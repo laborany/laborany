@@ -24,6 +24,7 @@
     "build:agent": "cd agent-service && npm run build:pkg",
     "build:agent:win": "cd agent-service && npm run build:pkg:win",
     "build:agent:mac": "cd agent-service && npm run build:pkg:mac",
+    "build:agent:mac-arm64": "cd agent-service && npm run build:pkg:mac-arm64",
     "build:agent:linux": "cd agent-service && npm run build:pkg:linux",
     "build:frontend": "cd frontend && npm run build",
     "bundle:cli": "node scripts/bundle-cli.js",

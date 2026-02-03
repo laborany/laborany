@@ -198,7 +198,7 @@ jobs:
           npm run bundle:cli:mac-arm64
           npm run bundle:uv:mac-arm64
           npm run build:api:mac-arm64
-          npm run build:agent:mac
+          npm run build:agent:mac-arm64
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-mac
           chmod +x agent-service/dist/laborany-agent-mac
