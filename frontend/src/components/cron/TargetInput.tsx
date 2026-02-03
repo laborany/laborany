@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import type { ExecutionTarget, TargetType } from '../../hooks/useCron'
-import { AGENT_API_BASE } from '../../config'
+import { API_BASE, AGENT_API_BASE } from '../../config'
 
 interface Props {
   value: ExecutionTarget
@@ -37,8 +37,13 @@ export function TargetInput({ value, onChange }: Props) {
     async function load() {
       setLoading(true)
       try {
+        const token = localStorage.getItem('token')
+        // Skills 从主 API 获取（包含用户创建的 skills）
+        // Workflows 从 Agent API 获取
         const [skillsRes, workflowsRes] = await Promise.all([
-          fetch(`${AGENT_API_BASE}/skills`),
+          fetch(`${API_BASE}/skill/list`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
           fetch(`${AGENT_API_BASE}/workflows`)
         ])
 

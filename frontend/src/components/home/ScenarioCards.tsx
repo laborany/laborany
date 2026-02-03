@@ -6,14 +6,14 @@
 
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuickStart, QuickStartItem } from '../../hooks/useQuickStart'
+import { useQuickStartContext, QuickStartItem } from '../../contexts/QuickStartContext'
 import { QuickStartEditor } from './QuickStartEditor'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           主组件                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export function ScenarioCards() {
-  const { scenarios, isCustomized } = useQuickStart()
+  const { scenarios, isCustomized } = useQuickStartContext()
   const [isEditing, setIsEditing] = useState(false)
 
   return (

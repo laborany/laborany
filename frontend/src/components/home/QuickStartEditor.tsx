@@ -5,7 +5,7 @@
  * ║  特性：选择/移除 skills、调整顺序、恢复默认                                  ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useQuickStart, QuickStartItem } from '../../hooks/useQuickStart'
+import { useQuickStartContext, QuickStartItem } from '../../contexts/QuickStartContext'
 import { useWorkers } from '../../hooks/useWorkers'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -20,7 +20,7 @@ export function QuickStartEditor() {
     resetToDefault,
     isCustomized,
     maxItems,
-  } = useQuickStart()
+  } = useQuickStartContext()
 
   const { workers, loading } = useWorkers()
 

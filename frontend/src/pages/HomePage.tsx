@@ -9,6 +9,7 @@ import { useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useWorkers } from '../hooks/useWorkers'
 import { useWorkflowList } from '../hooks/useWorkflow'
+import { QuickStartProvider } from '../contexts/QuickStartContext'
 import { ActionBar } from '../components/home/ActionBar'
 import { ScenarioCards } from '../components/home/ScenarioCards'
 import { WorkerGrid } from '../components/worker/WorkerGrid'
@@ -37,21 +38,23 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen p-8">
-      <div className="max-w-5xl mx-auto">
-        {/* 欢迎区域 + 主行动按钮 */}
-        <ActionBar userName={user?.name} />
+    <QuickStartProvider>
+      <div className="min-h-screen p-8">
+        <div className="max-w-5xl mx-auto">
+          {/* 欢迎区域 + 主行动按钮 */}
+          <ActionBar userName={user?.name} />
 
-        {/* 场景快捷入口 */}
-        <ScenarioCards />
+          {/* 场景快捷入口 */}
+          <ScenarioCards />
 
-        {/* 我的数字团队 */}
-        <WorkerGrid workers={workers} />
+          {/* 我的数字团队 */}
+          <WorkerGrid workers={workers} />
 
-        {/* 工作流预览 */}
-        <WorkflowPreview workflows={workflowItems} />
+          {/* 工作流预览 */}
+          <WorkflowPreview workflows={workflowItems} />
+        </div>
       </div>
-    </div>
+    </QuickStartProvider>
   )
 }
 
