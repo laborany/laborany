@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { v4 as uuid } from 'uuid'
-import { loadSkill } from '../skill-loader.js'
+import { loadSkill } from 'laborany-shared'
 import { executeAgent, type AgentEvent } from '../agent-executor.js'
 import { createContext, addStepResult, buildStepPrompt } from './context.js'
 import type {

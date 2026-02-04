@@ -28,14 +28,14 @@ import cors from 'cors'
 import { v4 as uuid } from 'uuid'
 import { readFile, readdir, writeFile, mkdir, rm } from 'fs/promises'
 import { existsSync, mkdirSync } from 'fs'
-import { loadSkill } from './skill-loader.js'
+import { loadSkill, BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from 'laborany-shared'
 import { SessionManager } from './session-manager.js'
 import { executeAgent } from './agent-executor.js'
 import { taskManager } from './task-manager.js'
 import { loadWorkflow } from './workflow/loader.js'
 import { executeWorkflow, validateWorkflowInput } from './workflow/executor.js'
 import type { WorkflowEvent } from './workflow/types.js'
-import { SKILLS_DIR, RESOURCES_DIR, DATA_DIR } from './paths.js'
+import { RESOURCES_DIR, DATA_DIR } from './paths.js'
 import {
   memoryFileManager,
   memorySearch,
@@ -53,6 +53,29 @@ app.use(cors())
 app.use(express.json())
 
 const sessionManager = new SessionManager()
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     Skill 路径辅助函数                                    │
+ * │                                                                          │
+ * │  查找顺序：用户目录优先，然后是内置目录                                    │
+ * │  写入时：始终使用用户目录（避免权限问题）                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function findSkillPath(skillId: string): string | null {
+  // 优先检查用户目录
+  const userPath = join(USER_SKILLS_DIR, skillId)
+  if (existsSync(userPath)) return userPath
+
+  // 然后检查内置目录
+  const builtinPath = join(BUILTIN_SKILLS_DIR, skillId)
+  if (existsSync(builtinPath)) return builtinPath
+
+  return null
+}
+
+function getWritableSkillPath(skillId: string): string {
+  // 写入时始终使用用户目录
+  return join(USER_SKILLS_DIR, skillId)
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                         健康检查端点                                      │
@@ -392,7 +415,11 @@ app.get('/skills/:skillId/detail', async (req: Request, res: Response) => {
       return
     }
 
-    const skillPath = join(SKILLS_DIR, skillId)
+    const skillPath = findSkillPath(skillId)
+    if (!skillPath) {
+      res.status(404).json({ error: 'Skill 目录不存在' })
+      return
+    }
     const entries = await readdir(skillPath, { withFileTypes: true })
 
     const files: Array<{
@@ -488,7 +515,12 @@ app.get('/skills/:skillId/file', async (req: Request, res: Response) => {
   }
 
   try {
-    const fullPath = join(SKILLS_DIR, skillId, filePath)
+    const skillPath = findSkillPath(skillId)
+    if (!skillPath) {
+      res.status(404).json({ error: 'Skill 不存在' })
+      return
+    }
+    const fullPath = join(skillPath, filePath)
     const content = await readFile(fullPath, 'utf-8')
     res.json({ content })
   } catch {
@@ -498,6 +530,7 @@ app.get('/skills/:skillId/file', async (req: Request, res: Response) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       保存 Skill 文件                                      │
+ * │  注意：始终保存到用户目录，避免权限问题                                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 app.put('/skills/:skillId/file', async (req: Request, res: Response) => {
   const { skillId } = req.params
@@ -509,7 +542,18 @@ app.put('/skills/:skillId/file', async (req: Request, res: Response) => {
   }
 
   try {
-    const fullPath = join(SKILLS_DIR, skillId, filePath)
+    // 始终保存到用户目录
+    const skillPath = getWritableSkillPath(skillId)
+    // 确保目录存在
+    if (!existsSync(skillPath)) {
+      mkdirSync(skillPath, { recursive: true })
+    }
+    const fullPath = join(skillPath, filePath)
+    // 确保父目录存在
+    const parentDir = dirname(fullPath)
+    if (!existsSync(parentDir)) {
+      mkdirSync(parentDir, { recursive: true })
+    }
     await writeFile(fullPath, content, 'utf-8')
     loadSkill.clearCache()
     res.json({ success: true })
@@ -519,15 +563,29 @@ app.put('/skills/:skillId/file', async (req: Request, res: Response) => {
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取当前 Skills 列表                                 │
+ * │                       获取当前 Skills 列表（用户目录）                       │
+ * │  用于检测新创建的 Skills                                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 async function getSkillIds(): Promise<Set<string>> {
+  const skillIds = new Set<string>()
+
+  // 检查用户目录
   try {
-    const entries = await readdir(SKILLS_DIR, { withFileTypes: true })
-    return new Set(entries.filter(e => e.isDirectory()).map(e => e.name))
-  } catch {
-    return new Set()
-  }
+    const userEntries = await readdir(USER_SKILLS_DIR, { withFileTypes: true })
+    for (const e of userEntries) {
+      if (e.isDirectory()) skillIds.add(e.name)
+    }
+  } catch { /* 目录可能不存在 */ }
+
+  // 检查内置目录
+  try {
+    const builtinEntries = await readdir(BUILTIN_SKILLS_DIR, { withFileTypes: true })
+    for (const e of builtinEntries) {
+      if (e.isDirectory()) skillIds.add(e.name)
+    }
+  } catch { /* 目录可能不存在 */ }
+
+  return skillIds
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -577,8 +635,8 @@ app.post('/skills/create', async (req: Request, res: Response) => {
       .map((m: { role: string; content: string }) => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
       .join('\n\n')
 
-    // 注入 skills 目录路径和对话历史
-    const absoluteSkillsDir = SKILLS_DIR.replace(/\\/g, '/')
+    // 注入 skills 目录路径和对话历史（使用用户目录，避免权限问题）
+    const absoluteSkillsDir = USER_SKILLS_DIR.replace(/\\/g, '/')
     const contextPrefix = `## 重要上下文
 
 Skills 目录的绝对路径是：${absoluteSkillsDir}
@@ -691,18 +749,26 @@ app.get('/skills/official', async (_req: Request, res: Response) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       卸载 Skill                                          │
+ * │  只允许删除用户目录中的 Skill，内置 Skill 不可删除                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 app.delete('/skills/:skillId', async (req: Request, res: Response) => {
   const { skillId } = req.params
 
   try {
-    const skillPath = join(SKILLS_DIR, skillId)
-    if (!existsSync(skillPath)) {
+    // 只允许删除用户目录中的 Skill
+    const userSkillPath = join(USER_SKILLS_DIR, skillId)
+    if (!existsSync(userSkillPath)) {
+      // 检查是否是内置 Skill
+      const builtinPath = join(BUILTIN_SKILLS_DIR, skillId)
+      if (existsSync(builtinPath)) {
+        res.status(403).json({ error: '内置 Skill 不可删除' })
+        return
+      }
       res.status(404).json({ error: 'Skill 不存在' })
       return
     }
 
-    await rm(skillPath, { recursive: true, force: true })
+    await rm(userSkillPath, { recursive: true, force: true })
     loadSkill.clearCache()
     res.json({ success: true })
   } catch (error) {
@@ -760,12 +826,13 @@ app.post('/skills/:skillId/optimize', async (req: Request, res: Response) => {
       .map((m: { role: string; content: string }) => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
       .join('\n\n')
 
-    // 注入上下文
-    const absoluteSkillsDir = SKILLS_DIR.replace(/\\/g, '/')
+    // 注入上下文（使用实际的 skill 路径）
+    const skillPath = findSkillPath(skillId)
+    const absoluteSkillPath = skillPath ? skillPath.replace(/\\/g, '/') : `${USER_SKILLS_DIR.replace(/\\/g, '/')}/${skillId}`
     const contextPrefix = `## 重要上下文
 
 你正在优化的 Skill 是：${skillId}
-Skill 目录的绝对路径是：${absoluteSkillsDir}/${skillId}
+Skill 目录的绝对路径是：${absoluteSkillPath}
 
 ## 现有 Skill 文件内容
 
@@ -809,7 +876,9 @@ ${conversationHistory}
  * │                       读取 Skill 所有文件内容                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 async function readSkillFiles(skillId: string): Promise<string> {
-  const skillPath = join(SKILLS_DIR, skillId)
+  const skillPath = findSkillPath(skillId)
+  if (!skillPath) return '（Skill 目录不存在）'
+
   const result: string[] = []
 
   async function readDir(dir: string, prefix: string = ''): Promise<void> {
@@ -929,8 +998,8 @@ async function installSkillFromGitHub(source: string): Promise<{ skillId: string
   // 提取 Skill ID（目录名）
   const skillId = skillPath.split('/').pop() || skillPath
 
-  // 创建本地目录
-  const localSkillDir = join(SKILLS_DIR, skillId)
+  // 创建本地目录（安装到用户目录，避免权限问题）
+  const localSkillDir = join(USER_SKILLS_DIR, skillId)
   if (existsSync(localSkillDir)) {
     throw new Error(`Skill "${skillId}" 已存在`)
   }

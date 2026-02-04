@@ -20,6 +20,7 @@
     "croner": "^10.0.1",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "laborany-shared": "file:../shared",
     "nodemailer": "^7.0.13",
     "uuid": "^9.0.1",
     "yaml": "^2.3.4",

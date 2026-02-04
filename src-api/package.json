@@ -28,6 +28,7 @@
     "hono": "^4.6.14",
     "jose": "^5.9.6",
     "laborany": "file:..",
+    "laborany-shared": "file:../shared",
     "sql.js": "^1.11.0",
     "uuid": "^9.0.1",
     "yaml": "^2.3.4",

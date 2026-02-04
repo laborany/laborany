@@ -1,89 +1,97 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                     路径工具 - pkg 打包环境支持                            ║
+ * ║                     路径工具 - 统一路径计算                               ║
  * ║                                                                          ║
  * ║  职责：提供正确的资源路径，兼容开发环境和 pkg 打包环境                       ║
  * ║  设计：                                                                   ║
- * ║    - 只读资源：相对于可执行文件                                            ║
- * ║    - 可写数据（data, workflows）：用户目录，避免权限问题                   ║
- * ║                                                                          ║
- * ║  注意：Skills 相关路径已迁移到 laborany-shared 包                          ║
+ * ║    - 内置 Skills（只读）：相对于可执行文件                                 ║
+ * ║    - 用户 Skills（可写）：系统用户目录，自动创建                            ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { homedir } from 'os'
+import { homedir, platform } from 'os'
 import { existsSync, mkdirSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     检测 pkg 打包环境                                     │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-const isPkg = typeof (process as any).pkg !== 'undefined'
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     获取只读资源目录                                       │
+ * │                     检测打包环境                                          │
  * │                                                                          │
- * │  pkg 环境：可执行文件在 resources/agent/，资源在 resources/               │
- * │  开发环境：项目根目录                                                     │
+ * │  两种检测方式：                                                           │
+ * │  1. pkg 注入的 process.pkg 属性                                          │
+ * │  2. execPath 不包含 node（打包后的可执行文件）                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function getResourcesDir(): string {
-  if (isPkg) {
-    return dirname(dirname(process.execPath))
-  }
-  return join(__dirname, '../..')
+export function isPackaged(): boolean {
+  return typeof (process as any).pkg !== 'undefined'
+    || !process.execPath.includes('node')
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     获取用户数据根目录                                     │
  * │                                                                          │
- * │  生产环境：用户目录（避免 Program Files 权限问题）                         │
- * │  开发环境：也使用用户目录（保持一致性）                                    │
+ * │  跨平台支持：                                                             │
+ * │  - Windows: %APPDATA%/LaborAny                                           │
+ * │  - macOS: ~/Library/Application Support/LaborAny                         │
+ * │  - Linux: ~/.config/laborany                                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getUserDir(): string {
   const home = homedir()
-  const platform = process.platform
+  const os = platform()
 
-  if (platform === 'win32') {
+  if (os === 'win32') {
     return join(process.env.APPDATA || join(home, 'AppData', 'Roaming'), 'LaborAny')
   }
-  if (platform === 'darwin') {
+  if (os === 'darwin') {
     return join(home, 'Library', 'Application Support', 'LaborAny')
   }
   return join(home, '.config', 'laborany')
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     获取可写数据目录                                       │
+ * │                     获取内置 Skills 目录（只读）                           │
+ * │                                                                          │
+ * │  打包后：exe 在 resources/api/ 或 resources/agent/                        │
+ * │         skills 在 resources/skills/                                      │
+ * │  开发模式：相对于 shared 包                                               │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function getDataDir(): string {
-  if (!isPkg) return join(__dirname, '../../data')
-  return join(getUserDir(), 'data')
+function getBuiltinSkillsDir(): string {
+  // 打包后：检查 exe 同级的 ../skills 目录
+  const pkgPath = join(dirname(process.execPath), '..', 'skills')
+  if (existsSync(pkgPath)) return pkgPath
+
+  // 开发模式：shared/src/paths.ts -> laborany/skills
+  // __dirname = shared/src, 所以需要 ../../skills
+  return join(__dirname, '../..', 'skills')
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     获取 Workflows 目录                                   │
+ * │                     获取用户 Skills 目录（可写）                           │
  * │                                                                          │
- * │  Workflows 是用户创建的，需要存储在可写目录                                │
- * │  开发模式：项目根目录下的 workflows                                       │
- * │  打包后：用户目录下的 workflows                                           │
+ * │  始终使用系统用户目录，无论开发还是生产环境                                 │
+ * │  首次访问时自动创建目录                                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function getWorkflowsDir(): string {
-  if (!isPkg) return join(__dirname, '../../workflows')
+function getUserSkillsDir(): string {
+  const userSkillsDir = join(getUserDir(), 'skills')
 
-  const userWorkflowsDir = join(getUserDir(), 'workflows')
-  // 确保目录存在
-  if (!existsSync(userWorkflowsDir)) {
-    mkdirSync(userWorkflowsDir, { recursive: true })
+  // 确保目录存在（首次访问时创建）
+  if (!existsSync(userSkillsDir)) {
+    mkdirSync(userSkillsDir, { recursive: true })
   }
-  return userWorkflowsDir
+
+  return userSkillsDir
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     导出路径常量                                          │
+ * │                                                                          │
+ * │  模块加载时立即计算，确保目录存在                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export const RESOURCES_DIR = getResourcesDir()
-export const WORKFLOWS_DIR = getWorkflowsDir()
-export const DATA_DIR = getDataDir()
+export const BUILTIN_SKILLS_DIR = getBuiltinSkillsDir()
+export const USER_SKILLS_DIR = getUserSkillsDir()
 
-export { isPkg }
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     导出目录获取函数                                       │
+ * │                                                                          │
+ * │  供外部模块动态获取路径（如需要延迟计算）                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export { getBuiltinSkillsDir, getUserSkillsDir, getUserDir }

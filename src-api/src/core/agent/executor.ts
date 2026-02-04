@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'fs'
 import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import type { Skill } from './skill-loader.js'
+import type { Skill } from 'laborany-shared'
 import { isZhipuApi, buildZhipuMcpServers, injectMcpServers } from './mcp/index.js'
 
 const __filename = fileURLToPath(import.meta.url)

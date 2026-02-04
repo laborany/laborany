@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import type { Skill } from './skill-loader.js'
+import type { Skill } from 'laborany-shared'
 import { memoryInjector, memoryFileManager } from './memory/index.js'
 
 const __filename = fileURLToPath(import.meta.url)
