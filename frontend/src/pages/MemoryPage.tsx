@@ -1,8 +1,8 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                         Memory 管理页面                                   ║
  * ║                                                                          ║
- * ║  功能：BOSS.md 编辑 + Memory 文件浏览                                      ║
- * ║  设计：双 Tab 布局，简洁直观                                               ║
+ * ║  功能：BOSS.md 编辑 + MEMORY.md 编辑 + Memory 文件浏览                     ║
+ * ║  设计：三 Tab 布局，简洁直观                                               ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect } from 'react'
@@ -22,7 +22,7 @@ interface Skill {
   name: string
 }
 
-type TabType = 'boss' | 'memory'
+type TabType = 'boss' | 'global-memory' | 'memory'
 type MemoryScope = 'global' | 'skill'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -49,6 +49,12 @@ export default function MemoryPage() {
               icon={<BookIcon />}
             />
             <TabButton
+              active={activeTab === 'global-memory'}
+              onClick={() => setActiveTab('global-memory')}
+              label="全局记忆"
+              icon={<BrainIcon />}
+            />
+            <TabButton
               active={activeTab === 'memory'}
               onClick={() => setActiveTab('memory')}
               label="记忆文件"
@@ -60,7 +66,9 @@ export default function MemoryPage() {
 
       {/* Tab 内容 */}
       <div className="max-w-4xl mx-auto p-6">
-        {activeTab === 'boss' ? <BossEditor /> : <MemoryBrowser />}
+        {activeTab === 'boss' && <BossEditor />}
+        {activeTab === 'global-memory' && <GlobalMemoryEditor />}
+        {activeTab === 'memory' && <MemoryBrowser />}
       </div>
     </div>
   )
@@ -170,6 +178,92 @@ function BossEditor() {
       <div className="flex justify-end">
         <button
           onClick={saveBoss}
+          disabled={saving}
+          className="px-6 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+        >
+          {saving && <LoadingIcon />}
+          保存
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           全局记忆编辑器 (MEMORY.md)                       │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function GlobalMemoryEditor() {
+  const [content, setContent] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    loadGlobalMemory()
+  }, [])
+
+  async function loadGlobalMemory() {
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/global-memory`)
+      const data = await res.json()
+      setContent(data.content || '')
+    } catch {
+      setMessage({ type: 'error', text: '加载 MEMORY.md 失败' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function saveGlobalMemory() {
+    setSaving(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/global-memory`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      })
+      if (res.ok) {
+        setMessage({ type: 'success', text: '保存成功' })
+      } else {
+        const data = await res.json()
+        setMessage({ type: 'error', text: data.error || '保存失败' })
+      }
+    } catch {
+      setMessage({ type: 'error', text: '保存失败' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return <LoadingSpinner />
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* 说明 */}
+      <div className="bg-muted/50 rounded-lg p-4">
+        <p className="text-sm text-muted-foreground">
+          MEMORY.md 是全局长期记忆，Labor 会在这里记录重要的学习成果和经验。
+        </p>
+      </div>
+
+      {/* 消息提示 */}
+      {message && <MessageBox type={message.type} text={message.text} />}
+
+      {/* 编辑器 */}
+      <textarea
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        className="w-full h-[500px] px-4 py-3 bg-card border border-border rounded-lg font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+        placeholder="# 全局记忆&#10;&#10;Labor 会在这里记录重要的学习成果..."
+      />
+
+      {/* 保存按钮 */}
+      <div className="flex justify-end">
+        <button
+          onClick={saveGlobalMemory}
           disabled={saving}
           className="px-6 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
@@ -404,6 +498,14 @@ function MemoryIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    </svg>
+  )
+}
+
+function BrainIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
     </svg>
   )
 }

@@ -41,6 +41,7 @@ import {
   memorySearch,
   memoryWriter,
   bossManager,
+  globalMemoryManager,
 } from './memory/index.js'
 
 const app = express()
@@ -1295,6 +1296,39 @@ app.put('/boss', (req: Request, res: Response) => {
     res.json({ success: true })
   } catch (error) {
     res.status(500).json({ error: '更新 BOSS.md 失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取 MEMORY.md 内容                                 │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/global-memory', (_req: Request, res: Response) => {
+  try {
+    const content = globalMemoryManager.read()
+    if (!content) {
+      res.status(404).json({ error: 'MEMORY.md 不存在' })
+      return
+    }
+    res.json({ content, path: globalMemoryManager.getPath() })
+  } catch (error) {
+    res.status(500).json({ error: '读取 MEMORY.md 失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       更新 MEMORY.md 内容                                 │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.put('/global-memory', (req: Request, res: Response) => {
+  const { content } = req.body
+  if (content === undefined) {
+    res.status(400).json({ error: '缺少 content 参数' })
+    return
+  }
+  try {
+    globalMemoryManager.update(content)
+    res.json({ success: true })
+  } catch (error) {
+    res.status(500).json({ error: '更新 MEMORY.md 失败' })
   }
 })
 

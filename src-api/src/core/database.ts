@@ -12,11 +12,13 @@ import { homedir } from 'os'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           数据库路径                                      │
+ * │                                                                          │
+ * │  使用 process.pkg 检测打包环境，与其他模块保持一致                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getDbPath(): string {
-  const isProduction = process.env.NODE_ENV === 'production'
+  const isPkg = typeof (process as any).pkg !== 'undefined'
 
-  if (isProduction) {
+  if (isPkg) {
     const appDataDir = process.platform === 'win32'
       ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
       : process.platform === 'darwin'
