@@ -11,6 +11,7 @@ import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import type { Skill } from './skill-loader.js'
+import { memoryInjector, memoryFileManager } from './memory/index.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -245,10 +246,24 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     args.push('--model', process.env.ANTHROPIC_MODEL)
   }
 
-  // 构建 prompt
-  const prompt = isNewSession
-    ? `${skill.systemPrompt}\n\n---\n\n用户问题：${userQuery}`
-    : userQuery  // 继续会话时只发送用户问题
+  // 构建 prompt（集成 Memory 系统）
+  let prompt: string
+  if (isNewSession) {
+    // 新会话：注入 Memory 上下文
+    const memoryContext = memoryInjector.buildContext({
+      skillId: skill.meta.id,
+      userQuery,
+    })
+    // 确保 Skill 记忆目录存在
+    memoryFileManager.ensureSkillMemoryDir(skill.meta.id)
+
+    prompt = memoryContext
+      ? `${memoryContext}\n\n---\n\n${skill.systemPrompt}\n\n---\n\n用户问题：${userQuery}`
+      : `${skill.systemPrompt}\n\n---\n\n用户问题：${userQuery}`
+  } else {
+    // 继续会话：只发送用户问题
+    prompt = userQuery
+  }
 
   console.log(`[Agent] Args: ${args.join(' ')}`)
 

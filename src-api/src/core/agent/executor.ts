@@ -59,72 +59,72 @@ function getTasksBaseDir(): string {
   return join(getAppDataDir(), 'tasks')
 }
 
-function findClaudeMd(): string | null {
+function findBossMd(): string | null {
   /* ┌────────────────────────────────────────────────────────────────────────┐
-   * │  在多个可能的位置查找 CLAUDE.md                                         │
+   * │  在多个可能的位置查找 BOSS.md                                           │
    * │  优先级：pkg 打包路径 > Electron resources > 开发模式路径               │
    * └────────────────────────────────────────────────────────────────────────┘ */
   const candidates: string[] = []
 
-  // 1. pkg 打包模式：exe 在 resources/api/，CLAUDE.md 在 resources/
+  // 1. pkg 打包模式：exe 在 resources/api/，BOSS.md 在 resources/
   const exeDir = dirname(process.execPath)
-  candidates.push(join(exeDir, '..', 'CLAUDE.md'))
-  candidates.push(join(exeDir, 'CLAUDE.md'))
+  candidates.push(join(exeDir, '..', 'BOSS.md'))
+  candidates.push(join(exeDir, 'BOSS.md'))
 
   // 2. Electron resources 路径（如果 resourcesPath 存在）
   if ((process as NodeJS.Process & { resourcesPath?: string }).resourcesPath) {
     const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath!
-    candidates.push(join(resourcesPath, 'CLAUDE.md'))
+    candidates.push(join(resourcesPath, 'BOSS.md'))
   }
 
   // 3. 开发模式：从项目根目录读取
-  candidates.push(join(__dirname, '..', '..', '..', '..', 'CLAUDE.md'))
+  candidates.push(join(__dirname, '..', '..', '..', '..', 'BOSS.md'))
 
   // 4. 相对于当前工作目录
-  candidates.push(join(process.cwd(), 'CLAUDE.md'))
+  candidates.push(join(process.cwd(), 'BOSS.md'))
 
   // 查找第一个存在的文件
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
-      console.log(`[Agent] Found CLAUDE.md at: ${candidate}`)
+      console.log(`[Agent] Found BOSS.md at: ${candidate}`)
       return candidate
     }
   }
 
-  console.warn(`[Agent] CLAUDE.md not found in any of: ${candidates.join(', ')}`)
+  console.warn(`[Agent] BOSS.md not found in any of: ${candidates.join(', ')}`)
   return null
 }
 
-function getClaudeMdPath(): string | null {
-  return findClaudeMd()
+function getBossMdPath(): string | null {
+  return findBossMd()
 }
 
 export function getTaskDir(sessionId: string): string {
   return join(getTasksBaseDir(), sessionId)
 }
 
-function copyClaudeMdToDir(targetDir: string): void {
+function copyBossMdToDir(targetDir: string): void {
   /* ┌────────────────────────────────────────────────────────────────────────┐
-   * │  复制 CLAUDE.md 到目标目录                                              │
+   * │  复制 BOSS.md 到目标目录                                                │
    * └────────────────────────────────────────────────────────────────────────┘ */
-  const claudeMdSrc = getClaudeMdPath()
-  const claudeMdDest = join(targetDir, 'CLAUDE.md')
+  const bossMdSrc = getBossMdPath()
+  const bossMdDest = join(targetDir, 'BOSS.md')
 
-  if (!claudeMdSrc) {
-    console.warn(`[Agent] CLAUDE.md source not found, skipping copy`)
+  if (!bossMdSrc) {
+    console.warn(`[Agent] BOSS.md source not found, skipping copy`)
     return
   }
 
-  if (existsSync(claudeMdDest)) {
-    console.log(`[Agent] CLAUDE.md already exists at: ${claudeMdDest}`)
+  if (existsSync(bossMdDest)) {
+    console.log(`[Agent] BOSS.md already exists at: ${bossMdDest}`)
     return
   }
 
   try {
-    copyFileSync(claudeMdSrc, claudeMdDest)
-    console.log(`[Agent] Copied CLAUDE.md: ${claudeMdSrc} -> ${claudeMdDest}`)
+    copyFileSync(bossMdSrc, bossMdDest)
+    console.log(`[Agent] Copied BOSS.md: ${bossMdSrc} -> ${bossMdDest}`)
   } catch (err) {
-    console.warn(`[Agent] Failed to copy CLAUDE.md: ${err}`)
+    console.warn(`[Agent] Failed to copy BOSS.md: ${err}`)
   }
 }
 
@@ -133,7 +133,7 @@ export function ensureTaskDir(sessionId: string): string {
   if (!existsSync(taskDir)) {
     mkdirSync(taskDir, { recursive: true })
   }
-  copyClaudeMdToDir(taskDir)
+  copyBossMdToDir(taskDir)
   return taskDir
 }
 
@@ -368,9 +368,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   if (workDir && !existsSync(workDir)) {
     mkdirSync(workDir, { recursive: true })
   }
-  // 确保 CLAUDE.md 存在于工作目录
+  // 确保 BOSS.md 存在于工作目录
   if (workDir) {
-    copyClaudeMdToDir(workDir)
+    copyBossMdToDir(workDir)
   }
 
   // 使用 sessionId 区分不同步骤的历史记录

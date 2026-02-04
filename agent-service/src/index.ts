@@ -27,7 +27,7 @@ import express, { Request, Response } from 'express'
 import cors from 'cors'
 import { v4 as uuid } from 'uuid'
 import { readFile, readdir, writeFile, mkdir, rm } from 'fs/promises'
-import { existsSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
 import { loadSkill } from './skill-loader.js'
 import { SessionManager } from './session-manager.js'
 import { executeAgent } from './agent-executor.js'
@@ -35,7 +35,13 @@ import { taskManager } from './task-manager.js'
 import { loadWorkflow } from './workflow/loader.js'
 import { executeWorkflow, validateWorkflowInput } from './workflow/executor.js'
 import type { WorkflowEvent } from './workflow/types.js'
-import { SKILLS_DIR } from './paths.js'
+import { SKILLS_DIR, RESOURCES_DIR, DATA_DIR } from './paths.js'
+import {
+  memoryFileManager,
+  memorySearch,
+  memoryWriter,
+  bossManager,
+} from './memory/index.js'
 
 const app = express()
 const PORT = process.env.AGENT_PORT || 3002
@@ -1187,6 +1193,205 @@ app.post('/workflows/stop/:runId', (req: Request, res: Response) => {
 })
 
 /* ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                         Memory System API                                ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝ */
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取 BOSS.md 内容                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/boss', (_req: Request, res: Response) => {
+  try {
+    const content = bossManager.read()
+    if (!content) {
+      res.status(404).json({ error: 'BOSS.md 不存在' })
+      return
+    }
+    res.json({ content, path: bossManager.getPath() })
+  } catch (error) {
+    res.status(500).json({ error: '读取 BOSS.md 失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       更新 BOSS.md 内容                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.put('/boss', (req: Request, res: Response) => {
+  const { content } = req.body
+  if (content === undefined) {
+    res.status(400).json({ error: '缺少 content 参数' })
+    return
+  }
+  try {
+    bossManager.update(content)
+    res.json({ success: true })
+  } catch (error) {
+    res.status(500).json({ error: '更新 BOSS.md 失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取全局记忆文件列表                                 │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/memory/global', async (_req: Request, res: Response) => {
+  try {
+    const globalDir = join(DATA_DIR, 'memory', 'global')
+    if (!existsSync(globalDir)) {
+      res.json({ files: [] })
+      return
+    }
+    const entries = await readdir(globalDir)
+    const files = entries
+      .filter(f => f.endsWith('.md'))
+      .sort()
+      .reverse()
+      .map(name => ({
+        name,
+        path: join('memory', 'global', name),
+      }))
+    res.json({ files })
+  } catch (error) {
+    res.status(500).json({ error: '获取全局记忆列表失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取 Skill 记忆文件列表                              │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/memory/skill/:skillId', async (req: Request, res: Response) => {
+  const { skillId } = req.params
+  try {
+    const skillDir = join(DATA_DIR, 'memory', 'skills', skillId)
+    if (!existsSync(skillDir)) {
+      res.json({ files: [] })
+      return
+    }
+    const entries = await readdir(skillDir)
+    const files = entries
+      .filter(f => f.endsWith('.md'))
+      .sort()
+      .reverse()
+      .map(name => ({
+        name,
+        path: join('memory', 'skills', skillId, name),
+      }))
+    res.json({ files })
+  } catch (error) {
+    res.status(500).json({ error: '获取 Skill 记忆列表失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       读取记忆文件内容                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/memory/file', (req: Request, res: Response) => {
+  const { path: filePath } = req.query
+  if (!filePath || typeof filePath !== 'string') {
+    res.status(400).json({ error: '缺少 path 参数' })
+    return
+  }
+  try {
+    // 安全检查：只允许访问 memory 目录下的文件
+    const fullPath = join(DATA_DIR, filePath)
+    const memoryDir = join(DATA_DIR, 'memory')
+    if (!fullPath.startsWith(memoryDir) && !fullPath.endsWith('MEMORY.md')) {
+      res.status(403).json({ error: '禁止访问' })
+      return
+    }
+    const content = memoryFileManager.readFile(fullPath)
+    if (!content) {
+      res.status(404).json({ error: '文件不存在' })
+      return
+    }
+    res.json({ content })
+  } catch (error) {
+    res.status(500).json({ error: '读取文件失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       更新记忆文件内容                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.put('/memory/file', async (req: Request, res: Response) => {
+  const { path: filePath, content } = req.body
+  if (!filePath || content === undefined) {
+    res.status(400).json({ error: '缺少 path 或 content 参数' })
+    return
+  }
+  try {
+    const fullPath = join(DATA_DIR, filePath)
+    const memoryDir = join(DATA_DIR, 'memory')
+    if (!fullPath.startsWith(memoryDir) && !fullPath.endsWith('MEMORY.md')) {
+      res.status(403).json({ error: '禁止访问' })
+      return
+    }
+    // 确保目录存在
+    const dir = dirname(fullPath)
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+    await writeFile(fullPath, content, 'utf-8')
+    res.json({ success: true })
+  } catch (error) {
+    res.status(500).json({ error: '更新文件失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       搜索记忆                                            │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.post('/memory/search', (req: Request, res: Response) => {
+  const { query, scope, skillId, maxResults } = req.body
+  if (!query) {
+    res.status(400).json({ error: '缺少 query 参数' })
+    return
+  }
+  try {
+    const results = memorySearch.search({
+      query,
+      scope: scope || 'all',
+      skillId,
+      maxResults: maxResults || 10,
+    })
+    res.json({ results })
+  } catch (error) {
+    res.status(500).json({ error: '搜索失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       写入记忆（纠正/偏好/事实）                            │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.post('/memory/write', (req: Request, res: Response) => {
+  const { type, skillId, ...data } = req.body
+  if (!type || !skillId) {
+    res.status(400).json({ error: '缺少 type 或 skillId 参数' })
+    return
+  }
+  try {
+    switch (type) {
+      case 'correction':
+        memoryWriter.writeCorrection({ skillId, ...data })
+        break
+      case 'preference':
+        memoryWriter.writePreference({ skillId, ...data })
+        break
+      case 'fact':
+        memoryWriter.writeFact({ skillId, ...data })
+        break
+      case 'longterm':
+        memoryWriter.writeLongTerm({ skillId, ...data })
+        break
+      default:
+        res.status(400).json({ error: '无效的 type 参数' })
+        return
+    }
+    res.json({ success: true })
+  } catch (error) {
+    res.status(500).json({ error: '写入记忆失败' })
+  }
+})
+
+/* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                         Cron 定时任务 API                                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
@@ -1428,8 +1633,15 @@ app.post('/notifications/test-email', async (_req: Request, res: Response) => {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           启动服务                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+
+// 确保 DATA_DIR 存在（Memory 文件存储位置）
+if (!existsSync(DATA_DIR)) {
+  mkdirSync(DATA_DIR, { recursive: true })
+}
+
 app.listen(PORT, () => {
   console.log(`[Agent Service] 运行在 http://localhost:${PORT}`)
+  console.log(`[Agent Service] 数据目录: ${DATA_DIR}`)
 
   // 启动定时任务调度器
   startCronTimer()
