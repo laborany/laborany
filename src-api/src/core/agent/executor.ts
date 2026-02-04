@@ -56,6 +56,10 @@ function getAppDataDir(): string {
 }
 
 function getTasksBaseDir(): string {
+  if (isPackaged()) {
+    // 打包环境：与 agent-service 保持一致，使用 data/tasks
+    return join(getAppDataDir(), 'data', 'tasks')
+  }
   return join(getAppDataDir(), 'tasks')
 }
 
