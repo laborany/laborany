@@ -12,6 +12,7 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import type { Skill } from 'laborany-shared'
 import { memoryInjector, memoryFileManager } from './memory/index.js'
+import { DATA_DIR } from './paths.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -46,11 +47,11 @@ interface ExecuteOptions {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务目录管理                                        │
+ * │                                                                          │
+ * │  使用用户数据目录存储任务，避免 pkg 打包后的 snapshot 只读问题             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getTaskDir(sessionId: string): string {
-  // agent-service/src/agent-executor.ts -> laborany/tasks/
-  const laboranyRoot = join(__dirname, '..', '..')
-  return join(laboranyRoot, 'tasks', sessionId)
+  return join(DATA_DIR, 'tasks', sessionId)
 }
 
 function ensureTaskDir(sessionId: string): string {

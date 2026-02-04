@@ -5,7 +5,7 @@
  * ║  设计：从 store.ts 拆分，遵循单一职责原则                                  ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import Database from './db.js'
+import Database, { createDatabase } from './db.js'
 import { join } from 'path'
 import { mkdirSync, existsSync } from 'fs'
 import { DATA_DIR } from '../paths.js'
@@ -49,7 +49,7 @@ function getDb(): Database.Database {
     mkdirSync(DATA_DIR, { recursive: true })
   }
 
-  db = new Database(DB_PATH)
+  db = createDatabase(DB_PATH)
   db.pragma('journal_mode = WAL')
   return db
 }
