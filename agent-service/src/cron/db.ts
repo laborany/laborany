@@ -7,7 +7,14 @@
 
 import { join, dirname } from 'path'
 import { existsSync } from 'fs'
+import { createRequire } from 'module'
+import { fileURLToPath } from 'url'
 import type BetterSqlite3 from 'better-sqlite3'
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     ES 模块中创建 require 函数                            │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const require = createRequire(import.meta.url)
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     检测 pkg 打包环境                                     │
