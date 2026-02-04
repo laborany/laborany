@@ -51,7 +51,7 @@
     "build:electron": "npm run bundle:all:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && electron-builder --win --publish never",
     "build:electron:mac": "npm run bundle:all:mac-universal && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && electron-builder --mac --publish never",
     "build:electron:linux": "npm run bundle:all:linux && npm run build:api:linux && npm run build:agent:linux && npm run build:frontend && electron-builder --linux --publish never",
-    "install:all": "npm install && cd src-api && npm install && cd ../agent-service && npm install && cd ../frontend && npm install"
+    "install:all": "npm install && cd shared && npm install && cd ../src-api && npm install && cd ../agent-service && npm install && cd ../frontend && npm install"
   },
   "build": {
     "appId": "ai.thinkany.laborany",
