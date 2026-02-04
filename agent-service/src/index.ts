@@ -6,28 +6,39 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { config } from 'dotenv'
-import { resolve, dirname } from 'path'
+import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+import { homedir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+// 加载项目根目录的 .env
 config({ path: resolve(__dirname, '../../.env') })
+
+// 加载用户配置目录的 .env（覆盖项目配置）
+const userConfigDir = process.platform === 'win32'
+  ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
+  : process.platform === 'darwin'
+    ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
+    : join(homedir(), '.config', 'laborany')
+config({ path: join(userConfigDir, '.env'), override: true })
 
 import express, { Request, Response } from 'express'
 import cors from 'cors'
 import { v4 as uuid } from 'uuid'
 import { readFile, readdir, writeFile, mkdir, rm } from 'fs/promises'
-import { join } from 'path'
 import { existsSync } from 'fs'
 import { loadSkill } from './skill-loader.js'
 import { SessionManager } from './session-manager.js'
 import { executeAgent } from './agent-executor.js'
+import { taskManager } from './task-manager.js'
 import { loadWorkflow } from './workflow/loader.js'
 import { executeWorkflow, validateWorkflowInput } from './workflow/executor.js'
 import type { WorkflowEvent } from './workflow/types.js'
+import { SKILLS_DIR } from './paths.js'
 
 const app = express()
-const PORT = process.env.PORT || 3002
-const SKILLS_DIR = join(__dirname, '../../skills')
+const PORT = process.env.AGENT_PORT || 3002
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           中间件配置                                      │
@@ -58,12 +69,23 @@ app.get('/skills', async (_req: Request, res: Response) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                      执行 Agent (SSE 流式响应)                            │
+ * │                                                                          │
+ * │  改进：集成 TaskManager，支持断线重连和后台执行                            │
+ * │  - 用户停留在页面：实时显示流式输出                                        │
+ * │  - 用户离开页面：任务继续后台执行，完成后发送通知                           │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 app.post('/execute', async (req: Request, res: Response) => {
   const { skillId, query, sessionId: existingSessionId } = req.body
 
   if (!skillId || !query) {
     res.status(400).json({ error: '缺少 skillId 或 query 参数' })
+    return
+  }
+
+  // 先加载 Skill 获取名称
+  const skill = await loadSkill.byId(skillId)
+  if (!skill) {
+    res.status(404).json({ error: 'Skill 不存在' })
     return
   }
 
@@ -77,37 +99,44 @@ app.post('/execute', async (req: Request, res: Response) => {
   const abortController = new AbortController()
   sessionManager.register(sessionId, abortController)
 
+  // 注册到 TaskManager（传递友好名称）
+  taskManager.register(sessionId, skillId, skill.meta.name)
+
   // 发送会话 ID
   res.write(`data: ${JSON.stringify({ type: 'session', sessionId })}\n\n`)
 
-  try {
-    const skill = await loadSkill.byId(skillId)
-    if (!skill) {
-      res.write(`data: ${JSON.stringify({ type: 'error', message: 'Skill 不存在' })}\n\n`)
-      res.end()
-      return
+  // 订阅任务事件（SSE 输出）
+  const unsubscribe = taskManager.subscribe(sessionId, (event) => {
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify(event)}\n\n`)
     }
+  })
 
-    // 执行 Agent 并流式返回结果
+  // SSE 断开时取消订阅（但任务继续执行）
+  res.on('close', () => {
+    unsubscribe()
+    // 注意：任务继续执行，不中止
+    // 只有显式调用 /stop/:sessionId 才会中止任务
+  })
+
+  try {
+    // 执行 Agent 并通过 TaskManager 分发事件
     await executeAgent({
       skill,
       query,
       sessionId,
       signal: abortController.signal,
-      onEvent: (event) => {
-        if (!res.writableEnded) {
-          res.write(`data: ${JSON.stringify(event)}\n\n`)
-        }
-      },
+      onEvent: (event) => taskManager.addEvent(sessionId, event),
     })
 
-    res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`)
+    // 发送完成事件
+    taskManager.addEvent(sessionId, { type: 'done' })
   } catch (error) {
     if ((error as Error).name === 'AbortError') {
-      res.write(`data: ${JSON.stringify({ type: 'aborted' })}\n\n`)
+      taskManager.addEvent(sessionId, { type: 'error', content: '执行被中止' })
     } else {
       const message = error instanceof Error ? error.message : '执行失败'
-      res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`)
+      taskManager.addEvent(sessionId, { type: 'error', content: message })
     }
   } finally {
     sessionManager.unregister(sessionId)
@@ -125,9 +154,79 @@ app.post('/stop/:sessionId', (req: Request, res: Response) => {
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       查询任务状态                                        │
+ * │                                                                          │
+ * │  用于前端检查是否有正在执行的任务                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/execute/status/:sessionId', (req: Request, res: Response) => {
+  const { sessionId } = req.params
+  const status = taskManager.getStatus(sessionId)
+
+  if (!status) {
+    res.status(404).json({ error: '任务不存在' })
+    return
+  }
+
+  res.json(status)
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       重新连接到正在执行的任务 (SSE)                       │
+ * │                                                                          │
+ * │  支持断线重连：                                                           │
+ * │  1. 先重放历史事件（从 events[] 缓存）                                     │
+ * │  2. 再订阅新事件                                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/execute/attach/:sessionId', (req: Request, res: Response) => {
+  const { sessionId } = req.params
+
+  if (!taskManager.has(sessionId)) {
+    res.status(404).json({ error: '任务不存在' })
+    return
+  }
+
+  // 设置 SSE 响应头
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders()
+
+  // 发送会话 ID
+  res.write(`data: ${JSON.stringify({ type: 'session', sessionId })}\n\n`)
+
+  // 订阅任务事件（会先重放历史事件）
+  const unsubscribe = taskManager.subscribe(sessionId, (event) => {
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify(event)}\n\n`)
+    }
+  })
+
+  // SSE 断开时取消订阅
+  res.on('close', () => {
+    unsubscribe()
+  })
+
+  // 如果任务已完成，立即结束连接
+  const status = taskManager.getStatus(sessionId)
+  if (status && status.status !== 'running') {
+    res.end()
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取运行中的任务列表                                 │
+ * │                                                                          │
+ * │  用于前端顶部导航栏显示运行中任务指示器                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/execute/running', (_req: Request, res: Response) => {
+  const tasks = taskManager.getRunningTasks()
+  res.json({ tasks, count: tasks.length })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务目录文件列表                                     │
  * │  列出 Skill 执行过程中产生的文件（HTML、文档、图片等）                        │
- * └──────────────────────���───────────────────────────────────────────────────┘ */
+ * └──────────────────────────────────────────────────────────────────────────┘ */
 app.get('/tasks/:sessionId/files', async (req: Request, res: Response) => {
   const { sessionId } = req.params
   const taskDir = join(__dirname, '../../tasks', sessionId)
@@ -139,7 +238,7 @@ app.get('/tasks/:sessionId/files', async (req: Request, res: Response) => {
 
   try {
     const files = await listTaskFiles(taskDir, '')
-    res.json({ files })
+    res.json({ files, workDir: taskDir })
   } catch (error) {
     res.status(500).json({ error: '获取文件列表失败' })
   }
@@ -147,6 +246,7 @@ app.get('/tasks/:sessionId/files', async (req: Request, res: Response) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       递归列出任务目录文件                                  │
+ * │  支持工作流步骤目录识别（step-N-name 格式）                                  │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 interface TaskFile {
   name: string
@@ -155,6 +255,18 @@ interface TaskFile {
   ext?: string
   size?: number
   children?: TaskFile[]
+  stepIndex?: number    // 工作流步骤索引
+  stepName?: string     // 工作流步骤名称
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       解析步骤目录名称                                     │
+ * │  格式：step-N-name → { index: N, name: name }                             │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function parseStepDir(dirName: string): { index: number; name: string } | null {
+  const match = dirName.match(/^step-(\d+)-(.+)$/)
+  if (!match) return null
+  return { index: parseInt(match[1], 10), name: match[2] }
 }
 
 async function listTaskFiles(baseDir: string, relativePath: string): Promise<TaskFile[]> {
@@ -184,11 +296,13 @@ async function listTaskFiles(baseDir: string, relativePath: string): Promise<Tas
     } else if (entry.isDirectory()) {
       const children = await listTaskFiles(baseDir, entryPath)
       if (children.length > 0) {
+        const stepInfo = parseStepDir(entry.name)
         files.push({
           name: entry.name,
           path: entryPath,
           type: 'folder',
           children,
+          ...(stepInfo && { stepIndex: stepInfo.index, stepName: stepInfo.name }),
         })
       }
     }
@@ -1072,9 +1186,251 @@ app.post('/workflows/stop/:runId', (req: Request, res: Response) => {
   res.json({ success: stopped })
 })
 
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                         Cron 定时任务 API                                 ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝ */
+
+import {
+  listJobs,
+  getJob,
+  createJob,
+  updateJob,
+  deleteJob,
+  getJobRuns,
+  triggerJob,
+  startCronTimer,
+  getCronTimerStatus,
+  validateCronExpr,
+  describeSchedule,
+  // 通知相关
+  listNotifications,
+  getUnreadCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  sendTestEmail
+} from './cron/index.js'
+import type { CreateJobRequest, UpdateJobRequest, Schedule } from './cron/index.js'
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取定时任务列表                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/cron/jobs', (_req: Request, res: Response) => {
+  try {
+    const jobs = listJobs()
+    res.json({ jobs })
+  } catch (error) {
+    res.status(500).json({ error: '获取任务列表失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取单个定时任务                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/cron/jobs/:id', (req: Request, res: Response) => {
+  const { id } = req.params
+  const job = getJob(id)
+  if (!job) {
+    res.status(404).json({ error: '任务不存在' })
+    return
+  }
+  res.json(job)
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       创建定时任务                                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.post('/cron/jobs', (req: Request, res: Response) => {
+  const { name, description, schedule, target, enabled } = req.body as CreateJobRequest
+
+  if (!name || !schedule || !target) {
+    res.status(400).json({ error: '缺少必要参数: name, schedule, target' })
+    return
+  }
+
+  // 验证 cron 表达式
+  if (schedule.kind === 'cron') {
+    const error = validateCronExpr(schedule.expr)
+    if (error) {
+      res.status(400).json({ error: `无效的 Cron 表达式: ${error}` })
+      return
+    }
+  }
+
+  try {
+    const job = createJob({ name, description, schedule, target, enabled })
+    res.json(job)
+  } catch (error) {
+    res.status(500).json({ error: '创建任务失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       更新定时任务                                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.patch('/cron/jobs/:id', (req: Request, res: Response) => {
+  const { id } = req.params
+  const updates = req.body as UpdateJobRequest
+
+  // 验证 cron 表达式
+  if (updates.schedule?.kind === 'cron') {
+    const error = validateCronExpr(updates.schedule.expr)
+    if (error) {
+      res.status(400).json({ error: `无效的 Cron 表达式: ${error}` })
+      return
+    }
+  }
+
+  try {
+    const job = updateJob(id, updates)
+    if (!job) {
+      res.status(404).json({ error: '任务不存在' })
+      return
+    }
+    res.json(job)
+  } catch (error) {
+    res.status(500).json({ error: '更新任务失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       删除定时任务                                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.delete('/cron/jobs/:id', (req: Request, res: Response) => {
+  const { id } = req.params
+  const success = deleteJob(id)
+  if (!success) {
+    res.status(404).json({ error: '任务不存在' })
+    return
+  }
+  res.json({ success: true })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       手动触发定时任务                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.post('/cron/jobs/:id/run', async (req: Request, res: Response) => {
+  const { id } = req.params
+  const result = await triggerJob(id)
+  if (!result.success) {
+    res.status(result.error === '任务不存在' ? 404 : 500).json({ error: result.error })
+    return
+  }
+  res.json({ success: true, sessionId: result.sessionId })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取任务执行历史                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/cron/jobs/:id/runs', (req: Request, res: Response) => {
+  const { id } = req.params
+  const limit = parseInt(req.query.limit as string) || 20
+
+  const job = getJob(id)
+  if (!job) {
+    res.status(404).json({ error: '任务不存在' })
+    return
+  }
+
+  const runs = getJobRuns(id, limit)
+  res.json({ runs })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取定时器状态                                       │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/cron/status', (_req: Request, res: Response) => {
+  res.json(getCronTimerStatus())
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       解析调度描述（辅助 API）                              │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.post('/cron/describe', (req: Request, res: Response) => {
+  const schedule = req.body as Schedule
+  if (!schedule || !schedule.kind) {
+    res.status(400).json({ error: '缺少 schedule 参数' })
+    return
+  }
+  res.json({ description: describeSchedule(schedule) })
+})
+
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                         通知系统 API                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝ */
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取通知列表                                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/notifications', (req: Request, res: Response) => {
+  const limit = parseInt(req.query.limit as string) || 50
+  try {
+    const notifications = listNotifications(limit)
+    res.json({ notifications })
+  } catch (error) {
+    res.status(500).json({ error: '获取通知列表失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取未读通知数量                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/notifications/unread-count', (_req: Request, res: Response) => {
+  try {
+    const count = getUnreadCount()
+    res.json({ count })
+  } catch (error) {
+    res.status(500).json({ error: '获取未读数量失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       标记单个通知为已读                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.post('/notifications/:id/read', (req: Request, res: Response) => {
+  const id = parseInt(req.params.id)
+  if (isNaN(id)) {
+    res.status(400).json({ error: '无效的通知 ID' })
+    return
+  }
+  const success = markNotificationRead(id)
+  res.json({ success })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       标记所有通知为已读                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.post('/notifications/read-all', (_req: Request, res: Response) => {
+  try {
+    const count = markAllNotificationsRead()
+    res.json({ success: true, count })
+  } catch (error) {
+    res.status(500).json({ error: '标记已读失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       发送测试邮件                                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.post('/notifications/test-email', async (_req: Request, res: Response) => {
+  try {
+    const result = await sendTestEmail()
+    if (result.success) {
+      res.json({ success: true, message: '测试邮件已发送，请检查收件箱' })
+    } else {
+      res.status(400).json({ success: false, error: result.error })
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : '发送失败'
+    res.status(500).json({ success: false, error: msg })
+  }
+})
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           启动服务                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 app.listen(PORT, () => {
   console.log(`[Agent Service] 运行在 http://localhost:${PORT}`)
+
+  // 启动定时任务调度器
+  startCronTimer()
 })

@@ -1,0 +1,7 @@
+{
+  "name": "laborany-agent",
+  "assets": [
+    "node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+    "node_modules/better-sqlite3/prebuilds/**/*"
+  ]
+}

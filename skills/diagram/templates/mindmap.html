@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>思维导图模板</title>
+
+  <!-- ╔══════════════════════════════════════════════════════════════════╗ -->
+  <!-- ║                         CDN 依赖                                  ║ -->
+  <!-- ╚══════════════════════════════════════════════════════════════════╝ -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    #diagram { background: white; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       配置数据                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    // 思维导图数据 - 树形结构
+    const mindmapData = {
+      text: "软件工程",
+      children: [
+        {
+          text: "需求分析",
+          color: "blue",
+          children: [
+            { text: "用户访谈" },
+            { text: "需求文档" },
+            { text: "原型设计" },
+          ],
+        },
+        {
+          text: "系统设计",
+          color: "green",
+          children: [
+            { text: "架构设计" },
+            { text: "数据库设计" },
+            { text: "接口设计" },
+          ],
+        },
+        {
+          text: "编码实现",
+          color: "purple",
+          children: [
+            { text: "前端开发" },
+            { text: "后端开发" },
+            { text: "代码审查" },
+          ],
+        },
+        {
+          text: "测试验证",
+          color: "orange",
+          children: [
+            { text: "单元测试" },
+            { text: "集成测试" },
+            { text: "性能测试" },
+          ],
+        },
+      ],
+    };
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       布局常量                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    const CENTER_X = 400;
+    const CENTER_Y = 280;
+    const BRANCH_RADIUS = 160;
+    const LEAF_RADIUS = 280;
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       颜色配置                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    const colors = {
+      blue: { bg: "bg-blue-500", line: "#3b82f6" },
+      green: { bg: "bg-green-500", line: "#22c55e" },
+      purple: { bg: "bg-purple-500", line: "#a855f7" },
+      orange: { bg: "bg-orange-500", line: "#f97316" },
+      gray: { bg: "bg-gray-500", line: "#6b7280" },
+    };
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       基础组件                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    // 中心节点
+    function CenterNode({ text, x, y }) {
+      return (
+        <div
+          className="absolute bg-gradient-to-br from-indigo-500 to-purple-600 text-white
+                     px-6 py-4 rounded-full shadow-lg font-bold text-lg transform -translate-x-1/2 -translate-y-1/2"
+          style={{ left: x, top: y }}
+        >
+          {text}
+        </div>
+      );
+    }
+
+    // 分支节点
+    function BranchNode({ text, x, y, color = "blue" }) {
+      const colorClass = colors[color]?.bg || colors.gray.bg;
+      return (
+        <div
+          className={`absolute ${colorClass} text-white px-4 py-2 rounded-lg shadow-md
+                     font-medium transform -translate-x-1/2 -translate-y-1/2`}
+          style={{ left: x, top: y }}
+        >
+          {text}
+        </div>
+      );
+    }
+
+    // 叶子节点
+    function LeafNode({ text, x, y, color = "blue" }) {
+      return (
+        <div
+          className="absolute bg-white border-2 border-gray-200 text-gray-700
+                     px-3 py-1.5 rounded shadow text-sm transform -translate-x-1/2 -translate-y-1/2"
+          style={{ left: x, top: y }}
+        >
+          {text}
+        </div>
+      );
+    }
+
+    // 曲线连接
+    function CurvedLine({ x1, y1, x2, y2, color = "#6b7280" }) {
+      // 计算控制点 - 使曲线更自然
+      const midX = (x1 + x2) / 2;
+      const midY = (y1 + y2) / 2;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+
+      // 控制点偏移，使曲线弯曲
+      const ctrlX = midX - dy * 0.2;
+      const ctrlY = midY + dx * 0.2;
+
+      return (
+        <path
+          d={`M ${x1} ${y1} Q ${ctrlX} ${ctrlY} ${x2} ${y2}`}
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      );
+    }
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       思维导图主体                                ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    function Diagram() {
+      const branches = mindmapData.children;
+      const branchCount = branches.length;
+
+      // 计算分支位置 - 均匀分布在圆周上
+      const getBranchPos = (index) => {
+        const angle = (index / branchCount) * Math.PI * 2 - Math.PI / 2;
+        return {
+          x: CENTER_X + Math.cos(angle) * BRANCH_RADIUS,
+          y: CENTER_Y + Math.sin(angle) * BRANCH_RADIUS,
+          angle,
+        };
+      };
+
+      // 计算叶子位置 - 在分支外侧展开
+      const getLeafPos = (branchIndex, leafIndex, leafCount) => {
+        const branchPos = getBranchPos(branchIndex);
+        const spreadAngle = Math.PI / 4; // 叶子展开角度
+        const startAngle = branchPos.angle - spreadAngle / 2;
+        const angleStep = leafCount > 1 ? spreadAngle / (leafCount - 1) : 0;
+        const leafAngle = startAngle + leafIndex * angleStep;
+
+        return {
+          x: CENTER_X + Math.cos(leafAngle) * LEAF_RADIUS,
+          y: CENTER_Y + Math.sin(leafAngle) * LEAF_RADIUS,
+        };
+      };
+
+      return (
+        <div className="relative" style={{ width: 800, height: 560 }}>
+          {/* SVG 连线层 */}
+          <svg className="absolute top-0 left-0 pointer-events-none" width={800} height={560}>
+            {/* 中心到分支的连线 */}
+            {branches.map((branch, i) => {
+              const pos = getBranchPos(i);
+              const lineColor = colors[branch.color]?.line || colors.gray.line;
+              return (
+                <CurvedLine
+                  key={`center-${i}`}
+                  x1={CENTER_X}
+                  y1={CENTER_Y}
+                  x2={pos.x}
+                  y2={pos.y}
+                  color={lineColor}
+                />
+              );
+            })}
+
+            {/* 分支到叶子的连线 */}
+            {branches.map((branch, bi) => {
+              const branchPos = getBranchPos(bi);
+              const lineColor = colors[branch.color]?.line || colors.gray.line;
+              return branch.children?.map((_, li) => {
+                const leafPos = getLeafPos(bi, li, branch.children.length);
+                return (
+                  <CurvedLine
+                    key={`leaf-${bi}-${li}`}
+                    x1={branchPos.x}
+                    y1={branchPos.y}
+                    x2={leafPos.x}
+                    y2={leafPos.y}
+                    color={lineColor}
+                  />
+                );
+              });
+            })}
+          </svg>
+
+          {/* 节点层 */}
+          {/* 叶子节点 - 先渲染，在底层 */}
+          {branches.map((branch, bi) =>
+            branch.children?.map((leaf, li) => {
+              const pos = getLeafPos(bi, li, branch.children.length);
+              return (
+                <LeafNode
+                  key={`leaf-${bi}-${li}`}
+                  text={leaf.text}
+                  x={pos.x}
+                  y={pos.y}
+                  color={branch.color}
+                />
+              );
+            })
+          )}
+
+          {/* 分支节点 */}
+          {branches.map((branch, i) => {
+            const pos = getBranchPos(i);
+            return (
+              <BranchNode
+                key={`branch-${i}`}
+                text={branch.text}
+                x={pos.x}
+                y={pos.y}
+                color={branch.color}
+              />
+            );
+          })}
+
+          {/* 中心节点 - 最后渲染，在顶层 */}
+          <CenterNode text={mindmapData.text} x={CENTER_X} y={CENTER_Y} />
+        </div>
+      );
+    }
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       主应用                                      ║ */
+    /* ╚══════════════════════════���═══════════════════════════════════════╝ */
+
+    function App() {
+      const exportPNG = () => {
+        const element = document.getElementById("diagram");
+        html2canvas(element, {
+          scale: 2,
+          backgroundColor: "#ffffff",
+          logging: false,
+        }).then((canvas) => {
+          const link = document.createElement("a");
+          link.download = "mindmap.png";
+          link.href = canvas.toDataURL("image/png");
+          link.click();
+        });
+      };
+
+      return (
+        <div className="max-w-5xl mx-auto">
+          {/* 标题 */}
+          <h1 className="text-2xl font-bold text-gray-800 mb-6 text-center">
+            软件工程知识图谱
+          </h1>
+
+          {/* 图表区域 */}
+          <div id="diagram" className="bg-white p-8 rounded-lg shadow-lg overflow-x-auto">
+            <Diagram />
+          </div>
+
+          {/* 操作按钮 */}
+          <div className="mt-6 flex justify-center gap-4">
+            <button
+              onClick={exportPNG}
+              className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-md"
+            >
+              导出 PNG
+            </button>
+          </div>
+
+          {/* 使用说明 */}
+          <div className="mt-8 text-sm text-gray-500 text-center">
+            <p>点击"导出 PNG"按钮下载图片</p>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

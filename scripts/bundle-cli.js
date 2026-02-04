@@ -4,7 +4,7 @@
  * ║                                                                          ║
  * ║  功能：下载 Node.js 并安装 Claude Code CLI 到 bundle 目录                  ║
  * ║  用法：node scripts/bundle-cli.js [platform]                              ║
- * ║  平台：win, mac, linux                                                    ║
+ * ║  平台：win, mac, mac-x64, mac-arm64, mac-universal, linux                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 const https = require('https')
@@ -17,7 +17,7 @@ const os = require('os')
  * │                           配置                                           │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const NODE_VERSION = '20.18.0'
-const BUNDLE_DIR = path.join(__dirname, '..', 'cli-bundle')
+const ROOT_DIR = path.join(__dirname, '..')
 const CACHE_DIR = path.join(os.homedir(), '.laborany', 'cache')
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -37,15 +37,17 @@ function getPlatform() {
   return 'linux'
 }
 
-function getArch() {
-  // 支持通过参数指定架构：mac-x64, mac-arm64
-  const arg = process.argv[2]
-  if (arg && arg.includes('-')) {
-    const parts = arg.split('-')
-    return parts[1] || 'x64'
+function parseArg(arg) {
+  if (!arg || !arg.includes('-')) return { platform: arg, arch: null, universal: false }
+
+  const parts = arg.split('-')
+  const platform = parts[0]
+  const archOrUniversal = parts[1]
+
+  if (archOrUniversal === 'universal') {
+    return { platform, arch: null, universal: true }
   }
-  // 默认使用当前系统架构
-  return os.arch() === 'arm64' ? 'arm64' : 'x64'
+  return { platform, arch: archOrUniversal, universal: false }
 }
 
 function getNodeUrl(platform, arch) {
@@ -86,19 +88,68 @@ function download(url, dest) {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           主流程                                          │
+ * │                       递归复制目录                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-async function main() {
-  const platformArg = process.argv[2] || ''
-  const platform = platformArg.includes('-') ? platformArg.split('-')[0] : getPlatform()
-  const arch = getArch()
-  log(`目标平台: ${platform}, 架构: ${arch}`)
+function copyDirRecursive(src, dest) {
+  fs.mkdirSync(dest, { recursive: true })
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name)
+    const destPath = path.join(dest, entry.name)
+    entry.isDirectory()
+      ? copyDirRecursive(srcPath, destPath)
+      : fs.copyFileSync(srcPath, destPath)
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       解压 Node.js                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function extractNode(platform, cacheFile, tempDir, bundleDir) {
+  if (platform === 'win') {
+    execSync(`powershell -Command "Expand-Archive -Path '${cacheFile}' -DestinationPath '${tempDir}' -Force"`)
+    const nodeDir = fs.readdirSync(tempDir).find(d => d.startsWith('node-'))
+    fs.copyFileSync(
+      path.join(tempDir, nodeDir, 'node.exe'),
+      path.join(bundleDir, 'node.exe')
+    )
+    return nodeDir
+  } else {
+    execSync(`tar -xzf "${cacheFile}" -C "${tempDir}"`)
+    const nodeDir = fs.readdirSync(tempDir).find(d => d.startsWith('node-'))
+    fs.copyFileSync(
+      path.join(tempDir, nodeDir, 'bin', 'node'),
+      path.join(bundleDir, 'node')
+    )
+    fs.chmodSync(path.join(bundleDir, 'node'), 0o755)
+    return nodeDir
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       复制 npm 到 deps 目录                               │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function copyNpmFromNodeDist(platform, tempDir, nodeDir, bundleDir) {
+  const nodeDirPath = path.join(tempDir, nodeDir)
+  const npmSrc = platform === 'win'
+    ? path.join(nodeDirPath, 'node_modules', 'npm')
+    : path.join(nodeDirPath, 'lib', 'node_modules', 'npm')
+  const npmDest = path.join(bundleDir, 'deps', 'npm')
+
+  copyDirRecursive(npmSrc, npmDest)
+  log('已复制 npm 到 deps/npm（Live Preview 需要）')
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       打包单个架构                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+async function bundleSingleArch(platform, arch, bundleDir) {
+  log(`打包 ${platform}-${arch} 到 ${bundleDir}`)
 
   // 清理并创建目录
-  if (fs.existsSync(BUNDLE_DIR)) {
-    fs.rmSync(BUNDLE_DIR, { recursive: true })
+  if (fs.existsSync(bundleDir)) {
+    fs.rmSync(bundleDir, { recursive: true })
   }
-  fs.mkdirSync(BUNDLE_DIR, { recursive: true })
+  fs.mkdirSync(bundleDir, { recursive: true })
   fs.mkdirSync(CACHE_DIR, { recursive: true })
 
   // 下载 Node.js
@@ -118,32 +169,12 @@ async function main() {
   const tempDir = path.join(os.tmpdir(), `node-extract-${Date.now()}`)
   fs.mkdirSync(tempDir, { recursive: true })
 
-  if (platform === 'win') {
-    // Windows: 使用 PowerShell 解压 zip
-    execSync(`powershell -Command "Expand-Archive -Path '${cacheFile}' -DestinationPath '${tempDir}' -Force"`)
-    const nodeDir = fs.readdirSync(tempDir).find(d => d.startsWith('node-'))
-    fs.copyFileSync(
-      path.join(tempDir, nodeDir, 'node.exe'),
-      path.join(BUNDLE_DIR, 'node.exe')
-    )
-  } else {
-    // Unix: 使用 tar 解压
-    execSync(`tar -xzf "${cacheFile}" -C "${tempDir}"`)
-    const nodeDir = fs.readdirSync(tempDir).find(d => d.startsWith('node-'))
-    fs.copyFileSync(
-      path.join(tempDir, nodeDir, 'bin', 'node'),
-      path.join(BUNDLE_DIR, 'node')
-    )
-    fs.chmodSync(path.join(BUNDLE_DIR, 'node'), 0o755)
-  }
-
-  // 清理临时目录
-  fs.rmSync(tempDir, { recursive: true })
+  const nodeDir = extractNode(platform, cacheFile, tempDir, bundleDir)
   log('Node.js 已准备好')
 
   // 创建 package.json
   fs.writeFileSync(
-    path.join(BUNDLE_DIR, 'package.json'),
+    path.join(bundleDir, 'package.json'),
     JSON.stringify({ name: 'cli-bundle', private: true, type: 'module' }, null, 2)
   )
 
@@ -151,29 +182,29 @@ async function main() {
   log('安装 @anthropic-ai/claude-code...')
   const npmRegistry = process.env.NPM_REGISTRY || 'https://registry.npmmirror.com'
   execSync(`npm install @anthropic-ai/claude-code --registry="${npmRegistry}"`, {
-    cwd: BUNDLE_DIR,
+    cwd: bundleDir,
     stdio: 'inherit'
   })
 
   // 验证安装
-  const cliPath = path.join(BUNDLE_DIR, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js')
+  const cliPath = path.join(bundleDir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js')
   if (!fs.existsSync(cliPath)) {
     throw new Error('Claude Code CLI 安装失败')
   }
 
   // 清理不需要的平台文件（减小体积）
   log('清理不需要的平台文件...')
-  const vendorDir = path.join(BUNDLE_DIR, 'node_modules', '@anthropic-ai', 'claude-code', 'vendor')
+  const vendorDir = path.join(bundleDir, 'node_modules', '@anthropic-ai', 'claude-code', 'vendor')
   if (fs.existsSync(vendorDir)) {
-    const keepPlatform = platform === 'win' ? 'x64-win32'
-                       : platform === 'mac' ? (arch === 'arm64' ? 'arm64-darwin' : 'x64-darwin')
-                       : 'x64-linux'
+    const keepPlatforms = platform === 'win' ? ['x64-win32']
+                        : platform === 'mac' ? ['arm64-darwin', 'x64-darwin']
+                        : ['x64-linux']
 
     const rgDir = path.join(vendorDir, 'ripgrep')
     if (fs.existsSync(rgDir)) {
       for (const dir of fs.readdirSync(rgDir)) {
         const fullPath = path.join(rgDir, dir)
-        if (fs.statSync(fullPath).isDirectory() && dir !== keepPlatform) {
+        if (fs.statSync(fullPath).isDirectory() && !keepPlatforms.includes(dir)) {
           fs.rmSync(fullPath, { recursive: true })
           log(`  删除: vendor/ripgrep/${dir}`)
         }
@@ -181,16 +212,57 @@ async function main() {
     }
   }
 
-  /* ┌──────────────────────────────────────────────────────────────────────────┐
-   * │  重命名 node_modules 为 deps                                             │
-   * │  原因：electron-builder 会排除 node_modules 目录                          │
-   * └──────────────────────────────────────────────────────────────────────────┘ */
+  // 重命名 node_modules 为 deps
   log('重命名 node_modules -> deps...')
-  const nodeModulesDir = path.join(BUNDLE_DIR, 'node_modules')
-  const depsDir = path.join(BUNDLE_DIR, 'deps')
+  const nodeModulesDir = path.join(bundleDir, 'node_modules')
+  const depsDir = path.join(bundleDir, 'deps')
   fs.renameSync(nodeModulesDir, depsDir)
 
-  log(`完成！输出目录: ${BUNDLE_DIR}`)
+  // 复制 npm 到 deps
+  copyNpmFromNodeDist(platform, tempDir, nodeDir, bundleDir)
+
+  // 清理临时目录
+  fs.rmSync(tempDir, { recursive: true })
+
+  log(`完成！输出目录: ${bundleDir}`)
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           主流程                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+async function main() {
+  const platformArg = process.argv[2] || ''
+  const { platform, arch, universal } = parseArg(platformArg || getPlatform())
+
+  log(`目标平台: ${platform}, 架构: ${arch || 'default'}, universal: ${universal}`)
+
+  if (platform === 'mac' && universal) {
+    /* ═══════════════════════════════════════════════════════════════════════
+     *  Mac Universal: 同时打包 arm64 和 x64 两个版本
+     * ═══════════════════════════════════════════════════════════════════════ */
+    log('========== Mac Universal 模式：打包双架构 ==========')
+
+    const arm64Dir = path.join(ROOT_DIR, 'cli-bundle-arm64')
+    const x64Dir = path.join(ROOT_DIR, 'cli-bundle-x64')
+
+    // 并行打包两个架构
+    await Promise.all([
+      bundleSingleArch('mac', 'arm64', arm64Dir),
+      bundleSingleArch('mac', 'x64', x64Dir),
+    ])
+
+    log('========== Mac Universal 打包完成 ==========')
+    log(`arm64: ${arm64Dir}`)
+    log(`x64: ${x64Dir}`)
+  } else {
+    /* ═══════════════════════════════════════════════════════════════════════
+     *  单架构模式
+     * ═══════════════════════════════════════════════════════════════════════ */
+    const finalArch = arch || (os.arch() === 'arm64' ? 'arm64' : 'x64')
+    const bundleDir = path.join(ROOT_DIR, 'cli-bundle')
+
+    await bundleSingleArch(platform, finalArch, bundleDir)
+  }
 }
 
 main().catch(err => {

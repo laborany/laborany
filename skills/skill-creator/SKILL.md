@@ -2,6 +2,8 @@
 name: 技能创建助手
 description: 创建和更新技能的开发指南，用于扩展 Claude 的专业知识、工作流程或工具集成
 license: Complete terms in LICENSE.txt
+icon: 🛠️
+category: 开发
 ---
 
 # Skill Creator
@@ -312,6 +314,34 @@ Write the YAML frontmatter with `name` and `description`:
   - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Claude needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
 
 Do not include any other fields in YAML frontmatter.
+
+##### 自动分类规则
+
+创建新 skill 时，必须根据功能添加 `category` 和 `icon` 字段：
+
+| 关键词 | Category | 推荐 Icon |
+|--------|----------|-----------|
+| 文档、Word、PDF、PPT、Excel | 办公 | 📝📄📊📈 |
+| 股票、金融、投资、财报 | 金融 | 💹📊 |
+| 论文、学术、研究 | 学术 | 📚🎓 |
+| 设计、UI、前端、网页 | 设计 | 🎨🖼️ |
+| 数据、监控、分析 | 数据 | 📈📉 |
+| 报销、费用、财务 | 财务 | 💰💳 |
+| 社交、运营、营销 | 运营 | 📱📣 |
+| 开发、代码、编程 | 开发 | 🛠️💻 |
+| 其他 | 工具 | 🔧⚙️ |
+
+**Frontmatter 示例：**
+
+```yaml
+---
+name: 技能名称
+description: |
+  技能描述...
+icon: 📝
+category: 办公
+---
+```
 
 ##### Body
 

@@ -5,7 +5,9 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Hono } from 'hono'
+import { existsSync } from 'fs'
 import { dbHelper } from '../core/database.js'
+import { getTaskDir } from '../core/agent/index.js'
 
 const session = new Hono()
 
@@ -42,9 +44,10 @@ session.get('/:sessionId', (c) => {
     query: string
     status: string
     cost: number
+    work_dir: string | null
     created_at: string
   }>(`
-    SELECT id, skill_id, query, status, cost, created_at
+    SELECT id, skill_id, query, status, cost, work_dir, created_at
     FROM sessions
     WHERE id = ?
   `, [sessionId])
@@ -79,8 +82,18 @@ session.get('/:sessionId', (c) => {
     createdAt: msg.created_at
   }))
 
+  // 如果 work_dir 为空，尝试动态计算（兼容旧会话）
+  let workDir = sessionData.work_dir
+  if (!workDir) {
+    const computedDir = getTaskDir(sessionId)
+    if (existsSync(computedDir)) {
+      workDir = computedDir
+    }
+  }
+
   return c.json({
     ...sessionData,
+    work_dir: workDir,
     messages: formattedMessages
   })
 })

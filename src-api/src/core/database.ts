@@ -102,6 +102,7 @@ function createTables(db: Database): void {
       query TEXT NOT NULL,
       status TEXT DEFAULT 'running',
       cost REAL DEFAULT 0,
+      work_dir TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
@@ -188,6 +189,26 @@ function createTables(db: Database): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_workflows_user_id ON workflows(user_id)`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow_id ON workflow_runs(workflow_id)`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_workflow_step_runs_run_id ON workflow_step_runs(run_id)`)
+
+  // 数据库迁移：为旧表添加新字段
+  migrateDatabase(db)
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           数据库迁移                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function migrateDatabase(db: Database): void {
+  // 检查 sessions 表是否有 work_dir 列
+  try {
+    const tableInfo = db.exec('PRAGMA table_info(sessions)')
+    const columns = tableInfo[0]?.values.map(row => row[1]) || []
+    if (!columns.includes('work_dir')) {
+      db.run('ALTER TABLE sessions ADD COLUMN work_dir TEXT')
+      console.log('[DB] 迁移：添加 sessions.work_dir 列')
+    }
+  } catch (err) {
+    console.warn('[DB] 迁移检查失败:', err)
+  }
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

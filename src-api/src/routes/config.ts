@@ -161,6 +161,9 @@ config.post('/', async (c) => {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 config.get('/template', (c) => {
   const template = {
+    // ═══════════════════════════════════════════════════════════════════════
+    // API 配置
+    // ═══════════════════════════════════════════════════════════════════════
     ANTHROPIC_API_KEY: {
       description: 'Anthropic API 密钥',
       required: true,
@@ -189,6 +192,52 @@ config.get('/template', (c) => {
       description: 'JWT 签名密钥（用于用户认证）',
       required: false,
       placeholder: 'your-secret-key',
+      sensitive: true
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 通知配置
+    // ═══════════════════════════════════════════════════════════════════════
+    NOTIFICATION_EMAIL: {
+      description: '接收定时任务通知的邮箱地址',
+      required: false,
+      placeholder: 'your@email.com',
+      sensitive: false
+    },
+    NOTIFY_ON_SUCCESS: {
+      description: '任务成功时是否发送通知（true/false）',
+      required: false,
+      placeholder: 'true',
+      sensitive: false
+    },
+    NOTIFY_ON_ERROR: {
+      description: '任务失败时是否发送通知（true/false）',
+      required: false,
+      placeholder: 'true',
+      sensitive: false
+    },
+    SMTP_HOST: {
+      description: 'SMTP 服务器地址。QQ邮箱: smtp.qq.com | 163邮箱: smtp.163.com | Gmail: smtp.gmail.com',
+      required: false,
+      placeholder: 'smtp.qq.com',
+      sensitive: false
+    },
+    SMTP_PORT: {
+      description: 'SMTP 端口。QQ/163邮箱推荐 465，Gmail 推荐 587',
+      required: false,
+      placeholder: '465',
+      sensitive: false
+    },
+    SMTP_USER: {
+      description: 'SMTP 用户名（通常是完整的邮箱地址）',
+      required: false,
+      placeholder: 'your@qq.com',
+      sensitive: false
+    },
+    SMTP_PASS: {
+      description: '授权码（非邮箱密码！）。QQ邮箱: 设置→账户→开启SMTP→获取授权码 | 163邮箱: 设置→POP3/SMTP→客户端授权密码',
+      required: false,
+      placeholder: '16位授权码',
       sensitive: true
     }
   }

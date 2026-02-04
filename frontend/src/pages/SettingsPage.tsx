@@ -5,7 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect } from 'react'
-import { API_BASE } from '../config'
+import { API_BASE, AGENT_API_BASE } from '../config/api'
 
 interface ConfigItem {
   value: string
@@ -136,6 +136,9 @@ export default function SettingsPage() {
           </div>
         )}
 
+        {/* 邮箱配置帮助卡片 */}
+        <EmailConfigHelp />
+
         {/* 配置项列表 */}
         <div className="bg-card rounded-lg border border-border divide-y divide-border">
           {Array.from(allKeys).map(key => {
@@ -216,6 +219,156 @@ export default function SettingsPage() {
           <p>部分配置修改后可能需要重启应用才能生效</p>
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       邮箱配置帮助组件                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function EmailConfigHelp() {
+  const [expanded, setExpanded] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  async function handleTestEmail() {
+    setTesting(true)
+    setTestResult(null)
+
+    try {
+      // 使用 agent-service 的 API
+      const res = await fetch(`${AGENT_API_BASE}/notifications/test-email`, {
+        method: 'POST',
+      })
+      const data = await res.json()
+
+      if (data.success) {
+        setTestResult({ success: true, message: '测试邮件已发送，请检查收件箱！' })
+      } else {
+        setTestResult({ success: false, message: data.error || '发送失败' })
+      }
+    } catch (err) {
+      setTestResult({ success: false, message: '无法连接到服务，请确保 Agent Service 正在运行' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-blue-100/50 dark:hover:bg-blue-900/30 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-blue-600 dark:text-blue-400">📧</span>
+          <span className="font-medium text-blue-900 dark:text-blue-100">邮箱通知配置指南</span>
+        </div>
+        <svg
+          className={`w-5 h-5 text-blue-600 dark:text-blue-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-4 space-y-4 text-sm">
+          {/* QQ 邮箱 */}
+          <div className="bg-white dark:bg-gray-900 rounded-lg p-3 border border-blue-100 dark:border-blue-900">
+            <h4 className="font-medium text-foreground mb-2">QQ 邮箱配置</h4>
+            <ol className="list-decimal list-inside space-y-1 text-muted-foreground text-xs">
+              <li>登录 <a href="https://mail.qq.com" target="_blank" rel="noopener" className="text-primary hover:underline">QQ 邮箱网页版</a></li>
+              <li>点击「设置」→「账户」</li>
+              <li>找到「POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV服务」</li>
+              <li>开启「SMTP 服务」，按提示发短信获取<strong className="text-foreground">授权码</strong></li>
+            </ol>
+            <div className="mt-2 p-2 bg-muted/50 rounded text-xs font-mono">
+              <div>SMTP_HOST = <span className="text-green-600 dark:text-green-400">smtp.qq.com</span></div>
+              <div>SMTP_PORT = <span className="text-green-600 dark:text-green-400">465</span></div>
+              <div>SMTP_USER = <span className="text-green-600 dark:text-green-400">你的QQ号@qq.com</span></div>
+              <div>SMTP_PASS = <span className="text-green-600 dark:text-green-400">16位授权码</span></div>
+            </div>
+          </div>
+
+          {/* 163 邮箱 */}
+          <div className="bg-white dark:bg-gray-900 rounded-lg p-3 border border-blue-100 dark:border-blue-900">
+            <h4 className="font-medium text-foreground mb-2">163 邮箱配置</h4>
+            <ol className="list-decimal list-inside space-y-1 text-muted-foreground text-xs">
+              <li>登录 <a href="https://mail.163.com" target="_blank" rel="noopener" className="text-primary hover:underline">163 邮箱网页版</a></li>
+              <li>点击「设置」→「POP3/SMTP/IMAP」</li>
+              <li>开启「SMTP 服务」</li>
+              <li>设置<strong className="text-foreground">客户端授权密码</strong></li>
+            </ol>
+            <div className="mt-2 p-2 bg-muted/50 rounded text-xs font-mono">
+              <div>SMTP_HOST = <span className="text-green-600 dark:text-green-400">smtp.163.com</span></div>
+              <div>SMTP_PORT = <span className="text-green-600 dark:text-green-400">465</span></div>
+              <div>SMTP_USER = <span className="text-green-600 dark:text-green-400">你的邮箱@163.com</span></div>
+              <div>SMTP_PASS = <span className="text-green-600 dark:text-green-400">授权密码</span></div>
+            </div>
+          </div>
+
+          {/* 重要提示 */}
+          <div className="flex items-start gap-2 p-2 bg-yellow-50 dark:bg-yellow-950/30 rounded border border-yellow-200 dark:border-yellow-800">
+            <span className="text-yellow-600">⚠️</span>
+            <p className="text-xs text-yellow-800 dark:text-yellow-200">
+              <strong>重要：</strong>SMTP_PASS 填写的是<strong>授权码</strong>，不是邮箱登录密码！授权码需要在邮箱设置中单独获取。
+            </p>
+          </div>
+
+          {/* 测试邮件按钮 */}
+          <div className="pt-2 border-t border-blue-200 dark:border-blue-800">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleTestEmail}
+                disabled={testing}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {testing ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                    发送中...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    发送测试邮件
+                  </>
+                )}
+              </button>
+              <span className="text-xs text-muted-foreground">
+                配置完成后，点击发送测试邮件验证配置是否正确
+              </span>
+            </div>
+
+            {/* 测试结果 */}
+            {testResult && (
+              <div className={`mt-3 p-3 rounded-lg text-sm ${
+                testResult.success
+                  ? 'bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800'
+                  : 'bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'
+              }`}>
+                <div className="flex items-center gap-2">
+                  {testResult.success ? (
+                    <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  )}
+                  <span>{testResult.message}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,0 +1,85 @@
+{
+  "name": "inventory",
+  "description": "库存管理主题 - 适用于库存管理、状态跟踪、资产清单",
+  "colors": {
+    "primary": "2E7D32",
+    "secondary": "1565C0",
+    "header": "37474F",
+    "headerText": "FFFFFF",
+    "inStock": "C8E6C9",
+    "inStockText": "1B5E20",
+    "lowStock": "FFF9C4",
+    "lowStockText": "F57F17",
+    "outOfStock": "FFCDD2",
+    "outOfStockText": "B71C1C",
+    "reserved": "E1BEE7",
+    "reservedText": "4A148C"
+  },
+  "numberFormats": {
+    "quantity": "#,##0",
+    "price": "¥#,##0.00",
+    "sku": "@"
+  },
+  "fonts": {
+    "header": {
+      "name": "微软雅黑",
+      "size": 11,
+      "bold": true,
+      "color": "FFFFFF"
+    },
+    "body": {
+      "name": "微软雅黑",
+      "size": 10,
+      "bold": false,
+      "color": "000000"
+    },
+    "status": {
+      "name": "微软雅黑",
+      "size": 10,
+      "bold": true
+    }
+  },
+  "statusStyles": {
+    "inStock": {
+      "fill": "inStock",
+      "font": {"color": "inStockText", "bold": true},
+      "label": "在库"
+    },
+    "lowStock": {
+      "fill": "lowStock",
+      "font": {"color": "lowStockText", "bold": true},
+      "label": "低库存"
+    },
+    "outOfStock": {
+      "fill": "outOfStock",
+      "font": {"color": "outOfStockText", "bold": true},
+      "label": "缺货"
+    },
+    "reserved": {
+      "fill": "reserved",
+      "font": {"color": "reservedText", "bold": true},
+      "label": "已预留"
+    }
+  },
+  "thresholds": {
+    "lowStock": 10,
+    "outOfStock": 0
+  },
+  "styles": {
+    "header": {
+      "font": "header",
+      "fill": "header",
+      "alignment": {"horizontal": "center", "vertical": "center"}
+    },
+    "sku": {
+      "font": "body",
+      "numberFormat": "sku",
+      "alignment": {"horizontal": "left"}
+    },
+    "quantity": {
+      "font": "body",
+      "numberFormat": "quantity",
+      "alignment": {"horizontal": "right"}
+    }
+  }
+}

@@ -26,11 +26,54 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Update version from tag
+        shell: pwsh
+        run: |
+          # 从 tag 提取版本号 (v0.2.8 -> 0.2.8)
+          $VERSION = "${{ github.ref_name }}" -replace '^v', ''
+          if (-not $VERSION) { $VERSION = "0.0.0" }
+          Write-Host "Setting version to: $VERSION"
+
+          # 更新 package.json
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $pkg.version = $VERSION
+          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json
+
+          # 更新 src-api/package.json
+          $api = Get-Content src-api/package.json | ConvertFrom-Json
+          $api.version = $VERSION
+          $api | ConvertTo-Json -Depth 10 | Set-Content src-api/package.json
+
+          # 更新 frontend/package.json
+          $fe = Get-Content frontend/package.json | ConvertFrom-Json
+          $fe.version = $VERSION
+          $fe | ConvertTo-Json -Depth 10 | Set-Content frontend/package.json
+
+          # 更新 src-tauri/tauri.conf.json
+          $tauri = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
+          $tauri.version = $VERSION
+          $tauri | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
+
       - name: Install dependencies
         run: npm run install:all
 
-      - name: Build Windows
-        run: npm run build:electron
+      - name: Build API and CLI bundle
+        run: |
+          npm run bundle:all:win
+          npm run build
+
+      - name: Build Electron
+        shell: pwsh
+        run: |
+          # 重试机制：最多尝试 3 次
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "Attempt $i of 3..."
+            npx electron-builder --win --publish never
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "Attempt $i failed, retrying in 10 seconds..."
+            Start-Sleep -Seconds 10
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -52,16 +95,44 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Update version from tag
+        run: |
+          # 从 tag 提取版本号 (v0.2.8 -> 0.2.8)
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          [ -z "$VERSION" ] && VERSION="0.0.0"
+          echo "Setting version to: $VERSION"
+
+          # 更新所有 package.json 和 tauri.conf.json
+          npm pkg set version="$VERSION"
+          npm pkg set version="$VERSION" --workspace=src-api 2>/dev/null || true
+          npm pkg set version="$VERSION" --workspace=frontend 2>/dev/null || true
+
+          # 更新 tauri.conf.json
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
       - name: Install dependencies
-        run: npm run install:all
+        run: |
+          # 清理 npm 缓存，避免 SSL 缓存问题
+          npm cache clean --force
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npm run install:all && break
+            echo "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
+            npm cache clean --force
+            sleep 10
+          done
 
       - name: Build API and CLI bundle
         run: |
           npm run bundle:cli:mac-x64
           npm run bundle:uv:mac-x64
           npm run build:api:mac-x64
+          npm run build:agent:mac
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-mac
+          chmod +x agent-service/dist/laborany-agent-mac
           chmod +x cli-bundle/node
           chmod +x uv-bundle/uv
 
@@ -69,7 +140,14 @@ jobs:
         run: npm run build:frontend
 
       - name: Build Electron
-        run: npx electron-builder --mac --x64 --publish never
+        run: |
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npx electron-builder --mac --x64 --publish never && break
+            echo "Attempt $i failed, retrying in 10 seconds..."
+            sleep 10
+          done
 
       - name: Upload Mac x64 artifact
         uses: actions/upload-artifact@v4
@@ -91,16 +169,39 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Update version from tag
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          [ -z "$VERSION" ] && VERSION="0.0.0"
+          echo "Setting version to: $VERSION"
+          npm pkg set version="$VERSION"
+          npm pkg set version="$VERSION" --workspace=src-api 2>/dev/null || true
+          npm pkg set version="$VERSION" --workspace=frontend 2>/dev/null || true
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
       - name: Install dependencies
-        run: npm run install:all
+        run: |
+          # 清理 npm 缓存，避免 SSL 缓存问题
+          npm cache clean --force
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npm run install:all && break
+            echo "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
+            npm cache clean --force
+            sleep 10
+          done
 
       - name: Build API and CLI bundle
         run: |
           npm run bundle:cli:mac-arm64
           npm run bundle:uv:mac-arm64
           npm run build:api:mac-arm64
+          npm run build:agent:mac-arm64
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-mac
+          chmod +x agent-service/dist/laborany-agent-mac
           chmod +x cli-bundle/node
           chmod +x uv-bundle/uv
 
@@ -108,7 +209,14 @@ jobs:
         run: npm run build:frontend
 
       - name: Build Electron
-        run: npx electron-builder --mac --arm64 --publish never
+        run: |
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npx electron-builder --mac --arm64 --publish never && break
+            echo "Attempt $i failed, retrying in 10 seconds..."
+            sleep 10
+          done
 
       - name: Upload Mac arm64 artifact
         uses: actions/upload-artifact@v4
@@ -119,7 +227,7 @@ jobs:
 
   # ╔══════════════════════════════════════════════════════════════════════════╗
   # ║                         Linux 构建                                        ║
-  # ╚═════════════════════��════════════════════════════════════════════════════╝
+  # ╚══════════════════════════════════════════════════════════════════════════╝
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -130,16 +238,39 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Update version from tag
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          [ -z "$VERSION" ] && VERSION="0.0.0"
+          echo "Setting version to: $VERSION"
+          npm pkg set version="$VERSION"
+          npm pkg set version="$VERSION" --workspace=src-api 2>/dev/null || true
+          npm pkg set version="$VERSION" --workspace=frontend 2>/dev/null || true
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
       - name: Install dependencies
-        run: npm run install:all
+        run: |
+          # 清理 npm 缓存，避免 SSL 缓存问题
+          npm cache clean --force
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npm run install:all && break
+            echo "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
+            npm cache clean --force
+            sleep 10
+          done
 
       - name: Build API and CLI bundle
         run: |
           npm run bundle:cli:linux
           npm run bundle:uv:linux
           npm run build:api:linux
+          npm run build:agent:linux
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-linux
+          chmod +x agent-service/dist/laborany-agent-linux
           chmod +x cli-bundle/node
           chmod +x uv-bundle/uv
 
@@ -147,7 +278,14 @@ jobs:
         run: npm run build:frontend
 
       - name: Build Electron
-        run: npx electron-builder --linux --publish never
+        run: |
+          # 重试机制：最多尝试 3 次
+          for i in 1 2 3; do
+            echo "Attempt $i of 3..."
+            npx electron-builder --linux --publish never && break
+            echo "Attempt $i failed, retrying in 10 seconds..."
+            sleep 10
+          done
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
@@ -182,18 +320,24 @@ jobs:
         run: |
           # ═════════════════════════════════════════════════════════════════════
           #  删除旧 release 中的所有 assets，避免上传同名文件冲突
-          #  ═════════════════════════════════════════════════════════════════════
-          echo "Checking release tag: $GITHUB_REF"
+          # ═════════════════════════════════════════════════════════════════════
+
+          # 从 refs/tags/v0.2.8 提取 tag 名称 v0.2.8
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          echo "Tag name: $TAG_NAME"
 
           # 尝试获取 release 的 asset 列表，如果 release 不存在则跳过
-          ASSETS=$(gh release view "$GITHUB_REF" --json assets -q '.assets[] | .name' 2>/dev/null || true)
+          ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets[].name' 2>/dev/null || true)
 
           if [ -n "$ASSETS" ]; then
-            echo "Deleting old assets..."
+            echo "Found existing assets, deleting all..."
             echo "$ASSETS" | while IFS= read -r asset; do
-              echo "Deleting: $asset"
-              gh release delete-asset "$GITHUB_REF" "$asset" || true
+              if [ -n "$asset" ]; then
+                echo "Deleting: $asset"
+                gh release delete-asset "$TAG_NAME" "$asset" --yes || true
+              fi
             done
+            echo "All old assets deleted"
           else
             echo "No existing assets found (or release does not exist yet)"
           fi

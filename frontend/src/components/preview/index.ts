@@ -17,23 +17,33 @@ export { VitePreview } from './VitePreview'
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           渲染器（供高级用法）                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export { CodeRenderer } from './renderers/CodeRenderer'
-export { MarkdownRenderer } from './renderers/MarkdownRenderer'
-export { ImageRenderer } from './renderers/ImageRenderer'
-export { HtmlRenderer } from './renderers/HtmlRenderer'
-export { PdfRenderer } from './renderers/PdfRenderer'
-export { AudioRenderer } from './renderers/AudioRenderer'
-export { VideoRenderer } from './renderers/VideoRenderer'
-export { ExcelRenderer } from './renderers/ExcelRenderer'
-export { DocxRenderer } from './renderers/DocxRenderer'
-export { FallbackRenderer } from './renderers/FallbackRenderer'
+export {
+  CodeRenderer,
+  MarkdownRenderer,
+  ImageRenderer,
+  HtmlRenderer,
+  PdfRenderer,
+  AudioRenderer,
+  VideoRenderer,
+  ExcelRenderer,
+  DocxRenderer,
+  PptxRenderer,
+  FontRenderer,
+  FallbackRenderer,
+} from './renderers'
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           辅助组件                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export { FileTooLarge } from './FileTooLarge'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           工具函数                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export { getExt, getCategory, getLang, isPreviewable, formatSize, getFileIcon } from './utils'
+export { getExt, getCategory, getLang, isPreviewable, formatSize, getFileIcon, openFileExternal } from './utils'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型                                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export type { FileArtifact, FileCategory, PreviewProps, RendererProps } from './types'
+export type { FileArtifact, FileCategory, PreviewProps, RendererProps, PptxSlide, PreviewMode, ViewMode } from './types'
+export { MAX_PREVIEW_SIZE } from './types'

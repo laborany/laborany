@@ -72,6 +72,7 @@ const generateViteConfig = (port: number): string => `export default {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       内置 Node.js 路径检测                               │
  * │  优先使用打包的 Node.js，避免依赖系统安装                                  │
+ * │  支持 Mac Universal：根据架构选择 arm64 或 x64 版本                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 interface BundledNode {
   node: string
@@ -80,32 +81,136 @@ interface BundledNode {
 
 let cachedBundledNode: BundledNode | null | undefined = undefined
 
+/* ── 列出目录内容（用于调试） ── */
+function listDir(dir: string): string[] {
+  try {
+    if (fsSync.existsSync(dir)) {
+      return fsSync.readdirSync(dir)
+    }
+  } catch { /* ignore */ }
+  return []
+}
+
+/* ── 确保二进制文件有执行权限（macOS/Linux） ── */
+function ensureExecutable(filePath: string): boolean {
+  if (platform() === 'win32') return true
+
+  try {
+    const stats = fsSync.statSync(filePath)
+    const isExecutable = (stats.mode & 0o111) !== 0
+
+    if (!isExecutable) {
+      console.log(`[Preview] 修复执行权限: ${filePath}`)
+      fsSync.chmodSync(filePath, 0o755)
+    }
+    return true
+  } catch (err) {
+    console.error(`[Preview] 无法设置执行权限: ${filePath}`, err)
+    return false
+  }
+}
+
+/* ── 获取架构特定的 bundle 目录名 ── */
+function getArchSpecificBundleDirs(): string[] {
+  const arch = process.arch
+  const os = platform()
+
+  if (os === 'darwin') {
+    /* ═══════════════════════════════════════════════════════════════════════
+     *  macOS: 优先使用架构特定目录，回退到通用目录
+     *  arm64 Mac: cli-bundle-arm64 > cli-bundle
+     *  x64 Mac:   cli-bundle-x64 > cli-bundle
+     * ═══════════════════════════════════════════════════════════════════════ */
+    const archDir = arch === 'arm64' ? 'cli-bundle-arm64' : 'cli-bundle-x64'
+    return [archDir, 'cli-bundle']
+  }
+
+  // Windows/Linux: 只使用通用目录
+  return ['cli-bundle']
+}
+
 function getBundledNodePath(): BundledNode | null {
   if (cachedBundledNode !== undefined) return cachedBundledNode
 
   const os = platform()
   const exeDir = dirname(process.execPath)
+  const parentDir = dirname(exeDir)
 
-  const candidates = [
-    path.join(exeDir, '..', 'cli-bundle'),
-    path.join(exeDir, '..', 'resources', 'cli-bundle'),
-    path.join(exeDir, 'resources', 'cli-bundle'),
-    path.join(__dirname, '..', '..', 'cli-bundle'),
+  console.log('[Preview] ========== 检测 Node.js 路径 ==========')
+  console.log('[Preview] platform:', os)
+  console.log('[Preview] arch:', process.arch)
+  console.log('[Preview] process.execPath:', process.execPath)
+  console.log('[Preview] exeDir:', exeDir)
+  console.log('[Preview] parentDir:', parentDir)
+  console.log('[Preview] __dirname:', __dirname)
+  console.log('[Preview] cwd:', process.cwd())
+
+  /* ── 列出关键目录内容 ── */
+  console.log('[Preview] exeDir 内容:', listDir(exeDir))
+  console.log('[Preview] parentDir 内容:', listDir(parentDir))
+
+  /* ── 获取架构特定的 bundle 目录名列表 ── */
+  const bundleDirNames = getArchSpecificBundleDirs()
+  console.log('[Preview] 查找 bundle 目录:', bundleDirNames)
+
+  /* ── 候选路径：覆盖 Electron 打包环境 ── */
+  const basePaths = [
+    /* ═══════════════════════════════════════════════════════════════════════
+     *  Electron 生产环境（最重要）
+     *  API 运行位置: resources/api/laborany-api.exe (Windows)
+     *  API 运行位置: resources/api/laborany-api (macOS/Linux)
+     *  cli-bundle 位置: resources/cli-bundle/ 或 resources/cli-bundle-{arch}/
+     * ═══════════════════════════════════════════════════════════════════════ */
+    path.join(exeDir, '..'),
+    parentDir,
+    path.join(exeDir, 'resources'),
+    path.join(exeDir, '..', 'resources'),
+    process.cwd(),
+    path.join(__dirname, '..', '..'),
+    path.join(__dirname, '..', '..', '..'),
+    path.join(exeDir, '..', 'app.asar.unpacked'),
   ]
 
-  for (const bundleDir of candidates) {
-    const nodeBin = os === 'win32'
-      ? path.join(bundleDir, 'node.exe')
-      : path.join(bundleDir, 'node')
-    const npmCli = path.join(bundleDir, 'deps', 'npm', 'bin', 'npm-cli.js')
+  /* ── 生成所有候选路径 ── */
+  const candidates: string[] = []
+  for (const basePath of basePaths) {
+    for (const bundleDirName of bundleDirNames) {
+      candidates.push(path.join(basePath, bundleDirName))
+    }
+  }
 
-    if (fsSync.existsSync(nodeBin) && fsSync.existsSync(npmCli)) {
-      console.log(`[Preview] 找到内置 Node.js: ${bundleDir}`)
+  for (const bundleDir of candidates) {
+    const resolvedDir = path.resolve(bundleDir)
+    const nodeBin = os === 'win32'
+      ? path.join(resolvedDir, 'node.exe')
+      : path.join(resolvedDir, 'node')
+    const npmCli = path.join(resolvedDir, 'deps', 'npm', 'bin', 'npm-cli.js')
+
+    const dirExists = fsSync.existsSync(resolvedDir)
+    const nodeExists = fsSync.existsSync(nodeBin)
+    const npmExists = fsSync.existsSync(npmCli)
+
+    console.log(`[Preview] 检查: ${resolvedDir}`)
+    console.log(`[Preview]   目录存在: ${dirExists}, node: ${nodeExists}, npm: ${npmExists}`)
+
+    if (dirExists) {
+      console.log(`[Preview]   目录内容: ${listDir(resolvedDir).join(', ')}`)
+    }
+
+    if (nodeExists && npmExists) {
+      /* ── 确保 node 二进制有执行权限（macOS/Linux 打包后可能丢失） ── */
+      if (!ensureExecutable(nodeBin)) {
+        console.log(`[Preview] ✗ 无法设置 node 执行权限，跳过此路径`)
+        continue
+      }
+
+      console.log(`[Preview] ✓ 找到内置 Node.js: ${resolvedDir}`)
       cachedBundledNode = { node: nodeBin, npm: npmCli }
       return cachedBundledNode
     }
   }
 
+  console.log('[Preview] ✗ 未找到内置 Node.js，将回退到系统 Node.js')
   cachedBundledNode = null
   return null
 }
@@ -121,6 +226,84 @@ export function isNodeAvailable(): boolean {
     return true
   } catch {
     return false
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       诊断信息（用于调试路径问题）                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export interface DiagnosticInfo {
+  platform: string
+  arch: string
+  execPath: string
+  exeDir: string
+  parentDir: string
+  dirname: string
+  cwd: string
+  bundleDirNames: string[]
+  bundledNode: BundledNode | null
+  candidates: Array<{
+    path: string
+    resolved: string
+    dirExists: boolean
+    nodeExists: boolean
+    npmExists: boolean
+    dirContents: string[]
+  }>
+}
+
+export function getDiagnosticInfo(): DiagnosticInfo {
+  const os = platform()
+  const exeDir = dirname(process.execPath)
+  const parentDir = dirname(exeDir)
+  const bundleDirNames = getArchSpecificBundleDirs()
+
+  const basePaths = [
+    path.join(exeDir, '..'),
+    parentDir,
+    path.join(exeDir, 'resources'),
+    path.join(exeDir, '..', 'resources'),
+    process.cwd(),
+    path.join(__dirname, '..', '..'),
+    path.join(__dirname, '..', '..', '..'),
+    path.join(exeDir, '..', 'app.asar.unpacked'),
+  ]
+
+  const candidates: string[] = []
+  for (const basePath of basePaths) {
+    for (const bundleDirName of bundleDirNames) {
+      candidates.push(path.join(basePath, bundleDirName))
+    }
+  }
+
+  const candidateInfo = candidates.map(bundleDir => {
+    const resolvedDir = path.resolve(bundleDir)
+    const nodeBin = os === 'win32'
+      ? path.join(resolvedDir, 'node.exe')
+      : path.join(resolvedDir, 'node')
+    const npmCli = path.join(resolvedDir, 'deps', 'npm', 'bin', 'npm-cli.js')
+
+    return {
+      path: bundleDir,
+      resolved: resolvedDir,
+      dirExists: fsSync.existsSync(resolvedDir),
+      nodeExists: fsSync.existsSync(nodeBin),
+      npmExists: fsSync.existsSync(npmCli),
+      dirContents: listDir(resolvedDir),
+    }
+  })
+
+  return {
+    platform: os,
+    arch: process.arch,
+    execPath: process.execPath,
+    exeDir,
+    parentDir,
+    dirname: __dirname,
+    cwd: process.cwd(),
+    bundleDirNames,
+    bundledNode: getBundledNodePath(),
+    candidates: candidateInfo,
   }
 }
 
@@ -223,56 +406,122 @@ export class PreviewManager {
    * 私有方法：启动 Vite 服务器
    * ──────────────────────────────────────────────────────────────────────── */
   private async startViteServer(instance: PreviewInstance, workDir: string): Promise<void> {
-    await this.ensureProjectFiles(workDir, instance.port)
+    console.log(`[Preview] ========== 启动 Vite 服务器 ==========`)
+    console.log(`[Preview] taskId: ${instance.taskId}`)
+    console.log(`[Preview] workDir: ${workDir}`)
+    console.log(`[Preview] port: ${instance.port}`)
 
-    console.log(`[Preview] 启动 Vite ${instance.taskId} 端口 ${instance.port}`)
+    await this.ensureProjectFiles(workDir, instance.port)
 
     // 检查是否需要安装依赖
     const viteBin = path.join(workDir, 'node_modules', '.bin', 'vite')
-    if (!fsSync.existsSync(viteBin)) {
-      console.log('[Preview] 安装依赖...')
-      await this.runNpmInstall(workDir)
+    const viteBinExists = fsSync.existsSync(viteBin)
+    console.log(`[Preview] viteBin 路径: ${viteBin}`)
+    console.log(`[Preview] viteBin 存在: ${viteBinExists}`)
+
+    if (!viteBinExists) {
+      console.log('[Preview] 开始安装依赖...')
+      try {
+        await this.runNpmInstall(workDir)
+        console.log('[Preview] 依赖安装完成')
+      } catch (err) {
+        console.error('[Preview] 依赖安装失败:', err)
+        throw err
+      }
     }
 
     // 启动 Vite（优先使用内置 Node.js）
     const viteCli = path.join(workDir, 'node_modules', 'vite', 'bin', 'vite.js')
+    const viteCliExists = fsSync.existsSync(viteCli)
     const bundled = getBundledNodePath()
+
+    console.log(`[Preview] viteCli 路径: ${viteCli}`)
+    console.log(`[Preview] viteCli 存在: ${viteCliExists}`)
+    console.log(`[Preview] bundled Node.js: ${bundled ? bundled.node : 'null'}`)
 
     let cmd: string
     let args: string[]
-    if (fsSync.existsSync(viteCli) && bundled) {
+    let useShell: boolean
+
+    if (viteCliExists && bundled) {
       cmd = bundled.node
       args = [viteCli]
-    } else if (fsSync.existsSync(viteCli)) {
+      useShell = false
+      console.log(`[Preview] 使用内置 Node.js 启动 Vite`)
+
+      /* ── 验证 node 二进制可执行（macOS 诊断） ── */
+      if (platform() !== 'win32') {
+        try {
+          const stats = fsSync.statSync(cmd)
+          const mode = stats.mode.toString(8)
+          console.log(`[Preview] node 文件权限: ${mode}`)
+          console.log(`[Preview] node 文件大小: ${stats.size} bytes`)
+        } catch (err) {
+          console.error(`[Preview] 无法读取 node 文件状态:`, err)
+        }
+      }
+    } else if (viteCliExists) {
       cmd = 'node'
       args = [viteCli]
+      useShell = true
+      console.log(`[Preview] 使用系统 Node.js 启动 Vite`)
     } else {
       cmd = 'npx'
       args = ['vite']
+      useShell = true
+      console.log(`[Preview] 使用 npx 启动 Vite`)
     }
+
+    console.log(`[Preview] 执行命令: ${cmd} ${args.join(' ')}`)
+    console.log(`[Preview] shell: ${useShell}`)
 
     const proc = spawn(cmd, args, {
       cwd: workDir,
-      shell: !bundled,
+      shell: useShell,
       stdio: 'pipe',
       env: { ...process.env, FORCE_COLOR: '0' },
     })
 
     instance.process = proc
+    console.log(`[Preview] 进程已启动, PID: ${proc.pid}`)
 
-    proc.stdout?.on('data', d => console.log(`[Preview:vite] ${d.toString().trim()}`))
-    proc.stderr?.on('data', d => console.log(`[Preview:vite] ${d.toString().trim()}`))
+    proc.stdout?.on('data', d => console.log(`[Preview:vite:stdout] ${d.toString().trim()}`))
+    proc.stderr?.on('data', d => console.log(`[Preview:vite:stderr] ${d.toString().trim()}`))
 
     proc.on('close', code => {
+      console.log(`[Preview] Vite 进程关闭, code=${code}, 当前状态=${instance.status}`)
+
+      /* ── code=127 特殊诊断（命令未找到） ── */
+      if (code === 127) {
+        console.error(`[Preview] ✗ Exit code 127: 命令未找到`)
+        console.error(`[Preview]   可能原因:`)
+        console.error(`[Preview]   1. node 二进制不存在或路径错误`)
+        console.error(`[Preview]   2. node 二进制没有执行权限`)
+        console.error(`[Preview]   3. node 二进制架构不匹配 (x64 vs arm64)`)
+        console.error(`[Preview]   执行的命令: ${cmd}`)
+      }
+
       if (instance.status === 'running' || instance.status === 'starting') {
-        console.log(`[Preview] Vite 退出 code=${code}`)
-        instance.status = 'stopped'
-        this.cleanup(instance)
+        instance.status = 'error'
+        instance.error = code === 127
+          ? `命令未找到 (code=127): 请检查 Node.js 二进制是否正确打包`
+          : `Vite 进程异常退出 (code=${code})`
+        // 清理资源但保留实例，让前端能获取错误信息
+        if (instance.healthCheck) {
+          clearInterval(instance.healthCheck)
+          instance.healthCheck = undefined
+        }
+        if (instance.idleTimeout) {
+          clearTimeout(instance.idleTimeout)
+          instance.idleTimeout = undefined
+        }
+        instance.process = undefined
+        this.releasePort(instance.port)
       }
     })
 
     proc.on('error', err => {
-      console.error('[Preview] Vite 错误:', err)
+      console.error('[Preview] Vite 进程错误:', err)
       instance.status = 'error'
       instance.error = err.message
       this.cleanup(instance)
@@ -347,15 +596,53 @@ export class PreviewManager {
     // vite.config.js
     await fs.writeFile(path.join(workDir, 'vite.config.js'), generateViteConfig(port))
 
-    // index.html
+    // index.html - 确保始终存在
     const indexPath = path.join(workDir, 'index.html')
     if (!fsSync.existsSync(indexPath)) {
       const files = await fs.readdir(workDir)
-      const html = files.find(f => f.endsWith('.html'))
-      if (html && html !== 'index.html') {
+      const htmlFiles = files.filter(f => f.endsWith('.html'))
+
+      if (htmlFiles.length > 0) {
+        /* ── 有其他 HTML 文件，创建重定向页面 ── */
+        const html = htmlFiles[0]
         await fs.writeFile(indexPath, `<!DOCTYPE html>
 <html><head><meta http-equiv="refresh" content="0; url='./${html}'"></head>
 <body><p>重定向到 <a href="./${html}">${html}</a>...</p></body></html>`)
+      } else {
+        /* ── 没有 HTML 文件，创建文件列表页面 ── */
+        const previewableExts = ['.js', '.css', '.json', '.txt', '.md', '.svg', '.png', '.jpg', '.gif']
+        const previewFiles = files.filter(f => {
+          const ext = path.extname(f).toLowerCase()
+          return previewableExts.includes(ext) || f.endsWith('.html')
+        })
+
+        const fileLinks = previewFiles.length > 0
+          ? previewFiles.map(f => `<li><a href="./${f}">${f}</a></li>`).join('\n')
+          : '<li>暂无可预览的文件</li>'
+
+        await fs.writeFile(indexPath, `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Preview</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+    h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+    a { color: #0066cc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .hint { color: #666; font-size: 14px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>📁 Live Preview</h1>
+  <p>工作目录中的文件：</p>
+  <ul>${fileLinks}</ul>
+  <p class="hint">提示：创建 index.html 文件后，此页面将自动显示您的内容。</p>
+</body>
+</html>`)
       }
     }
   }

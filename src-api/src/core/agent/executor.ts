@@ -11,6 +11,7 @@ import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import type { Skill } from './skill-loader.js'
+import { isZhipuApi, buildZhipuMcpServers, injectMcpServers } from './mcp/index.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -98,7 +99,7 @@ function getClaudeMdPath(): string | null {
   return findClaudeMd()
 }
 
-function getTaskDir(sessionId: string): string {
+export function getTaskDir(sessionId: string): string {
   return join(getTasksBaseDir(), sessionId)
 }
 
@@ -405,6 +406,16 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     return
   }
 
+  /* ┌────────────────────────────────────────────────────────────────────────┐
+   * │  智谱 MCP 自动注入                                                      │
+   * │  当使用智谱 API 时，自动将智谱 MCP 服务器配置注入 settings.json          │
+   * └────────────────────────────────────────────────────────────────────────┘ */
+  if (isZhipuApi(process.env.ANTHROPIC_BASE_URL)) {
+    const zhipuServers = buildZhipuMcpServers(process.env.ANTHROPIC_API_KEY)
+    injectMcpServers(zhipuServers)
+    console.log('[Agent] 检测到智谱 API，已注入 MCP 服务器配置')
+  }
+
   if (claudeConfig.useBundled) {
     console.log(`[Agent] Node: ${claudeConfig.nodePath}`)
     console.log(`[Agent] CLI: ${claudeConfig.cliPath}`)
@@ -430,8 +441,13 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     args.push('--model', process.env.ANTHROPIC_MODEL)
   }
 
+  /* ═══════════════════════════════════════════════════════════════════════════
+   * 构建完整 prompt
+   * ═══════════════════════════════════════════════════════════════════════════ */
+  const basePrompt = skill.systemPrompt
+
   const prompt = isNewSession
-    ? `${skill.systemPrompt}\n\n---\n\n用户问题：${userQuery}`
+    ? `${basePrompt}\n\n---\n\n用户问题：${userQuery}`
     : userQuery
 
   console.log(`[Agent] Args: ${args.join(' ')}`)

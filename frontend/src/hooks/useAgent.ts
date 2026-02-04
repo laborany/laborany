@@ -2,16 +2,38 @@
  * ║                         Agent 通信 Hook                                   ║
  * ║                                                                          ║
  * ║  职责：SSE 流式通信、消息管理、执行控制、任务文件管理                          ║
+ * ║  改进：支持断线重连和后台任务恢复                                            ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useCallback, useRef } from 'react'
 import type { AgentMessage, TaskFile } from '../types'
-import { API_BASE } from '../config'
+import { API_BASE, AGENT_API_BASE } from '../config/api'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           重新导出类型                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export type { AgentMessage, TaskFile }
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                      AskUserQuestion 相关类型                             │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export interface QuestionOption {
+  label: string
+  description: string
+}
+
+export interface AgentQuestion {
+  question: string
+  header: string
+  options: QuestionOption[]
+  multiSelect: boolean
+}
+
+export interface PendingQuestion {
+  id: string
+  toolUseId: string
+  questions: AgentQuestion[]
+}
 
 interface AgentState {
   messages: AgentMessage[]
@@ -20,11 +42,55 @@ interface AgentState {
   error: string | null
   taskFiles: TaskFile[]
   workDir: string | null
+  pendingQuestion: PendingQuestion | null
+  filesVersion: number
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           Hook 实现                                       │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+
+/* ════════════════════════════════════════════════════════════════════════════
+ *  带重试的 fetch 封装
+ *  503 错误时自动重试，使用指数退避策略
+ * ════════════════════════════════════════════════════════════════════════════ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 3
+): Promise<Response> {
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, options)
+
+      /* ────────────────────────────────────────────────────────────────────────
+       *  503 表示服务暂时不可用，等待后重试
+       *  其他状态码直接返回（包括其他错误码，由调用方处理）
+       * ──────────────────────────────────────────────────────────────────────── */
+      if (res.status !== 503) {
+        return res
+      }
+
+      const data = await res.clone().json().catch(() => ({}))
+      const retryAfter = (data.retryAfter || Math.pow(2, attempt)) * 1000
+
+      console.log(`[useAgent] 服务暂时不可用，${retryAfter / 1000}s 后重试 (${attempt + 1}/${maxRetries})`)
+      await new Promise(r => setTimeout(r, retryAfter))
+    } catch (err) {
+      lastError = err as Error
+      if ((err as Error).name === 'AbortError') throw err
+
+      const delay = Math.pow(2, attempt) * 1000
+      console.log(`[useAgent] 请求失败，${delay / 1000}s 后重试 (${attempt + 1}/${maxRetries})`)
+      await new Promise(r => setTimeout(r, delay))
+    }
+  }
+
+  throw lastError || new Error('请求失败，已达最大重试次数')
+}
+
 export function useAgent(skillId: string) {
   const [state, setState] = useState<AgentState>({
     messages: [],
@@ -33,11 +99,114 @@ export function useAgent(skillId: string) {
     error: null,
     taskFiles: [],
     workDir: null,
+    pendingQuestion: null,
+    filesVersion: 0,
   })
 
   const abortRef = useRef<AbortController | null>(null)
   const currentTextRef = useRef('')
   const sessionIdRef = useRef<string | null>(null)
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                     处理 SSE 事件（提取为独立函数）                         │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  const handleEvent = useCallback(
+    (event: Record<string, unknown>, assistantId: string) => {
+      switch (event.type) {
+        case 'session':
+          const sid = event.sessionId as string
+          sessionIdRef.current = sid
+          setState((s) => ({ ...s, sessionId: sid }))
+          // 保存 sessionId 到 localStorage（支持页面刷新后恢复）
+          localStorage.setItem(`lastSession_${skillId}`, sid)
+          break
+
+        case 'text':
+          currentTextRef.current += event.content as string
+          setState((s) => {
+            const existing = s.messages.find((m) => m.id === assistantId)
+            if (existing) {
+              return {
+                ...s,
+                messages: s.messages.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, content: currentTextRef.current }
+                    : m,
+                ),
+              }
+            }
+            return {
+              ...s,
+              messages: [
+                ...s.messages,
+                {
+                  id: assistantId,
+                  type: 'assistant',
+                  content: currentTextRef.current,
+                  timestamp: new Date(),
+                },
+              ],
+            }
+          })
+          break
+
+        case 'tool_use':
+          const toolName = event.toolName as string
+          const toolInput = event.toolInput as Record<string, unknown>
+
+          // 检测 AskUserQuestion 工具调用
+          if (toolName === 'AskUserQuestion' && toolInput.questions) {
+            setState((s) => ({
+              ...s,
+              isRunning: false,
+              pendingQuestion: {
+                id: `question_${Date.now()}`,
+                toolUseId: (event.toolUseId as string) || `tool_${Date.now()}`,
+                questions: toolInput.questions as AgentQuestion[],
+              },
+            }))
+            abortRef.current?.abort()
+            // 通知后端停止
+            if (sessionIdRef.current) {
+              const token = localStorage.getItem('token')
+              fetch(`${API_BASE}/skill/stop/${sessionIdRef.current}`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+              })
+            }
+            return
+          }
+
+          setState((s) => ({
+            ...s,
+            messages: [
+              ...s.messages,
+              {
+                id: crypto.randomUUID(),
+                type: 'tool',
+                content: '',
+                toolName,
+                toolInput,
+                timestamp: new Date(),
+              },
+            ],
+          }))
+          break
+
+        case 'error':
+          setState((s) => ({ ...s, error: (event.message || event.content) as string }))
+          // 任务失败，清理 localStorage
+          localStorage.removeItem(`lastSession_${skillId}`)
+          break
+
+        case 'done':
+          // 任务完成，清理 localStorage
+          localStorage.removeItem(`lastSession_${skillId}`)
+          break
+      }
+    },
+    [skillId],
+  )
 
   // 执行查询
   const execute = useCallback(
@@ -72,7 +241,7 @@ export function useAgent(skillId: string) {
 
       try {
         console.log('[useAgent] 发送请求到 /api/skill/execute')
-        
+
         let body: BodyInit
         const headers: HeadersInit = {
           Authorization: `Bearer ${token}`,
@@ -151,69 +320,8 @@ export function useAgent(skillId: string) {
         abortRef.current = null
       }
     },
-    [skillId],
+    [skillId, handleEvent],
   )
-
-  // 处理 SSE 事件
-  function handleEvent(event: Record<string, unknown>, assistantId: string) {
-    switch (event.type) {
-      case 'session':
-        const sid = event.sessionId as string
-        sessionIdRef.current = sid
-        setState((s) => ({ ...s, sessionId: sid }))
-        break
-
-      case 'text':
-        currentTextRef.current += event.content as string
-        setState((s) => {
-          const existing = s.messages.find((m) => m.id === assistantId)
-          if (existing) {
-            return {
-              ...s,
-              messages: s.messages.map((m) =>
-                m.id === assistantId
-                  ? { ...m, content: currentTextRef.current }
-                  : m,
-              ),
-            }
-          }
-          return {
-            ...s,
-            messages: [
-              ...s.messages,
-              {
-                id: assistantId,
-                type: 'assistant',
-                content: currentTextRef.current,
-                timestamp: new Date(),
-              },
-            ],
-          }
-        })
-        break
-
-      case 'tool_use':
-        setState((s) => ({
-          ...s,
-          messages: [
-            ...s.messages,
-            {
-              id: crypto.randomUUID(),
-              type: 'tool',
-              content: '',  // 不再存储 JSON 字符串
-              toolName: event.toolName as string,
-              toolInput: event.toolInput as Record<string, unknown>,
-              timestamp: new Date(),
-            },
-          ],
-        }))
-        break
-
-      case 'error':
-        setState((s) => ({ ...s, error: event.message as string }))
-        break
-    }
-  }
 
   // 中止执行
   const stop = useCallback(async () => {
@@ -240,6 +348,8 @@ export function useAgent(skillId: string) {
       error: null,
       taskFiles: [],
       workDir: null,
+      pendingQuestion: null,
+      filesVersion: 0,
     })
   }, [])
 
@@ -258,6 +368,7 @@ export function useAgent(skillId: string) {
           ...s,
           taskFiles: data.files || [],
           workDir: data.workDir || null,
+          filesVersion: s.filesVersion + 1,
         }))
       }
     } catch (err) {
@@ -265,13 +376,149 @@ export function useAgent(skillId: string) {
     }
   }, [state.sessionId])
 
-  // 获取文件下载/预览 URL
+  // 获取文件下载/预览 URL（使用 filesVersion 破坏缓存）
   const getFileUrl = useCallback(
     (filePath: string) => {
       if (!state.sessionId) return ''
-      return `${API_BASE}/task/${state.sessionId}/files/${filePath}`
+      return `${API_BASE}/task/${state.sessionId}/files/${filePath}?v=${state.filesVersion}`
     },
-    [state.sessionId],
+    [state.sessionId, state.filesVersion],
+  )
+
+  // 响应用户问题
+  const respondToQuestion = useCallback(
+    async (_questionId: string, answers: Record<string, string>) => {
+      if (!state.pendingQuestion) return
+
+      const answerText = Object.entries(answers)
+        .map(([q, a]) => `${q}: ${a}`)
+        .join('\n')
+
+      // 清除待回答问题
+      setState((s) => ({ ...s, pendingQuestion: null }))
+
+      // 添加用户回答到消息
+      const userMessage: AgentMessage = {
+        id: crypto.randomUUID(),
+        type: 'user',
+        content: answerText,
+        timestamp: new Date(),
+      }
+      setState((s) => ({ ...s, messages: [...s.messages, userMessage] }))
+
+      // 继续对话
+      await execute(answerText)
+    },
+    [state.pendingQuestion, execute],
+  )
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                     检查是否有正在执行的任务                               │
+   * │                                                                          │
+   * │  用于页面加载时检测后台任务，支持断线重连                                   │
+   * │  增强：503 时自动重试                                                      │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  const checkRunningTask = useCallback(async (): Promise<string | null> => {
+    const lastSessionId = localStorage.getItem(`lastSession_${skillId}`)
+    if (!lastSessionId) return null
+
+    try {
+      const res = await fetchWithRetry(
+        `${AGENT_API_BASE}/execute/status/${lastSessionId}`,
+        {},
+        2
+      )
+      if (!res.ok) {
+        localStorage.removeItem(`lastSession_${skillId}`)
+        return null
+      }
+
+      const status = await res.json()
+      if (status.status === 'running') {
+        return lastSessionId
+      }
+
+      localStorage.removeItem(`lastSession_${skillId}`)
+      return null
+    } catch {
+      return null
+    }
+  }, [skillId])
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                     重新连接到正在执行的任务                               │
+   * │                                                                          │
+   * │  通过 SSE 重新订阅任务事件，会先重放历史事件                                │
+   * │  增强：503 时自动重试                                                      │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  const attachToSession = useCallback(
+    async (targetSessionId: string) => {
+      const token = localStorage.getItem('token')
+      if (!token) {
+        setState((s) => ({ ...s, error: '未登录，请重新登录' }))
+        return
+      }
+
+      setState((s) => ({
+        ...s,
+        isRunning: true,
+        sessionId: targetSessionId,
+        error: null,
+      }))
+
+      sessionIdRef.current = targetSessionId
+      abortRef.current = new AbortController()
+
+      const assistantId = crypto.randomUUID()
+      currentTextRef.current = ''
+
+      try {
+        const res = await fetchWithRetry(
+          `${AGENT_API_BASE}/execute/attach/${targetSessionId}`,
+          { signal: abortRef.current.signal },
+          3
+        )
+
+        if (!res.ok) {
+          throw new Error('无法连接到任务')
+        }
+
+        const reader = res.body?.getReader()
+        const decoder = new TextDecoder()
+
+        if (!reader) throw new Error('无法读取响应流')
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const chunk = decoder.decode(value)
+          const lines = chunk.split('\n')
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+
+            try {
+              const event = JSON.parse(line.slice(6))
+              handleEvent(event, assistantId)
+            } catch {
+              // 忽略解析错误
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name !== 'AbortError') {
+          setState((s) => ({
+            ...s,
+            error: (err as Error).message,
+          }))
+        }
+      } finally {
+        setState((s) => ({ ...s, isRunning: false }))
+        abortRef.current = null
+      }
+    },
+    [handleEvent],
   )
 
   return {
@@ -281,6 +528,9 @@ export function useAgent(skillId: string) {
     clear,
     fetchTaskFiles,
     getFileUrl,
+    respondToQuestion,
+    checkRunningTask,
+    attachToSession,
   }
 }
 

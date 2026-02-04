@@ -1,0 +1,71 @@
+{
+  "name": "minimal",
+  "displayName": "极简主题",
+  "description": "黑白极简风格，大量留白，适合高端展示",
+
+  "colors": {
+    "primary": "000000",
+    "secondary": "333333",
+    "accent": "666666",
+    "background": "ffffff",
+    "surface": "fafafa",
+    "text": "1a1a1a",
+    "textLight": "666666",
+    "border": "e5e5e5"
+  },
+
+  "fonts": {
+    "title": {
+      "face": "微软雅黑",
+      "size": 48,
+      "bold": false,
+      "color": "primary"
+    },
+    "subtitle": {
+      "face": "微软雅黑",
+      "size": 24,
+      "bold": false,
+      "color": "secondary"
+    },
+    "body": {
+      "face": "微软雅黑",
+      "size": 18,
+      "bold": false,
+      "color": "text"
+    },
+    "caption": {
+      "face": "微软雅黑",
+      "size": 14,
+      "bold": false,
+      "color": "textLight"
+    }
+  },
+
+  "layouts": {
+    "title": {
+      "background": "background",
+      "titleColor": "primary",
+      "subtitleColor": "secondary"
+    },
+    "section": {
+      "background": "primary",
+      "titleColor": "ffffff"
+    },
+    "content": {
+      "background": "background",
+      "titleColor": "primary",
+      "bodyColor": "text"
+    },
+    "end": {
+      "background": "primary",
+      "titleColor": "ffffff",
+      "subtitleColor": "e5e5e5"
+    }
+  },
+
+  "chart": {
+    "colors": ["1a1a1a", "4a4a4a", "7a7a7a", "aaaaaa"],
+    "gridColor": "e5e5e5",
+    "labelColor": "666666"
+  }
+}

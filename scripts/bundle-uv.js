@@ -4,7 +4,7 @@
  * ║                                                                          ║
  * ║  功能：下载 uv 二进制到 bundle 目录                                        ║
  * ║  用法：node scripts/bundle-uv.js [platform]                               ║
- * ║  平台：win, mac, linux                                                    ║
+ * ║  平台：win, mac, mac-x64, mac-arm64, mac-universal, linux                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 const https = require('https')
@@ -17,7 +17,7 @@ const os = require('os')
  * │                           配置                                           │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const UV_VERSION = '0.5.14'
-const BUNDLE_DIR = path.join(__dirname, '..', 'uv-bundle')
+const ROOT_DIR = path.join(__dirname, '..')
 const CACHE_DIR = path.join(os.homedir(), '.laborany', 'cache')
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -29,10 +29,7 @@ function log(msg) {
 
 function getPlatform() {
   const arg = process.argv[2]
-  if (arg) {
-    // 支持 mac-x64, mac-arm64 格式
-    return arg.includes('-') ? arg.split('-')[0] : arg
-  }
+  if (arg) return arg
 
   const platform = os.platform()
   if (platform === 'win32') return 'win'
@@ -40,18 +37,23 @@ function getPlatform() {
   return 'linux'
 }
 
-function getArch() {
-  // 支持通过参数指定架构：mac-x64, mac-arm64
-  const arg = process.argv[2]
-  if (arg && arg.includes('-')) {
-    const archPart = arg.split('-')[1]
-    // 转换为 uv 使用的架构名称
-    if (archPart === 'arm64') return 'aarch64'
-    if (archPart === 'x64') return 'x86_64'
-    return archPart
+function parseArg(arg) {
+  if (!arg || !arg.includes('-')) return { platform: arg, arch: null, universal: false }
+
+  const parts = arg.split('-')
+  const platform = parts[0]
+  const archOrUniversal = parts[1]
+
+  if (archOrUniversal === 'universal') {
+    return { platform, arch: null, universal: true }
   }
-  // 默认使用当前系统架构
-  return os.arch() === 'arm64' ? 'aarch64' : 'x86_64'
+
+  // 转换为 uv 使用的架构名称
+  let uvArch = archOrUniversal
+  if (archOrUniversal === 'arm64') uvArch = 'aarch64'
+  if (archOrUniversal === 'x64') uvArch = 'x86_64'
+
+  return { platform, arch: uvArch, universal: false }
 }
 
 function getUvUrl(platform, arch) {
@@ -99,18 +101,35 @@ function download(url, dest) {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           主流程                                          │
+ * │                           辅助函数                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-async function main() {
-  const platform = getPlatform()
-  const arch = getArch()
-  log(`目标平台: ${platform}, 架构: ${arch}`)
+function findFile(dir, filename) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      const found = findFile(fullPath, filename)
+      if (found) return found
+    } else if (entry.name === filename) {
+      return fullPath
+    }
+  }
+
+  return null
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       打包单个架构                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+async function bundleSingleArch(platform, arch, bundleDir) {
+  log(`打包 ${platform}-${arch} 到 ${bundleDir}`)
 
   // 清理并创建目录
-  if (fs.existsSync(BUNDLE_DIR)) {
-    fs.rmSync(BUNDLE_DIR, { recursive: true })
+  if (fs.existsSync(bundleDir)) {
+    fs.rmSync(bundleDir, { recursive: true })
   }
-  fs.mkdirSync(BUNDLE_DIR, { recursive: true })
+  fs.mkdirSync(bundleDir, { recursive: true })
   fs.mkdirSync(CACHE_DIR, { recursive: true })
 
   // 下载 uv
@@ -139,12 +158,12 @@ async function main() {
     if (!uvExe) {
       throw new Error('未找到 uv.exe')
     }
-    fs.copyFileSync(uvExe, path.join(BUNDLE_DIR, 'uv.exe'))
+    fs.copyFileSync(uvExe, path.join(bundleDir, 'uv.exe'))
 
     // 同时复制 uvx.exe（如果存在）
     const uvxExe = findFile(tempDir, 'uvx.exe')
     if (uvxExe) {
-      fs.copyFileSync(uvxExe, path.join(BUNDLE_DIR, 'uvx.exe'))
+      fs.copyFileSync(uvxExe, path.join(bundleDir, 'uvx.exe'))
     }
   } else {
     // Unix: 使用 tar 解压
@@ -155,14 +174,14 @@ async function main() {
     if (!uvBin) {
       throw new Error('未找到 uv 二进制')
     }
-    fs.copyFileSync(uvBin, path.join(BUNDLE_DIR, 'uv'))
-    fs.chmodSync(path.join(BUNDLE_DIR, 'uv'), 0o755)
+    fs.copyFileSync(uvBin, path.join(bundleDir, 'uv'))
+    fs.chmodSync(path.join(bundleDir, 'uv'), 0o755)
 
     // 同时复制 uvx（如果存在）
     const uvxBin = findFile(tempDir, 'uvx')
     if (uvxBin) {
-      fs.copyFileSync(uvxBin, path.join(BUNDLE_DIR, 'uvx'))
-      fs.chmodSync(path.join(BUNDLE_DIR, 'uvx'), 0o755)
+      fs.copyFileSync(uvxBin, path.join(bundleDir, 'uvx'))
+      fs.chmodSync(path.join(bundleDir, 'uvx'), 0o755)
     }
   }
 
@@ -171,41 +190,52 @@ async function main() {
 
   // 验证安装
   const uvPath = platform === 'win'
-    ? path.join(BUNDLE_DIR, 'uv.exe')
-    : path.join(BUNDLE_DIR, 'uv')
+    ? path.join(bundleDir, 'uv.exe')
+    : path.join(bundleDir, 'uv')
 
   if (!fs.existsSync(uvPath)) {
     throw new Error('uv 安装失败')
   }
 
-  // 获取版本信息
-  try {
-    const version = execSync(`"${uvPath}" --version`, { encoding: 'utf-8' }).trim()
-    log(`已安装: ${version}`)
-  } catch (e) {
-    log('警告: 无法获取版本信息')
-  }
-
-  log(`完成！输出目录: ${BUNDLE_DIR}`)
+  log(`完成！输出目录: ${bundleDir}`)
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           辅助函数                                        │
+ * │                           主流程                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function findFile(dir, filename) {
-  const entries = fs.readdirSync(dir, { withFileTypes: true })
+async function main() {
+  const platformArg = process.argv[2] || ''
+  const { platform, arch, universal } = parseArg(platformArg || getPlatform())
 
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name)
-    if (entry.isDirectory()) {
-      const found = findFile(fullPath, filename)
-      if (found) return found
-    } else if (entry.name === filename) {
-      return fullPath
-    }
+  log(`目标平台: ${platform}, 架构: ${arch || 'default'}, universal: ${universal}`)
+
+  if (platform === 'mac' && universal) {
+    /* ═══════════════════════════════════════════════════════════════════════
+     *  Mac Universal: 同时打包 arm64 和 x64 两个版本
+     * ═══════════════════════════════════════════════════════════════════════ */
+    log('========== Mac Universal 模式：打包双架构 ==========')
+
+    const arm64Dir = path.join(ROOT_DIR, 'uv-bundle-arm64')
+    const x64Dir = path.join(ROOT_DIR, 'uv-bundle-x64')
+
+    // 并行打包两个架构
+    await Promise.all([
+      bundleSingleArch('mac', 'aarch64', arm64Dir),
+      bundleSingleArch('mac', 'x86_64', x64Dir),
+    ])
+
+    log('========== Mac Universal 打包完成 ==========')
+    log(`arm64: ${arm64Dir}`)
+    log(`x64: ${x64Dir}`)
+  } else {
+    /* ═══════════════════════════════════════════════════════════════════════
+     *  单架构模式
+     * ═══════════════════════════════════════════════════════════════════════ */
+    const finalArch = arch || (os.arch() === 'arm64' ? 'aarch64' : 'x86_64')
+    const bundleDir = path.join(ROOT_DIR, 'uv-bundle')
+
+    await bundleSingleArch(platform, finalArch, bundleDir)
   }
-
-  return null
 }
 
 main().catch(err => {

@@ -1,0 +1,71 @@
+{
+  "name": "corporate",
+  "displayName": "商务主题",
+  "description": "专业商务风格，深蓝配色，适合正式汇报",
+
+  "colors": {
+    "primary": "1a365d",
+    "secondary": "2c5282",
+    "accent": "3182ce",
+    "background": "ffffff",
+    "surface": "f7fafc",
+    "text": "2d3748",
+    "textLight": "718096",
+    "border": "e2e8f0"
+  },
+
+  "fonts": {
+    "title": {
+      "face": "微软雅黑",
+      "size": 36,
+      "bold": true,
+      "color": "primary"
+    },
+    "subtitle": {
+      "face": "微软雅黑",
+      "size": 24,
+      "bold": false,
+      "color": "secondary"
+    },
+    "body": {
+      "face": "微软雅黑",
+      "size": 18,
+      "bold": false,
+      "color": "text"
+    },
+    "caption": {
+      "face": "微软雅黑",
+      "size": 14,
+      "bold": false,
+      "color": "textLight"
+    }
+  },
+
+  "layouts": {
+    "title": {
+      "background": "primary",
+      "titleColor": "ffffff",
+      "subtitleColor": "e2e8f0"
+    },
+    "section": {
+      "background": "secondary",
+      "titleColor": "ffffff"
+    },
+    "content": {
+      "background": "background",
+      "titleColor": "primary",
+      "bodyColor": "text"
+    },
+    "end": {
+      "background": "primary",
+      "titleColor": "ffffff",
+      "subtitleColor": "e2e8f0"
+    }
+  },
+
+  "chart": {
+    "colors": ["3182ce", "63b3ed", "90cdf4", "bee3f8"],
+    "gridColor": "e2e8f0",
+    "labelColor": "718096"
+  }
+}

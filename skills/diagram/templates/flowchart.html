@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>流程图模板</title>
+
+  <!-- ╔══════════════════════════════════════════════════════════════════╗ -->
+  <!-- ║                         CDN 依赖                                  ║ -->
+  <!-- ╚══════════════════════════════════════════════════════════════════╝ -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* 确保导出时背景正确 */
+    #diagram { background: white; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       基础组件                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    // 矩形节点 - 用于处理步骤
+    function RectNode({ text, color = "blue" }) {
+      const colors = {
+        blue: "bg-blue-500 text-white",
+        green: "bg-green-500 text-white",
+        gray: "bg-gray-500 text-white",
+        white: "bg-white text-gray-800 border-2 border-gray-800",
+      };
+      return (
+        <div className={`px-6 py-3 rounded-lg shadow-md text-center font-medium ${colors[color]}`}>
+          {text}
+        </div>
+      );
+    }
+
+    // 菱形节点 - 用于判断
+    function DiamondNode({ text, color = "yellow" }) {
+      const colors = {
+        yellow: "bg-yellow-500",
+        orange: "bg-orange-500",
+        white: "bg-white border-2 border-gray-800",
+      };
+      const textColor = color === "white" ? "text-gray-800" : "text-white";
+      return (
+        <div className="relative w-28 h-28 flex items-center justify-center">
+          <div className={`absolute w-20 h-20 rotate-45 ${colors[color]} shadow-md`} />
+          <span className={`relative z-10 text-center text-sm font-medium ${textColor}`}>{text}</span>
+        </div>
+      );
+    }
+
+    // 圆形节点 - 用于开始/结束
+    function CircleNode({ text, type = "start" }) {
+      const styles = {
+        start: "bg-green-500 text-white",
+        end: "bg-red-500 text-white",
+      };
+      return (
+        <div className={`w-20 h-20 rounded-full flex items-center justify-center shadow-md ${styles[type]}`}>
+          <span className="text-sm font-medium">{text}</span>
+        </div>
+      );
+    }
+
+    // 箭头连接线
+    function ArrowDown({ label = "" }) {
+      return (
+        <div className="flex flex-col items-center">
+          <div className="w-0.5 h-8 bg-gray-600" />
+          <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-gray-600" />
+          {label && <span className="text-xs text-gray-600 mt-1">{label}</span>}
+        </div>
+      );
+    }
+
+    // 水平箭头
+    function ArrowRight({ label = "" }) {
+      return (
+        <div className="flex items-center">
+          <div className="w-8 h-0.5 bg-gray-600" />
+          <div className="w-0 h-0 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent border-l-[8px] border-l-gray-600" />
+          {label && <span className="text-xs text-gray-600 ml-1">{label}</span>}
+        </div>
+      );
+    }
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       示例流程图                                  ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    function Diagram() {
+      return (
+        <div className="flex flex-col items-center gap-2">
+          {/* 开始 */}
+          <CircleNode text="开始" type="start" />
+          <ArrowDown />
+
+          {/* 步骤1 */}
+          <RectNode text="用户输入数据" color="blue" />
+          <ArrowDown />
+
+          {/* 判断 */}
+          <DiamondNode text="数据有效?" color="yellow" />
+
+          {/* 分支 */}
+          <div className="flex items-start gap-16">
+            {/* 是分支 */}
+            <div className="flex flex-col items-center">
+              <span className="text-xs text-gray-600 mb-2">是</span>
+              <ArrowDown />
+              <RectNode text="处理数据" color="green" />
+              <ArrowDown />
+              <RectNode text="保存结果" color="blue" />
+              <ArrowDown />
+              <CircleNode text="结束" type="end" />
+            </div>
+
+            {/* 否分支 */}
+            <div className="flex flex-col items-center">
+              <span className="text-xs text-gray-600 mb-2">否</span>
+              <ArrowDown />
+              <RectNode text="显示错误" color="gray" />
+              <ArrowDown />
+              <span className="text-xs text-gray-500">返回输入</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       主应用                                      ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    function App() {
+      const exportPNG = () => {
+        const element = document.getElementById("diagram");
+        html2canvas(element, {
+          scale: 2,
+          backgroundColor: "#ffffff",
+          logging: false,
+        }).then(canvas => {
+          const link = document.createElement("a");
+          link.download = "flowchart.png";
+          link.href = canvas.toDataURL("image/png");
+          link.click();
+        });
+      };
+
+      return (
+        <div className="max-w-4xl mx-auto">
+          {/* 标题 */}
+          <h1 className="text-2xl font-bold text-gray-800 mb-6 text-center">
+            流程图示例
+          </h1>
+
+          {/* 图表区域 */}
+          <div id="diagram" className="bg-white p-12 rounded-lg shadow-lg">
+            <Diagram />
+          </div>
+
+          {/* 操作按钮 */}
+          <div className="mt-6 flex justify-center gap-4">
+            <button
+              onClick={exportPNG}
+              className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-md"
+            >
+              导出 PNG
+            </button>
+          </div>
+
+          {/* 使用说明 */}
+          <div className="mt-8 text-sm text-gray-500 text-center">
+            <p>点击"导出 PNG"按钮下载图片</p>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>架构图模板</title>
+
+  <!-- ╔══════════════════════════════════════════════════════════════════╗ -->
+  <!-- ║                         CDN 依赖                                  ║ -->
+  <!-- ╚══════════════════════════════════════════════════════════════════╝ -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    #diagram { background: white; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       基础组件                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    // 层级容器
+    function LayerBox({ title, children, color = "blue" }) {
+      const colors = {
+        blue: "border-blue-400 bg-blue-50",
+        green: "border-green-400 bg-green-50",
+        purple: "border-purple-400 bg-purple-50",
+        orange: "border-orange-400 bg-orange-50",
+        gray: "border-gray-400 bg-gray-50",
+      };
+      const titleColors = {
+        blue: "text-blue-700",
+        green: "text-green-700",
+        purple: "text-purple-700",
+        orange: "text-orange-700",
+        gray: "text-gray-700",
+      };
+      return (
+        <div className={`border-2 rounded-lg p-4 ${colors[color]}`}>
+          <div className={`text-sm font-bold mb-3 ${titleColors[color]}`}>{title}</div>
+          <div className="flex flex-wrap gap-3 justify-center">
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    // 模块卡片
+    function ModuleCard({ title, items = [], color = "white" }) {
+      const colors = {
+        white: "bg-white border border-gray-200 text-gray-800",
+        blue: "bg-blue-500 text-white",
+        green: "bg-green-500 text-white",
+        purple: "bg-purple-500 text-white",
+      };
+      const itemColor = color === "white" ? "text-gray-600" : "text-white/80";
+      return (
+        <div className={`rounded-lg shadow-md p-4 min-w-[140px] ${colors[color]}`}>
+          <div className="font-bold text-sm mb-2">{title}</div>
+          {items.length > 0 && (
+            <ul className={`text-xs space-y-1 ${itemColor}`}>
+              {items.map((item, i) => (
+                <li key={i}>• {item}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      );
+    }
+
+    // 数据库图标
+    function DatabaseIcon({ label }) {
+      return (
+        <div className="flex flex-col items-center gap-2">
+          <svg className="w-14 h-16" viewBox="0 0 56 64">
+            <ellipse cx="28" cy="10" rx="24" ry="10" fill="#3b82f6" />
+            <path d="M4 10 v44 a24 10 0 0 0 48 0 v-44" fill="#3b82f6" />
+            <ellipse cx="28" cy="54" rx="24" ry="10" fill="#2563eb" />
+            <ellipse cx="28" cy="10" rx="24" ry="10" fill="#60a5fa" />
+          </svg>
+          <span className="text-xs font-medium text-gray-700">{label}</span>
+        </div>
+      );
+    }
+
+    // 云服务图标
+    function CloudIcon({ label }) {
+      return (
+        <div className="flex flex-col items-center gap-2">
+          <svg className="w-16 h-12" viewBox="0 0 64 48">
+            <path
+              d="M52 36H16a12 12 0 0 1-2-23.8A16 16 0 0 1 44 8a12 12 0 0 1 8 28z"
+              fill="#60a5fa"
+            />
+          </svg>
+          <span className="text-xs font-medium text-gray-700">{label}</span>
+        </div>
+      );
+    }
+
+    // 连接箭头（垂直）
+    function VerticalArrow({ direction = "down", label = "" }) {
+      const isDown = direction === "down";
+      return (
+        <div className="flex flex-col items-center py-2">
+          {!isDown && (
+            <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[8px] border-b-gray-500" />
+          )}
+          <div className="w-0.5 h-6 bg-gray-500" />
+          {isDown && (
+            <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-gray-500" />
+          )}
+          {label && <span className="text-xs text-gray-500 mt-1">{label}</span>}
+        </div>
+      );
+    }
+
+    // 双向箭头
+    function BidirectionalArrow() {
+      return (
+        <div className="flex flex-col items-center py-2">
+          <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[8px] border-b-gray-500" />
+          <div className="w-0.5 h-4 bg-gray-500" />
+          <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-gray-500" />
+        </div>
+      );
+    }
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       示例架构图                                  ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    function Diagram() {
+      return (
+        <div className="flex flex-col gap-4">
+          {/* 客户端层 */}
+          <LayerBox title="客户端 (Client)" color="blue">
+            <ModuleCard title="Web 应用" items={["React", "TypeScript"]} />
+            <ModuleCard title="移动端" items={["iOS", "Android"]} />
+            <ModuleCard title="桌面端" items={["Electron"]} />
+          </LayerBox>
+
+          <VerticalArrow label="HTTP/WebSocket" />
+
+          {/* API 网关层 */}
+          <LayerBox title="API 网关 (Gateway)" color="green">
+            <ModuleCard title="负载均衡" items={["Nginx", "健康检查"]} color="green" />
+            <ModuleCard title="认证授权" items={["JWT", "OAuth2"]} color="green" />
+            <ModuleCard title="限流熔断" items={["Rate Limit", "Circuit Breaker"]} color="green" />
+          </LayerBox>
+
+          <VerticalArrow label="gRPC/REST" />
+
+          {/* 服务层 */}
+          <LayerBox title="微服务 (Services)" color="purple">
+            <ModuleCard title="用户服务" items={["注册登录", "权限管理"]} />
+            <ModuleCard title="订单服务" items={["创建订单", "支付处理"]} />
+            <ModuleCard title="商品服务" items={["商品管理", "库存管理"]} />
+            <ModuleCard title="通知服务" items={["邮件", "短信", "推送"]} />
+          </LayerBox>
+
+          <BidirectionalArrow />
+
+          {/* 数据层 */}
+          <LayerBox title="数据层 (Data)" color="orange">
+            <DatabaseIcon label="PostgreSQL" />
+            <DatabaseIcon label="Redis" />
+            <DatabaseIcon label="MongoDB" />
+            <CloudIcon label="OSS 存储" />
+          </LayerBox>
+        </div>
+      );
+    }
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       主应用                                      ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    function App() {
+      const exportPNG = () => {
+        const element = document.getElementById("diagram");
+        html2canvas(element, {
+          scale: 2,
+          backgroundColor: "#ffffff",
+          logging: false,
+        }).then(canvas => {
+          const link = document.createElement("a");
+          link.download = "architecture.png";
+          link.href = canvas.toDataURL("image/png");
+          link.click();
+        });
+      };
+
+      return (
+        <div className="max-w-5xl mx-auto">
+          {/* 标题 */}
+          <h1 className="text-2xl font-bold text-gray-800 mb-6 text-center">
+            系统架构图
+          </h1>
+
+          {/* 图表区域 */}
+          <div id="diagram" className="bg-white p-8 rounded-lg shadow-lg">
+            <Diagram />
+          </div>
+
+          {/* 操作按钮 */}
+          <div className="mt-6 flex justify-center gap-4">
+            <button
+              onClick={exportPNG}
+              className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-md"
+            >
+              导出 PNG
+            </button>
+          </div>
+
+          {/* 使用说明 */}
+          <div className="mt-8 text-sm text-gray-500 text-center">
+            <p>点击"导出 PNG"按钮下载图片</p>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

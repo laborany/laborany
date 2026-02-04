@@ -3,23 +3,47 @@
  * ║                                                                          ║
  * ║  职责：路由配置、认证状态管理、布局                                         ║
  * ║  设计：借鉴 workany 的现代化布局系统                                        ║
+ * ║  优化：使用 React.lazy 实现路由级别代码分割                                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense, lazy } from 'react'
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { NotificationBell } from './components/notification/NotificationBell'
+import { RunningTasksIndicator } from './components/notification/RunningTasksIndicator'
 import { API_BASE } from './config'
-import SetupPage from './pages/SetupPage'
-import LoginPage from './pages/LoginPage'
-import HomePage from './pages/HomePage'
-import ExecutePage from './pages/ExecutePage'
-import HistoryPage, { SessionDetailPage } from './pages/HistoryPage'
-import SkillsPage from './pages/SkillsPage'
-import CreatePage from './pages/CreatePage'
-import WorkflowsPage from './pages/WorkflowsPage'
-import WorkflowEditPage from './pages/WorkflowEditPage'
-import SettingsPage from './pages/SettingsPage'
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           懒加载页面组件                                   │
+ * │  好品味：按需加载，减少首屏加载时间                                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const SetupPage = lazy(() => import('./pages/SetupPage'))
+const LoginPage = lazy(() => import('./pages/LoginPage'))
+const HomePage = lazy(() => import('./pages/HomePage'))
+const ExecutePage = lazy(() => import('./pages/ExecutePage'))
+const HistoryPage = lazy(() => import('./pages/HistoryPage').then(m => ({ default: m.default })))
+const SessionDetailPage = lazy(() => import('./pages/HistoryPage').then(m => ({ default: m.SessionDetailPage })))
+const SkillsPage = lazy(() => import('./pages/SkillsPage'))
+const CreatePage = lazy(() => import('./pages/CreatePage'))
+const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'))
+const WorkflowEditPage = lazy(() => import('./pages/WorkflowEditPage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const CronPage = lazy(() => import('./pages/CronPage'))
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           加载占位组件                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function PageLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="flex flex-col items-center gap-3">
+        <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
+        <span className="text-sm text-muted-foreground">加载中...</span>
+      </div>
+    </div>
+  )
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           受保护路由                                      │
@@ -28,14 +52,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
-          <span className="text-sm text-muted-foreground">加载中...</span>
-        </div>
-      </div>
-    )
+    return <PageLoader />
   }
 
   if (!user) {
@@ -152,6 +169,14 @@ function AppLayout({ children }: { children: React.ReactNode }) {
               isCollapsed={sidebarCollapsed}
             />
             <NavItem
+              to="/cron"
+              icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>}
+              label="定时任务"
+              isCollapsed={sidebarCollapsed}
+            />
+            <NavItem
               to="/history"
               icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -198,6 +223,13 @@ function AppLayout({ children }: { children: React.ReactNode }) {
           user ? (sidebarCollapsed ? 'ml-16' : 'ml-56') : ''
         }`}
       >
+        {/* 顶部通知栏 */}
+        {user && (
+          <div className="fixed top-0 right-0 h-14 flex items-center gap-4 px-6 z-30">
+            <RunningTasksIndicator />
+            <NotificationBell />
+          </div>
+        )}
         {children}
       </main>
     </div>
@@ -228,19 +260,16 @@ export default function App() {
 
   // 加载中
   if (setupComplete === null) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
-          <span className="text-sm text-muted-foreground">正在初始化...</span>
-        </div>
-      </div>
-    )
+    return <PageLoader />
   }
 
   // 需要设置
   if (!setupComplete) {
-    return <SetupPage onReady={() => setSetupComplete(true)} />
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <SetupPage onReady={() => setSetupComplete(true)} />
+      </Suspense>
+    )
   }
 
   // 正常应用
@@ -248,91 +277,101 @@ export default function App() {
     <ErrorBoundary>
       <AuthProvider>
         <AppLayout>
-          <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <HomePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/execute/:skillId"
-            element={
-              <ProtectedRoute>
-                <ExecutePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/history"
-            element={
-              <ProtectedRoute>
-                <HistoryPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/history/:sessionId"
-            element={
-              <ProtectedRoute>
-                <SessionDetailPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/skills"
-            element={
-              <ProtectedRoute>
-                <SkillsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/create"
-            element={
-              <ProtectedRoute>
-                <CreatePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/workflows"
-            element={
-              <ProtectedRoute>
-                <WorkflowsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/workflows/new"
-            element={
-              <ProtectedRoute>
-                <WorkflowEditPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/workflows/:workflowId/edit"
-            element={
-              <ProtectedRoute>
-                <WorkflowEditPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ProtectedRoute>
-                <SettingsPage />
-              </ProtectedRoute>
-            }
-          />
-        </Routes>
-      </AppLayout>
-    </AuthProvider>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <HomePage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/execute/:skillId"
+                element={
+                  <ProtectedRoute>
+                    <ExecutePage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/history"
+                element={
+                  <ProtectedRoute>
+                    <HistoryPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/history/:sessionId"
+                element={
+                  <ProtectedRoute>
+                    <SessionDetailPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/skills"
+                element={
+                  <ProtectedRoute>
+                    <SkillsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/create"
+                element={
+                  <ProtectedRoute>
+                    <CreatePage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/workflows"
+                element={
+                  <ProtectedRoute>
+                    <WorkflowsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/workflows/new"
+                element={
+                  <ProtectedRoute>
+                    <WorkflowEditPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/workflows/:workflowId/edit"
+                element={
+                  <ProtectedRoute>
+                    <WorkflowEditPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/cron"
+                element={
+                  <ProtectedRoute>
+                    <CronPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute>
+                    <SettingsPage />
+                  </ProtectedRoute>
+                }
+              />
+            </Routes>
+          </Suspense>
+        </AppLayout>
+      </AuthProvider>
     </ErrorBoundary>
   )
 }

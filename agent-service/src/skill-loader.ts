@@ -6,12 +6,9 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { readFile, readdir } from 'fs/promises'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import { join } from 'path'
 import { parse as parseYaml } from 'yaml'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const SKILLS_DIR = join(__dirname, '../../skills')
+import { SKILLS_DIR } from './paths.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │

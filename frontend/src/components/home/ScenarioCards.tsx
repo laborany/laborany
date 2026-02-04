@@ -1,41 +1,60 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                      场景快捷入口卡片                                      ║
+ * ║                                                                          ║
+ * ║  功能：首页快速开始场景卡片，支持自定义配置                                  ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useQuickStartContext, QuickStartItem } from '../../contexts/QuickStartContext'
+import { QuickStartEditor } from './QuickStartEditor'
 
-/** 场景定义 */
-interface Scenario {
-  id: string
-  icon: string
-  name: string
-  description: string
-  skillId?: string
-}
-
-/** 预设场景列表 */
-const SCENARIOS: Scenario[] = [
-  { id: 'expense', icon: '💰', name: '报销助理', description: '智能处理报销单据', skillId: 'expense-assistant' },
-  { id: 'monitor', icon: '📈', name: '监控员', description: '实时监控数据变化', skillId: 'data-monitor' },
-  { id: 'transfer', icon: '📋', name: '搬运工', description: '自动化数据迁移', skillId: 'data-transfer' },
-  { id: 'social', icon: '📱', name: '运营分身', description: '社交媒体自动化', skillId: 'social-operator' },
-]
-
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           主组件                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
 export function ScenarioCards() {
+  const { scenarios, isCustomized } = useQuickStartContext()
+  const [isEditing, setIsEditing] = useState(false)
+
   return (
     <div className="mb-8">
-      <h2 className="text-lg font-semibold text-foreground mb-4">快速开始</h2>
-      <div className="flex gap-3 overflow-x-auto pb-2">
-        {SCENARIOS.map((scenario) => (
-          <ScenarioCard key={scenario.id} scenario={scenario} />
-        ))}
+      {/* ═══════════════════════════════════════════════════════════════════════
+       * 标题栏
+       * ═══════════════════════════════════════════════════════════════════════ */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-foreground">快速开始</h2>
+        <button
+          onClick={() => setIsEditing(!isEditing)}
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {isEditing ? '完成' : '自定义'}
+          {isCustomized && !isEditing && (
+            <span className="ml-1 text-xs text-primary">•</span>
+          )}
+        </button>
       </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+       * 编辑模式 / 展示模式
+       * ═══════════════════════════════════════════════════════════════════════ */}
+      {isEditing ? (
+        <QuickStartEditor />
+      ) : (
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {scenarios.map((scenario) => (
+            <ScenarioCard key={scenario.skillId} scenario={scenario} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
-function ScenarioCard({ scenario }: { scenario: Scenario }) {
-  const href = scenario.skillId ? `/execute/${scenario.skillId}` : '/skills'
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           场景卡片                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function ScenarioCard({ scenario }: { scenario: QuickStartItem }) {
+  const href = `/execute/${scenario.skillId}`
 
   return (
     <Link

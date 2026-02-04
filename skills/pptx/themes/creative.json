@@ -1,0 +1,71 @@
+{
+  "name": "creative",
+  "displayName": "创意主题",
+  "description": "活泼现代风格，渐变配色，适合产品介绍和创意展示",
+
+  "colors": {
+    "primary": "6b46c1",
+    "secondary": "805ad5",
+    "accent": "ed64a6",
+    "background": "ffffff",
+    "surface": "faf5ff",
+    "text": "2d3748",
+    "textLight": "718096",
+    "border": "e9d8fd"
+  },
+
+  "fonts": {
+    "title": {
+      "face": "微软雅黑",
+      "size": 40,
+      "bold": true,
+      "color": "primary"
+    },
+    "subtitle": {
+      "face": "微软雅黑",
+      "size": 24,
+      "bold": false,
+      "color": "secondary"
+    },
+    "body": {
+      "face": "微软雅黑",
+      "size": 18,
+      "bold": false,
+      "color": "text"
+    },
+    "caption": {
+      "face": "微软雅黑",
+      "size": 14,
+      "bold": false,
+      "color": "textLight"
+    }
+  },
+
+  "layouts": {
+    "title": {
+      "background": "primary",
+      "titleColor": "ffffff",
+      "subtitleColor": "e9d8fd"
+    },
+    "section": {
+      "background": "secondary",
+      "titleColor": "ffffff"
+    },
+    "content": {
+      "background": "background",
+      "titleColor": "primary",
+      "bodyColor": "text"
+    },
+    "end": {
+      "background": "primary",
+      "titleColor": "ffffff",
+      "subtitleColor": "e9d8fd"
+    }
+  },
+
+  "chart": {
+    "colors": ["6b46c1", "805ad5", "b794f4", "ed64a6"],
+    "gridColor": "e9d8fd",
+    "labelColor": "718096"
+  }
+}

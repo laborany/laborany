@@ -9,40 +9,49 @@
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently -n api,frontend -c blue,green \"npm run dev:api\" \"npm run dev:frontend\"",
+    "dev": "concurrently -n api,agent,frontend -c blue,yellow,green \"npm run dev:api\" \"npm run dev:agent\" \"npm run dev:frontend\"",
     "dev:api": "cd src-api && npm run dev",
+    "dev:agent": "cd agent-service && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:electron": "electron .",
-    "build": "npm run build:api && npm run build:frontend",
+    "build": "npm run build:api && npm run build:agent && npm run build:frontend",
     "build:api": "cd src-api && npm run build",
     "build:api:win": "cd src-api && npm run build:win",
     "build:api:mac": "cd src-api && npm run build:mac",
     "build:api:mac-x64": "cd src-api && npm run build:mac-x64",
     "build:api:mac-arm64": "cd src-api && npm run build:mac-arm64",
     "build:api:linux": "cd src-api && npm run build:linux",
+    "build:agent": "cd agent-service && npm run build:pkg",
+    "build:agent:win": "cd agent-service && npm run build:pkg:win",
+    "build:agent:mac": "cd agent-service && npm run build:pkg:mac",
+    "build:agent:mac-arm64": "cd agent-service && npm run build:pkg:mac-arm64",
+    "build:agent:linux": "cd agent-service && npm run build:pkg:linux",
     "build:frontend": "cd frontend && npm run build",
     "bundle:cli": "node scripts/bundle-cli.js",
     "bundle:cli:win": "node scripts/bundle-cli.js win",
     "bundle:cli:mac": "node scripts/bundle-cli.js mac",
     "bundle:cli:mac-x64": "node scripts/bundle-cli.js mac-x64",
     "bundle:cli:mac-arm64": "node scripts/bundle-cli.js mac-arm64",
+    "bundle:cli:mac-universal": "node scripts/bundle-cli.js mac-universal",
     "bundle:cli:linux": "node scripts/bundle-cli.js linux",
     "bundle:uv": "node scripts/bundle-uv.js",
     "bundle:uv:win": "node scripts/bundle-uv.js win",
     "bundle:uv:mac": "node scripts/bundle-uv.js mac",
     "bundle:uv:mac-x64": "node scripts/bundle-uv.js mac-x64",
     "bundle:uv:mac-arm64": "node scripts/bundle-uv.js mac-arm64",
+    "bundle:uv:mac-universal": "node scripts/bundle-uv.js mac-universal",
     "bundle:uv:linux": "node scripts/bundle-uv.js linux",
     "bundle:all": "npm run bundle:cli && npm run bundle:uv",
     "bundle:all:win": "npm run bundle:cli:win && npm run bundle:uv:win",
     "bundle:all:mac": "npm run bundle:cli:mac && npm run bundle:uv:mac",
     "bundle:all:mac-x64": "npm run bundle:cli:mac-x64 && npm run bundle:uv:mac-x64",
     "bundle:all:mac-arm64": "npm run bundle:cli:mac-arm64 && npm run bundle:uv:mac-arm64",
+    "bundle:all:mac-universal": "npm run bundle:cli:mac-universal && npm run bundle:uv:mac-universal",
     "bundle:all:linux": "npm run bundle:cli:linux && npm run bundle:uv:linux",
-    "build:electron": "npm run bundle:all:win && npm run build && electron-builder --win --publish never",
-    "build:electron:mac": "npm run bundle:all:mac && npm run build:api:mac && npm run build:frontend && electron-builder --mac --publish never",
-    "build:electron:linux": "npm run bundle:all:linux && npm run build:api:linux && npm run build:frontend && electron-builder --linux --publish never",
-    "install:all": "npm install && cd src-api && npm install && cd ../frontend && npm install"
+    "build:electron": "npm run bundle:all:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && electron-builder --win --publish never",
+    "build:electron:mac": "npm run bundle:all:mac-universal && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && electron-builder --mac --publish never",
+    "build:electron:linux": "npm run bundle:all:linux && npm run build:api:linux && npm run build:agent:linux && npm run build:frontend && electron-builder --linux --publish never",
+    "install:all": "npm install && cd src-api && npm install && cd ../agent-service && npm install && cd ../frontend && npm install"
   },
   "build": {
     "appId": "ai.thinkany.laborany",
@@ -94,6 +103,14 @@
         {
           "from": "src-api/dist/laborany-api.exe",
           "to": "api/laborany-api.exe"
+        },
+        {
+          "from": "agent-service/dist/laborany-agent.exe",
+          "to": "agent/laborany-agent.exe"
+        },
+        {
+          "from": "agent-service/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+          "to": "agent/better_sqlite3.node"
         }
       ]
     },
@@ -104,6 +121,34 @@
         {
           "from": "src-api/dist/laborany-api-mac",
           "to": "api/laborany-api"
+        },
+        {
+          "from": "agent-service/dist/laborany-agent-mac",
+          "to": "agent/laborany-agent"
+        },
+        {
+          "from": "agent-service/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+          "to": "agent/better_sqlite3.node"
+        },
+        {
+          "from": "cli-bundle-arm64",
+          "to": "cli-bundle-arm64",
+          "filter": ["**/*"]
+        },
+        {
+          "from": "cli-bundle-x64",
+          "to": "cli-bundle-x64",
+          "filter": ["**/*"]
+        },
+        {
+          "from": "uv-bundle-arm64",
+          "to": "uv-bundle-arm64",
+          "filter": ["**/*"]
+        },
+        {
+          "from": "uv-bundle-x64",
+          "to": "uv-bundle-x64",
+          "filter": ["**/*"]
         }
       ]
     },
@@ -115,6 +160,14 @@
         {
           "from": "src-api/dist/laborany-api-linux",
           "to": "api/laborany-api"
+        },
+        {
+          "from": "agent-service/dist/laborany-agent-linux",
+          "to": "agent/laborany-agent"
+        },
+        {
+          "from": "agent-service/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+          "to": "agent/better_sqlite3.node"
         }
       ]
     },

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  共享字符串模板 - sharedStrings.xml                                             ║
+║  SpreadsheetML 共享字符串表                                                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+-->
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="0" uniqueCount="0">
+  <!--
+  共享字符串条目格式:
+  <si>
+    <t>字符串内容</t>
+  </si>
+
+  富文本格式:
+  <si>
+    <r>
+      <rPr>
+        <b/>
+        <sz val="11"/>
+        <color theme="1"/>
+        <rFont val="等线"/>
+      </rPr>
+      <t>加粗文本</t>
+    </r>
+    <r>
+      <t>普通文本</t>
+    </r>
+  </si>
+  -->
+</sst>

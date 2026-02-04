@@ -1,5 +1,5 @@
 ---
-name: expense-assistant
+name: 报销助理
 description: 智能处理报销流程，支持发票OCR识别、费用合规性检查及自动生成报销单据。当用户上传发票图片、询问报销政策或请求制作报销单时调用。
 icon: 💰
 category: 财务

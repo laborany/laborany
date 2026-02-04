@@ -2,6 +2,8 @@
 name: PDF文档助手
 description: 提取文本和表格、创建新 PDF、合并拆分文档、填写表单，支持批量处理和分析
 license: Proprietary. LICENSE.txt has complete terms
+icon: 📄
+category: 办公
 ---
 
 # PDF Processing Guide

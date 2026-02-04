@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         主题 XML 模板                                          ║
+║                                                                              ║
+║  基础主题定义，包含配色方案和字体设置                                             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+-->
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="{{THEME_NAME}}">
+  <!-- 主题元素 -->
+  <a:themeElements>
+    <!-- 配色方案 -->
+    <a:clrScheme name="{{SCHEME_NAME}}">
+      <a:dk1><a:srgbClr val="{{COLOR_DK1}}"/></a:dk1>
+      <a:lt1><a:srgbClr val="{{COLOR_LT1}}"/></a:lt1>
+      <a:dk2><a:srgbClr val="{{COLOR_DK2}}"/></a:dk2>
+      <a:lt2><a:srgbClr val="{{COLOR_LT2}}"/></a:lt2>
+      <a:accent1><a:srgbClr val="{{COLOR_ACCENT1}}"/></a:accent1>
+      <a:accent2><a:srgbClr val="{{COLOR_ACCENT2}}"/></a:accent2>
+      <a:accent3><a:srgbClr val="{{COLOR_ACCENT3}}"/></a:accent3>
+      <a:accent4><a:srgbClr val="{{COLOR_ACCENT4}}"/></a:accent4>
+      <a:accent5><a:srgbClr val="{{COLOR_ACCENT5}}"/></a:accent5>
+      <a:accent6><a:srgbClr val="{{COLOR_ACCENT6}}"/></a:accent6>
+      <a:hlink><a:srgbClr val="{{COLOR_HLINK}}"/></a:hlink>
+      <a:folHlink><a:srgbClr val="{{COLOR_FOLHLINK}}"/></a:folHlink>
+    </a:clrScheme>
+
+    <!-- 字体方案 -->
+    <a:fontScheme name="{{FONT_SCHEME_NAME}}">
+      <a:majorFont>
+        <a:latin typeface="{{FONT_MAJOR_LATIN}}"/>
+        <a:ea typeface="{{FONT_MAJOR_EA}}"/>
+        <a:cs typeface=""/>
+      </a:majorFont>
+      <a:minorFont>
+        <a:latin typeface="{{FONT_MINOR_LATIN}}"/>
+        <a:ea typeface="{{FONT_MINOR_EA}}"/>
+        <a:cs typeface=""/>
+      </a:minorFont>
+    </a:fontScheme>
+
+    <!-- 格式方案 -->
+    <a:fmtScheme name="{{FORMAT_SCHEME_NAME}}">
+      <a:fillStyleLst>
+        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+        <a:gradFill rotWithShape="1">
+          <a:gsLst>
+            <a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="50000"/></a:schemeClr></a:gs>
+            <a:gs pos="100000"><a:schemeClr val="phClr"/></a:gs>
+          </a:gsLst>
+          <a:lin ang="5400000" scaled="0"/>
+        </a:gradFill>
+        <a:gradFill rotWithShape="1">
+          <a:gsLst>
+            <a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="80000"/></a:schemeClr></a:gs>
+            <a:gs pos="100000"><a:schemeClr val="phClr"/></a:gs>
+          </a:gsLst>
+          <a:lin ang="5400000" scaled="0"/>
+        </a:gradFill>
+      </a:fillStyleLst>
+      <a:lnStyleLst>
+        <a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+        <a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+        <a:ln w="38100"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+      </a:lnStyleLst>
+      <a:effectStyleLst>
+        <a:effectStyle><a:effectLst/></a:effectStyle>
+        <a:effectStyle><a:effectLst/></a:effectStyle>
+        <a:effectStyle><a:effectLst/></a:effectStyle>
+      </a:effectStyleLst>
+      <a:bgFillStyleLst>
+        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+        <a:gradFill rotWithShape="1">
+          <a:gsLst>
+            <a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="40000"/></a:schemeClr></a:gs>
+            <a:gs pos="100000"><a:schemeClr val="phClr"/></a:gs>
+          </a:gsLst>
+          <a:lin ang="5400000" scaled="0"/>
+        </a:gradFill>
+        <a:gradFill rotWithShape="1">
+          <a:gsLst>
+            <a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="80000"/></a:schemeClr></a:gs>
+            <a:gs pos="100000"><a:schemeClr val="phClr"/></a:gs>
+          </a:gsLst>
+          <a:lin ang="5400000" scaled="0"/>
+        </a:gradFill>
+      </a:bgFillStyleLst>
+    </a:fmtScheme>
+  </a:themeElements>
+
+  <!-- 对象默认值 -->
+  <a:objectDefaults/>
+
+  <!-- 额外配色方案 -->
+  <a:extraClrSchemeLst/>
+</a:theme>

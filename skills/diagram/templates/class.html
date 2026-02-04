@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>类图模板</title>
+
+  <!-- ╔══════════════════════════════════════════════════════════════════╗ -->
+  <!-- ║                         CDN 依赖                                  ║ -->
+  <!-- ╚══════════════════════════════════════════════════════════════════╝ -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    #diagram { background: white; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       配置数据                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    // 类定义
+    const classes = [
+      {
+        id: "animal",
+        name: "Animal",
+        type: "abstract",
+        attributes: ["- name: string", "- age: int"],
+        methods: ["+ eat(): void", "+ sleep(): void", "+ makeSound(): void"],
+        x: 300,
+        y: 20,
+      },
+      {
+        id: "dog",
+        name: "Dog",
+        type: "class",
+        attributes: ["- breed: string"],
+        methods: ["+ bark(): void", "+ fetch(): void"],
+        x: 100,
+        y: 250,
+      },
+      {
+        id: "cat",
+        name: "Cat",
+        type: "class",
+        attributes: ["- indoor: boolean"],
+        methods: ["+ meow(): void", "+ scratch(): void"],
+        x: 350,
+        y: 250,
+      },
+      {
+        id: "flyable",
+        name: "Flyable",
+        type: "interface",
+        attributes: [],
+        methods: ["+ fly(): void"],
+        x: 550,
+        y: 20,
+      },
+      {
+        id: "bird",
+        name: "Bird",
+        type: "class",
+        attributes: ["- wingspan: float"],
+        methods: ["+ fly(): void", "+ chirp(): void"],
+        x: 550,
+        y: 250,
+      },
+    ];
+
+    // 关系定义
+    const relations = [
+      { from: "dog", to: "animal", type: "extends" },
+      { from: "cat", to: "animal", type: "extends" },
+      { from: "bird", to: "animal", type: "extends" },
+      { from: "bird", to: "flyable", type: "implements" },
+    ];
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       基础组件                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    // 类卡片
+    function ClassCard({ data }) {
+      const { name, type, attributes, methods, x, y } = data;
+
+      // 类型标签样式
+      const typeStyles = {
+        class: { bg: "bg-blue-500", label: "" },
+        abstract: { bg: "bg-purple-500", label: "«abstract»" },
+        interface: { bg: "bg-green-500", label: "«interface»" },
+      };
+
+      const style = typeStyles[type];
+      const width = 180;
+
+      return (
+        <div
+          className="absolute bg-white border-2 border-gray-300 rounded shadow-md"
+          style={{ left: x, top: y, width }}
+        >
+          {/* 类名区域 */}
+          <div className={`${style.bg} text-white text-center py-2 rounded-t`}>
+            {style.label && (
+              <div className="text-xs opacity-80">{style.label}</div>
+            )}
+            <div className="font-bold">{name}</div>
+          </div>
+
+          {/* 属性区域 */}
+          <div className="border-b border-gray-300 p-2 text-sm font-mono">
+            {attributes.length > 0 ? (
+              attributes.map((attr, i) => (
+                <div key={i} className="text-gray-700">{attr}</div>
+              ))
+            ) : (
+              <div className="text-gray-400 italic">无属性</div>
+            )}
+          </div>
+
+          {/* 方法区域 */}
+          <div className="p-2 text-sm font-mono">
+            {methods.map((method, i) => (
+              <div key={i} className="text-gray-700">{method}</div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // 关系连线
+    function Relation({ from, to, type, classes }) {
+      const fromClass = classes.find((c) => c.id === from);
+      const toClass = classes.find((c) => c.id === to);
+
+      // 计算连接点 - 从子类顶部到父类底部
+      const fromX = fromClass.x + 90;
+      const fromY = fromClass.y;
+      const toX = toClass.x + 90;
+      const toY = toClass.y + 120; // 假设类卡片高度约 120
+
+      // 箭头样式
+      const isImplements = type === "implements";
+
+      return (
+        <g>
+          <line
+            x1={fromX}
+            y1={fromY}
+            x2={toX}
+            y2={toY}
+            stroke="#64748b"
+            strokeWidth="1.5"
+            strokeDasharray={isImplements ? "6,4" : "none"}
+          />
+          {/* 空心三角箭头 */}
+          <polygon
+            points={`${toX},${toY} ${toX - 8},${toY + 12} ${toX + 8},${toY + 12}`}
+            fill="white"
+            stroke="#64748b"
+            strokeWidth="1.5"
+          />
+        </g>
+      );
+    }
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       类图主体                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    function Diagram() {
+      return (
+        <div className="relative" style={{ width: 750, height: 450 }}>
+          {/* SVG 连线层 */}
+          <svg
+            className="absolute top-0 left-0 pointer-events-none"
+            width={750}
+            height={450}
+          >
+            {relations.map((rel, i) => (
+              <Relation key={i} {...rel} classes={classes} />
+            ))}
+          </svg>
+
+          {/* 类卡片层 */}
+          {classes.map((cls) => (
+            <ClassCard key={cls.id} data={cls} />
+          ))}
+        </div>
+      );
+    }
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       主应用                                      ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    function App() {
+      const exportPNG = () => {
+        const element = document.getElementById("diagram");
+        html2canvas(element, {
+          scale: 2,
+          backgroundColor: "#ffffff",
+          logging: false,
+        }).then((canvas) => {
+          const link = document.createElement("a");
+          link.download = "class-diagram.png";
+          link.href = canvas.toDataURL("image/png");
+          link.click();
+        });
+      };
+
+      return (
+        <div className="max-w-5xl mx-auto">
+          {/* 标题 */}
+          <h1 className="text-2xl font-bold text-gray-800 mb-6 text-center">
+            动物类继承关系图
+          </h1>
+
+          {/* 图例 */}
+          <div className="flex justify-center gap-6 mb-4 text-sm">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 bg-blue-500 rounded"></div>
+              <span>类 (Class)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 bg-purple-500 rounded"></div>
+              <span>抽象类 (Abstract)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 bg-green-500 rounded"></div>
+              <span>接口 (Interface)</span>
+            </div>
+          </div>
+
+          {/* 图表区域 */}
+          <div id="diagram" className="bg-white p-8 rounded-lg shadow-lg overflow-x-auto">
+            <Diagram />
+          </div>
+
+          {/* 操作按钮 */}
+          <div className="mt-6 flex justify-center gap-4">
+            <button
+              onClick={exportPNG}
+              className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-md"
+            >
+              导出 PNG
+            </button>
+          </div>
+
+          {/* 使用说明 */}
+          <div className="mt-8 text-sm text-gray-500 text-center">
+            <p>点击"导出 PNG"按钮下载图片</p>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

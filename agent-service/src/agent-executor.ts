@@ -15,6 +15,12 @@ import type { Skill } from './skill-loader.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
+/* ════════════════════════════════════════════════════════════════════════════
+ *  默认超时时间：30 分钟
+ *  防止 Claude Code CLI 卡住导致任务永远挂起
+ * ════════════════════════════════════════════════════════════════════════════ */
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -25,6 +31,7 @@ export interface AgentEvent {
   toolInput?: Record<string, unknown>
   toolResult?: string
   taskDir?: string
+  isError?: boolean  // 结构化错误标记，用于判断执行是否失败
 }
 
 interface ExecuteOptions {
@@ -33,6 +40,7 @@ interface ExecuteOptions {
   sessionId: string
   signal: AbortSignal
   onEvent: (event: AgentEvent) => void
+  timeoutMs?: number  // 执行超时时间（毫秒），默认 30 分钟
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -185,7 +193,8 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): vo
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, timeoutMs } = options
+  const effectiveTimeout = timeoutMs ?? DEFAULT_TIMEOUT_MS
 
   if (signal.aborted) {
     throw new DOMException('Aborted', 'AbortError')
@@ -271,12 +280,25 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const abortHandler = () => proc.kill('SIGTERM')
   signal.addEventListener('abort', abortHandler)
 
+  /* ────────────────────────────────────────────────────────────────────────
+   *  超时保护：防止任务无限挂起
+   * ──────────────────────────────────────────────────────────────────────── */
+  let timedOut = false
+  const timeoutId = setTimeout(() => {
+    timedOut = true
+    console.warn(`[Agent] 任务超时 (${effectiveTimeout / 1000}s)，强制终止`)
+    proc.kill('SIGTERM')
+  }, effectiveTimeout)
+
   return new Promise((resolve) => {
     proc.on('close', (code) => {
+      clearTimeout(timeoutId)
       signal.removeEventListener('abort', abortHandler)
       if (lineBuffer.trim()) parseStreamLine(lineBuffer, onEvent)
 
-      if (signal.aborted) {
+      if (timedOut) {
+        onEvent({ type: 'error', content: `执行超时 (${effectiveTimeout / 1000}s)` })
+      } else if (signal.aborted) {
         onEvent({ type: 'error', content: '执行被中止' })
       } else if (code !== 0) {
         onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
@@ -287,6 +309,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     })
 
     proc.on('error', (err) => {
+      clearTimeout(timeoutId)
       signal.removeEventListener('abort', abortHandler)
       onEvent({ type: 'error', content: err.message })
       onEvent({ type: 'done' })

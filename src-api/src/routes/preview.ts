@@ -5,7 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Hono } from 'hono'
-import { getPreviewManager, isNodeAvailable } from '../services/preview.js'
+import { getPreviewManager, isNodeAvailable, getDiagnosticInfo } from '../services/preview.js'
 
 const preview = new Hono()
 
@@ -13,8 +13,14 @@ const preview = new Hono()
  * │                       POST /start - 启动预览                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 preview.post('/start', async (c) => {
+  console.log('[Preview API] POST /start 收到请求')
+
   // 检查 Node.js 是否可用
-  if (!isNodeAvailable()) {
+  const nodeAvailable = isNodeAvailable()
+  console.log('[Preview API] Node.js 可用:', nodeAvailable)
+
+  if (!nodeAvailable) {
+    console.log('[Preview API] 错误: Node.js 不可用')
     return c.json({
       id: '',
       taskId: '',
@@ -25,8 +31,10 @@ preview.post('/start', async (c) => {
 
   const body = await c.req.json<{ taskId: string; workDir: string }>()
   const { taskId, workDir } = body
+  console.log('[Preview API] 请求参数: taskId=', taskId, 'workDir=', workDir)
 
   if (!taskId || !workDir) {
+    console.log('[Preview API] 错误: 缺少参数')
     return c.json({
       id: '',
       taskId: taskId || '',
@@ -36,7 +44,9 @@ preview.post('/start', async (c) => {
   }
 
   const manager = getPreviewManager()
+  console.log('[Preview API] 调用 manager.startPreview')
   const status = await manager.startPreview(taskId, workDir)
+  console.log('[Preview API] startPreview 返回:', JSON.stringify(status))
   return c.json(status)
 })
 
@@ -66,8 +76,10 @@ preview.post('/stop', async (c) => {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 preview.get('/status/:taskId', (c) => {
   const taskId = c.req.param('taskId')
+  console.log('[Preview API] GET /status/', taskId)
   const manager = getPreviewManager()
   const status = manager.getStatus(taskId)
+  console.log('[Preview API] 状态:', JSON.stringify(status))
   return c.json(status)
 })
 
@@ -76,6 +88,13 @@ preview.get('/status/:taskId', (c) => {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 preview.get('/check', (c) => {
   return c.json({ available: isNodeAvailable() })
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       GET /diagnostic - 路径诊断信息                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+preview.get('/diagnostic', (c) => {
+  return c.json(getDiagnosticInfo())
 })
 
 export default preview

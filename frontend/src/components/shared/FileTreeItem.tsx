@@ -5,6 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, ReactNode } from 'react'
+import { formatSize } from '../preview/utils'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -52,16 +53,6 @@ function getDefaultIcon(file: TreeFile): string {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           文件大小格式化                                   │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function formatSize(bytes?: number): string {
-  if (!bytes) return ''
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           组件实现                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export function FileTreeItem({
@@ -76,7 +67,7 @@ export function FileTreeItem({
 }: FileTreeItemProps) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
   const icon = renderIcon ? renderIcon(file) : getDefaultIcon(file)
-  const size = formatSize(file.size)
+  const size = file.size ? formatSize(file.size) : ''
   const canPreview = file.type === 'file' && isPreviewable(file.ext || '')
 
   /* ────────────────────────────────────────────────────────────────────────

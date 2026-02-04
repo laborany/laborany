@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>时序图模板</title>
+
+  <!-- ╔══════════════════════════════════════════════════════════════════╗ -->
+  <!-- ║                         CDN 依赖                                  ║ -->
+  <!-- ╚══════════════════════════════════════════════════════════════════╝ -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    #diagram { background: white; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       配置数据                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    // 参与者列表
+    const actors = [
+      { id: "user", name: "用户" },
+      { id: "client", name: "客户端" },
+      { id: "server", name: "服务器" },
+      { id: "db", name: "数据库" },
+    ];
+
+    // 消息列表 - 按时间顺序
+    const messages = [
+      { from: "user", to: "client", text: "点击登录", type: "sync" },
+      { from: "client", to: "server", text: "POST /login", type: "sync" },
+      { from: "server", to: "db", text: "查询用户", type: "sync" },
+      { from: "db", to: "server", text: "返回用户数据", type: "return" },
+      { from: "server", to: "server", text: "验证密码", type: "self" },
+      { from: "server", to: "client", text: "返回 Token", type: "return" },
+      { from: "client", to: "user", text: "显示成功", type: "return" },
+    ];
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       布局常量                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    const ACTOR_WIDTH = 100;
+    const ACTOR_GAP = 140;
+    const MESSAGE_HEIGHT = 50;
+    const HEADER_HEIGHT = 60;
+    const PADDING = 40;
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       基础组件                                    ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    // 参与者头部
+    function ActorHeader({ name, x }) {
+      return (
+        <g transform={`translate(${x}, 0)`}>
+          <rect
+            x={-ACTOR_WIDTH / 2}
+            y={0}
+            width={ACTOR_WIDTH}
+            height={40}
+            rx={4}
+            fill="#3b82f6"
+          />
+          <text
+            x={0}
+            y={25}
+            textAnchor="middle"
+            fill="white"
+            fontSize="14"
+            fontWeight="500"
+          >
+            {name}
+          </text>
+        </g>
+      );
+    }
+
+    // 生命线
+    function Lifeline({ x, height }) {
+      return (
+        <line
+          x1={x}
+          y1={HEADER_HEIGHT}
+          x2={x}
+          y2={height - 20}
+          stroke="#cbd5e1"
+          strokeWidth="2"
+          strokeDasharray="6,4"
+        />
+      );
+    }
+
+    // 消息箭头
+    function Message({ fromX, toX, y, text, type }) {
+      const isSelf = type === "self";
+      const isReturn = type === "return";
+
+      // 自调用消息 - 画一个回环
+      if (isSelf) {
+        const loopWidth = 30;
+        return (
+          <g>
+            <path
+              d={`M ${fromX} ${y} h ${loopWidth} v 25 h -${loopWidth}`}
+              fill="none"
+              stroke="#64748b"
+              strokeWidth="1.5"
+              markerEnd="url(#arrowhead)"
+            />
+            <text x={fromX + loopWidth + 5} y={y + 12} fontSize="12" fill="#374151">
+              {text}
+            </text>
+          </g>
+        );
+      }
+
+      const direction = toX > fromX ? 1 : -1;
+      const startX = fromX + direction * 2;
+      const endX = toX - direction * 8;
+
+      return (
+        <g>
+          <line
+            x1={startX}
+            y1={y}
+            x2={endX}
+            y2={y}
+            stroke={isReturn ? "#94a3b8" : "#64748b"}
+            strokeWidth="1.5"
+            strokeDasharray={isReturn ? "4,3" : "none"}
+            markerEnd="url(#arrowhead)"
+          />
+          <text
+            x={(startX + endX) / 2}
+            y={y - 8}
+            textAnchor="middle"
+            fontSize="12"
+            fill="#374151"
+          >
+            {text}
+          </text>
+        </g>
+      );
+    }
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       时序图主体                                  ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    function Diagram() {
+      // 计算画布尺寸
+      const width = PADDING * 2 + (actors.length - 1) * ACTOR_GAP + ACTOR_WIDTH;
+      const height = HEADER_HEIGHT + messages.length * MESSAGE_HEIGHT + PADDING * 2;
+
+      // 计算每个参与者的 X 坐标
+      const actorX = (id) => {
+        const index = actors.findIndex((a) => a.id === id);
+        return PADDING + ACTOR_WIDTH / 2 + index * ACTOR_GAP;
+      };
+
+      return (
+        <svg width={width} height={height} className="mx-auto">
+          {/* 箭头定义 */}
+          <defs>
+            <marker
+              id="arrowhead"
+              markerWidth="10"
+              markerHeight="7"
+              refX="9"
+              refY="3.5"
+              orient="auto"
+            >
+              <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+            </marker>
+          </defs>
+
+          {/* 生命线 - 先画，在底层 */}
+          {actors.map((actor) => (
+            <Lifeline key={actor.id} x={actorX(actor.id)} height={height} />
+          ))}
+
+          {/* 参与者头部 */}
+          {actors.map((actor) => (
+            <ActorHeader key={actor.id} name={actor.name} x={actorX(actor.id)} />
+          ))}
+
+          {/* 消息 */}
+          {messages.map((msg, i) => (
+            <Message
+              key={i}
+              fromX={actorX(msg.from)}
+              toX={actorX(msg.to)}
+              y={HEADER_HEIGHT + PADDING + i * MESSAGE_HEIGHT}
+              text={msg.text}
+              type={msg.type}
+            />
+          ))}
+        </svg>
+      );
+    }
+
+    /* ╔══════════════════════════════════════════════════════════════════╗ */
+    /* ║                       主应用                                      ║ */
+    /* ╚══════════════════════════════════════════════════════════════════╝ */
+
+    function App() {
+      const exportPNG = () => {
+        const element = document.getElementById("diagram");
+        html2canvas(element, {
+          scale: 2,
+          backgroundColor: "#ffffff",
+          logging: false,
+        }).then((canvas) => {
+          const link = document.createElement("a");
+          link.download = "sequence.png";
+          link.href = canvas.toDataURL("image/png");
+          link.click();
+        });
+      };
+
+      return (
+        <div className="max-w-5xl mx-auto">
+          {/* 标题 */}
+          <h1 className="text-2xl font-bold text-gray-800 mb-6 text-center">
+            用户登录时序图
+          </h1>
+
+          {/* 图表区域 */}
+          <div id="diagram" className="bg-white p-8 rounded-lg shadow-lg overflow-x-auto">
+            <Diagram />
+          </div>
+
+          {/* 操作按钮 */}
+          <div className="mt-6 flex justify-center gap-4">
+            <button
+              onClick={exportPNG}
+              className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-md"
+            >
+              导出 PNG
+            </button>
+          </div>
+
+          {/* 使用说明 */}
+          <div className="mt-8 text-sm text-gray-500 text-center">
+            <p>点击"导出 PNG"按钮下载图片</p>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
