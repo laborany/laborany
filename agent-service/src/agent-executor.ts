@@ -11,7 +11,7 @@ import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import type { Skill } from 'laborany-shared'
-import { memoryInjector, memoryFileManager } from './memory/index.js'
+import { memoryInjector, memoryFileManager, memoryProcessor } from './memory/index.js'
 import { DATA_DIR } from './paths.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -318,7 +318,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   }, effectiveTimeout)
 
   return new Promise((resolve) => {
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       clearTimeout(timeoutId)
       signal.removeEventListener('abort', abortHandler)
       if (lineBuffer.trim()) {
@@ -336,23 +336,15 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
         onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
       }
 
-      // 任务完成后自动记录到每日记忆
+      // 任务完成后自动记录到三级记忆结构（使用 LLM 智能提取）
       if (code === 0 && !timedOut && !signal.aborted && agentResponse.trim()) {
         try {
-          const summary = agentResponse.length > 500
-            ? agentResponse.slice(0, 500) + '...'
-            : agentResponse
-          const memoryEntry = `**任务记录**\n- 技能：${skill.meta.name || skill.meta.id}\n- 问题：${userQuery}\n- 摘要：${summary}`
-          memoryFileManager.appendToDaily({
-            scope: 'skill',
+          const result = await memoryProcessor.processConversationAsync({
             skillId: skill.meta.id,
-            content: memoryEntry,
+            userQuery,
+            assistantResponse: agentResponse,
           })
-          memoryFileManager.appendToDaily({
-            scope: 'global',
-            content: memoryEntry,
-          })
-          console.log('[Agent] 已记录任务到每日记忆')
+          console.log(`[Agent] 已记录到三级记忆: cellId=${result.cellId}, method=${result.extractionMethod}`)
         } catch (err) {
           console.error('[Agent] 记录记忆失败:', err)
         }

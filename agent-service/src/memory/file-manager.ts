@@ -263,6 +263,12 @@ function initializeMemorySystem(): void {
   ensureDir(GLOBAL_MEMORY_DIR)
   ensureDir(SKILLS_MEMORY_DIR)
 
+  // 新增：三级记忆结构目录
+  ensureDir(join(MEMORY_DIR, 'cells'))
+  ensureDir(join(MEMORY_DIR, 'episodes'))
+  ensureDir(join(MEMORY_DIR, 'profiles'))
+  ensureDir(join(MEMORY_DIR, 'index'))
+
   // 创建默认 BOSS.md（如果不存在）
   if (!existsSync(BOSS_MD_PATH)) {
     writeFileSync(BOSS_MD_PATH, DEFAULT_BOSS_MD, 'utf-8')

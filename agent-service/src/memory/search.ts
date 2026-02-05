@@ -1,23 +1,28 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                     Memory Search (BM25)                                  ║
+ * ║                     Memory Search (混合检索引擎)                          ║
  * ║                                                                          ║
- * ║  职责：基于 BM25 算法的全文搜索                                            ║
- * ║  设计：简化版实现，不依赖外部搜索引擎                                       ║
+ * ║  职责：BM25 + TF-IDF + RRF 融合的混合检索                                 ║
+ * ║  设计：索引缓存 + 多策略检索 + 排名融合                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { existsSync, readdirSync, readFileSync } from 'fs'
-import { join, basename } from 'path'
+import { join } from 'path'
 import { MEMORY_DIR, SKILLS_MEMORY_DIR } from './file-manager.js'
 import { DATA_DIR } from '../paths.js'
+import { TFIDFIndexer, TFIDFSearcher, tokenize } from './tfidf.js'
+import { indexCacheManager } from './index-cache.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+export type SearchStrategy = 'keyword' | 'semantic' | 'hybrid'
+
 interface SearchParams {
   query: string
   scope?: 'global' | 'skill' | 'all'
   skillId?: string
   maxResults?: number
+  strategy?: SearchStrategy
 }
 
 export interface SearchResult {
@@ -26,22 +31,22 @@ export interface SearchResult {
   score: number
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
+interface BM25Index {
+  documents: Map<string, { content: string; tokens: string[] }>
+  avgDocLen: number
+  idf: Map<string, number>
+}
+
+/* ┌────────────────────────────────────────────────────────��─────────────────┐
  * │                     BM25 参数                                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const K1 = 1.2
 const B = 0.75
+const RRF_K = 60  // RRF 融合常数
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     工具函数                                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function tokenize(text: string): string[] {
-  return text.toLowerCase()
-    .replace(/[^\w\u4e00-\u9fa5]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length > 1)
-}
-
 function getTermFrequency(tokens: string[]): Map<string, number> {
   const freq = new Map<string, number>()
   for (const token of tokens) {
@@ -65,9 +70,6 @@ function extractSnippet(content: string, queryTokens: string[], maxLen = 200): s
  * │                     Memory Search 类                                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export class MemorySearch {
-  private documents: Map<string, { content: string; tokens: string[] }> = new Map()
-  private avgDocLen = 0
-
   /* ────────────────────────────────────────────────────────────────────────
    *  收集所有记忆文件
    * ──────────────────────────────────────────────────────────────────────── */
@@ -112,79 +114,174 @@ export class MemorySearch {
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  构建索引
+   *  构建 BM25 索引（带缓存）
    * ──────────────────────────────────────────────────────────────────────── */
-  private buildIndex(files: string[]): void {
-    this.documents.clear()
-    let totalLen = 0
+  private buildBM25Index(files: string[]): BM25Index {
+    const cacheKey = `bm25_${files.length}`
 
+    return indexCacheManager.getOrBuild(cacheKey, files, () => {
+      const documents = new Map<string, { content: string; tokens: string[] }>()
+      let totalLen = 0
+
+      for (const file of files) {
+        const content = readFileSync(file, 'utf-8')
+        const tokens = tokenize(content)
+        documents.set(file, { content, tokens })
+        totalLen += tokens.length
+      }
+
+      const avgDocLen = documents.size > 0 ? totalLen / documents.size : 0
+
+      // 预计算 IDF
+      const idf = new Map<string, number>()
+      const N = documents.size
+      const docFreq = new Map<string, number>()
+
+      for (const doc of documents.values()) {
+        const seen = new Set<string>()
+        for (const token of doc.tokens) {
+          if (!seen.has(token)) {
+            docFreq.set(token, (docFreq.get(token) || 0) + 1)
+            seen.add(token)
+          }
+        }
+      }
+
+      for (const [term, df] of docFreq) {
+        idf.set(term, Math.log((N - df + 0.5) / (df + 0.5) + 1))
+      }
+
+      return { documents, avgDocLen, idf }
+    })
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  BM25 搜索
+   * ──────────────────────────────────────────────────────────────────────── */
+  private searchBM25(
+    index: BM25Index,
+    queryTokens: string[],
+    maxResults: number
+  ): Array<{ path: string; score: number }> {
+    const results: Array<{ path: string; score: number }> = []
+
+    for (const [path, doc] of index.documents) {
+      const docLen = doc.tokens.length
+      const tf = getTermFrequency(doc.tokens)
+      let score = 0
+
+      for (const term of queryTokens) {
+        const termFreq = tf.get(term) || 0
+        if (termFreq === 0) continue
+
+        const idf = index.idf.get(term) || 0
+        const tfNorm = (termFreq * (K1 + 1)) /
+          (termFreq + K1 * (1 - B + B * docLen / index.avgDocLen))
+        score += idf * tfNorm
+      }
+
+      if (score > 0) {
+        results.push({ path, score })
+      }
+    }
+
+    return results.sort((a, b) => b.score - a.score).slice(0, maxResults)
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  TF-IDF 搜索
+   * ──────────────────────────────────────────────────────────────────────── */
+  private searchTFIDF(
+    files: string[],
+    query: string,
+    maxResults: number
+  ): Array<{ path: string; score: number }> {
+    const cacheKey = `tfidf_${files.length}`
+
+    // 构建 TF-IDF 索引
+    const indexer = new TFIDFIndexer()
     for (const file of files) {
       const content = readFileSync(file, 'utf-8')
-      const tokens = tokenize(content)
-      this.documents.set(file, { content, tokens })
-      totalLen += tokens.length
+      indexer.addDocument(file, content)
     }
+    const tfidfIndex = indexer.build()
 
-    this.avgDocLen = this.documents.size > 0 ? totalLen / this.documents.size : 0
+    // 搜索
+    const searcher = new TFIDFSearcher(tfidfIndex)
+    return searcher.search(query, maxResults).map(r => ({
+      path: r.id,
+      score: r.score,
+    }))
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  计算 BM25 分数
+   *  RRF 融合算法
+   *
+   *  RRF(d) = Σ 1/(k + rank_r(d))
+   *  融合多个排名列表，k=60 是经验值
    * ──────────────────────────────────────────────────────────────────────── */
-  private calcBM25(queryTokens: string[], docTokens: string[]): number {
-    const docLen = docTokens.length
-    const tf = getTermFrequency(docTokens)
-    const N = this.documents.size
-    let score = 0
+  private fuseRRF(
+    ...rankings: Array<Array<{ path: string; score: number }>>
+  ): Array<{ path: string; score: number }> {
+    const scores = new Map<string, number>()
 
-    for (const term of queryTokens) {
-      const termFreq = tf.get(term) || 0
-      if (termFreq === 0) continue
-
-      // 计算 IDF
-      let docCount = 0
-      for (const [, doc] of this.documents) {
-        if (doc.tokens.includes(term)) docCount++
+    for (const ranking of rankings) {
+      for (let i = 0; i < ranking.length; i++) {
+        const { path } = ranking[i]
+        const rrfScore = 1 / (RRF_K + i + 1)
+        scores.set(path, (scores.get(path) || 0) + rrfScore)
       }
-      const idf = Math.log((N - docCount + 0.5) / (docCount + 0.5) + 1)
-
-      // 计算 TF 部分
-      const tfNorm = (termFreq * (K1 + 1)) /
-        (termFreq + K1 * (1 - B + B * docLen / this.avgDocLen))
-
-      score += idf * tfNorm
     }
 
-    return score
+    return Array.from(scores.entries())
+      .map(([path, score]) => ({ path, score }))
+      .sort((a, b) => b.score - a.score)
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  搜索
+   *  主搜索方法
    * ──────────────────────────────────────────────────────────────────────── */
   search(params: SearchParams): SearchResult[] {
-    const { query, scope = 'all', skillId, maxResults = 10 } = params
+    const {
+      query,
+      scope = 'all',
+      skillId,
+      maxResults = 10,
+      strategy = 'hybrid',
+    } = params
+
     const queryTokens = tokenize(query)
     if (queryTokens.length === 0) return []
 
     const files = this.collectFiles(scope, skillId)
-    this.buildIndex(files)
+    if (files.length === 0) return []
 
-    const results: SearchResult[] = []
+    let rankedPaths: Array<{ path: string; score: number }>
 
-    for (const [path, doc] of this.documents) {
-      const score = this.calcBM25(queryTokens, doc.tokens)
-      if (score > 0) {
-        results.push({
-          path,
-          snippet: extractSnippet(doc.content, queryTokens),
-          score,
-        })
-      }
+    // 根据策略选择检索方式
+    if (strategy === 'keyword') {
+      const bm25Index = this.buildBM25Index(files)
+      rankedPaths = this.searchBM25(bm25Index, queryTokens, maxResults * 2)
+    } else if (strategy === 'semantic') {
+      rankedPaths = this.searchTFIDF(files, query, maxResults * 2)
+    } else {
+      // hybrid: RRF 融合 BM25 和 TF-IDF
+      const bm25Index = this.buildBM25Index(files)
+      const bm25Results = this.searchBM25(bm25Index, queryTokens, maxResults * 2)
+      const tfidfResults = this.searchTFIDF(files, query, maxResults * 2)
+      rankedPaths = this.fuseRRF(bm25Results, tfidfResults)
     }
 
-    return results
-      .sort((a, b) => b.score - a.score)
-      .slice(0, maxResults)
+    // 构建最终结果
+    const bm25Index = this.buildBM25Index(files)
+    return rankedPaths.slice(0, maxResults).map(({ path, score }) => {
+      const doc = bm25Index.documents.get(path)
+      return {
+        path,
+        snippet: doc ? extractSnippet(doc.content, queryTokens) : '',
+        score,
+      }
+    })
   }
 }
 

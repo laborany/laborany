@@ -2,7 +2,7 @@
  * ║                         Memory System API 路由                           ║
  * ║                                                                          ║
  * ║  职责：处理所有 Memory 相关的 HTTP 请求                                    ║
- * ║  包含：BOSS.md、MEMORY.md、每日记忆、记忆搜索、记忆归纳                     ║
+ * ║  包含：BOSS.md、MEMORY.md、Profile、每日记忆、记忆搜索、记忆归纳           ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Router, Request, Response } from 'express'
@@ -19,6 +19,8 @@ import {
   globalMemoryManager,
   memoryInjector,
   memoryConsolidator,
+  memoryProcessor,
+  profileManager,
 } from '../memory/index.js'
 
 const router = Router()
@@ -96,7 +98,11 @@ router.put('/global-memory', (req: Request, res: Response) => {
 router.get('/memory-context/:skillId', (req: Request, res: Response) => {
   try {
     const { skillId } = req.params
-    const context = memoryInjector.buildContext({ skillId, userQuery: '' })
+    const { query } = req.query
+    const context = memoryInjector.buildContext({
+      skillId,
+      userQuery: (query as string) || '',
+    })
     res.json({ context })
   } catch (error) {
     res.status(500).json({ error: '获取 Memory 上下文失败' })
@@ -104,24 +110,26 @@ router.get('/memory-context/:skillId', (req: Request, res: Response) => {
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       记录任务完成后的记忆                                 │
- * │  供 src-api 调用，用于记录任务执行结果到每日记忆                           │
+ * │                       记录任务完成后的记忆（新版三级结构）                   │
+ * │  供 src-api 调用，使用 LLM 智能提取记忆                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-router.post('/memory/record-task', (req: Request, res: Response) => {
+router.post('/memory/record-task', async (req: Request, res: Response) => {
   try {
-    const { skillId, skillName, userQuery, summary } = req.body
+    const { skillId, userQuery, assistantResponse, summary } = req.body
     if (!skillId || !userQuery) {
       res.status(400).json({ error: '缺少必要参数' })
       return
     }
 
-    const memoryEntry = `**任务记录**\n- 技能：${skillName || skillId}\n- 问题：${userQuery}\n- 摘要：${summary || '(无摘要)'}`
+    // 使用新的三级记忆处理器
+    const result = await memoryProcessor.processConversationAsync({
+      skillId,
+      userQuery,
+      assistantResponse: assistantResponse || summary || '',
+    })
 
-    memoryFileManager.appendToDaily({ scope: 'skill', skillId, content: memoryEntry })
-    memoryFileManager.appendToDaily({ scope: 'global', content: memoryEntry })
-
-    console.log('[Memory] 已记录任务到每日记忆')
-    res.json({ success: true })
+    console.log(`[Memory] 已记录到三级记忆: cellId=${result.cellId}, method=${result.extractionMethod}`)
+    res.json({ success: true, ...result })
   } catch (error) {
     console.error('[Memory] 记录任务失败:', error)
     res.status(500).json({ error: '记录任务失败' })
@@ -370,6 +378,46 @@ router.post('/memory/reject-candidates', (req: Request, res: Response) => {
     res.json({ success: true, rejected })
   } catch (error) {
     res.status(500).json({ error: '拒绝候选失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取用户画像 (Profile)                               │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+router.get('/profile', (_req: Request, res: Response) => {
+  try {
+    const profile = profileManager.get()
+    const summary = profileManager.getSummary()
+    res.json({ profile, summary })
+  } catch (error) {
+    res.status(500).json({ error: '获取用户画像失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取记忆系统统计                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+router.get('/memory/stats', (_req: Request, res: Response) => {
+  try {
+    const stats = memoryProcessor.getStats()
+    res.json(stats)
+  } catch (error) {
+    res.status(500).json({ error: '获取统计失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       触发 Episode 聚类                                    │
+ * │  将最近的 MemCell 聚合为 Episode（可手动触发或定时任务调用）                │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+router.post('/memory/cluster-episodes', async (req: Request, res: Response) => {
+  try {
+    const { days } = req.body
+    const episodeIds = await memoryProcessor.clusterRecentCellsAsync(days || 7)
+    res.json({ success: true, episodeIds, count: episodeIds.length })
+  } catch (error) {
+    console.error('[Memory] Episode 聚类失败:', error)
+    res.status(500).json({ error: 'Episode 聚类失败' })
   }
 })
 

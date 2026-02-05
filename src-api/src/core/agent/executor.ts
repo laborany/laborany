@@ -75,15 +75,17 @@ export function getTaskDir(sessionId: string): string {
 async function writeClaudeMdWithMemory(
   targetDir: string,
   skillId: string,
-  skillSystemPrompt: string
+  skillSystemPrompt: string,
+  userQuery?: string
 ): Promise<void> {
   const claudeMdPath = join(targetDir, 'CLAUDE.md')
 
   try {
-    // 从 agent-service 获取 Memory 上下文
-    const response = await fetch(`http://localhost:3002/memory-context/${skillId}`)
+    // 从 agent-service 获取 Memory 上下文（传入 userQuery 用于智能检索）
+    const queryParam = userQuery ? `?query=${encodeURIComponent(userQuery)}` : ''
+    const response = await fetch(`http://localhost:3002/memory-context/${skillId}${queryParam}`)
     if (response.ok) {
-      const data = await response.json()
+      const data = await response.json() as { context?: string }
       const memoryContext = data.context || ''
 
       // 组合完整的系统提示词
@@ -360,9 +362,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const historyFile = join(taskDir, `history-${sessionId}.txt`)
   const isNewSession = !existsSync(historyFile)
 
-  // 新会话时写入 CLAUDE.md（含 Memory 上下文）
+  // 新会话时写入 CLAUDE.md（含 Memory 上下文，传入 userQuery 用于智能检索）
   if (isNewSession) {
-    await writeClaudeMdWithMemory(taskDir, skill.meta.id, skill.systemPrompt)
+    await writeClaudeMdWithMemory(taskDir, skill.meta.id, skill.systemPrompt, userQuery)
   }
   console.log(`[Agent] Task directory: ${taskDir}`)
   console.log(`[Agent] Is new session: ${isNewSession}`)
@@ -498,23 +500,19 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
         onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
       }
 
-      // 任务完成后记录到每日记忆
+      // 任务完成后记录到三级记忆系统
       if (code === 0 && !signal.aborted && agentResponse.trim()) {
         try {
-          const summary = agentResponse.length > 500
-            ? agentResponse.slice(0, 500) + '...'
-            : agentResponse
           await fetch('http://localhost:3002/memory/record-task', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               skillId: skill.meta.id,
-              skillName: skill.meta.name,
               userQuery,
-              summary,
+              assistantResponse: agentResponse,
             }),
           })
-          console.log('[Agent] 已记录任务到每日记忆')
+          console.log('[Agent] 已记录任务到三级记忆系统')
         } catch (err) {
           console.error('[Agent] 记录记忆失败:', err)
         }
