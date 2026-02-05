@@ -17,10 +17,17 @@ const isPkg = typeof (process as any).pkg !== 'undefined'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     获取原生模块路径                                       │
+ * │                                                                          │
+ * │  优先级：环境变量 > 可执行文件同目录 > 默认加载                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const getNativeBindingPath = (): string | undefined => {
+  // 优先使用环境变量指定的路径（Electron 启动时设置）
+  const envPath = process.env.BETTER_SQLITE3_BINDING
+  if (envPath && existsSync(envPath)) return envPath
+
   if (!isPkg) return undefined
 
+  // pkg 环境：检查可执行文件同目录
   const nativePath = join(dirname(process.execPath), 'better_sqlite3.node')
   return existsSync(nativePath) ? nativePath : undefined
 }

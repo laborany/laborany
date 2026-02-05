@@ -26,6 +26,10 @@
     "build:agent:mac": "cd agent-service && npm run build:pkg:mac",
     "build:agent:mac-arm64": "cd agent-service && npm run build:pkg:mac-arm64",
     "build:agent:linux": "cd agent-service && npm run build:pkg:linux",
+    "fix:native:win": "node scripts/fix-native-modules.js win x64",
+    "fix:native:mac": "node scripts/fix-native-modules.js mac arm64",
+    "fix:native:mac-x64": "node scripts/fix-native-modules.js mac x64",
+    "fix:native:linux": "node scripts/fix-native-modules.js linux x64",
     "build:frontend": "cd frontend && npm run build",
     "bundle:cli": "node scripts/bundle-cli.js",
     "bundle:cli:win": "node scripts/bundle-cli.js win",
@@ -48,9 +52,9 @@
     "bundle:all:mac-arm64": "npm run bundle:cli:mac-arm64 && npm run bundle:uv:mac-arm64",
     "bundle:all:mac-universal": "npm run bundle:cli:mac-universal && npm run bundle:uv:mac-universal",
     "bundle:all:linux": "npm run bundle:cli:linux && npm run bundle:uv:linux",
-    "build:electron": "npm run bundle:all:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && electron-builder --win --publish never",
-    "build:electron:mac": "npm run bundle:all:mac-universal && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && electron-builder --mac --publish never",
-    "build:electron:linux": "npm run bundle:all:linux && npm run build:api:linux && npm run build:agent:linux && npm run build:frontend && electron-builder --linux --publish never",
+    "build:electron": "npm run bundle:all:win && npm run fix:native:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && electron-builder --win --publish never",
+    "build:electron:mac": "npm run bundle:all:mac-universal && npm run fix:native:mac && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && electron-builder --mac --publish never",
+    "build:electron:linux": "npm run bundle:all:linux && npm run fix:native:linux && npm run build:api:linux && npm run build:agent:linux && npm run build:frontend && electron-builder --linux --publish never",
     "install:all": "npm install && cd shared && npm install && cd ../src-api && npm install && cd ../agent-service && npm install && cd ../frontend && npm install"
   },
   "build": {

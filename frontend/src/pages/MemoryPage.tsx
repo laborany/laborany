@@ -14,7 +14,10 @@ import { AGENT_API_BASE } from '../config/api'
 interface MemoryFile {
   name: string
   path: string
-  date?: string
+  scope: 'global' | 'skill'
+  displayName: string
+  skillId?: string
+  skillName?: string
 }
 
 interface Skill {
@@ -22,7 +25,18 @@ interface Skill {
   name: string
 }
 
-type TabType = 'boss' | 'global-memory' | 'memory'
+interface ConsolidationCandidate {
+  id: string
+  scope: 'global' | 'skill'
+  skillId?: string
+  skillName?: string
+  category: string
+  content: string
+  source: string[]
+  confidence: number
+}
+
+type TabType = 'boss' | 'global-memory' | 'memory' | 'consolidate'
 type MemoryScope = 'global' | 'skill'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -60,6 +74,12 @@ export default function MemoryPage() {
               label="记忆文件"
               icon={<MemoryIcon />}
             />
+            <TabButton
+              active={activeTab === 'consolidate'}
+              onClick={() => setActiveTab('consolidate')}
+              label="记忆归纳"
+              icon={<ConsolidateIcon />}
+            />
           </nav>
         </div>
       </div>
@@ -69,6 +89,7 @@ export default function MemoryPage() {
         {activeTab === 'boss' && <BossEditor />}
         {activeTab === 'global-memory' && <GlobalMemoryEditor />}
         {activeTab === 'memory' && <MemoryBrowser />}
+        {activeTab === 'consolidate' && <MemoryConsolidator />}
       </div>
     </div>
   )
@@ -416,7 +437,10 @@ function MemoryBrowser() {
                     selectedFile?.path === file.path ? 'bg-primary/10 text-primary' : 'text-foreground'
                   }`}
                 >
-                  {file.name}
+                  <div className="flex items-center gap-2">
+                    <ScopeTag scope={file.scope} />
+                    <span className="truncate">{file.displayName}</span>
+                  </div>
                 </button>
               ))
             )}
@@ -427,8 +451,10 @@ function MemoryBrowser() {
         <div className="col-span-2 space-y-3">
           {selectedFile ? (
             <>
-              <div className="text-sm text-muted-foreground">
-                编辑: <code className="bg-muted px-2 py-0.5 rounded">{selectedFile.name}</code>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <ScopeTag scope={selectedFile.scope} />
+                <span>编辑:</span>
+                <code className="bg-muted px-2 py-0.5 rounded">{selectedFile.displayName}</code>
               </div>
               <textarea
                 value={fileContent}
@@ -453,6 +479,225 @@ function MemoryBrowser() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           记忆归纳组件                                    │
+ * │                                                                          │
+ * │  分析每日记忆 → 生成候选 → 用户确认 → 写入长期记忆                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function MemoryConsolidator() {
+  const [scope, setScope] = useState<MemoryScope>('global')
+  const [skills, setSkills] = useState<Skill[]>([])
+  const [selectedSkill, setSelectedSkill] = useState<string>('')
+  const [candidates, setCandidates] = useState<ConsolidationCandidate[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(false)
+  const [consolidating, setConsolidating] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    loadSkills()
+  }, [])
+
+  async function loadSkills() {
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/skills`)
+      const data = await res.json()
+      setSkills(data.skills || [])
+    } catch {
+      // 忽略
+    }
+  }
+
+  async function analyze() {
+    if (scope === 'skill' && !selectedSkill) return
+    setLoading(true)
+    setMessage(null)
+    setCandidates([])
+    setSelected(new Set())
+    try {
+      const params = new URLSearchParams({ scope })
+      if (scope === 'skill' && selectedSkill) params.set('skillId', selectedSkill)
+      const res = await fetch(`${AGENT_API_BASE}/memory/consolidation-candidates?${params}`)
+      const data = await res.json()
+      setCandidates(data.candidates || [])
+      if (data.candidates?.length === 0) {
+        setMessage({ type: 'success', text: '暂无可归纳的记忆模式' })
+      }
+    } catch {
+      setMessage({ type: 'error', text: '分析失败' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function toggleSelect(id: string) {
+    const next = new Set(selected)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelected(next)
+  }
+
+  function selectAll() {
+    setSelected(new Set(candidates.map(c => c.id)))
+  }
+
+  async function consolidate() {
+    if (selected.size === 0) return
+    setConsolidating(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/memory/consolidate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidateIds: Array.from(selected),
+          scope,
+          skillId: scope === 'skill' ? selectedSkill : undefined,
+        }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setMessage({ type: 'success', text: `已归纳 ${data.consolidated} 条记忆` })
+        setCandidates(prev => prev.filter(c => !selected.has(c.id)))
+        setSelected(new Set())
+      }
+    } catch {
+      setMessage({ type: 'error', text: '归纳失败' })
+    } finally {
+      setConsolidating(false)
+    }
+  }
+
+  async function reject() {
+    if (selected.size === 0) return
+    try {
+      await fetch(`${AGENT_API_BASE}/memory/reject-candidates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ candidateIds: Array.from(selected) }),
+      })
+      setCandidates(prev => prev.filter(c => !selected.has(c.id)))
+      setSelected(new Set())
+    } catch {
+      setMessage({ type: 'error', text: '操作失败' })
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* 说明 */}
+      <div className="bg-muted/50 rounded-lg p-4">
+        <p className="text-sm text-muted-foreground">
+          分析最近的每日记忆，提取重复出现的模式，归纳为长期记忆。
+        </p>
+      </div>
+
+      {/* 作用域选择 + 分析按钮 */}
+      <div className="flex items-center gap-4">
+        <select
+          value={scope}
+          onChange={(e) => { setScope(e.target.value as MemoryScope); setCandidates([]) }}
+          className="px-3 py-2 bg-card border border-border rounded-lg text-sm"
+        >
+          <option value="global">全局记忆</option>
+          <option value="skill">技能记忆</option>
+        </select>
+
+        {scope === 'skill' && (
+          <select
+            value={selectedSkill}
+            onChange={(e) => { setSelectedSkill(e.target.value); setCandidates([]) }}
+            className="px-3 py-2 bg-card border border-border rounded-lg text-sm"
+          >
+            <option value="">选择技能...</option>
+            {skills.map((s) => (
+              <option key={s.id} value={s.id}>{s.name || s.id}</option>
+            ))}
+          </select>
+        )}
+
+        <button
+          onClick={analyze}
+          disabled={loading || (scope === 'skill' && !selectedSkill)}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+        >
+          {loading && <LoadingIcon />}
+          分析记忆
+        </button>
+      </div>
+
+      {/* 消息提示 */}
+      {message && <MessageBox type={message.type} text={message.text} />}
+
+      {/* 候选列表 */}
+      {candidates.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">
+              发现 {candidates.length} 个可归纳的模式
+            </span>
+            <button onClick={selectAll} className="text-sm text-primary hover:underline">
+              全选
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {candidates.map((c) => (
+              <div
+                key={c.id}
+                onClick={() => toggleSelect(c.id)}
+                className={`p-4 bg-card border rounded-lg cursor-pointer transition-colors ${
+                  selected.has(c.id) ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(c.id)}
+                    onChange={() => toggleSelect(c.id)}
+                    className="mt-1"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-sm">{c.category}</span>
+                      <span className="text-xs text-muted-foreground">
+                        置信度: {Math.round(c.confidence * 100)}%
+                      </span>
+                    </div>
+                    <p className="text-sm text-muted-foreground line-clamp-2">{c.content}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      来源: {c.source.slice(0, 3).join(', ')}{c.source.length > 3 ? '...' : ''}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 操作按钮 */}
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={reject}
+              disabled={selected.size === 0}
+              className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-accent disabled:opacity-50"
+            >
+              忽略选中
+            </button>
+            <button
+              onClick={consolidate}
+              disabled={selected.size === 0 || consolidating}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+            >
+              {consolidating && <LoadingIcon />}
+              确认归纳 ({selected.size})
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -486,6 +731,24 @@ function MessageBox({ type, text }: { type: 'success' | 'error'; text: string })
   )
 }
 
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           作用域标签                                      │
+ * │                                                                          │
+ * │  全局记忆：蓝色标签 | 技能记忆：紫色标签                                    │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function ScopeTag({ scope }: { scope: 'global' | 'skill' }) {
+  const isGlobal = scope === 'global'
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+      isGlobal
+        ? 'bg-blue-500/10 text-blue-600'
+        : 'bg-purple-500/10 text-purple-600'
+    }`}>
+      {isGlobal ? '全局' : '技能'}
+    </span>
+  )
+}
+
 function BookIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -506,6 +769,14 @@ function BrainIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+    </svg>
+  )
+}
+
+function ConsolidateIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
     </svg>
   )
 }

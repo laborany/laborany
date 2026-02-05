@@ -178,11 +178,20 @@ function startAgentServer() {
 
   console.log(`[Electron] Starting Agent server: ${agentPath}`)
 
+  /* ═════════════════════════════════════════════════════════════════════
+   *  设置 better-sqlite3 原生模块路径
+   *  pkg 打包后需要从外部加载 .node 文件
+   * ═════════════════════════════════════════════════════════════════════ */
+  const sqliteBindingPath = isDev
+    ? path.join(__dirname, '..', 'agent-service', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')
+    : path.join(process.resourcesPath, 'agent', 'better_sqlite3.node')
+
   agentProcess = spawn(agentPath, [], {
     env: {
       ...process.env,
       AGENT_PORT: AGENT_PORT.toString(),
-      NODE_ENV: 'production'
+      NODE_ENV: 'production',
+      BETTER_SQLITE3_BINDING: sqliteBindingPath
     },
     stdio: ['ignore', 'pipe', 'pipe']
   })
