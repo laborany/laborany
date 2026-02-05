@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { config } from 'dotenv'
-import { resolve, dirname, join } from 'path'
+import { resolve, dirname, join, posix, normalize } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir } from 'os'
 
@@ -42,6 +42,7 @@ import {
   memoryWriter,
   bossManager,
   globalMemoryManager,
+  memoryInjector,
 } from './memory/index.js'
 
 const app = express()
@@ -1333,6 +1334,58 @@ app.put('/global-memory', (req: Request, res: Response) => {
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取完整 Memory 上下文                               │
+ * │  供 src-api 调用，用于注入到 Agent 的系统提示词                            │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.get('/memory-context/:skillId', (req: Request, res: Response) => {
+  try {
+    const { skillId } = req.params
+    const context = memoryInjector.buildContext({
+      skillId,
+      userQuery: '',
+    })
+    res.json({ context })
+  } catch (error) {
+    res.status(500).json({ error: '获取 Memory 上下文失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       记录任务完成后的记忆                                 │
+ * │  供 src-api 调用，用于记录任务执行结果到每日记忆                           │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.post('/memory/record-task', (req: Request, res: Response) => {
+  try {
+    const { skillId, skillName, userQuery, summary } = req.body
+    if (!skillId || !userQuery) {
+      res.status(400).json({ error: '缺少必要参数' })
+      return
+    }
+
+    const memoryEntry = `**任务记录**\n- 技能：${skillName || skillId}\n- 问题：${userQuery}\n- 摘要：${summary || '(无摘要)'}`
+
+    // 记录到 Skill 级别的每日记忆
+    memoryFileManager.appendToDaily({
+      scope: 'skill',
+      skillId,
+      content: memoryEntry,
+    })
+
+    // 记录到全局每日记忆
+    memoryFileManager.appendToDaily({
+      scope: 'global',
+      content: memoryEntry,
+    })
+
+    console.log('[Memory] 已记录任务到每日记忆')
+    res.json({ success: true })
+  } catch (error) {
+    console.error('[Memory] 记录任务失败:', error)
+    res.status(500).json({ error: '记录任务失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取全局记忆文件列表                                 │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 app.get('/memory/global', async (_req: Request, res: Response) => {
@@ -1349,7 +1402,7 @@ app.get('/memory/global', async (_req: Request, res: Response) => {
       .reverse()
       .map(name => ({
         name,
-        path: join('memory', 'global', name),
+        path: posix.join('memory', 'global', name),
       }))
     res.json({ files })
   } catch (error) {
@@ -1375,7 +1428,7 @@ app.get('/memory/skill/:skillId', async (req: Request, res: Response) => {
       .reverse()
       .map(name => ({
         name,
-        path: join('memory', 'skills', skillId, name),
+        path: posix.join('memory', 'skills', skillId, name),
       }))
     res.json({ files })
   } catch (error) {
@@ -1393,8 +1446,10 @@ app.get('/memory/file', (req: Request, res: Response) => {
     return
   }
   try {
+    // normalize() 会自动将路径分隔符转换为当前平台的格式
+    const normalizedPath = normalize(filePath)
     // 安全检查：只允许访问 memory 目录下的文件
-    const fullPath = join(DATA_DIR, filePath)
+    const fullPath = join(DATA_DIR, normalizedPath)
     const memoryDir = join(DATA_DIR, 'memory')
     if (!fullPath.startsWith(memoryDir) && !fullPath.endsWith('MEMORY.md')) {
       res.status(403).json({ error: '禁止访问' })
@@ -1421,7 +1476,9 @@ app.put('/memory/file', async (req: Request, res: Response) => {
     return
   }
   try {
-    const fullPath = join(DATA_DIR, filePath)
+    // normalize() 会自动将路径分隔符转换为当前平台的格式
+    const normalizedPath = normalize(filePath)
+    const fullPath = join(DATA_DIR, normalizedPath)
     const memoryDir = join(DATA_DIR, 'memory')
     if (!fullPath.startsWith(memoryDir) && !fullPath.endsWith('MEMORY.md')) {
       res.status(403).json({ error: '禁止访问' })

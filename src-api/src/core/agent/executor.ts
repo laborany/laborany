@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { spawn, execSync } from 'child_process'
-import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
@@ -63,72 +63,45 @@ function getTasksBaseDir(): string {
   return join(getAppDataDir(), 'tasks')
 }
 
-function findBossMd(): string | null {
-  /* ┌────────────────────────────────────────────────────────────────────────┐
-   * │  在多个可能的位置查找 BOSS.md                                           │
-   * │  优先级：pkg 打包路径 > Electron resources > 开发模式路径               │
-   * └────────────────────────────────────────────────────────────────────────┘ */
-  const candidates: string[] = []
-
-  // 1. pkg 打包模式：exe 在 resources/api/，BOSS.md 在 resources/
-  const exeDir = dirname(process.execPath)
-  candidates.push(join(exeDir, '..', 'BOSS.md'))
-  candidates.push(join(exeDir, 'BOSS.md'))
-
-  // 2. Electron resources 路径（如果 resourcesPath 存在）
-  if ((process as NodeJS.Process & { resourcesPath?: string }).resourcesPath) {
-    const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath!
-    candidates.push(join(resourcesPath, 'BOSS.md'))
-  }
-
-  // 3. 开发模式：从项目根目录读取
-  candidates.push(join(__dirname, '..', '..', '..', '..', 'BOSS.md'))
-
-  // 4. 相对于当前工作目录
-  candidates.push(join(process.cwd(), 'BOSS.md'))
-
-  // 查找第一个存在的文件
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      console.log(`[Agent] Found BOSS.md at: ${candidate}`)
-      return candidate
-    }
-  }
-
-  console.warn(`[Agent] BOSS.md not found in any of: ${candidates.join(', ')}`)
-  return null
-}
-
-function getBossMdPath(): string | null {
-  return findBossMd()
-}
-
 export function getTaskDir(sessionId: string): string {
   return join(getTasksBaseDir(), sessionId)
 }
 
-function copyBossMdToDir(targetDir: string): void {
-  /* ┌────────────────────────────────────────────────────────────────────────┐
-   * │  复制 BOSS.md 到目标目录                                                │
-   * └────────────────────────────────────────────────────────────────────────┘ */
-  const bossMdSrc = getBossMdPath()
-  const bossMdDest = join(targetDir, 'BOSS.md')
-
-  if (!bossMdSrc) {
-    console.warn(`[Agent] BOSS.md source not found, skipping copy`)
-    return
-  }
-
-  if (existsSync(bossMdDest)) {
-    console.log(`[Agent] BOSS.md already exists at: ${bossMdDest}`)
-    return
-  }
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取 Memory 上下文并写入 CLAUDE.md                   │
+ * │  从 agent-service 获取完整的 Memory 上下文，写入 CLAUDE.md                 │
+ * │  Claude Code 会自动读取 CLAUDE.md 作为系统提示词                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+async function writeClaudeMdWithMemory(
+  targetDir: string,
+  skillId: string,
+  skillSystemPrompt: string
+): Promise<void> {
+  const claudeMdPath = join(targetDir, 'CLAUDE.md')
 
   try {
-    copyFileSync(bossMdSrc, bossMdDest)
-    console.log(`[Agent] Copied BOSS.md: ${bossMdSrc} -> ${bossMdDest}`)
+    // 从 agent-service 获取 Memory 上下文
+    const response = await fetch(`http://localhost:3002/memory-context/${skillId}`)
+    if (response.ok) {
+      const data = await response.json()
+      const memoryContext = data.context || ''
+
+      // 组合完整的系统提示词
+      const fullPrompt = memoryContext
+        ? `${memoryContext}\n\n---\n\n${skillSystemPrompt}`
+        : skillSystemPrompt
+
+      writeFileSync(claudeMdPath, fullPrompt, 'utf-8')
+      console.log(`[Agent] 已写入 CLAUDE.md（含 Memory 上下文）: ${claudeMdPath}`)
+    } else {
+      // 如果获取失败，只写入 skill 的系统提示词
+      writeFileSync(claudeMdPath, skillSystemPrompt, 'utf-8')
+      console.log(`[Agent] 已写入 CLAUDE.md（无 Memory）: ${claudeMdPath}`)
+    }
   } catch (err) {
-    console.warn(`[Agent] Failed to copy BOSS.md: ${err}`)
+    // 网络错误时，只写入 skill 的系统提示词
+    writeFileSync(claudeMdPath, skillSystemPrompt, 'utf-8')
+    console.warn(`[Agent] 获取 Memory 上下文失败，已写入基础 CLAUDE.md: ${err}`)
   }
 }
 
@@ -137,7 +110,6 @@ export function ensureTaskDir(sessionId: string): string {
   if (!existsSync(taskDir)) {
     mkdirSync(taskDir, { recursive: true })
   }
-  copyBossMdToDir(taskDir)
   return taskDir
 }
 
@@ -320,7 +292,11 @@ interface StreamMessage {
 }
 
 function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): void {
-  if (!line.trim()) return
+  parseStreamLineWithReturn(line, onEvent)
+}
+
+function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) => void): AgentEvent | null {
+  if (!line.trim()) return null
 
   try {
     const msg: StreamMessage = JSON.parse(line)
@@ -328,14 +304,18 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): vo
     if (msg.type === 'assistant' && msg.message?.content) {
       for (const block of msg.message.content) {
         if (block.type === 'text' && block.text) {
-          onEvent({ type: 'text', content: block.text })
+          const event: AgentEvent = { type: 'text', content: block.text }
+          onEvent(event)
+          return event
         } else if (block.type === 'tool_use' && block.name) {
-          onEvent({
+          const event: AgentEvent = {
             type: 'tool_use',
             toolName: block.name,
             toolInput: block.input,
             content: `调用工具: ${block.name}`,
-          })
+          }
+          onEvent(event)
+          return event
         }
       }
     } else if (msg.type === 'user' && msg.message?.content) {
@@ -344,17 +324,20 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): vo
           const resultText = typeof block.content === 'string'
             ? block.content
             : JSON.stringify(block.content)
-          onEvent({
+          const event: AgentEvent = {
             type: 'tool_result',
             toolResult: resultText,
             content: block.is_error ? `工具执行失败` : `工具执行完成`,
-          })
+          }
+          onEvent(event)
+          return event
         }
       }
     }
   } catch {
     // 非 JSON 行，忽略
   }
+  return null
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -372,14 +355,15 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   if (workDir && !existsSync(workDir)) {
     mkdirSync(workDir, { recursive: true })
   }
-  // 确保 BOSS.md 存在于工作目录
-  if (workDir) {
-    copyBossMdToDir(workDir)
-  }
 
   // 使用 sessionId 区分不同步骤的历史记录
   const historyFile = join(taskDir, `history-${sessionId}.txt`)
   const isNewSession = !existsSync(historyFile)
+
+  // 新会话时写入 CLAUDE.md（含 Memory 上下文）
+  if (isNewSession) {
+    await writeClaudeMdWithMemory(taskDir, skill.meta.id, skill.systemPrompt)
+  }
   console.log(`[Agent] Task directory: ${taskDir}`)
   console.log(`[Agent] Is new session: ${isNewSession}`)
 
@@ -446,13 +430,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
-   * 构建完整 prompt
+   * 构建 prompt（系统提示词已写入 CLAUDE.md，这里只传用户查询）
    * ═══════════════════════════════════════════════════════════════════════════ */
-  const basePrompt = skill.systemPrompt
-
-  const prompt = isNewSession
-    ? `${basePrompt}\n\n---\n\n用户问题：${userQuery}`
-    : userQuery
+  const prompt = userQuery
 
   console.log(`[Agent] Args: ${args.join(' ')}`)
 
@@ -480,13 +460,18 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   proc.stdin.end()
 
   let lineBuffer = ''
+  let agentResponse = ''  // 收集 Agent 的文本输出
 
   proc.stdout.on('data', (data: Buffer) => {
     lineBuffer += data.toString()
     const lines = lineBuffer.split('\n')
     lineBuffer = lines.pop() || ''
     for (const line of lines) {
-      parseStreamLine(line, onEvent)
+      const event = parseStreamLineWithReturn(line, onEvent)
+      // 收集文本输出用于记忆
+      if (event?.type === 'text' && event.content) {
+        agentResponse += event.content
+      }
     }
   })
 
@@ -498,14 +483,41 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   signal.addEventListener('abort', abortHandler)
 
   return new Promise((resolve) => {
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       signal.removeEventListener('abort', abortHandler)
-      if (lineBuffer.trim()) parseStreamLine(lineBuffer, onEvent)
+      if (lineBuffer.trim()) {
+        const event = parseStreamLineWithReturn(lineBuffer, onEvent)
+        if (event?.type === 'text' && event.content) {
+          agentResponse += event.content
+        }
+      }
 
       if (signal.aborted) {
         onEvent({ type: 'error', content: '执行被中止' })
       } else if (code !== 0) {
         onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
+      }
+
+      // 任务完成后记录到每日记忆
+      if (code === 0 && !signal.aborted && agentResponse.trim()) {
+        try {
+          const summary = agentResponse.length > 500
+            ? agentResponse.slice(0, 500) + '...'
+            : agentResponse
+          await fetch('http://localhost:3002/memory/record-task', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              skillId: skill.meta.id,
+              skillName: skill.meta.name,
+              userQuery,
+              summary,
+            }),
+          })
+          console.log('[Agent] 已记录任务到每日记忆')
+        } catch (err) {
+          console.error('[Agent] 记录记忆失败:', err)
+        }
       }
 
       onEvent({ type: 'done' })
