@@ -25,7 +25,7 @@ const EXTRACTION_PROMPT = `你是一个记忆提取专家。分析以下对话�
 
 ## 任务
 从对话中提取：
-1. **摘要**：一句话概括对话主题（不超过 50 字）
+1. **摘要**：100-200 字，包含用户意图、核心问题、解决方案或结论
 2. **事实**：用户透露的偏好、个人信息、纠正等
 3. **关键词**：3-5 个核心关键词
 4. **情感**：用户的整体情感倾向
@@ -38,11 +38,34 @@ const EXTRACTION_PROMPT = `你是一个记忆提取专家。分析以下对话�
 
 ## 输出格式（严格 JSON）
 {
-  "summary": "一句话摘要",
+  "summary": "100-200 字摘要",
   "facts": [
     {"type": "preference", "content": "具体内容", "confidence": 0.8}
   ],
   "keywords": ["关键词1", "关键词2"],
+  "sentiment": "neutral"
+}
+
+## 示例 1（含事实）
+对话：User: 我在用 Next.js 做一个电商项目，部署在 Vercel 上。最近遇到 SSR 水合错误。
+输出：
+{
+  "summary": "用户正在使用 Next.js 开发电商项目并部署在 Vercel 上，遇到了 SSR 水合（hydration）错误。这类错误通常由服务端和客户端渲染结果不一致引起，需要检查动态内容和浏览器 API 的使用方式。",
+  "facts": [
+    {"type": "context", "content": "正在用 Next.js 做电商项目", "confidence": 0.9},
+    {"type": "context", "content": "项目部署在 Vercel 上", "confidence": 0.9}
+  ],
+  "keywords": ["Next.js", "SSR", "水合错误", "Vercel", "电商"],
+  "sentiment": "negative"
+}
+
+## 示例 2（无事实）
+对话：User: 帮我写一个快速排序算法。
+输出：
+{
+  "summary": "用户请求实现快速排序算法。这是一个标准的算法实现需求，不涉及个人偏好或项目上下文信息。",
+  "facts": [],
+  "keywords": ["快速排序", "算法"],
   "sentiment": "neutral"
 }
 
@@ -99,7 +122,7 @@ export class LLMExtractor {
       const client = this.getClient()
       const response = await client.messages.create({
         model: this.model,
-        max_tokens: 1000,
+        max_tokens: 1500,
         messages: [{ role: 'user', content: prompt }],
       })
 
@@ -113,15 +136,39 @@ export class LLMExtractor {
       const result = JSON.parse(textBlock.text) as LLMExtractResult
       return result
     } catch (error) {
-      console.error('[LLMExtractor] 提取失败:', error)
-      // 返回默认结果
-      return {
-        summary: messages[0]?.content.slice(0, 50) || '对话记录',
-        facts: [],
-        keywords: [],
-        sentiment: 'neutral',
+      console.error('[LLMExtractor] 提取失败，使用降级方案:', error)
+      return this.buildFallbackResult(messages)
+    }
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  降级方案：LLM 失败时用规则提取兜底
+   * ──────────────────────────────────────────────────────────────────────── */
+  private buildFallbackResult(messages: Message[]): LLMExtractResult {
+    const userMsg = messages.find(m => m.role === 'user')
+    const summary = userMsg
+      ? userMsg.content.slice(0, 200) + (userMsg.content.length > 200 ? '...' : '')
+      : '对话记录'
+
+    // 用正则提取事实作为降级（复用 memCellExtractor 的模式）
+    const facts: LLMExtractResult['facts'] = []
+    const patterns = [
+      { regex: /我(喜欢|习惯|偏好|倾向)[^。，！？\n]+/g, type: 'preference' as const },
+      { regex: /(不是.{2,20}是|应该是|错了.{2,20}正确)/g, type: 'correction' as const },
+      { regex: /我(是|的|在|有)[^。，！？\n]{2,30}/g, type: 'fact' as const },
+    ]
+    for (const msg of messages) {
+      if (msg.role !== 'user') continue
+      for (const { regex, type } of patterns) {
+        const matches = msg.content.match(regex)
+        if (!matches) continue
+        for (const match of matches) {
+          facts.push({ type, content: match.trim(), confidence: 0.6 })
+        }
       }
     }
+
+    return { summary, facts, keywords: [], sentiment: 'neutral' }
   }
 
   /* ────────────────────────────────────────────────────────────────────────

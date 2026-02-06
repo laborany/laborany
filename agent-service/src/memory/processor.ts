@@ -11,6 +11,7 @@ import { episodeClusterer, episodeStorage, episodeLLMEnhancer } from './episode/
 import { profileManager, profileLLMClassifier } from './profile/index.js'
 import { memoryFileManager } from './file-manager.js'
 import { llmExtractor } from './llm-extractor.js'
+import { memoryConsolidator } from './consolidator.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -107,7 +108,13 @@ export class MemoryProcessor {
       result.profileUpdated = cell.facts.length > 0
     }
 
-    this.writeToDaily(params, cell.summary)
+    this.writeToDaily(params, cell)
+
+    // 异步触发自动归纳（fire-and-forget，不阻塞主流程）
+    this.maybeAutoConsolidate().catch(err =>
+      console.warn('[MemoryProcessor] 自动归纳失败:', err)
+    )
+
     return result
   }
 
@@ -188,18 +195,73 @@ export class MemoryProcessor {
       context: '工作偏好',
     }
     const section = sectionMap[fact.type] || '工作偏好'
-    profileManager.updateField(section, fact.content.slice(0, 20), fact.content, evidence, fact.confidence)
+    const key = this.extractFactKey(fact.content)
+    profileManager.updateField(section, key, fact.content, evidence, fact.confidence)
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  写入每日记忆
+   *  从事实内容中提取有意义的 key
+   *
+   *  策略：去掉常见前缀词，提取核心名词短语
    * ──────────────────────────────────────────────────────────────────────── */
-  private writeToDaily(params: ProcessParams, summary?: string): void {
-    const { skillId, userQuery, assistantResponse, timestamp = new Date() } = params
-    const displaySummary = summary || (
-      assistantResponse.length > 500 ? assistantResponse.slice(0, 500) + '...' : assistantResponse
-    )
-    const content = `**任务记录**\n- 问题：${userQuery}\n- 摘要：${displaySummary}`
+  private extractFactKey(content: string): string {
+    // 去掉常见的中文前缀（"我喜欢"、"我是"、"我在"等）
+    const stripped = content
+      .replace(/^我(喜欢|习惯|偏好|倾向|是|的|在|有|用|做)/, '')
+      .trim()
+
+    // 取前 30 字符中的核心短语
+    const core = stripped.slice(0, 30)
+
+    // 如果提取后为空，回退到原始内容截取
+    return core || content.slice(0, 20)
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  自动归纳：当天 MemCell 积累足够时，触发长期记忆归纳
+   *
+   *  条件：当天 MemCell >= 5
+   *  范围：最近 3 天的每日记忆
+   *  阈值：confidence >= 0.6 的候选自动写入
+   * ──────────────────────────────────────────────────────────────────────── */
+  private async maybeAutoConsolidate(): Promise<void> {
+    const todayCells = memCellStorage.listByDate(new Date())
+    if (todayCells.length < 5) return
+
+    const candidates = memoryConsolidator.analyzeRecentMemories({
+      scope: 'global',
+      days: 3,
+    })
+
+    const qualified = candidates.filter(c => c.confidence >= 0.6)
+    if (qualified.length === 0) return
+
+    const ids = qualified.map(c => c.id)
+    const result = memoryConsolidator.consolidate({
+      candidateIds: ids,
+      scope: 'global',
+    })
+
+    console.log(`[MemoryProcessor] 自动归纳: ${result.consolidated} 条写入 MEMORY.md`)
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  写入每日记忆（结构化格式）
+   * ──────────────────────────────────────────────────────────────────────── */
+  private writeToDaily(params: ProcessParams, cell: MemCell): void {
+    const { skillId, timestamp = new Date() } = params
+
+    // 构建结构化内容
+    const lines = [`**任务记录**`, `- 问题：${cell.messages[0]?.content || params.userQuery}`]
+    lines.push(`- 摘要：${cell.summary}`)
+
+    // 附加关键事实（如果有）
+    if (cell.facts.length > 0) {
+      const factList = cell.facts.map(f => `${f.content}`).join('；')
+      lines.push(`- 关键事实：${factList}`)
+    }
+
+    const content = lines.join('\n')
     memoryFileManager.appendToDaily({ scope: 'skill', skillId, content, timestamp })
     memoryFileManager.appendToDaily({ scope: 'global', content, timestamp })
   }

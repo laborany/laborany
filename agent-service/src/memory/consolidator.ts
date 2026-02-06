@@ -45,6 +45,23 @@ interface DailyMemoryEntry {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     中英文停用词集合                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const STOPWORDS = new Set([
+  // 中文停用词
+  '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一',
+  '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有',
+  '看', '好', '自己', '这', '他', '她', '它', '们', '那', '些', '什么', '怎么',
+  '如何', '可以', '需要', '使用', '进行', '通过', '问题', '方法', '这个', '那个',
+  '已经', '还是', '或者', '但是', '因为', '所以', '如果', '虽然', '然后', '之后',
+  // 英文停用词
+  'the', 'is', 'at', 'which', 'on', 'and', 'or', 'but', 'in', 'with',
+  'for', 'to', 'of', 'an', 'it', 'this', 'that', 'are', 'was', 'be',
+  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'can',
+  'could', 'should', 'may', 'might', 'not', 'no', 'so', 'if', 'then',
+])
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           Memory Consolidator 类                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export class MemoryConsolidator {
@@ -83,13 +100,13 @@ export class MemoryConsolidator {
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  提取关键词（简单实现：提取中文词汇和英文单词）
+   *  提取关键词（过滤停用词）
    * ──────────────────────────────────────────────────────────────────────── */
   private extractKeywords(text: string): string[] {
     const words = text
       .replace(/[^\u4e00-\u9fa5a-zA-Z\s]/g, ' ')
       .split(/\s+/)
-      .filter(w => w.length >= 2)
+      .filter(w => w.length >= 2 && !STOPWORDS.has(w.toLowerCase()))
     return [...new Set(words)]
   }
 
@@ -148,8 +165,10 @@ export class MemoryConsolidator {
 
     // 为每个高频模式生成候选
     for (const [keyword, relatedEntries] of patterns) {
-      // 取最具代表性的条目作为候选内容
-      const representative = relatedEntries[0]
+      // 取最长的条目作为代表（信息量最大）
+      const representative = relatedEntries.reduce((a, b) =>
+        a.content.length >= b.content.length ? a : b
+      )
       const sources = [...new Set(relatedEntries.map(e => `${e.date} ${e.time}`))]
 
       const candidate: ConsolidationCandidate = {
@@ -160,7 +179,7 @@ export class MemoryConsolidator {
         category: keyword,
         content: representative.content,
         source: sources,
-        confidence: Math.min(relatedEntries.length / entries.length, 1),
+        confidence: this.calcConfidence(relatedEntries, entries.length),
       }
 
       this.candidates.set(candidate.id, candidate)
@@ -235,6 +254,23 @@ export class MemoryConsolidator {
    * ──────────────────────────────────────────────────────────────────────── */
   clearCandidates(): void {
     this.candidates.clear()
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  计算置信度（近期条目加权）
+   * ──────────────────────────────────────────────────────────────────────── */
+  private calcConfidence(entries: DailyMemoryEntry[], total: number): number {
+    const base = Math.min(entries.length / total, 1)
+    const recentBoost = entries.some(e => this.isRecent(e.date)) ? 0.1 : 0
+    return Math.min(base + recentBoost, 1)
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  判断日期是否为近 2 天内
+   * ──────────────────────────────────────────────────────────────────────── */
+  private isRecent(dateStr: string): boolean {
+    const diff = Date.now() - new Date(dateStr).getTime()
+    return diff < 2 * 24 * 60 * 60 * 1000
   }
 }
 

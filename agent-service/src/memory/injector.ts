@@ -15,7 +15,7 @@ import { profileManager } from './profile/index.js'
 interface BuildContextParams {
   skillId: string
   userQuery: string
-  tokenBudget?: number  // Token 预算，默认 2000
+  tokenBudget?: number  // Token 预算，默认 4000
 }
 
 interface MemorySection {
@@ -154,7 +154,7 @@ export class MemoryInjector {
    *  4. Token 预算控制
    * ──────────────────────────────────────────────────────────────────────── */
   buildContext(params: BuildContextParams): string {
-    const { skillId, userQuery, tokenBudget = 2000 } = params
+    const { skillId, userQuery, tokenBudget = 4000 } = params
 
     // 收集所有记忆段落
     const sections = this.collectSections(skillId)
@@ -171,10 +171,15 @@ export class MemoryInjector {
     // Token 预算控制
     const selected: MemorySection[] = []
     let usedTokens = 0
+    const maxPerItem = Math.floor(tokenBudget * 0.4)
 
     for (const section of sections) {
-      // 优先级 1 必须注入
+      // 优先级 1 必须注入，但单项不超过预算 40%
       if (section.priority === 1) {
+        if (section.tokens > maxPerItem) {
+          section.content = section.content.slice(0, Math.floor(maxPerItem * 2.5))
+          section.tokens = maxPerItem
+        }
         selected.push(section)
         usedTokens += section.tokens
         continue
