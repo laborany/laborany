@@ -4,7 +4,7 @@
  * ║  支持多行输入、快捷键提交、运行状态控制、文件上传、图片粘贴                      ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useState, useRef, useEffect, useCallback, KeyboardEvent, ChangeEvent, ClipboardEvent } from 'react'
+import { useState, useRef, useEffect, useCallback, KeyboardEvent, ChangeEvent, ClipboardEvent, DragEvent } from 'react'
 import { FileIcon } from './FileIcon'
 import {
   DropdownMenu,
@@ -18,6 +18,17 @@ import {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024  // 5MB
+
+/* 可接受的文件类型 —— 与 preview/utils.ts 已支持的类型对齐 */
+const ACCEPTED_FILE_TYPES = [
+  'image/*',
+  '.pdf', '.doc', '.docx', '.txt', '.md',
+  '.json', '.csv', '.xlsx', '.xls', '.xlsm',
+  '.pptx', '.ppt',
+  '.html', '.htm', '.xml', '.yaml', '.yml',
+  '.py', '.js', '.ts', '.jsx', '.tsx',
+  '.svg', '.zip',
+].join(',')
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -51,6 +62,7 @@ export default function ChatInput({
 }: ChatInputProps) {
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [isDragOver, setIsDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const prevIsRunningRef = useRef(isRunning)
@@ -123,6 +135,25 @@ export default function ChatInput({
     [addFiles]
   )
 
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                       拖拽上传处理                                        │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setIsDragOver(true)
+  }, [])
+
+  const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return
+    setIsDragOver(false)
+  }, [])
+
+  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setIsDragOver(false)
+    addFiles(Array.from(e.dataTransfer.files))
+  }, [addFiles])
+
   function handleSubmit() {
     const query = value.trim()
     // 过滤掉有错误的附件
@@ -181,7 +212,18 @@ export default function ChatInput({
     : 'w-full px-4 py-3 overflow-y-auto resize-none focus:outline-none disabled:bg-muted bg-transparent text-foreground placeholder:text-muted-foreground'
 
   return (
-    <div className={containerStyles}>
+    <div
+      className={`${containerStyles} relative transition-all ${isDragOver ? 'ring-2 ring-primary ring-offset-2' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* 拖拽悬停提示 */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-primary/5 rounded-lg pointer-events-none">
+          <span className="text-sm font-medium text-primary">松开鼠标上传文件</span>
+        </div>
+      )}
       {/* 附件预览区 */}
       {attachments.length > 0 && (
         <div className="px-4 py-2 flex flex-wrap gap-2 border-b border-border/50">
@@ -213,7 +255,7 @@ export default function ChatInput({
           <input
             type="file"
             multiple
-            accept="image/*,.pdf,.doc,.docx,.txt,.md,.json,.csv,.xlsx,.xls"
+            accept={ACCEPTED_FILE_TYPES}
             ref={fileInputRef}
             className="hidden"
             onChange={handleFileSelect}
