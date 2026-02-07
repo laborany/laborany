@@ -71,35 +71,55 @@ export class MemCellExtractor {
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  提取事实（简单规则匹配）
+   *  提取事实（规则匹配 + 保底机制）
    *
-   *  识别模式：
-   *  - 偏好：「我喜欢」「我习惯」「我偏好」
+   *  识别模式（中文 + 英文）：
+   *  - 偏好：「我喜欢」「我习惯」「I prefer」「I like」
    *  - 纠正：「不是...是」「应该是」「错了」
-   *  - 事实：「我是」「我的」「我在」
+   *  - 事实：「我是」「我在」「I work with」「I use」
+   *  - 上下文：「我用」「我做」「我正在」「项目」「工作」
+   *
+   *  保底：当所有模式均未匹配时，生成一条 context fact
    * ──────────────────────────────────────────────────────────────────────── */
   extractFacts(messages: Message[]): ExtractedFact[] {
     const facts: ExtractedFact[] = []
-    const patterns = [
+
+    /* ── 中文模式 ── */
+    const zhPatterns = [
       { regex: /我(喜欢|习惯|偏好|倾向)[^。，！？\n]+/g, type: 'preference' as const },
       { regex: /(不是.{2,20}是|应该是|错了.{2,20}正确)/g, type: 'correction' as const },
       { regex: /我(是|的|在|有)[^。，！？\n]{2,30}/g, type: 'fact' as const },
+      { regex: /我(用|常|需要|想|做|正在)[^。，！？\n]{2,40}/g, type: 'context' as const },
+      { regex: /(项目|工作)[^。，！？\n]{2,40}/g, type: 'context' as const },
     ]
 
-    for (const msg of messages) {
-      if (msg.role !== 'user') continue
+    /* ── 英文模式 ── */
+    const enPatterns = [
+      { regex: /I (prefer|like|enjoy|love)\b[^.!?\n]{2,60}/gi, type: 'preference' as const },
+      { regex: /I (use|work with|work on|am using)\b[^.!?\n]{2,60}/gi, type: 'context' as const },
+      { regex: /I (am|have been|was)\b[^.!?\n]{2,60}/gi, type: 'fact' as const },
+    ]
 
-      for (const { regex, type } of patterns) {
+    const allPatterns = [...zhPatterns, ...enPatterns]
+
+    /* ── 同时处理 user 和 assistant 消息 ── */
+    for (const msg of messages) {
+      const confidence = msg.role === 'user' ? 0.7 : 0.5
+      for (const { regex, type } of allPatterns) {
         const matches = msg.content.match(regex)
-        if (matches) {
-          for (const match of matches) {
-            facts.push({
-              type,
-              content: match.trim(),
-              confidence: 0.7,
-            })
-          }
+        if (!matches) continue
+        for (const match of matches) {
+          facts.push({ type, content: match.trim(), confidence })
         }
+      }
+    }
+
+    /* ── 保底机制：确保至少产出一条 fact ── */
+    if (facts.length === 0) {
+      const userMsg = messages.find(m => m.role === 'user')
+      if (userMsg) {
+        const snippet = userMsg.content.slice(0, 50).trim()
+        facts.push({ type: 'context', content: snippet, confidence: 0.5 })
       }
     }
 

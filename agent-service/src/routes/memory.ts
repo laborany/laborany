@@ -21,6 +21,8 @@ import {
   memoryConsolidator,
   memoryProcessor,
   profileManager,
+  memCellStorage,
+  episodeStorage,
 } from '../memory/index.js'
 
 const router = Router()
@@ -403,6 +405,49 @@ router.get('/memory/stats', (_req: Request, res: Response) => {
     res.json(stats)
   } catch (error) {
     res.status(500).json({ error: '获取统计失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取 MemCell 列表                                   │
+ * │  返回最近 N 天的原子记忆列表（轻量摘要）                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+router.get('/memory/cells', (req: Request, res: Response) => {
+  try {
+    const days = req.query.days ? parseInt(req.query.days as string, 10) : 7
+    const cells = memCellStorage.listRecent(days)
+    const list = cells.map(c => ({
+      id: c.id,
+      timestamp: c.timestamp,
+      skillId: c.skillId,
+      summary: c.summary,
+      factCount: c.facts.length,
+      facts: c.facts,
+    }))
+    res.json({ cells: list, total: list.length })
+  } catch (error) {
+    res.status(500).json({ error: '获取 MemCell 列表失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取 Episode 列表                                   │
+ * │  返回所有情节记忆列表（轻量摘要）                                         │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+router.get('/memory/episodes', (_req: Request, res: Response) => {
+  try {
+    const episodes = episodeStorage.listAll()
+    const list = episodes.map(ep => ({
+      id: ep.id,
+      subject: ep.subject,
+      summary: ep.summary,
+      cellCount: ep.cellIds.length,
+      keyFacts: ep.keyFacts,
+      createdAt: ep.createdAt,
+    }))
+    res.json({ episodes: list, total: list.length })
+  } catch (error) {
+    res.status(500).json({ error: '获取 Episode 列表失败' })
   }
 })
 

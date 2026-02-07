@@ -267,6 +267,15 @@ function buildEnvConfig(): Record<string, string | undefined> {
     env.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL
   }
 
+  // 跨平台编码修复：确保子进程输出 UTF-8
+  env.PYTHONIOENCODING = 'utf-8'
+  env.PYTHONUTF8 = '1'
+  if (platform() !== 'win32') {
+    // Unix-like：设置 locale（不覆盖用户已有设置）
+    env.LANG = env.LANG || 'en_US.UTF-8'
+    env.LC_ALL = env.LC_ALL || 'en_US.UTF-8'
+  }
+
   return env
 }
 
@@ -465,7 +474,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   let agentResponse = ''  // 收集 Agent 的文本输出
 
   proc.stdout.on('data', (data: Buffer) => {
-    lineBuffer += data.toString()
+    lineBuffer += data.toString('utf-8')
     const lines = lineBuffer.split('\n')
     lineBuffer = lines.pop() || ''
     for (const line of lines) {
@@ -478,7 +487,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   })
 
   proc.stderr.on('data', (data: Buffer) => {
-    console.error('[Agent] stderr:', data.toString())
+    console.error('[Agent] stderr:', data.toString('utf-8'))
   })
 
   const abortHandler = () => proc.kill('SIGTERM')

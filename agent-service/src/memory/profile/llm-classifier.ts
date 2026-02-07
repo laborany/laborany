@@ -7,7 +7,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type { ExtractedFact } from '../memcell/index.js'
-import type { ProfileSection } from './manager.js'
+import { profileManager } from './manager.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -24,6 +24,16 @@ interface ConflictResult {
   resolution: 'keep_old' | 'use_new' | 'merge'
   mergedValue?: string
   reason: string
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     健壮 JSON 解析                                       │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function parseJSON<T>(raw: string): T {
+  try { return JSON.parse(raw) as T } catch { /* 继续尝试 */ }
+  const m = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+  if (m) return JSON.parse(m[1]) as T
+  throw new Error('无法解析 JSON 响应')
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -82,10 +92,13 @@ const CONFLICT_PROMPT = `你是一个用户画像管理专家。用户画像中�
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export class ProfileLLMClassifier {
   private client: Anthropic | null = null
-  private model: string
+  private classifyModel: string
 
   constructor() {
-    this.model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514'
+    // 分类任务用更轻量的模型，降低延迟和成本
+    this.classifyModel = process.env.ANTHROPIC_CLASSIFY_MODEL
+      || process.env.ANTHROPIC_MODEL
+      || 'claude-haiku-4-20250414'
   }
 
   /* ────────────────────────────────────────────────────────────────────────
@@ -102,25 +115,36 @@ export class ProfileLLMClassifier {
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  分类事实到 Profile 字段
+   *  分类事实到 Profile 字段（带 timeout + Profile 上下文注入）
    * ──────────────────────────────────────────────────────────────────────── */
   async classify(fact: ExtractedFact): Promise<ClassifyResult> {
-    const prompt = CLASSIFY_PROMPT + `类型：${fact.type}\n内容：${fact.content}\n置信度：${fact.confidence}`
+    // 注入当前 Profile 已有字段，辅助 LLM 去重和合并
+    const existingContext = this.buildProfileContext()
+    const prompt = CLASSIFY_PROMPT
+      + `\n## 当前已有画像字段\n${existingContext}\n\n`
+      + `类型：${fact.type}\n内容：${fact.content}\n置信度：${fact.confidence}`
 
     try {
       const client = this.getClient()
-      const response = await client.messages.create({
-        model: this.model,
-        max_tokens: 300,
-        messages: [{ role: 'user', content: prompt }],
-      })
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 10_000)
+
+      const response = await client.messages.create(
+        {
+          model: this.classifyModel,
+          max_tokens: 300,
+          messages: [{ role: 'user', content: prompt }],
+        },
+        { signal: controller.signal }
+      )
+      clearTimeout(timer)
 
       const textBlock = response.content.find(
         (b): b is Anthropic.TextBlock => b.type === 'text'
       )
       if (!textBlock) throw new Error('No text response')
 
-      return JSON.parse(textBlock.text) as ClassifyResult
+      return parseJSON<ClassifyResult>(textBlock.text)
     } catch (error) {
       console.warn('[ProfileLLMClassifier] 分类失败，使用默认:', error)
       return this.defaultClassify(fact)
@@ -128,7 +152,7 @@ export class ProfileLLMClassifier {
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  解决冲突
+   *  解决冲突（带 timeout）
    * ──────────────────────────────────────────────────────────────────────── */
   async resolveConflict(
     oldValue: string,
@@ -144,21 +168,48 @@ export class ProfileLLMClassifier {
 
     try {
       const client = this.getClient()
-      const response = await client.messages.create({
-        model: this.model,
-        max_tokens: 300,
-        messages: [{ role: 'user', content: prompt }],
-      })
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 10_000)
+
+      const response = await client.messages.create(
+        {
+          model: this.classifyModel,
+          max_tokens: 300,
+          messages: [{ role: 'user', content: prompt }],
+        },
+        { signal: controller.signal }
+      )
+      clearTimeout(timer)
 
       const textBlock = response.content.find(
         (b): b is Anthropic.TextBlock => b.type === 'text'
       )
       if (!textBlock) throw new Error('No text response')
 
-      return JSON.parse(textBlock.text) as ConflictResult
+      return parseJSON<ConflictResult>(textBlock.text)
     } catch (error) {
       console.warn('[ProfileLLMClassifier] 冲突解决失败，使用新值:', error)
       return { resolution: 'use_new', reason: 'LLM 调用失败，默认使用新值' }
+    }
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  构建当前 Profile 上下文（注入到分类 prompt）
+   * ──────────────────────────────────────────────────────────────────────── */
+  private buildProfileContext(): string {
+    try {
+      const profile = profileManager.get()
+      const lines: string[] = []
+      for (const section of profile.sections) {
+        if (section.fields.length === 0) continue
+        lines.push(`### ${section.name}`)
+        for (const f of section.fields) {
+          lines.push(`- ${f.key}: ${f.description}`)
+        }
+      }
+      return lines.length > 0 ? lines.join('\n') : '（暂无已有字段）'
+    } catch {
+      return '（暂无已有字段）'
     }
   }
 

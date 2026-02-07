@@ -7,6 +7,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type { Message, ExtractedFact, MemCell } from './memcell/index.js'
+import { memCellExtractor } from './memcell/index.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -79,6 +80,23 @@ const EXTRACTION_PROMPT = `你是一个记忆提取专家。分析以下对话�
 `
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     健壮 JSON 解析                                       │
+ * │  处理 LLM 返回的 markdown 代码块包裹（```json ... ```）                  │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function parseJSON<T>(raw: string): T {
+  // 尝试直接解析
+  try { return JSON.parse(raw) as T } catch { /* 继续尝试 */ }
+
+  // 剥离 markdown 代码块
+  const codeBlockMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+  if (codeBlockMatch) {
+    return JSON.parse(codeBlockMatch[1]) as T
+  }
+
+  throw new Error('无法解析 JSON 响应')
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     LLM 提取器类                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export class LLMExtractor {
@@ -112,7 +130,7 @@ export class LLMExtractor {
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  调用 LLM 提取记忆
+   *  调用 LLM 提取记忆（带 timeout 和健壮 JSON 解析）
    * ──────────────────────────────────────────────────────────────────────── */
   async extract(messages: Message[]): Promise<LLMExtractResult> {
     const conversation = this.formatConversation(messages)
@@ -120,11 +138,18 @@ export class LLMExtractor {
 
     try {
       const client = this.getClient()
-      const response = await client.messages.create({
-        model: this.model,
-        max_tokens: 1500,
-        messages: [{ role: 'user', content: prompt }],
-      })
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 15_000)
+
+      const response = await client.messages.create(
+        {
+          model: this.model,
+          max_tokens: 1500,
+          messages: [{ role: 'user', content: prompt }],
+        },
+        { signal: controller.signal }
+      )
+      clearTimeout(timer)
 
       // 提取文本内容
       const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -132,8 +157,8 @@ export class LLMExtractor {
         throw new Error('No text response')
       }
 
-      // 解析 JSON
-      const result = JSON.parse(textBlock.text) as LLMExtractResult
+      // 健壮 JSON 解析：处理 markdown 代码块包裹
+      const result = parseJSON<LLMExtractResult>(textBlock.text)
       return result
     } catch (error) {
       console.error('[LLMExtractor] 提取失败，使用降级方案:', error)
@@ -142,7 +167,7 @@ export class LLMExtractor {
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  降级方案：LLM 失败时用规则提取兜底
+   *  降级方案：LLM 失败时复用规则提取器兜底
    * ──────────────────────────────────────────────────────────────────────── */
   private buildFallbackResult(messages: Message[]): LLMExtractResult {
     const userMsg = messages.find(m => m.role === 'user')
@@ -150,23 +175,8 @@ export class LLMExtractor {
       ? userMsg.content.slice(0, 200) + (userMsg.content.length > 200 ? '...' : '')
       : '对话记录'
 
-    // 用正则提取事实作为降级（复用 memCellExtractor 的模式）
-    const facts: LLMExtractResult['facts'] = []
-    const patterns = [
-      { regex: /我(喜欢|习惯|偏好|倾向)[^。，！？\n]+/g, type: 'preference' as const },
-      { regex: /(不是.{2,20}是|应该是|错了.{2,20}正确)/g, type: 'correction' as const },
-      { regex: /我(是|的|在|有)[^。，！？\n]{2,30}/g, type: 'fact' as const },
-    ]
-    for (const msg of messages) {
-      if (msg.role !== 'user') continue
-      for (const { regex, type } of patterns) {
-        const matches = msg.content.match(regex)
-        if (!matches) continue
-        for (const match of matches) {
-          facts.push({ type, content: match.trim(), confidence: 0.6 })
-        }
-      }
-    }
+    // 复用 memCellExtractor（已含保底机制）
+    const facts = memCellExtractor.extractFacts(messages)
 
     return { summary, facts, keywords: [], sentiment: 'neutral' }
   }

@@ -12,6 +12,9 @@ import { profileManager, profileLLMClassifier } from './profile/index.js'
 import { memoryFileManager } from './file-manager.js'
 import { llmExtractor } from './llm-extractor.js'
 import { memoryConsolidator } from './consolidator.js'
+import { existsSync, writeFileSync, readFileSync, mkdirSync } from 'fs'
+import { join, dirname } from 'path'
+import { DATA_DIR } from '../paths.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -56,6 +59,9 @@ export class MemoryProcessor {
    * ──────────────────────────────────────────────────────────────────────── */
   async processConversationAsync(params: ProcessParams): Promise<ProcessResult> {
     const { skillId, userQuery, assistantResponse, timestamp = new Date(), useLLM = true } = params
+    const llmAvailable = llmExtractor.isAvailable()
+
+    console.log(`[MemoryProcessor] 开始处理 | skillId=${skillId} useLLM=${useLLM} llmAvailable=${llmAvailable}`)
 
     const result: ProcessResult = {
       cellId: null,
@@ -73,7 +79,7 @@ export class MemoryProcessor {
     let cell: MemCell
 
     // MemCell 层：LLM 提取
-    if (useLLM && llmExtractor.isAvailable()) {
+    if (useLLM && llmAvailable) {
       try {
         const llmResult = await llmExtractor.extract(messages)
         cell = {
@@ -95,7 +101,14 @@ export class MemoryProcessor {
     }
 
     result.cellId = cell.id
-    memCellStorage.save(cell)
+    console.log(`[MemoryProcessor] factsCount=${cell.facts.length} method=${result.extractionMethod}`)
+
+    // 保存 MemCell（带错误保护）
+    try {
+      memCellStorage.save(cell)
+    } catch (error) {
+      console.error('[MemoryProcessor] MemCell 保存失败:', error)
+    }
 
     // Profile 层：LLM 智能分类
     if (useLLM && profileLLMClassifier.isAvailable() && cell.facts.length > 0) {
@@ -108,11 +121,16 @@ export class MemoryProcessor {
       result.profileUpdated = cell.facts.length > 0
     }
 
+    console.log(`[MemoryProcessor] 完成 | profileUpdated=${result.profileUpdated} profileMethod=${result.profileMethod}`)
+
     this.writeToDaily(params, cell)
 
-    // 异步触发自动归纳（fire-and-forget，不阻塞主流程）
+    // 异步触发自动归纳 + 自动 Episode 聚类（fire-and-forget）
     this.maybeAutoConsolidate().catch(err =>
       console.warn('[MemoryProcessor] 自动归纳失败:', err)
+    )
+    this.maybeAutoClusterEpisodes().catch(err =>
+      console.warn('[MemoryProcessor] 自动 Episode 聚类失败:', err)
     )
 
     return result
@@ -205,15 +223,13 @@ export class MemoryProcessor {
    *  策略：去掉常见前缀词，提取核心名词短语
    * ──────────────────────────────────────────────────────────────────────── */
   private extractFactKey(content: string): string {
-    // 去掉常见的中文前缀（"我喜欢"、"我是"、"我在"等）
+    // 去掉常见的中英文前缀
     const stripped = content
-      .replace(/^我(喜欢|习惯|偏好|倾向|是|的|在|有|用|做)/, '')
+      .replace(/^我(喜欢|习惯|偏好|倾向|是|的|在|有|用|常|需要|想|做|正在)/, '')
+      .replace(/^I\s+(prefer|like|enjoy|love|use|work with|work on|am using|am|have been|was)\s+/i, '')
       .trim()
 
-    // 取前 30 字符中的核心短语
     const core = stripped.slice(0, 30)
-
-    // 如果提取后为空，回退到原始内容截取
     return core || content.slice(0, 20)
   }
 
@@ -243,6 +259,35 @@ export class MemoryProcessor {
     })
 
     console.log(`[MemoryProcessor] 自动归纳: ${result.consolidated} 条写入 MEMORY.md`)
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  自动 Episode 聚类
+   *
+   *  触发条件：
+   *  1. 最近 7 天 MemCell >= 5
+   *  2. 距离上次聚类 >= 24 小时
+   * ──────────────────────────────────────────────────────────────────────── */
+  private async maybeAutoClusterEpisodes(): Promise<void> {
+    const cells = memCellStorage.listRecent(7)
+    if (cells.length < 5) return
+
+    // 检查上次聚类时间
+    const clusterFile = join(DATA_DIR, 'memory', 'last-cluster.txt')
+    if (existsSync(clusterFile)) {
+      const lastTime = parseInt(readFileSync(clusterFile, 'utf-8').trim(), 10)
+      if (Date.now() - lastTime < 24 * 60 * 60 * 1000) return
+    }
+
+    // 执行聚类
+    const episodeIds = await this.clusterRecentCellsAsync(7)
+
+    // 记录聚类时间
+    const dir = dirname(clusterFile)
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    writeFileSync(clusterFile, String(Date.now()), 'utf-8')
+
+    console.log(`[MemoryProcessor] 自动 Episode 聚类: ${episodeIds.length} 个 Episode`)
   }
 
   /* ────────────────────────────────────────────────────────────────────────

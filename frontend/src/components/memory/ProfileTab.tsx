@@ -8,6 +8,8 @@
 import { useState, useEffect } from 'react'
 import { AGENT_API_BASE } from '../../config/api'
 import { CollapsibleSection } from '../shared/CollapsibleSection'
+import { MemCellListPanel } from './MemCellListPanel'
+import { EpisodeListPanel } from './EpisodeListPanel'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -45,6 +47,7 @@ export function ProfileTab() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [clustering, setClustering] = useState(false)
+  const [expandedPanel, setExpandedPanel] = useState<'cells' | 'episodes' | null>(null)
 
   useEffect(() => {
     loadData()
@@ -106,8 +109,16 @@ export function ProfileTab() {
 
   return (
     <div className="space-y-6">
-      {/* 记忆概览统计卡片 */}
-      <StatsCards stats={stats} />
+      {/* 记忆概览统计卡片（可点击展开） */}
+      <StatsCards stats={stats} onCardClick={setExpandedPanel} activePanel={expandedPanel} />
+
+      {/* 展开的详情面板 */}
+      {expandedPanel === 'cells' && (
+        <MemCellListPanel onClose={() => setExpandedPanel(null)} />
+      )}
+      {expandedPanel === 'episodes' && (
+        <EpisodeListPanel onClose={() => setExpandedPanel(null)} />
+      )}
 
       {/* 消息提示 */}
       {message && <MessageBox type={message.type} text={message.text} />}
@@ -160,17 +171,27 @@ export function ProfileTab() {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           统计卡片组件                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function StatsCards({ stats }: { stats: MemoryStats | null }) {
+function StatsCards({ stats, onCardClick, activePanel }: {
+  stats: MemoryStats | null
+  onCardClick: (panel: 'cells' | 'episodes' | null) => void
+  activePanel: 'cells' | 'episodes' | null
+}) {
   const items = [
-    { label: '原子记忆', value: stats?.cellCount ?? 0, color: 'text-blue-500' },
-    { label: '情节记忆', value: stats?.episodeCount ?? 0, color: 'text-green-500' },
-    { label: '画像字段', value: stats?.profileFieldCount ?? 0, color: 'text-purple-500' },
+    { label: '原子记忆', value: stats?.cellCount ?? 0, color: 'text-blue-500', panel: 'cells' as const },
+    { label: '情节记忆', value: stats?.episodeCount ?? 0, color: 'text-green-500', panel: 'episodes' as const },
+    { label: '画像字段', value: stats?.profileFieldCount ?? 0, color: 'text-purple-500', panel: null },
   ]
 
   return (
     <div className="grid grid-cols-3 gap-4">
       {items.map((item) => (
-        <div key={item.label} className="rounded-lg border border-border bg-card p-4 text-center">
+        <div
+          key={item.label}
+          onClick={() => item.panel && onCardClick(activePanel === item.panel ? null : item.panel)}
+          className={`rounded-lg border bg-card p-4 text-center transition-colors ${
+            item.panel ? 'cursor-pointer hover:bg-accent' : ''
+          } ${activePanel === item.panel ? 'border-primary' : 'border-border'}`}
+        >
           <div className={`text-2xl font-bold ${item.color}`}>{item.value}</div>
           <div className="mt-1 text-sm text-muted-foreground">{item.label}</div>
         </div>
