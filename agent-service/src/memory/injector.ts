@@ -159,10 +159,13 @@ export class MemoryInjector {
     // 收集所有记忆段落
     const sections = this.collectSections(skillId)
 
-    // 如果有查询，添加检索结果
+    // 如果有查询，添加检索结果（去重）
     if (userQuery.trim()) {
       const relevant = this.searchRelevantMemories(userQuery, skillId)
-      sections.push(...relevant)
+      // 去重：排除已存在的段落（基于内容前 100 字符）
+      const existingPrefixes = new Set(sections.map(s => s.content.slice(0, 100)))
+      const unique = relevant.filter(r => !existingPrefixes.has(r.content.slice(0, 100)))
+      sections.push(...unique)
     }
 
     // 按优先级排序

@@ -5,7 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Link, useParams, useNavigate } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { useAgent } from '../hooks/useAgent'
 import { useVitePreview } from '../hooks/useVitePreview'
 import type { TaskFile, Session, SessionDetail } from '../types'
@@ -187,7 +187,6 @@ const SIDEBAR_WIDTH = 280
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>()
-  const navigate = useNavigate()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [continuing, setContinuing] = useState(false)
@@ -383,11 +382,16 @@ export function SessionDetailPage() {
     return messages
   }
 
-  // 继续对话
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                      在当前页面继续对话                                   │
+   * │                                                                          │
+   * │  恢复 session 上下文后直接执行，无需跳转到 ExecutePage                      │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
   async function handleContinue(query: string) {
     if (!session) return
+    agent.resumeSession(sessionId!)
     setContinuing(true)
-    navigate(`/execute/${session.skill_id}?continue=${sessionId}&query=${encodeURIComponent(query)}`)
+    agent.execute(query)
   }
 
   if (loading) {

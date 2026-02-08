@@ -106,12 +106,13 @@ export function useAgent(skillId: string) {
   const abortRef = useRef<AbortController | null>(null)
   const currentTextRef = useRef('')
   const sessionIdRef = useRef<string | null>(null)
+  const assistantIdRef = useRef<string>(crypto.randomUUID())
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                     处理 SSE 事件（提取为独立函数）                         │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   const handleEvent = useCallback(
-    (event: Record<string, unknown>, assistantId: string) => {
+    (event: Record<string, unknown>) => {
       switch (event.type) {
         case 'session':
           const sid = event.sessionId as string
@@ -121,15 +122,20 @@ export function useAgent(skillId: string) {
           localStorage.setItem(`lastSession_${skillId}`, sid)
           break
 
-        case 'text':
+        case 'text': {
+          /* ────────────────────────────────────────────────────────────────────
+           *  使用 assistantIdRef 追踪当前文本块归属的 assistant 消息
+           *  当 tool_use 事件到来后会重置，使下一段文本创建新消息
+           * ──────────────────────────────────────────────────────────────────── */
+          const aid = assistantIdRef.current
           currentTextRef.current += event.content as string
           setState((s) => {
-            const existing = s.messages.find((m) => m.id === assistantId)
+            const existing = s.messages.find((m) => m.id === aid)
             if (existing) {
               return {
                 ...s,
                 messages: s.messages.map((m) =>
-                  m.id === assistantId
+                  m.id === aid
                     ? { ...m, content: currentTextRef.current }
                     : m,
                 ),
@@ -140,7 +146,7 @@ export function useAgent(skillId: string) {
               messages: [
                 ...s.messages,
                 {
-                  id: assistantId,
+                  id: aid,
                   type: 'assistant',
                   content: currentTextRef.current,
                   timestamp: new Date(),
@@ -149,8 +155,9 @@ export function useAgent(skillId: string) {
             }
           })
           break
+        }
 
-        case 'tool_use':
+        case 'tool_use': {
           const toolName = event.toolName as string
           const toolInput = event.toolInput as Record<string, unknown>
 
@@ -191,7 +198,15 @@ export function useAgent(skillId: string) {
               },
             ],
           }))
+
+          /* ────────────────────────────────────────────────────────────────────
+           *  tool_use 后重置文本累积状态
+           *  下一段 text 事件将创建全新的 assistant 消息，保留对话结构
+           * ──────────────────────────────────────────────────────────────────── */
+          currentTextRef.current = ''
+          assistantIdRef.current = crypto.randomUUID()
           break
+        }
 
         case 'error':
           setState((s) => ({ ...s, error: (event.message || event.content) as string }))
@@ -199,8 +214,9 @@ export function useAgent(skillId: string) {
           localStorage.removeItem(`lastSession_${skillId}`)
           break
 
+        case 'stopped':
         case 'done':
-          // 任务完成，清理 localStorage
+          // 任务完成或停止，清理 localStorage
           localStorage.removeItem(`lastSession_${skillId}`)
           break
       }
@@ -233,8 +249,11 @@ export function useAgent(skillId: string) {
         error: null,
       }))
 
+      // 中止上一次未完成的请求（防止快速连续点击导致竞态）
+      abortRef.current?.abort()
+
       // 准备助手消息
-      const assistantId = crypto.randomUUID()
+      assistantIdRef.current = crypto.randomUUID()
       currentTextRef.current = ''
 
       abortRef.current = new AbortController()
@@ -301,7 +320,7 @@ export function useAgent(skillId: string) {
             try {
               const event = JSON.parse(line.slice(6))
               console.log('[useAgent] 收到事件:', event.type)
-              handleEvent(event, assistantId)
+              handleEvent(event)
             } catch (parseErr) {
               console.warn('[useAgent] JSON 解析失败:', line.slice(6, 100))
             }
@@ -327,20 +346,25 @@ export function useAgent(skillId: string) {
   const stop = useCallback(async () => {
     abortRef.current?.abort()
 
-    if (state.sessionId) {
+    const sid = sessionIdRef.current
+    if (sid) {
       const token = localStorage.getItem('token')
-      await fetch(`${API_BASE}/skill/stop/${state.sessionId}`, {
+      await fetch(`${API_BASE}/skill/stop/${sid}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       })
+      // 清理 localStorage
+      localStorage.removeItem(`lastSession_${skillId}`)
     }
 
     setState((s) => ({ ...s, isRunning: false }))
-  }, [state.sessionId])
+  }, [skillId])
 
   // 清空消息
   const clear = useCallback(() => {
     sessionIdRef.current = null
+    assistantIdRef.current = crypto.randomUUID()
+    currentTextRef.current = ''
     setState({
       messages: [],
       isRunning: false,
@@ -352,6 +376,17 @@ export function useAgent(skillId: string) {
       filesVersion: 0,
     })
   }, [])
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │                     恢复已有 session 上下文                               │
+   * │                                                                          │
+   * │  用于历史对话页面直接继续对话，无需跳转到 ExecutePage                        │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  const resumeSession = useCallback((targetSessionId: string) => {
+    sessionIdRef.current = targetSessionId
+    setState(s => ({ ...s, sessionId: targetSessionId }))
+    localStorage.setItem(`lastSession_${skillId}`, targetSessionId)
+  }, [skillId])
 
   // 获取任务产出文件
   const fetchTaskFiles = useCallback(async () => {
@@ -469,7 +504,7 @@ export function useAgent(skillId: string) {
       sessionIdRef.current = targetSessionId
       abortRef.current = new AbortController()
 
-      const assistantId = crypto.randomUUID()
+      assistantIdRef.current = crypto.randomUUID()
       currentTextRef.current = ''
 
       try {
@@ -500,7 +535,7 @@ export function useAgent(skillId: string) {
 
             try {
               const event = JSON.parse(line.slice(6))
-              handleEvent(event, assistantId)
+              handleEvent(event)
             } catch {
               // 忽略解析错误
             }
@@ -526,6 +561,7 @@ export function useAgent(skillId: string) {
     execute,
     stop,
     clear,
+    resumeSession,
     fetchTaskFiles,
     getFileUrl,
     respondToQuestion,

@@ -5,7 +5,7 @@
  * ║  设计：双目录加载 - 内置 skills（只读）+ 用户 skills（可写）               ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { readFile, readdir } from 'fs/promises'
+import { readFile, readdir, stat } from 'fs/promises'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { parse as parseYaml } from 'yaml'
@@ -148,37 +148,46 @@ export const loadSkill = {
     return skill
   },
 
-  /* 列出所有可用 Skills（内置 + 用户创建） */
+  /* 列出所有可用 Skills（用户创建按时间倒序 + 内置） */
   async listAll(): Promise<SkillMeta[]> {
-    const skillIds = new Set<string>()
-    const skills: SkillMeta[] = []
+    const userIds: { id: string; mtime: number }[] = []
+    const builtinIds: string[] = []
+    const seen = new Set<string>()
 
     /* ────────────────────────────────────────────────────────────────────────
-     *  先加载用户创建的 Skills（优先级更高）
+     *  加载用户 Skills（带修改时间，用于排序）
      * ──────────────────────────────────────────────────────────────────────── */
     try {
       const userDirs = await readdir(USER_SKILLS_DIR, { withFileTypes: true })
       for (const dir of userDirs) {
-        if (dir.isDirectory()) skillIds.add(dir.name)
+        if (!dir.isDirectory()) continue
+        seen.add(dir.name)
+        const mtime = (await stat(join(USER_SKILLS_DIR, dir.name))).mtimeMs
+        userIds.push({ id: dir.name, mtime })
       }
     } catch { /* 目录可能不存在 */ }
 
+    userIds.sort((a, b) => b.mtime - a.mtime)
+
     /* ────────────────────────────────────────────────────────────────────────
-     *  再加载内置 Skills（跳过已存在的 ID，避免重复）
+     *  加载内置 Skills（跳过已存在的 ID，避免重复）
      * ──────────────────────────────────────────────────────────────────────── */
     try {
       const builtinDirs = await readdir(BUILTIN_SKILLS_DIR, { withFileTypes: true })
       for (const dir of builtinDirs) {
-        if (dir.isDirectory()) skillIds.add(dir.name)
+        if (dir.isDirectory() && !seen.has(dir.name)) builtinIds.push(dir.name)
       }
     } catch { /* 目录可能不存在 */ }
 
-    // 加载所有 skills
-    for (const id of skillIds) {
+    /* ────────────────────────────────────────────────────────────────────────
+     *  按顺序加载：用户 skills（最新优先）→ 内置 skills
+     * ──────────────────────────────────────────────────────────────────────── */
+    const orderedIds = [...userIds.map(u => u.id), ...builtinIds]
+    const skills: SkillMeta[] = []
+
+    for (const id of orderedIds) {
       const skill = await this.byId(id)
-      if (skill) {
-        skills.push(skill.meta)
-      }
+      if (skill) skills.push(skill.meta)
     }
     return skills
   },

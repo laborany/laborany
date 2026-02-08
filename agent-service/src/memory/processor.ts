@@ -95,6 +95,7 @@ export class MemoryProcessor {
       } catch (error) {
         console.warn('[MemoryProcessor] MemCell LLM 失败，降级:', error)
         cell = memCellExtractor.extract(messages, skillId)
+        result.extractionMethod = 'regex'
       }
     } else {
       cell = memCellExtractor.extract(messages, skillId)
