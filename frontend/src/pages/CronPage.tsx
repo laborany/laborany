@@ -256,7 +256,7 @@ export default function CronPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* 头部 */}
-      <header className="h-14 border-b border-border bg-card flex items-center justify-between px-6">
+      <header className="h-14 border-b border-border bg-card flex items-center justify-between pl-6 pr-40">
         <h1 className="text-lg font-semibold text-foreground">定时任务</h1>
         <button
           onClick={() => setShowForm(true)}
