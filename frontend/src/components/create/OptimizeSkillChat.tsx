@@ -60,7 +60,11 @@ export function OptimizeSkillChat({
 
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch(`/api/skill/${skillId}/optimize`, {
+      // ═══════════════════════════════════════════════════════════════════════════
+      // 使用 agent-service 的优化端点，而非 src-api
+      // agent-service 内置 skill-optimizer prompt，不依赖外部 skill，实现更稳定
+      // ═══════════════════════════════════════════════════════════════════════════
+      const response = await fetch(`/agent-api/skills/${skillId}/optimize`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -109,10 +113,16 @@ export function OptimizeSkillChat({
           }
         }
       }
-    } catch {
+    } catch (error) {
+      // ═══════════════════════════════════════════════════════════════════════════
+      // 记录错误详情，便于调试
+      // ═══════════════════════════════════════════════════════════════════════════
+      console.error('优化失败:', error)
+
+      const errorMessage = error instanceof Error ? error.message : '未知错误'
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: '优化过程中出现错误，请稍后重试。' },
+        { role: 'assistant', content: `❌ 优化过程中出现错误：${errorMessage}\n\n请检查：\n1. agent-service 是否正常运行（端口 3002）\n2. 网络连接是否正常` },
       ])
     } finally {
       setOptimizing(false)
