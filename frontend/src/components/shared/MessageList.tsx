@@ -22,14 +22,15 @@ interface MessageListProps {
  * │  文本是文本，工具是工具，绝不混淆                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-type TextBlock  = { type: 'text';  content: string; isStreaming: boolean }
-type ToolGroup  = { type: 'tools'; tools: ToolEntry[]; isCompleted: boolean }
-type UserBlock  = { type: 'user';  content: string }
-type ErrorBlock = { type: 'error'; content: string }
+type TextBlock     = { type: 'text';     content: string; isStreaming: boolean }
+type ToolGroup     = { type: 'tools';    tools: ToolEntry[]; isCompleted: boolean }
+type UserBlock     = { type: 'user';     content: string }
+type ErrorBlock    = { type: 'error';    content: string }
+type ThinkingBlock = { type: 'thinking' }
 
 type ToolEntry = { name: string; input?: Record<string, unknown> }
 
-type RenderBlock = TextBlock | ToolGroup | UserBlock | ErrorBlock
+type RenderBlock = TextBlock | ToolGroup | UserBlock | ErrorBlock | ThinkingBlock
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           入口组件                                       │
@@ -101,6 +102,15 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
     }
   }
 
+  // 思考中指示器：正在运行且尚无流式文本输出时显示
+  if (isRunning) {
+    const last = blocks[blocks.length - 1]
+    const needsThinking = !last || last.type === 'user' || last.type === 'tools'
+    if (needsThinking) {
+      blocks.push({ type: 'thinking' })
+    }
+  }
+
   return blocks
 }
 
@@ -110,10 +120,11 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function BlockRenderer({ block }: { block: RenderBlock }) {
   switch (block.type) {
-    case 'user':  return <UserBubble content={block.content} />
-    case 'text':  return <TextBlockView content={block.content} isStreaming={block.isStreaming} />
-    case 'tools': return <ToolGroupView tools={block.tools} isCompleted={block.isCompleted} />
-    case 'error': return <ErrorBanner content={block.content} />
+    case 'user':     return <UserBubble content={block.content} />
+    case 'text':     return <TextBlockView content={block.content} isStreaming={block.isStreaming} />
+    case 'tools':    return <ToolGroupView tools={block.tools} isCompleted={block.isCompleted} />
+    case 'error':    return <ErrorBanner content={block.content} />
+    case 'thinking': return <ThinkingIndicator />
   }
 }
 
@@ -223,6 +234,25 @@ function ErrorBanner({ content }: { content: string }) {
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
       <span>{content}</span>
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     思考中指示器                                         │
+ * │  三点弹跳动画 + 文字提示，给用户即时的视觉反馈                              │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function ThinkingIndicator() {
+  return (
+    <div className="flex items-center gap-2 py-3 animate-in fade-in slide-in-from-bottom-1 duration-200">
+      <div className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-accent/30">
+        <div className="flex gap-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+          <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+          <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+        </div>
+        <span className="text-sm text-muted-foreground ml-1">思考中</span>
+      </div>
     </div>
   )
 }

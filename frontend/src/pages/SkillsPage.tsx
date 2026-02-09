@@ -14,7 +14,6 @@ import { LoadingState } from '../components/shared/LoadingState'
 import { InstalledSkills } from '../components/skill/InstalledSkills'
 import { OfficialMarket } from '../components/skill/OfficialMarket'
 import { SkillConfigPanel } from '../components/skill/SkillConfigPanel'
-import { CreateSkillChat } from '../components/create/CreateSkillChat'
 import { OptimizeSkillChat } from '../components/create/OptimizeSkillChat'
 
 type TabType = 'installed' | 'official' | 'create'
@@ -171,7 +170,7 @@ export default function SkillsPage() {
             active={activeTab === 'create'}
             onClick={() => setActiveTab('create')}
           >
-            创建流程
+            创建
           </TabButton>
         </nav>
       </div>
@@ -196,7 +195,23 @@ export default function SkillsPage() {
           onCustomUrlChange={setCustomUrl}
         />
       ) : (
-        <CreateSkillChat />
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+            <svg className="w-8 h-8 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+          </div>
+          <p className="text-lg font-medium text-foreground mb-2">创建新技能</p>
+          <p className="text-sm text-muted-foreground mb-6">
+            通过对话描述你的需求，AI 会帮你创建一位专属的数字员工
+          </p>
+          <Link
+            to="/create"
+            className="btn-primary px-6 py-2.5 text-sm font-medium rounded-lg"
+          >
+            开始创建
+          </Link>
+        </div>
       )}
     </div>
   )

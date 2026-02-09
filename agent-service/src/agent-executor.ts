@@ -27,7 +27,7 @@ const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentEvent {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'error' | 'done'
+  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'error' | 'done' | 'stopped'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
@@ -286,17 +286,28 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   let lineBuffer = ''
   let agentResponse = ''  // 收集 Agent 的文本输出
+  let toolSummary = ''    // 收集工具调用摘要
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  包装 onEvent：统一收集文本和工具调用信息
+   * ──────────────────────────────────────────────────────────────────────── */
+  const wrappedOnEvent = (event: AgentEvent) => {
+    onEvent(event)
+    if (event.type === 'text' && event.content) {
+      agentResponse += event.content
+    }
+    if (event.type === 'tool_use' && event.toolName) {
+      const desc = event.toolInput?.description || event.toolInput?.file_path || event.toolInput?.command || ''
+      toolSummary += `[工具: ${event.toolName}] ${String(desc).slice(0, 100)}\n`
+    }
+  }
 
   proc.stdout.on('data', (data: Buffer) => {
     lineBuffer += data.toString()
     const lines = lineBuffer.split('\n')
     lineBuffer = lines.pop() || ''
     for (const line of lines) {
-      const event = parseStreamLine(line, onEvent)
-      // 收集文本输出用于记忆
-      if (event?.type === 'text' && event.content) {
-        agentResponse += event.content
-      }
+      parseStreamLine(line, wrappedOnEvent)
     }
   })
 
@@ -304,7 +315,17 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     console.error('[Agent] stderr:', data.toString())
   })
 
-  const abortHandler = () => proc.kill('SIGTERM')
+  const abortHandler = () => {
+    if (platform() === 'win32') {
+      try {
+        execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'ignore' })
+      } catch {
+        proc.kill('SIGTERM')
+      }
+    } else {
+      proc.kill('SIGTERM')
+    }
+  }
   signal.addEventListener('abort', abortHandler)
 
   /* ────────────────────────────────────────────────────────────────────────
@@ -322,35 +343,39 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       clearTimeout(timeoutId)
       signal.removeEventListener('abort', abortHandler)
       if (lineBuffer.trim()) {
-        const event = parseStreamLine(lineBuffer, onEvent)
-        if (event?.type === 'text' && event.content) {
-          agentResponse += event.content
-        }
+        parseStreamLine(lineBuffer, wrappedOnEvent)
       }
 
-      if (timedOut) {
+      /* ──────────────────────────────────────────────────────────────────────
+       *  终止事件：stopped / error / done 互斥，只发一个
+       *  避免后续 done 覆盖 stopped/error 的状态
+       * ────────────────────────────────────────────────────────────────────── */
+      if (signal.aborted) {
+        onEvent({ type: 'stopped', content: '任务已停止' })
+      } else if (timedOut) {
         onEvent({ type: 'error', content: `执行超时 (${effectiveTimeout / 1000}s)` })
-      } else if (signal.aborted) {
-        onEvent({ type: 'error', content: '执行被中止' })
-      } else if (code !== 0) {
-        onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
-      }
-
-      // 任务完成后自动记录到三级记忆结构（使用 LLM 智能提取）
-      if (code === 0 && !timedOut && !signal.aborted && agentResponse.trim()) {
-        try {
-          const result = await memoryProcessor.processConversationAsync({
-            skillId: skill.meta.id,
-            userQuery,
-            assistantResponse: agentResponse,
-          })
-          console.log(`[Agent] 已记录到三级记忆: cellId=${result.cellId}, method=${result.extractionMethod}`)
-        } catch (err) {
-          console.error('[Agent] 记录记忆失败:', err)
+      } else {
+        // 正常完成：记录记忆 + 发送 done
+        if (code === 0 && agentResponse.trim()) {
+          try {
+            const result = await memoryProcessor.processConversationAsync({
+              skillId: skill.meta.id,
+              userQuery,
+              assistantResponse: toolSummary
+                ? `${agentResponse}\n\n## 工具调用记录\n${toolSummary}`
+                : agentResponse,
+            })
+            console.log(`[Agent] 已记录到三级记忆: cellId=${result.cellId}, method=${result.extractionMethod}`)
+          } catch (err) {
+            console.error('[Agent] 记录记忆失败:', err)
+          }
+        }
+        if (code !== 0) {
+          onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
+        } else {
+          onEvent({ type: 'done' })
         }
       }
-
-      onEvent({ type: 'done' })
       resolve()
     })
 
@@ -358,7 +383,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       clearTimeout(timeoutId)
       signal.removeEventListener('abort', abortHandler)
       onEvent({ type: 'error', content: err.message })
-      onEvent({ type: 'done' })
       resolve()
     })
   })

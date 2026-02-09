@@ -344,55 +344,30 @@ skill.post('/stop/:sessionId', (c) => {
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       对话式创建 Skill (SSE)                              │
- * │  说明：新 skill 保存到用户目录（AppData），避免 Program Files 权限问题     │
+ * │                       获取用户 Skills 目录                                │
+ * │  前端创建 skill 时需要知道目标路径                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-skill.post('/create-chat', async (c) => {
-  const { messages } = await c.req.json()
+skill.get('/user-dir', (c) => {
+  return c.json({ path: loadSkill.getUserSkillsDir() })
+})
 
-  if (!messages || !Array.isArray(messages)) {
-    return c.json({ error: '缺少 messages 参数' }, 400)
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       检测新创建的 Skill                                  │
+ * │  对比已知 ID 列表，返回新增的 skill 元信息                                │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+skill.post('/detect-new', async (c) => {
+  const { knownIds } = await c.req.json()
+
+  if (!Array.isArray(knownIds)) {
+    return c.json({ error: '缺少 knownIds 参数' }, 400)
   }
 
-  // 使用 skill-creator skill 来创建新 skill
-  const skillCreator = await loadSkill.byId('skill-creator')
-  if (!skillCreator) {
-    return c.json({ error: 'skill-creator 不存在，无法创建 Skill' }, 404)
-  }
+  loadSkill.clearCache()
+  const allSkills = await loadSkill.listAll()
+  const known = new Set(knownIds)
+  const newSkills = allSkills.filter(s => !known.has(s.id))
 
-  const sessionId = uuid()
-  const abortController = new AbortController()
-  sessionManager.register(sessionId, abortController)
-
-  // 获取用户 skills 目录（可写）
-  const userSkillsDir = loadSkill.getUserSkillsDir()
-
-  // 构建查询：告诉 Claude Code 在用户目录创建 skill
-  const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
-  const query = `${lastUserMessage?.content || ''}\n\n【重要】创建 skill 时，请使用以下路径作为 --path 参数：${userSkillsDir}`
-
-  return streamSSE(c, async (stream) => {
-    try {
-      await executeAgent({
-        skill: skillCreator,
-        query,
-        sessionId,
-        signal: abortController.signal,
-        // 不设置 workDir，使用默认的 tasks 目录（在 AppData 中）
-        onEvent: async (event) => {
-          await stream.writeSSE({ data: JSON.stringify(event) })
-        },
-      })
-      // 创建完成后清除缓存，确保新 skill 可以被加载
-      loadSkill.clearCache()
-      await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '创建失败'
-      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message }) })
-    } finally {
-      sessionManager.unregister(sessionId)
-    }
-  })
+  return c.json({ newSkills })
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

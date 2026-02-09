@@ -14,7 +14,7 @@ import type { AgentEvent } from './agent-executor.js'
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-export type TaskStatus = 'running' | 'completed' | 'failed'
+export type TaskStatus = 'running' | 'completed' | 'failed' | 'stopped'
 
 export interface Task {
   sessionId: string
@@ -90,9 +90,14 @@ class TaskManager {
       }
     })
 
-    // 检查任务是否完成
-    if (event.type === 'done' || event.type === 'error') {
-      task.status = event.type === 'done' ? 'completed' : 'failed'
+    // 终态保护：已完成的任务不再接受状态变更
+    if (task.status !== 'running') return
+
+    // 检查任务是否完成（含停止）
+    if (event.type === 'done' || event.type === 'error' || event.type === 'stopped') {
+      task.status = event.type === 'done' ? 'completed'
+        : event.type === 'stopped' ? 'stopped'
+        : 'failed'
       task.completedAt = Date.now()
       if (event.type === 'error') {
         task.error = event.content

@@ -161,9 +161,6 @@ app.post('/execute', async (req: Request, res: Response) => {
       signal: abortController.signal,
       onEvent: (event) => taskManager.addEvent(sessionId, event),
     })
-
-    // 发送完成事件
-    taskManager.addEvent(sessionId, { type: 'done' })
   } catch (error) {
     if ((error as Error).name === 'AbortError') {
       taskManager.addEvent(sessionId, { type: 'error', content: '执行被中止' })
@@ -183,7 +180,11 @@ app.post('/execute', async (req: Request, res: Response) => {
 app.post('/stop/:sessionId', (req: Request, res: Response) => {
   const { sessionId } = req.params
   const stopped = sessionManager.abort(sessionId)
-  res.json({ success: stopped })
+  // 如果 sessionManager 中没有（可能已经完成），直接标记 taskManager
+  if (!stopped && taskManager.isRunning(sessionId)) {
+    taskManager.addEvent(sessionId, { type: 'stopped', content: '任务已停止' })
+  }
+  res.json({ success: stopped || taskManager.has(sessionId) })
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
