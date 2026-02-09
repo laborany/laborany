@@ -5,7 +5,7 @@
  * ║  设计哲学：扁平化存储，避免 JSON 解析，便于查询和索引                       ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import Database from './db.js'
+import Database, { createDatabase } from './db.js'
 import { join } from 'path'
 import { mkdirSync, existsSync } from 'fs'
 import { v4 as uuid } from 'uuid'
@@ -39,7 +39,7 @@ function getDb(): Database.Database {
     mkdirSync(DATA_DIR, { recursive: true })
   }
 
-  db = new Database(DB_PATH)
+  db = createDatabase(DB_PATH)
   db.pragma('journal_mode = WAL')
   initTables(db)
   return db

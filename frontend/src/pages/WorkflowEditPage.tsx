@@ -388,7 +388,7 @@ export default function WorkflowEditPage() {
   return (
     <div className="h-screen bg-background flex flex-col">
       {/* 头部 */}
-      <header className="h-14 border-b border-border flex items-center justify-between px-4 flex-shrink-0">
+      <header className="h-14 border-b border-border flex items-center justify-between pl-4 pr-40 flex-shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/workflows')}

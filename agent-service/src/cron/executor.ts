@@ -7,7 +7,7 @@
 
 import { v4 as uuid } from 'uuid'
 import { executeAgent } from '../agent-executor.js'
-import { loadSkill } from '../skill-loader.js'
+import { loadSkill } from 'laborany-shared'
 import { executeWorkflow } from '../workflow/executor.js'
 import { loadWorkflow } from '../workflow/loader.js'
 import type { CronJob } from './types.js'

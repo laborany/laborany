@@ -6,7 +6,7 @@
 
 import { Hono } from 'hono'
 import { loadWorkflow } from '../core/workflow/index.js'
-import { loadSkill } from '../core/agent/skill-loader.js'
+import { loadSkill } from '../core/agent/index.js'
 
 const workflow = new Hono()
 

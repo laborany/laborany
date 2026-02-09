@@ -2,12 +2,13 @@
  * ║                     SQLite 数据库加载器                                   ║
  * ║                                                                          ║
  * ║  处理 pkg 打包环境下的原生模块加载                                         ║
- * ║  设计：在 pkg 环境中从可执行文件同级目录加载 .node 文件                     ║
+ * ║  设计：在 pkg 环境中通过 nativeBinding 选项加载 .node 文件                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { join, dirname } from 'path'
 import { existsSync } from 'fs'
-import type BetterSqlite3 from 'better-sqlite3'
+import Database from 'better-sqlite3'
+import type { Database as DatabaseType } from 'better-sqlite3'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     检测 pkg 打包环境                                     │
@@ -15,53 +16,35 @@ import type BetterSqlite3 from 'better-sqlite3'
 const isPkg = typeof (process as any).pkg !== 'undefined'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     加载 better-sqlite3                                   │
+ * │                     获取原生模块路径                                       │
  * │                                                                          │
- * │  pkg 环境：从可执行文件同级目录加载原生模块                                │
- * │  开发环境：正常导入                                                       │
+ * │  优先级：环境变量 > 可执行文件同目录 > 默认加载                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-let DatabaseConstructor: typeof BetterSqlite3
+const getNativeBindingPath = (): string | undefined => {
+  // 优先使用环境变量指定的路径（Electron 启动时设置）
+  const envPath = process.env.BETTER_SQLITE3_BINDING
+  if (envPath && existsSync(envPath)) return envPath
 
-if (isPkg) {
-  const nativeModulePath = join(dirname(process.execPath), 'better_sqlite3.node')
+  if (!isPkg) return undefined
 
-  if (existsSync(nativeModulePath)) {
-    // 在 pkg 环境中，需要在加载 better-sqlite3 之前设置原生模块路径
-    // 通过修改 require.resolve 的行为来实现
-    const binding = require(nativeModulePath)
-
-    // 创建一个假的 bindings 模块
-    const Module = require('module')
-    const originalResolveFilename = Module._resolveFilename
-
-    Module._resolveFilename = function(request: string, parent: any, isMain: boolean, options: any) {
-      if (request === 'bindings') {
-        // 返回一个假的路径，实际上我们会拦截 require
-        return 'bindings'
-      }
-      return originalResolveFilename.call(this, request, parent, isMain, options)
-    }
-
-    // 缓存假的 bindings 模块
-    require.cache['bindings'] = {
-      id: 'bindings',
-      filename: 'bindings',
-      loaded: true,
-      exports: () => binding
-    } as any
-
-    DatabaseConstructor = require('better-sqlite3')
-
-    // 恢复原始行为
-    Module._resolveFilename = originalResolveFilename
-    delete require.cache['bindings']
-  } else {
-    console.warn('[DB] Native module not found at:', nativeModulePath)
-    DatabaseConstructor = require('better-sqlite3')
-  }
-} else {
-  // 开发环境，正常导入
-  DatabaseConstructor = require('better-sqlite3')
+  // pkg 环境：检查可执行文件同目录
+  const nativePath = join(dirname(process.execPath), 'better_sqlite3.node')
+  return existsSync(nativePath) ? nativePath : undefined
 }
 
-export default DatabaseConstructor
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     创建数据库实例                                         │
+ * │                                                                          │
+ * │  pkg 环境：通过 nativeBinding 选项指定原生模块路径                         │
+ * │  开发环境：使用默认加载方式                                                │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export const createDatabase = (filename: string, options?: { readonly?: boolean }): DatabaseType => {
+  const nativeBinding = getNativeBindingPath()
+
+  return new Database(filename, {
+    ...options,
+    ...(nativeBinding ? { nativeBinding } : {})
+  })
+}
+
+export default Database

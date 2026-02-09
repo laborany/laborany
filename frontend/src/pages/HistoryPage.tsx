@@ -231,9 +231,17 @@ export function SessionDetailPage() {
   useEffect(() => {
     if (sessionId) {
       fetchSessionDetail()
-      fetchTaskFiles()
     }
   }, [sessionId])
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │  只有当 session 有 work_dir 时才获取文件列表                              │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  useEffect(() => {
+    if (session?.work_dir) {
+      fetchTaskFiles()
+    }
+  }, [session?.work_dir])
 
   async function fetchSessionDetail() {
     try {

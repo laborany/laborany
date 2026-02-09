@@ -160,7 +160,8 @@ app.all('/agent-api/*', async (c) => {
   }
 
   const path = c.req.path.replace('/agent-api', '')
-  const targetUrl = `${AGENT_SERVICE_URL}${path}`
+  const url = new URL(c.req.url)
+  const targetUrl = `${AGENT_SERVICE_URL}${path}${url.search}`
 
   try {
     const headers = new Headers(c.req.raw.headers)

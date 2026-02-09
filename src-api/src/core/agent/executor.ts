@@ -6,11 +6,11 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { spawn, execSync } from 'child_process'
-import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import type { Skill } from './skill-loader.js'
+import type { Skill } from 'laborany-shared'
 import { isZhipuApi, buildZhipuMcpServers, injectMcpServers } from './mcp/index.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -56,75 +56,54 @@ function getAppDataDir(): string {
 }
 
 function getTasksBaseDir(): string {
+  if (isPackaged()) {
+    // 打包环境：与 agent-service 保持一致，使用 data/tasks
+    return join(getAppDataDir(), 'data', 'tasks')
+  }
   return join(getAppDataDir(), 'tasks')
-}
-
-function findClaudeMd(): string | null {
-  /* ┌────────────────────────────────────────────────────────────────────────┐
-   * │  在多个可能的位置查找 CLAUDE.md                                         │
-   * │  优先级：pkg 打包路径 > Electron resources > 开发模式路径               │
-   * └────────────────────────────────────────────────────────────────────────┘ */
-  const candidates: string[] = []
-
-  // 1. pkg 打包模式：exe 在 resources/api/，CLAUDE.md 在 resources/
-  const exeDir = dirname(process.execPath)
-  candidates.push(join(exeDir, '..', 'CLAUDE.md'))
-  candidates.push(join(exeDir, 'CLAUDE.md'))
-
-  // 2. Electron resources 路径（如果 resourcesPath 存在）
-  if ((process as NodeJS.Process & { resourcesPath?: string }).resourcesPath) {
-    const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath!
-    candidates.push(join(resourcesPath, 'CLAUDE.md'))
-  }
-
-  // 3. 开发模式：从项目根目录读取
-  candidates.push(join(__dirname, '..', '..', '..', '..', 'CLAUDE.md'))
-
-  // 4. 相对于当前工作目录
-  candidates.push(join(process.cwd(), 'CLAUDE.md'))
-
-  // 查找第一个存在的文件
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      console.log(`[Agent] Found CLAUDE.md at: ${candidate}`)
-      return candidate
-    }
-  }
-
-  console.warn(`[Agent] CLAUDE.md not found in any of: ${candidates.join(', ')}`)
-  return null
-}
-
-function getClaudeMdPath(): string | null {
-  return findClaudeMd()
 }
 
 export function getTaskDir(sessionId: string): string {
   return join(getTasksBaseDir(), sessionId)
 }
 
-function copyClaudeMdToDir(targetDir: string): void {
-  /* ┌────────────────────────────────────────────────────────────────────────┐
-   * │  复制 CLAUDE.md 到目标目录                                              │
-   * └────────────────────────────────────────────────────────────────────────┘ */
-  const claudeMdSrc = getClaudeMdPath()
-  const claudeMdDest = join(targetDir, 'CLAUDE.md')
-
-  if (!claudeMdSrc) {
-    console.warn(`[Agent] CLAUDE.md source not found, skipping copy`)
-    return
-  }
-
-  if (existsSync(claudeMdDest)) {
-    console.log(`[Agent] CLAUDE.md already exists at: ${claudeMdDest}`)
-    return
-  }
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       获取 Memory 上下文并写入 CLAUDE.md                   │
+ * │  从 agent-service 获取完整的 Memory 上下文，写入 CLAUDE.md                 │
+ * │  Claude Code 会自动读取 CLAUDE.md 作为系统提示词                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+async function writeClaudeMdWithMemory(
+  targetDir: string,
+  skillId: string,
+  skillSystemPrompt: string,
+  userQuery?: string
+): Promise<void> {
+  const claudeMdPath = join(targetDir, 'CLAUDE.md')
 
   try {
-    copyFileSync(claudeMdSrc, claudeMdDest)
-    console.log(`[Agent] Copied CLAUDE.md: ${claudeMdSrc} -> ${claudeMdDest}`)
+    // 从 agent-service 获取 Memory 上下文（传入 userQuery 用于智能检索）
+    const queryParam = userQuery ? `?query=${encodeURIComponent(userQuery)}` : ''
+    const response = await fetch(`http://localhost:3002/memory-context/${skillId}${queryParam}`)
+    if (response.ok) {
+      const data = await response.json() as { context?: string }
+      const memoryContext = data.context || ''
+
+      // 组合完整的系统提示词
+      const fullPrompt = memoryContext
+        ? `${memoryContext}\n\n---\n\n${skillSystemPrompt}`
+        : skillSystemPrompt
+
+      writeFileSync(claudeMdPath, fullPrompt, 'utf-8')
+      console.log(`[Agent] 已写入 CLAUDE.md（含 Memory 上下文）: ${claudeMdPath}`)
+    } else {
+      // 如果获取失败，只写入 skill 的系统提示词
+      writeFileSync(claudeMdPath, skillSystemPrompt, 'utf-8')
+      console.log(`[Agent] 已写入 CLAUDE.md（无 Memory）: ${claudeMdPath}`)
+    }
   } catch (err) {
-    console.warn(`[Agent] Failed to copy CLAUDE.md: ${err}`)
+    // 网络错误时，只写入 skill 的系统提示词
+    writeFileSync(claudeMdPath, skillSystemPrompt, 'utf-8')
+    console.warn(`[Agent] 获取 Memory 上下文失败，已写入基础 CLAUDE.md: ${err}`)
   }
 }
 
@@ -133,7 +112,6 @@ export function ensureTaskDir(sessionId: string): string {
   if (!existsSync(taskDir)) {
     mkdirSync(taskDir, { recursive: true })
   }
-  copyClaudeMdToDir(taskDir)
   return taskDir
 }
 
@@ -289,6 +267,15 @@ function buildEnvConfig(): Record<string, string | undefined> {
     env.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL
   }
 
+  // 跨平台编码修复：确保子进程输出 UTF-8
+  env.PYTHONIOENCODING = 'utf-8'
+  env.PYTHONUTF8 = '1'
+  if (platform() !== 'win32') {
+    // Unix-like：设置 locale（不覆盖用户已有设置）
+    env.LANG = env.LANG || 'en_US.UTF-8'
+    env.LC_ALL = env.LC_ALL || 'en_US.UTF-8'
+  }
+
   return env
 }
 
@@ -316,7 +303,11 @@ interface StreamMessage {
 }
 
 function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): void {
-  if (!line.trim()) return
+  parseStreamLineWithReturn(line, onEvent)
+}
+
+function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) => void): AgentEvent | null {
+  if (!line.trim()) return null
 
   try {
     const msg: StreamMessage = JSON.parse(line)
@@ -324,14 +315,18 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): vo
     if (msg.type === 'assistant' && msg.message?.content) {
       for (const block of msg.message.content) {
         if (block.type === 'text' && block.text) {
-          onEvent({ type: 'text', content: block.text })
+          const event: AgentEvent = { type: 'text', content: block.text }
+          onEvent(event)
+          return event
         } else if (block.type === 'tool_use' && block.name) {
-          onEvent({
+          const event: AgentEvent = {
             type: 'tool_use',
             toolName: block.name,
             toolInput: block.input,
             content: `调用工具: ${block.name}`,
-          })
+          }
+          onEvent(event)
+          return event
         }
       }
     } else if (msg.type === 'user' && msg.message?.content) {
@@ -340,17 +335,20 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): vo
           const resultText = typeof block.content === 'string'
             ? block.content
             : JSON.stringify(block.content)
-          onEvent({
+          const event: AgentEvent = {
             type: 'tool_result',
             toolResult: resultText,
             content: block.is_error ? `工具执行失败` : `工具执行完成`,
-          })
+          }
+          onEvent(event)
+          return event
         }
       }
     }
   } catch {
     // 非 JSON 行，忽略
   }
+  return null
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -368,14 +366,15 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   if (workDir && !existsSync(workDir)) {
     mkdirSync(workDir, { recursive: true })
   }
-  // 确保 CLAUDE.md 存在于工作目录
-  if (workDir) {
-    copyClaudeMdToDir(workDir)
-  }
 
   // 使用 sessionId 区分不同步骤的历史记录
   const historyFile = join(taskDir, `history-${sessionId}.txt`)
   const isNewSession = !existsSync(historyFile)
+
+  // 新会话时写入 CLAUDE.md（含 Memory 上下文，传入 userQuery 用于智能检索）
+  if (isNewSession) {
+    await writeClaudeMdWithMemory(taskDir, skill.meta.id, skill.systemPrompt, userQuery)
+  }
   console.log(`[Agent] Task directory: ${taskDir}`)
   console.log(`[Agent] Is new session: ${isNewSession}`)
 
@@ -442,13 +441,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
-   * 构建完整 prompt
+   * 构建 prompt（系统提示词已写入 CLAUDE.md，这里只传用户查询）
    * ═══════════════════════════════════════════════════════════════════════════ */
-  const basePrompt = skill.systemPrompt
-
-  const prompt = isNewSession
-    ? `${basePrompt}\n\n---\n\n用户问题：${userQuery}`
-    : userQuery
+  const prompt = userQuery
 
   console.log(`[Agent] Args: ${args.join(' ')}`)
 
@@ -476,32 +471,60 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   proc.stdin.end()
 
   let lineBuffer = ''
+  let agentResponse = ''  // 收集 Agent 的文本输出
 
   proc.stdout.on('data', (data: Buffer) => {
-    lineBuffer += data.toString()
+    lineBuffer += data.toString('utf-8')
     const lines = lineBuffer.split('\n')
     lineBuffer = lines.pop() || ''
     for (const line of lines) {
-      parseStreamLine(line, onEvent)
+      const event = parseStreamLineWithReturn(line, onEvent)
+      // 收集文本输出用于记忆
+      if (event?.type === 'text' && event.content) {
+        agentResponse += event.content
+      }
     }
   })
 
   proc.stderr.on('data', (data: Buffer) => {
-    console.error('[Agent] stderr:', data.toString())
+    console.error('[Agent] stderr:', data.toString('utf-8'))
   })
 
   const abortHandler = () => proc.kill('SIGTERM')
   signal.addEventListener('abort', abortHandler)
 
   return new Promise((resolve) => {
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       signal.removeEventListener('abort', abortHandler)
-      if (lineBuffer.trim()) parseStreamLine(lineBuffer, onEvent)
+      if (lineBuffer.trim()) {
+        const event = parseStreamLineWithReturn(lineBuffer, onEvent)
+        if (event?.type === 'text' && event.content) {
+          agentResponse += event.content
+        }
+      }
 
       if (signal.aborted) {
         onEvent({ type: 'error', content: '执行被中止' })
       } else if (code !== 0) {
         onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
+      }
+
+      // 任务完成后记录到三级记忆系统
+      if (code === 0 && !signal.aborted && agentResponse.trim()) {
+        try {
+          await fetch('http://localhost:3002/memory/record-task', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              skillId: skill.meta.id,
+              userQuery,
+              assistantResponse: agentResponse,
+            }),
+          })
+          console.log('[Agent] 已记录任务到三级记忆系统')
+        } catch (err) {
+          console.error('[Agent] 记录记忆失败:', err)
+        }
       }
 
       onEvent({ type: 'done' })

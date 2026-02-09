@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { config } from 'dotenv'
-import { resolve, dirname, join } from 'path'
+import { resolve, dirname, join, posix, normalize } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir } from 'os'
 
@@ -27,15 +27,18 @@ import express, { Request, Response } from 'express'
 import cors from 'cors'
 import { v4 as uuid } from 'uuid'
 import { readFile, readdir, writeFile, mkdir, rm } from 'fs/promises'
-import { existsSync } from 'fs'
-import { loadSkill } from './skill-loader.js'
+import { existsSync, mkdirSync } from 'fs'
+import { loadSkill, BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from 'laborany-shared'
 import { SessionManager } from './session-manager.js'
 import { executeAgent } from './agent-executor.js'
 import { taskManager } from './task-manager.js'
 import { loadWorkflow } from './workflow/loader.js'
 import { executeWorkflow, validateWorkflowInput } from './workflow/executor.js'
 import type { WorkflowEvent } from './workflow/types.js'
-import { SKILLS_DIR } from './paths.js'
+import { RESOURCES_DIR, DATA_DIR } from './paths.js'
+import { memoryInjector } from './memory/index.js'
+import { memoryRouter, cronRouter, notificationsRouter } from './routes/index.js'
+import { startCronTimer } from './cron/index.js'
 
 const app = express()
 const PORT = process.env.AGENT_PORT || 3002
@@ -46,7 +49,37 @@ const PORT = process.env.AGENT_PORT || 3002
 app.use(cors())
 app.use(express.json())
 
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                           路由挂载                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+app.use(memoryRouter)
+app.use('/cron', cronRouter)
+app.use('/notifications', notificationsRouter)
+
 const sessionManager = new SessionManager()
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     Skill 路径辅助函数                                    │
+ * │                                                                          │
+ * │  查找顺序：用户目录优先，然后是内置目录                                    │
+ * │  写入时：始终使用用户目录（避免权限问题）                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function findSkillPath(skillId: string): string | null {
+  // 优先检查用户目录
+  const userPath = join(USER_SKILLS_DIR, skillId)
+  if (existsSync(userPath)) return userPath
+
+  // 然后检查内置目录
+  const builtinPath = join(BUILTIN_SKILLS_DIR, skillId)
+  if (existsSync(builtinPath)) return builtinPath
+
+  return null
+}
+
+function getWritableSkillPath(skillId: string): string {
+  // 写入时始终使用用户目录
+  return join(USER_SKILLS_DIR, skillId)
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                         健康检查端点                                      │
@@ -386,7 +419,11 @@ app.get('/skills/:skillId/detail', async (req: Request, res: Response) => {
       return
     }
 
-    const skillPath = join(SKILLS_DIR, skillId)
+    const skillPath = findSkillPath(skillId)
+    if (!skillPath) {
+      res.status(404).json({ error: 'Skill 目录不存在' })
+      return
+    }
     const entries = await readdir(skillPath, { withFileTypes: true })
 
     const files: Array<{
@@ -482,7 +519,12 @@ app.get('/skills/:skillId/file', async (req: Request, res: Response) => {
   }
 
   try {
-    const fullPath = join(SKILLS_DIR, skillId, filePath)
+    const skillPath = findSkillPath(skillId)
+    if (!skillPath) {
+      res.status(404).json({ error: 'Skill 不存在' })
+      return
+    }
+    const fullPath = join(skillPath, filePath)
     const content = await readFile(fullPath, 'utf-8')
     res.json({ content })
   } catch {
@@ -492,6 +534,7 @@ app.get('/skills/:skillId/file', async (req: Request, res: Response) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       保存 Skill 文件                                      │
+ * │  注意：始终保存到用户目录，避免权限问题                                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 app.put('/skills/:skillId/file', async (req: Request, res: Response) => {
   const { skillId } = req.params
@@ -503,7 +546,18 @@ app.put('/skills/:skillId/file', async (req: Request, res: Response) => {
   }
 
   try {
-    const fullPath = join(SKILLS_DIR, skillId, filePath)
+    // 始终保存到用户目录
+    const skillPath = getWritableSkillPath(skillId)
+    // 确保目录存在
+    if (!existsSync(skillPath)) {
+      mkdirSync(skillPath, { recursive: true })
+    }
+    const fullPath = join(skillPath, filePath)
+    // 确保父目录存在
+    const parentDir = dirname(fullPath)
+    if (!existsSync(parentDir)) {
+      mkdirSync(parentDir, { recursive: true })
+    }
     await writeFile(fullPath, content, 'utf-8')
     loadSkill.clearCache()
     res.json({ success: true })
@@ -513,15 +567,29 @@ app.put('/skills/:skillId/file', async (req: Request, res: Response) => {
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取当前 Skills 列表                                 │
+ * │                       获取当前 Skills 列表（用户目录）                       │
+ * │  用于检测新创建的 Skills                                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 async function getSkillIds(): Promise<Set<string>> {
+  const skillIds = new Set<string>()
+
+  // 检查用户目录
   try {
-    const entries = await readdir(SKILLS_DIR, { withFileTypes: true })
-    return new Set(entries.filter(e => e.isDirectory()).map(e => e.name))
-  } catch {
-    return new Set()
-  }
+    const userEntries = await readdir(USER_SKILLS_DIR, { withFileTypes: true })
+    for (const e of userEntries) {
+      if (e.isDirectory()) skillIds.add(e.name)
+    }
+  } catch { /* 目录可能不存在 */ }
+
+  // 检查内置目录
+  try {
+    const builtinEntries = await readdir(BUILTIN_SKILLS_DIR, { withFileTypes: true })
+    for (const e of builtinEntries) {
+      if (e.isDirectory()) skillIds.add(e.name)
+    }
+  } catch { /* 目录可能不存在 */ }
+
+  return skillIds
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -571,8 +639,8 @@ app.post('/skills/create', async (req: Request, res: Response) => {
       .map((m: { role: string; content: string }) => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
       .join('\n\n')
 
-    // 注入 skills 目录路径和对话历史
-    const absoluteSkillsDir = SKILLS_DIR.replace(/\\/g, '/')
+    // 注入 skills 目录路径和对话历史（使用用户目录，避免权限问题）
+    const absoluteSkillsDir = USER_SKILLS_DIR.replace(/\\/g, '/')
     const contextPrefix = `## 重要上下文
 
 Skills 目录的绝对路径是：${absoluteSkillsDir}
@@ -685,18 +753,26 @@ app.get('/skills/official', async (_req: Request, res: Response) => {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       卸载 Skill                                          │
+ * │  只允许删除用户目录中的 Skill，内置 Skill 不可删除                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 app.delete('/skills/:skillId', async (req: Request, res: Response) => {
   const { skillId } = req.params
 
   try {
-    const skillPath = join(SKILLS_DIR, skillId)
-    if (!existsSync(skillPath)) {
+    // 只允许删除用户目录中的 Skill
+    const userSkillPath = join(USER_SKILLS_DIR, skillId)
+    if (!existsSync(userSkillPath)) {
+      // 检查是否是内置 Skill
+      const builtinPath = join(BUILTIN_SKILLS_DIR, skillId)
+      if (existsSync(builtinPath)) {
+        res.status(403).json({ error: '内置 Skill 不可删除' })
+        return
+      }
       res.status(404).json({ error: 'Skill 不存在' })
       return
     }
 
-    await rm(skillPath, { recursive: true, force: true })
+    await rm(userSkillPath, { recursive: true, force: true })
     loadSkill.clearCache()
     res.json({ success: true })
   } catch (error) {
@@ -754,12 +830,13 @@ app.post('/skills/:skillId/optimize', async (req: Request, res: Response) => {
       .map((m: { role: string; content: string }) => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
       .join('\n\n')
 
-    // 注入上下文
-    const absoluteSkillsDir = SKILLS_DIR.replace(/\\/g, '/')
+    // 注入上下文（使用实际的 skill 路径）
+    const skillPath = findSkillPath(skillId)
+    const absoluteSkillPath = skillPath ? skillPath.replace(/\\/g, '/') : `${USER_SKILLS_DIR.replace(/\\/g, '/')}/${skillId}`
     const contextPrefix = `## 重要上下文
 
 你正在优化的 Skill 是：${skillId}
-Skill 目录的绝对路径是：${absoluteSkillsDir}/${skillId}
+Skill 目录的绝对路径是：${absoluteSkillPath}
 
 ## 现有 Skill 文件内容
 
@@ -803,7 +880,9 @@ ${conversationHistory}
  * │                       读取 Skill 所有文件内容                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 async function readSkillFiles(skillId: string): Promise<string> {
-  const skillPath = join(SKILLS_DIR, skillId)
+  const skillPath = findSkillPath(skillId)
+  if (!skillPath) return '（Skill 目录不存在）'
+
   const result: string[] = []
 
   async function readDir(dir: string, prefix: string = ''): Promise<void> {
@@ -923,8 +1002,8 @@ async function installSkillFromGitHub(source: string): Promise<{ skillId: string
   // 提取 Skill ID（目录名）
   const skillId = skillPath.split('/').pop() || skillPath
 
-  // 创建本地目录
-  const localSkillDir = join(SKILLS_DIR, skillId)
+  // 创建本地目录（安装到用户目录，避免权限问题）
+  const localSkillDir = join(USER_SKILLS_DIR, skillId)
   if (existsSync(localSkillDir)) {
     throw new Error(`Skill "${skillId}" 已存在`)
   }
@@ -1186,250 +1265,18 @@ app.post('/workflows/stop/:runId', (req: Request, res: Response) => {
   res.json({ success: stopped })
 })
 
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                         Cron 定时任务 API                                 ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
-import {
-  listJobs,
-  getJob,
-  createJob,
-  updateJob,
-  deleteJob,
-  getJobRuns,
-  triggerJob,
-  startCronTimer,
-  getCronTimerStatus,
-  validateCronExpr,
-  describeSchedule,
-  // 通知相关
-  listNotifications,
-  getUnreadCount,
-  markNotificationRead,
-  markAllNotificationsRead,
-  sendTestEmail
-} from './cron/index.js'
-import type { CreateJobRequest, UpdateJobRequest, Schedule } from './cron/index.js'
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取定时任务列表                                     │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.get('/cron/jobs', (_req: Request, res: Response) => {
-  try {
-    const jobs = listJobs()
-    res.json({ jobs })
-  } catch (error) {
-    res.status(500).json({ error: '获取任务列表失败' })
-  }
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取单个定时任务                                     │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.get('/cron/jobs/:id', (req: Request, res: Response) => {
-  const { id } = req.params
-  const job = getJob(id)
-  if (!job) {
-    res.status(404).json({ error: '任务不存在' })
-    return
-  }
-  res.json(job)
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       创建定时任务                                         │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.post('/cron/jobs', (req: Request, res: Response) => {
-  const { name, description, schedule, target, enabled } = req.body as CreateJobRequest
-
-  if (!name || !schedule || !target) {
-    res.status(400).json({ error: '缺少必要参数: name, schedule, target' })
-    return
-  }
-
-  // 验证 cron 表达式
-  if (schedule.kind === 'cron') {
-    const error = validateCronExpr(schedule.expr)
-    if (error) {
-      res.status(400).json({ error: `无效的 Cron 表达式: ${error}` })
-      return
-    }
-  }
-
-  try {
-    const job = createJob({ name, description, schedule, target, enabled })
-    res.json(job)
-  } catch (error) {
-    res.status(500).json({ error: '创建任务失败' })
-  }
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       更新定时任务                                         │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.patch('/cron/jobs/:id', (req: Request, res: Response) => {
-  const { id } = req.params
-  const updates = req.body as UpdateJobRequest
-
-  // 验证 cron 表达式
-  if (updates.schedule?.kind === 'cron') {
-    const error = validateCronExpr(updates.schedule.expr)
-    if (error) {
-      res.status(400).json({ error: `无效的 Cron 表达式: ${error}` })
-      return
-    }
-  }
-
-  try {
-    const job = updateJob(id, updates)
-    if (!job) {
-      res.status(404).json({ error: '任务不存在' })
-      return
-    }
-    res.json(job)
-  } catch (error) {
-    res.status(500).json({ error: '更新任务失败' })
-  }
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       删除定时任务                                         │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.delete('/cron/jobs/:id', (req: Request, res: Response) => {
-  const { id } = req.params
-  const success = deleteJob(id)
-  if (!success) {
-    res.status(404).json({ error: '任务不存在' })
-    return
-  }
-  res.json({ success: true })
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       手动触发定时任务                                     │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.post('/cron/jobs/:id/run', async (req: Request, res: Response) => {
-  const { id } = req.params
-  const result = await triggerJob(id)
-  if (!result.success) {
-    res.status(result.error === '任务不存在' ? 404 : 500).json({ error: result.error })
-    return
-  }
-  res.json({ success: true, sessionId: result.sessionId })
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取任务执行历史                                     │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.get('/cron/jobs/:id/runs', (req: Request, res: Response) => {
-  const { id } = req.params
-  const limit = parseInt(req.query.limit as string) || 20
-
-  const job = getJob(id)
-  if (!job) {
-    res.status(404).json({ error: '任务不存在' })
-    return
-  }
-
-  const runs = getJobRuns(id, limit)
-  res.json({ runs })
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取定时器状态                                       │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.get('/cron/status', (_req: Request, res: Response) => {
-  res.json(getCronTimerStatus())
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       解析调度描述（辅助 API）                              │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.post('/cron/describe', (req: Request, res: Response) => {
-  const schedule = req.body as Schedule
-  if (!schedule || !schedule.kind) {
-    res.status(400).json({ error: '缺少 schedule 参数' })
-    return
-  }
-  res.json({ description: describeSchedule(schedule) })
-})
-
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                         通知系统 API                                      ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取通知列表                                         │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.get('/notifications', (req: Request, res: Response) => {
-  const limit = parseInt(req.query.limit as string) || 50
-  try {
-    const notifications = listNotifications(limit)
-    res.json({ notifications })
-  } catch (error) {
-    res.status(500).json({ error: '获取通知列表失败' })
-  }
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取未读通知数量                                     │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.get('/notifications/unread-count', (_req: Request, res: Response) => {
-  try {
-    const count = getUnreadCount()
-    res.json({ count })
-  } catch (error) {
-    res.status(500).json({ error: '获取未读数量失败' })
-  }
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       标记单个通知为已读                                   │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.post('/notifications/:id/read', (req: Request, res: Response) => {
-  const id = parseInt(req.params.id)
-  if (isNaN(id)) {
-    res.status(400).json({ error: '无效的通知 ID' })
-    return
-  }
-  const success = markNotificationRead(id)
-  res.json({ success })
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       标记所有通知为已读                                   │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.post('/notifications/read-all', (_req: Request, res: Response) => {
-  try {
-    const count = markAllNotificationsRead()
-    res.json({ success: true, count })
-  } catch (error) {
-    res.status(500).json({ error: '标记已读失败' })
-  }
-})
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       发送测试邮件                                         │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-app.post('/notifications/test-email', async (_req: Request, res: Response) => {
-  try {
-    const result = await sendTestEmail()
-    if (result.success) {
-      res.json({ success: true, message: '测试邮件已发送，请检查收件箱' })
-    } else {
-      res.status(400).json({ success: false, error: result.error })
-    }
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : '发送失败'
-    res.status(500).json({ success: false, error: msg })
-  }
-})
-
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           启动服务                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+
+// 确保 DATA_DIR 存在（Memory 文件存储位置）
+if (!existsSync(DATA_DIR)) {
+  mkdirSync(DATA_DIR, { recursive: true })
+}
+
 app.listen(PORT, () => {
   console.log(`[Agent Service] 运行在 http://localhost:${PORT}`)
+  console.log(`[Agent Service] 数据目录: ${DATA_DIR}`)
 
   // 启动定时任务调度器
   startCronTimer()

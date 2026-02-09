@@ -2,13 +2,14 @@
  * ║                         Skill 加载器                                      ║
  * ║                                                                          ║
  * ║  职责：读取 skills 目录下的 SKILL.md 和 skill.yaml                         ║
- * ║  设计：单例模式，缓存已加载的 Skill                                        ║
+ * ║  设计：双目录加载 - 内置 skills（只读）+ 用户 skills（可写）               ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { readFile, readdir } from 'fs/promises'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import { parse as parseYaml } from 'yaml'
-import { SKILLS_DIR } from './paths.js'
+import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from './paths.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -43,14 +44,37 @@ export interface Skill {
 const skillCache = new Map<string, Skill>()
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       提取 YAML Frontmatter                               │
+ * │                                                                          │
+ * │  支持 Unix (\n) 和 Windows (\r\n) 换行符                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function extractFrontmatter(content: string): Record<string, unknown> | null {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return null
+
+  try {
+    return parseYaml(match[1]) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       加载单个 Skill                                      │
+ * │                                                                          │
+ * │  搜索顺序：用户目录优先，然后是内置目录                                    │
  * │  支持两种格式：                                                            │
  * │  1. skill.yaml + SKILL.md（传统格式）                                     │
  * │  2. SKILL.md with YAML frontmatter（官方格式）                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-async function loadSingleSkill(skillDir: string): Promise<Skill | null> {
+async function loadSingleSkill(skillId: string): Promise<Skill | null> {
+  // 优先检查用户目录
+  const userPath = join(USER_SKILLS_DIR, skillId)
+  const builtinPath = join(BUILTIN_SKILLS_DIR, skillId)
+
+  const skillPath = existsSync(join(userPath, 'SKILL.md')) ? userPath : builtinPath
+
   try {
-    const skillPath = join(SKILLS_DIR, skillDir)
     const mdPath = join(skillPath, 'SKILL.md')
 
     // 读取 SKILL.md
@@ -71,7 +95,7 @@ async function loadSingleSkill(skillDir: string): Promise<Skill | null> {
       const yamlData = parseYaml(yamlContent) as SkillMeta & { tools?: SkillTool[] }
 
       meta = {
-        id: skillDir,
+        id: skillId,
         name: yamlData.name,
         description: yamlData.description,
         icon: yamlData.icon,
@@ -87,8 +111,8 @@ async function loadSingleSkill(skillDir: string): Promise<Skill | null> {
       }
 
       meta = {
-        id: skillDir,
-        name: (frontmatter.name as string) || skillDir,
+        id: skillId,
+        name: (frontmatter.name as string) || skillId,
         description: (frontmatter.description as string) || '',
         icon: frontmatter.icon as string | undefined,
         category: frontmatter.category as string | undefined,
@@ -109,24 +133,10 @@ async function loadSingleSkill(skillDir: string): Promise<Skill | null> {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       提取 YAML Frontmatter                               │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function extractFrontmatter(content: string): Record<string, unknown> | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---/)
-  if (!match) return null
-
-  try {
-    return parseYaml(match[1]) as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       导出的加载器对象                                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export const loadSkill = {
-  // 根据 ID 加载 Skill
+  /* 根据 ID 加载 Skill（带缓存） */
   async byId(id: string): Promise<Skill | null> {
     if (skillCache.has(id)) {
       return skillCache.get(id)!
@@ -138,14 +148,34 @@ export const loadSkill = {
     return skill
   },
 
-  // 列出所有可用 Skills
+  /* 列出所有可用 Skills（内置 + 用户创建） */
   async listAll(): Promise<SkillMeta[]> {
-    const dirs = await readdir(SKILLS_DIR, { withFileTypes: true })
+    const skillIds = new Set<string>()
     const skills: SkillMeta[] = []
 
-    for (const dir of dirs) {
-      if (!dir.isDirectory()) continue
-      const skill = await this.byId(dir.name)
+    /* ────────────────────────────────────────────────────────────────────────
+     *  先加载用户创建的 Skills（优先级更高）
+     * ──────────────────────────────────────────────────────────────────────── */
+    try {
+      const userDirs = await readdir(USER_SKILLS_DIR, { withFileTypes: true })
+      for (const dir of userDirs) {
+        if (dir.isDirectory()) skillIds.add(dir.name)
+      }
+    } catch { /* 目录可能不存在 */ }
+
+    /* ────────────────────────────────────────────────────────────────────────
+     *  再加载内置 Skills（跳过已存在的 ID，避免重复）
+     * ──────────────────────────────────────────────────────────────────────── */
+    try {
+      const builtinDirs = await readdir(BUILTIN_SKILLS_DIR, { withFileTypes: true })
+      for (const dir of builtinDirs) {
+        if (dir.isDirectory()) skillIds.add(dir.name)
+      }
+    } catch { /* 目录可能不存在 */ }
+
+    // 加载所有 skills
+    for (const id of skillIds) {
+      const skill = await this.byId(id)
       if (skill) {
         skills.push(skill.meta)
       }
@@ -153,8 +183,23 @@ export const loadSkill = {
     return skills
   },
 
-  // 清除缓存
+  /* 清除缓存 */
   clearCache(): void {
     skillCache.clear()
+  },
+
+  /* 获取用户 skills 目录（用于创建新 skill） */
+  getUserSkillsDir(): string {
+    return USER_SKILLS_DIR
+  },
+
+  /* 获取内置 skills 目录（只读） */
+  getBuiltinSkillsDir(): string {
+    return BUILTIN_SKILLS_DIR
+  },
+
+  /* 兼容旧 API：返回用户目录 */
+  getSkillsDir(): string {
+    return USER_SKILLS_DIR
   },
 }

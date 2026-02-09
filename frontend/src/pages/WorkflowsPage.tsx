@@ -166,7 +166,7 @@ export default function WorkflowsPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* 头部 */}
-      <header className="h-14 border-b border-border flex items-center justify-between px-6">
+      <header className="h-14 border-b border-border flex items-center justify-between pl-6 pr-40">
         <h1 className="text-lg font-semibold text-foreground">工作流</h1>
         <Link
           to="/workflows/new"

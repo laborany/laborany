@@ -31,17 +31,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务目录路径                                        │
+ * │                                                                          │
+ * │  与 agent-service 保持一致：                                              │
+ * │  - 打包环境：%APPDATA%/LaborAny/data/tasks                               │
+ * │  - 开发环境：项目根目录/tasks                                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getTasksDir(): string {
-  const isProduction = process.env.NODE_ENV === 'production'
+  const isPkg = typeof (process as any).pkg !== 'undefined'
 
-  if (isProduction) {
+  if (isPkg) {
     const appDataDir = process.platform === 'win32'
       ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
       : process.platform === 'darwin'
         ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
         : join(homedir(), '.config', 'laborany')
-    return join(appDataDir, 'tasks')
+    return join(appDataDir, 'data', 'tasks')
   }
 
   // 开发模式：相对于项目根目录

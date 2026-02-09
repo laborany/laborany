@@ -10,7 +10,9 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import type { Skill } from './skill-loader.js'
+import type { Skill } from 'laborany-shared'
+import { memoryInjector, memoryFileManager, memoryProcessor } from './memory/index.js'
+import { DATA_DIR } from './paths.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -45,11 +47,11 @@ interface ExecuteOptions {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务目录管理                                        │
+ * │                                                                          │
+ * │  使用用户数据目录存储任务，避免 pkg 打包后的 snapshot 只读问题             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getTaskDir(sessionId: string): string {
-  // agent-service/src/agent-executor.ts -> laborany/tasks/
-  const laboranyRoot = join(__dirname, '..', '..')
-  return join(laboranyRoot, 'tasks', sessionId)
+  return join(DATA_DIR, 'tasks', sessionId)
 }
 
 function ensureTaskDir(sessionId: string): string {
@@ -148,8 +150,8 @@ interface StreamMessage {
   tool_input?: Record<string, unknown>
 }
 
-function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): void {
-  if (!line.trim()) return
+function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): AgentEvent | null {
+  if (!line.trim()) return null
 
   try {
     const msg: StreamMessage = JSON.parse(line)
@@ -158,7 +160,9 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): vo
     if (msg.type === 'assistant' && msg.message?.content) {
       for (const block of msg.message.content) {
         if (block.type === 'text' && block.text) {
-          onEvent({ type: 'text', content: block.text })
+          const event: AgentEvent = { type: 'text', content: block.text }
+          onEvent(event)
+          return event
         } else if (block.type === 'tool_use' && block.name) {
           onEvent({
             type: 'tool_use',
@@ -187,6 +191,7 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): vo
   } catch {
     // 非 JSON 行，忽略
   }
+  return null
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -245,10 +250,27 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     args.push('--model', process.env.ANTHROPIC_MODEL)
   }
 
-  // 构建 prompt
-  const prompt = isNewSession
-    ? `${skill.systemPrompt}\n\n---\n\n用户问题：${userQuery}`
-    : userQuery  // 继续会话时只发送用户问题
+  // 构建系统提示词并写入 CLAUDE.md（Claude Code 会自动读取）
+  if (isNewSession) {
+    const memoryContext = memoryInjector.buildContext({
+      skillId: skill.meta.id,
+      userQuery,
+    })
+    memoryFileManager.ensureSkillMemoryDir(skill.meta.id)
+
+    // 构建完整的系统提示词
+    const systemPrompt = memoryContext
+      ? `${memoryContext}\n\n---\n\n${skill.systemPrompt}`
+      : skill.systemPrompt
+
+    // 写入 CLAUDE.md，Claude Code 会自动读取作为系统提示词
+    const claudeMdPath = join(taskDir, 'CLAUDE.md')
+    writeFileSync(claudeMdPath, systemPrompt, 'utf-8')
+    console.log(`[Agent] 已写入系统提示词到 ${claudeMdPath}`)
+  }
+
+  // 用户消息只包含查询内容
+  const prompt = userQuery
 
   console.log(`[Agent] Args: ${args.join(' ')}`)
 
@@ -263,13 +285,18 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   proc.stdin.end()
 
   let lineBuffer = ''
+  let agentResponse = ''  // 收集 Agent 的文本输出
 
   proc.stdout.on('data', (data: Buffer) => {
     lineBuffer += data.toString()
     const lines = lineBuffer.split('\n')
     lineBuffer = lines.pop() || ''
     for (const line of lines) {
-      parseStreamLine(line, onEvent)
+      const event = parseStreamLine(line, onEvent)
+      // 收集文本输出用于记忆
+      if (event?.type === 'text' && event.content) {
+        agentResponse += event.content
+      }
     }
   })
 
@@ -291,10 +318,15 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   }, effectiveTimeout)
 
   return new Promise((resolve) => {
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       clearTimeout(timeoutId)
       signal.removeEventListener('abort', abortHandler)
-      if (lineBuffer.trim()) parseStreamLine(lineBuffer, onEvent)
+      if (lineBuffer.trim()) {
+        const event = parseStreamLine(lineBuffer, onEvent)
+        if (event?.type === 'text' && event.content) {
+          agentResponse += event.content
+        }
+      }
 
       if (timedOut) {
         onEvent({ type: 'error', content: `执行超时 (${effectiveTimeout / 1000}s)` })
@@ -302,6 +334,20 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
         onEvent({ type: 'error', content: '执行被中止' })
       } else if (code !== 0) {
         onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
+      }
+
+      // 任务完成后自动记录到三级记忆结构（使用 LLM 智能提取）
+      if (code === 0 && !timedOut && !signal.aborted && agentResponse.trim()) {
+        try {
+          const result = await memoryProcessor.processConversationAsync({
+            skillId: skill.meta.id,
+            userQuery,
+            assistantResponse: agentResponse,
+          })
+          console.log(`[Agent] 已记录到三级记忆: cellId=${result.cellId}, method=${result.extractionMethod}`)
+        } catch (err) {
+          console.error('[Agent] 记录记忆失败:', err)
+        }
       }
 
       onEvent({ type: 'done' })
