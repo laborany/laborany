@@ -42,6 +42,7 @@ npm install
 - `playwright` - 跨平台浏览器自动化（用于 PDF 导出）
 - `pdf-lib` - PDF 文件合并
 - `pptxgenjs` - PPTX 生成
+- `sharp` - SVG 转 PNG（用于 PPTX 图片嵌入）
 
 > 💡 安装过程会自动下载 Chromium 浏览器（约 150MB），用于 SVG 渲染。
 
@@ -86,7 +87,7 @@ node scripts/export_pdf.js ./ppt-output/ [--output=路径]
 ```
 
 #### 3.2 导出为 PPTX
-使用 pptxgenjs 生成包含矢量图形的幻灯片。
+使用 sharp 将 SVG 转为 PNG，再通过 pptxgenjs 以 base64 嵌入生成幻灯片，确保图片在任何设备上都能正常显示。
 ```bash
 node scripts/export_pptx.js ./ppt-output/ [路径]
 ```
@@ -136,4 +137,4 @@ node scripts/export_pptx.js ./ppt-output/ [路径]
 
 1. **版本说明**: v1 版本将导出 `ppt-output/` 目录下的所有页面，暂不支持筛选特定页面。
 2. **PDF 质量**: 使用 Playwright 渲染确保字体和样式完美呈现，支持所有系统字体。
-3. **PPTX 编辑性**: 导出的 PPTX 将 SVG 作为矢量对象嵌入，支持在 PowerPoint 中进行基本的缩放和位置调整。
+3. **PPTX 兼容性**: 导出的 PPTX 将 SVG 先转为 PNG 再以 base64 内嵌，确保在任何设备上打开都能正常显示图片。
