@@ -27,7 +27,35 @@ interface IndexCache<T> {
  * │                           常量                                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const INDEX_DIR = join(DATA_DIR, 'memory', 'index')
-const CACHE_VERSION = 1
+const CACHE_VERSION = 2
+
+interface SerializedMap {
+  __type: 'Map'
+  entries: Array<[unknown, unknown]>
+}
+
+function isSerializedMap(value: unknown): value is SerializedMap {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<SerializedMap>
+  return candidate.__type === 'Map' && Array.isArray(candidate.entries)
+}
+
+function cacheReplacer(_key: string, value: unknown): unknown {
+  if (value instanceof Map) {
+    return {
+      __type: 'Map',
+      entries: Array.from(value.entries()),
+    } as SerializedMap
+  }
+  return value
+}
+
+function cacheReviver(_key: string, value: unknown): unknown {
+  if (isSerializedMap(value)) {
+    return new Map(value.entries)
+  }
+  return value
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     索引缓存管理器                                        │
@@ -93,7 +121,7 @@ export class IndexCacheManager {
 
     try {
       const content = readFileSync(cachePath, 'utf-8')
-      return JSON.parse(content) as IndexCache<T>
+      return JSON.parse(content, cacheReviver) as IndexCache<T>
     } catch {
       return null
     }
@@ -105,7 +133,7 @@ export class IndexCacheManager {
   private saveToDisk<T>(cacheKey: string, cache: IndexCache<T>): void {
     const cachePath = join(INDEX_DIR, `${cacheKey}.json`)
     try {
-      writeFileSync(cachePath, JSON.stringify(cache), 'utf-8')
+      writeFileSync(cachePath, JSON.stringify(cache, cacheReplacer), 'utf-8')
     } catch {
       // 忽略写入错误，缓存失败不影响功能
     }

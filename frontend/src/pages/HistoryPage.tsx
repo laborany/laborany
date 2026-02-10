@@ -1,14 +1,10 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                         历史会话页面                                       ║
- * ║                                                                          ║
- * ║  展示用户的历史会话记录，支持查看详情和继续对话                                ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAgent } from '../hooks/useAgent'
+import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { useVitePreview } from '../hooks/useVitePreview'
-import type { TaskFile, Session, SessionDetail } from '../types'
+import type { TaskFile, Session, SessionDetail, SessionLiveStatus } from '../types'
 import { API_BASE } from '../config'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
@@ -24,9 +20,6 @@ import {
 } from '../components/preview'
 import { Tooltip } from '../components/ui'
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           历史会话列表                                     │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 export default function HistoryPage() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
@@ -60,12 +53,14 @@ export default function HistoryPage() {
       completed: 'badge-success',
       failed: 'badge-error',
       stopped: 'bg-secondary text-secondary-foreground',
+      aborted: 'bg-secondary text-secondary-foreground',
     }
     const labels: Record<string, string> = {
       running: '运行中',
       completed: '已完成',
       failed: '失败',
       stopped: '已中止',
+      aborted: '已中止',
     }
     return (
       <span className={`badge ${styles[status] || styles.stopped}`}>
@@ -136,9 +131,6 @@ export default function HistoryPage() {
   )
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                      递归查找第一个可预览文件                               │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 function findFirstPreviewableFile(files: TaskFile[]): TaskFile | null {
   for (const file of files) {
     if (file.type === 'file' && isPreviewable(file.ext || '')) return file
@@ -150,18 +142,12 @@ function findFirstPreviewableFile(files: TaskFile[]): TaskFile | null {
   return null
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                      TaskFile → FileArtifact 转换                         │
- * │                                                                          │
- * │  注意：path 字段需要是绝对路径，用于 PDF 转换等需要文件系统路径的场景         │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 function toFileArtifact(
   file: TaskFile,
   getFileUrl: (path: string) => string,
   workDir: string | null,
 ): FileArtifact {
   const ext = file.ext || getExt(file.name)
-  // 构建绝对路径：workDir + 相对路径
   const fullPath = workDir ? `${workDir}/${file.path}`.replace(/\\/g, '/') : file.path
   return {
     name: file.name,
@@ -173,28 +159,20 @@ function toFileArtifact(
   }
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                      布局常量                                             │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 const CHAT_PANEL_MIN = 300
 const CHAT_PANEL_MAX = 800
 const CHAT_PANEL_DEFAULT = 450
 const SIDEBAR_WIDTH = 280
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           会话详情页面                                     │
- * │  显示历史消息，支持继续对话，对齐 ExecutePage 的三面板布局                     │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 export function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>()
+  const { getSkillName } = useSkillNameMap()
   const [session, setSession] = useState<SessionDetail | null>(null)
+  const [liveStatus, setLiveStatus] = useState<SessionLiveStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [continuing, setContinuing] = useState(false)
   const [taskFiles, setTaskFiles] = useState<TaskFile[]>([])
 
-  /* ┌──────────────────────────────────────────────────────────────────────────┐
-   * │                           状态管理（对齐 ExecutePage）                     │
-   * └──────────────────────────────────────────────────────────────────────────┘ */
   const [isPreviewVisible, setIsPreviewVisible] = useState(false)
   const [isRightSidebarVisible, setIsRightSidebarVisible] = useState(false)
   const [selectedArtifact, setSelectedArtifact] = useState<FileArtifact | null>(null)
@@ -203,7 +181,6 @@ export function SessionDetailPage() {
   // 自动展开标记
   const hasAutoExpandedRef = useRef(false)
 
-  // 可拖拽面板宽度
   const {
     width: chatPanelWidth,
     handleResize: handleChatResize,
@@ -215,12 +192,11 @@ export function SessionDetailPage() {
     storageKey: 'laborany-history-chat-panel-width',
   })
 
-  // 用于继续对话的 agent hook
   const agent = useAgent(session?.skill_id || '')
 
   // Live Preview hook
   const {
-    status: liveStatus,
+    status: previewStatus,
     previewUrl,
     error: liveError,
     startPreview,
@@ -233,9 +209,40 @@ export function SessionDetailPage() {
     }
   }, [sessionId])
 
-  /* ┌──────────────────────────────────────────────────────────────────────────┐
-   * │  只有当 session 有 work_dir 时才获取文件列表                              │
-   * └──────────────────────────────────────────────────────────────────────────┘ */
+  useEffect(() => {
+    if (!sessionId) return
+    let cancelled = false
+
+    async function refreshLiveStatus() {
+      try {
+        const token = localStorage.getItem('token')
+        const res = await fetch(`${API_BASE}/sessions/${sessionId}/live-status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) return
+        const data = (await res.json()) as SessionLiveStatus
+        if (cancelled) return
+        setLiveStatus(data)
+
+        if (data.isRunning && data.canAttach && !agent.isRunning) {
+          setContinuing(true)
+          agent.resumeSession(sessionId!)
+          agent.attachToSession(sessionId!)
+        }
+      } catch {
+        // 韫囩晫鏆愰柨娆掝嚖
+      }
+    }
+
+    refreshLiveStatus()
+    const timer = setInterval(refreshLiveStatus, 5000)
+
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [sessionId, agent.isRunning, agent.resumeSession, agent.attachToSession])
+
   useEffect(() => {
     if (session?.work_dir) {
       fetchTaskFiles()
@@ -256,6 +263,25 @@ export function SessionDetailPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const effectiveStatus = liveStatus?.isRunning ? 'running' : session?.status
+  const effectiveStatusBadgeClass =
+    effectiveStatus === 'running'
+      ? 'badge badge-primary'
+      : effectiveStatus === 'completed'
+        ? 'badge badge-success'
+        : effectiveStatus === 'failed'
+          ? 'badge badge-error'
+          : 'badge bg-secondary text-secondary-foreground'
+
+  function renderStatusLabel(status: string | undefined) {
+    if (!status) return '--'
+    if (status === 'running') return '运行中'
+    if (status === 'completed') return '已完成'
+    if (status === 'failed') return '失败'
+    if (status === 'stopped' || status === 'aborted') return '已中止'
+    return status
   }
 
   async function fetchTaskFiles() {
@@ -279,18 +305,12 @@ export function SessionDetailPage() {
     [sessionId],
   )
 
-  /* ┌──────────────────────────────────────────────────────────────────────────┐
-   * │                      选中 artifact 时打开预览                             │
-   * └──────────────────────────────────────────────────────────────────────────┘ */
   const handleSelectArtifact = useCallback((artifact: FileArtifact) => {
     setSelectedArtifact(artifact)
     setIsPreviewVisible(true)
     setShowLivePreview(false)
   }, [])
 
-  /* ┌──────────────────────────────────────────────────────────────────────────┐
-   * │                      启动 Live Preview                                   │
-   * └──────────────────────────────────────────────────────────────────────────┘ */
   const handleStartLivePreview = useCallback(() => {
     if (session?.work_dir) {
       setShowLivePreview(true)
@@ -299,9 +319,6 @@ export function SessionDetailPage() {
     }
   }, [session?.work_dir, startPreview])
 
-  /* ┌──────────────────────────────────────────────────────────────────────────┐
-   * │                      自动展开预览面板                                     │
-   * └──────────────────────────────────────────────────────────────────────────┘ */
   useEffect(() => {
     if (hasAutoExpandedRef.current) return
     if (taskFiles.length === 0) return
@@ -315,16 +332,12 @@ export function SessionDetailPage() {
     handleSelectArtifact(toFileArtifact(firstFile, getFileUrl, session?.work_dir || null))
   }, [taskFiles, handleSelectArtifact, getFileUrl, session?.work_dir])
 
-  /* ┌──────────────────────────────────────────────────────────────────────────┐
-   * │                      关闭预览                                            │
-   * └──────────────────────────────────────────────────────────────────────────┘ */
   const handleClosePreview = useCallback(() => {
     setIsPreviewVisible(false)
     setSelectedArtifact(null)
     setShowLivePreview(false)
   }, [])
 
-  // 将历史消息转换为 MessageList 需要的格式
   function convertMessages() {
     if (!session) return []
 
@@ -382,17 +395,19 @@ export function SessionDetailPage() {
     return messages
   }
 
-  /* ┌──────────────────────────────────────────────────────────────────────────┐
-   * │                      在当前页面继续对话                                   │
-   * │                                                                          │
-   * │  恢复 session 上下文后直接执行，无需跳转到 ExecutePage                      │
-   * └──────────────────────────────────────────────────────────────────────────┘ */
   async function handleContinue(query: string) {
     if (!session) return
     agent.resumeSession(sessionId!)
     setContinuing(true)
+    hasAutoExpandedRef.current = false  // 重置，让新产物可触发自动展开
     agent.execute(query)
   }
+
+  useEffect(() => {
+    if (continuing && !agent.isRunning && agent.messages.length > 0) {
+      fetchTaskFiles()
+    }
+  }, [continuing, agent.isRunning, agent.messages.length])
 
   if (loading) {
     return (
@@ -423,9 +438,7 @@ export function SessionDetailPage() {
 
   return (
     <div className="flex h-[calc(100vh-64px)]">
-      {/* ════════════════════════════════════════════════════════════════════
-       * 左侧：聊天面板
-       * ════════════════════════════════════════════════════════════════════ */}
+      {/* 左侧：聊天面板 */}
       <div
         className="flex flex-col px-4 py-6 overflow-hidden"
         style={{
@@ -443,16 +456,10 @@ export function SessionDetailPage() {
               </svg>
             </Link>
             <h2 className="text-lg font-semibold text-foreground">
-              {session.skill_id}
+              {getSkillName(session.skill_id)}
             </h2>
-            <span className={`badge ${
-              session.status === 'completed' ? 'badge-success' :
-              session.status === 'failed' ? 'badge-error' :
-              'bg-secondary text-secondary-foreground'
-            }`}>
-              {session.status === 'completed' ? '已完成' :
-               session.status === 'failed' ? '失败' :
-               session.status === 'stopped' ? '已中止' : session.status}
+            <span className={effectiveStatusBadgeClass}>
+              {renderStatusLabel(effectiveStatus)}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -465,7 +472,7 @@ export function SessionDetailPage() {
                     showLivePreview ? 'text-green-500' : 'text-primary hover:text-primary/80'
                   }`}
                 >
-                  🚀 Live
+                  🔍 Live
                 </button>
               </Tooltip>
             )}
@@ -508,9 +515,7 @@ export function SessionDetailPage() {
         </div>
       </div>
 
-      {/* ════════════════════════════════════════════════════════════════════
-       * 分隔条（聊天面板和预览面板之间）
-       * ════════════════════════════════════════════════════════════════════ */}
+      {/* 分隔条（聊天面板与预览/侧栏之间） */}
       {showResizeHandle && (
         <ResizeHandle
           onResize={handleChatResize}
@@ -519,9 +524,7 @@ export function SessionDetailPage() {
         />
       )}
 
-      {/* ════════════════════════════════════════════════════════════════════
-       * 中间：预览面板
-       * ════════════════════════════════════════════════════════════════════ */}
+      {/* 中间：预览面板 */}
       {isPreviewVisible && (
         <div className="flex-1 min-w-[300px] border-l border-border">
           {showLivePreview ? (
@@ -530,7 +533,7 @@ export function SessionDetailPage() {
               <div className="flex shrink-0 items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-foreground">Live Preview</span>
-                  {liveStatus === 'running' && (
+                  {previewStatus === 'running' && (
                     <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
                   )}
                 </div>
@@ -545,7 +548,7 @@ export function SessionDetailPage() {
               </div>
               <div className="flex-1 overflow-hidden">
                 <VitePreview
-                  status={liveStatus}
+                  status={previewStatus}
                   previewUrl={previewUrl}
                   error={liveError}
                   onStart={handleStartLivePreview}
@@ -560,9 +563,7 @@ export function SessionDetailPage() {
         </div>
       )}
 
-      {/* ════════════════════════════════════════════════════════════════════
-       * 右侧：侧边栏
-       * ════════════════════════════════════════════════════════════════════ */}
+      {/* 右侧：工具侧栏 */}
       {isRightSidebarVisible && (
         <div style={{ width: SIDEBAR_WIDTH }} className="shrink-0">
           <RightSidebar

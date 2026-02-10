@@ -10,6 +10,12 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { homedir, platform } from 'os'
 import type { WorkflowDefinition, WorkflowInputParam, WorkflowStep } from './types.js'
 import { convertWorkflowToSkill } from './converter.js'
+import {
+  generateCapabilityId,
+  normalizeCapabilityDisplayName,
+  normalizeCapabilityId,
+  pickUniqueCapabilityId,
+} from 'laborany-shared'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -68,6 +74,22 @@ interface WorkflowYaml {
   on_failure?: 'stop' | 'continue' | 'retry'
 }
 
+async function collectExistingWorkflowIds(): Promise<Set<string>> {
+  const existingIds = new Set<string>()
+  if (!existsSync(WORKFLOWS_DIR)) {
+    return existingIds
+  }
+
+  const dirs = await readdir(WORKFLOWS_DIR, { withFileTypes: true })
+  for (const dir of dirs) {
+    if (dir.isDirectory()) {
+      existingIds.add(dir.name)
+    }
+  }
+
+  return existingIds
+}
+
 async function loadSingleWorkflow(workflowDir: string): Promise<WorkflowDefinition | null> {
   try {
     const workflowPath = join(WORKFLOWS_DIR, workflowDir)
@@ -118,13 +140,19 @@ export const loadWorkflow = {
   },
 
   async create(workflow: Omit<WorkflowDefinition, 'id'> & { id?: string }): Promise<WorkflowDefinition> {
-    const id = workflow.id || generateWorkflowId(workflow.name)
+    const normalizedName = normalizeCapabilityDisplayName(workflow.name)
+    const idBase = workflow.id
+      ? normalizeCapabilityId(workflow.id, 'workflow')
+      : generateCapabilityId(normalizedName, 'workflow')
+
+    const existingIds = await collectExistingWorkflowIds()
+    const id = pickUniqueCapabilityId(idBase, existingIds)
     const workflowPath = join(WORKFLOWS_DIR, id)
 
     await mkdir(workflowPath, { recursive: true })
 
     const yamlData: WorkflowYaml = {
-      name: workflow.name,
+      name: normalizedName,
       description: workflow.description,
       icon: workflow.icon,
       steps: workflow.steps,
@@ -135,7 +163,7 @@ export const loadWorkflow = {
     const yamlContent = stringifyYaml(yamlData)
     await writeFile(join(workflowPath, 'workflow.yaml'), yamlContent, 'utf-8')
 
-    const newWorkflow: WorkflowDefinition = { ...workflow, id }
+    const newWorkflow: WorkflowDefinition = { ...workflow, id, name: normalizedName }
     workflowCache.set(id, newWorkflow)
 
     return newWorkflow
@@ -145,7 +173,8 @@ export const loadWorkflow = {
     const existing = await this.byId(id)
     if (!existing) return null
 
-    const updated: WorkflowDefinition = { ...existing, ...workflow, id }
+    const normalizedName = normalizeCapabilityDisplayName(workflow.name ?? existing.name)
+    const updated: WorkflowDefinition = { ...existing, ...workflow, id, name: normalizedName }
     const workflowPath = join(WORKFLOWS_DIR, id)
 
     const yamlData: WorkflowYaml = {
@@ -206,12 +235,4 @@ export const loadWorkflow = {
     // TODO: 从数据库获取单次执行详情
     return null
   },
-}
-
-function generateWorkflowId(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 50) || `workflow-${Date.now()}`
 }

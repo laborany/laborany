@@ -7,6 +7,7 @@
 import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { LaborAnyLogo } from '../components/ui/LaborAnyLogo'
 
 export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true)
@@ -50,7 +51,7 @@ export default function LoginPage() {
         {/* Logo 区域 */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-4">
-            <span className="text-3xl">🤖</span>
+            <LaborAnyLogo size={40} />
           </div>
           <h1 className="text-2xl font-bold text-foreground">LaborAny</h1>
           <p className="text-muted-foreground mt-1">让 AI 为你工作</p>

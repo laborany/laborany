@@ -12,6 +12,7 @@ import { join, dirname, basename, extname } from 'path'
 import { platform, homedir, tmpdir } from 'os'
 import { createHash } from 'crypto'
 import { getDownloadedLibreOfficePath } from './libreoffice-downloader.js'
+import { wrapCmdForUtf8 } from 'laborany-shared'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -88,7 +89,7 @@ function findLibreOffice(): string | null {
   /* 尝试 which/where 命令 */
   try {
     const whichCmd = os === 'win32' ? 'where soffice' : 'which soffice'
-    const result = execSync(whichCmd, { encoding: 'utf-8', timeout: 5000 }).trim()
+    const result = execSync(wrapCmdForUtf8(whichCmd), { encoding: 'utf-8', timeout: 5000 }).trim()
     if (result && existsSync(result.split('\n')[0])) {
       libreOfficePath = result.split('\n')[0]
       libreOfficeChecked = true

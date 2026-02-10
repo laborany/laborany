@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import type { ChatMessage } from '../../types'
+import { ThinkingIndicator } from '../shared/ThinkingIndicator'
 
 interface OptimizeSkillChatProps {
   skillId: string
@@ -122,7 +123,7 @@ export function OptimizeSkillChat({
       const errorMessage = error instanceof Error ? error.message : '未知错误'
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: `❌ 优化过程中出现错误：${errorMessage}\n\n请检查：\n1. agent-service 是否正常运行（端口 3002）\n2. 网络连接是否正常` },
+        { role: 'assistant', content: `优化过程中出现错误：${errorMessage}\n\n请检查：\n1. agent-service 是否正常运行（端口 3002）\n2. 网络连接是否正常` },
       ])
     } finally {
       setOptimizing(false)
@@ -151,7 +152,7 @@ export function OptimizeSkillChat({
           {messages.map((msg, i) => (
             <MessageBubble key={i} message={msg} />
           ))}
-          {optimizing && <ThinkingIndicator />}
+          {optimizing && <ThinkingIndicator text="正在分析和优化" />}
           <div ref={messagesEndRef} />
         </div>
 
@@ -216,18 +217,3 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   )
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           思考指示器                                      │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function ThinkingIndicator() {
-  return (
-    <div className="flex justify-start">
-      <div className="bg-muted px-4 py-3 rounded-lg">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="animate-pulse">●</span>
-          正在分析和优化...
-        </div>
-      </div>
-    </div>
-  )
-}

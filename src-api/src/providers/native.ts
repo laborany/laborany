@@ -1,19 +1,9 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                         原生沙盒提供者                                     ║
- * ║                                                                          ║
- * ║  职责：直接在主机上执行脚本，无隔离                                         ║
- * ║  设计：作为回退方案，当 uv 不可用时使用                                     ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
 import { spawn } from 'child_process'
 import { extname } from 'path'
 import { platform } from 'os'
 import type { ISandboxProvider, ScriptExecOptions, ScriptExecResult } from '../core/sandbox/types.js'
 import { DEFAULT_TIMEOUT } from '../core/sandbox/types.js'
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           运行时检测                                      │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+import { withUtf8Env } from 'laborany-shared'
 
 function detectRuntime(filePath: string): { cmd: string; args: string[] } {
   const ext = extname(filePath).toLowerCase()
@@ -21,7 +11,6 @@ function detectRuntime(filePath: string): { cmd: string; args: string[] } {
 
   switch (ext) {
     case '.py':
-      // Windows 上使用 python，Unix 上使用 python3
       return { cmd: isWindows ? 'python' : 'python3', args: [] }
     case '.ts':
     case '.mts':
@@ -36,16 +25,11 @@ function detectRuntime(filePath: string): { cmd: string; args: string[] } {
   }
 }
 
-/* ┌───────────────────────────────────────────────────────────────────────���──┐
- * │                           NativeProvider 实现                             │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-
 export class NativeProvider implements ISandboxProvider {
   readonly type = 'native'
   readonly name = 'Native (无隔离)'
 
   async isAvailable(): Promise<boolean> {
-    // 原生执行始终可用
     return true
   }
 
@@ -65,9 +49,8 @@ export class NativeProvider implements ISandboxProvider {
     return new Promise((resolve) => {
       const proc = spawn(runtime.cmd, fullArgs, {
         cwd: workDir,
-        env: { ...process.env, ...env },
+        env: withUtf8Env({ ...process.env, ...env }),
         timeout,
-        // Windows 上不使用 shell，直接执行
       })
 
       let stdout = ''
@@ -91,7 +74,7 @@ export class NativeProvider implements ISandboxProvider {
         resolve({
           success: false,
           stdout,
-          stderr: stderr + '\n' + err.message,
+          stderr: `${stderr}\n${err.message}`,
           exitCode: 1,
           duration: Date.now() - startTime,
           provider: { type: this.type, name: this.name, isolation: 'none' },
@@ -104,10 +87,6 @@ export class NativeProvider implements ISandboxProvider {
     console.log('[NativeProvider] 已停止')
   }
 }
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           工厂函数                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 
 export function createNativeProvider(): NativeProvider {
   return new NativeProvider()

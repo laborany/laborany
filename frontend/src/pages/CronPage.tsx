@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom'
 import { useCronJobs, useCronJobRuns, describeSchedule, formatTime, formatDuration } from '../hooks/useCron'
 import type { CronJob, CreateJobRequest, Schedule } from '../hooks/useCron'
 import { CronJobForm } from '../components/cron/CronJobForm'
+import { useSkillNameMap } from '../hooks/useSkillNameMap'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           状态图标                                        │
@@ -38,6 +39,7 @@ function StatusBadge({ status }: { status: CronJob['lastStatus'] }) {
 
 function JobCard({
   job,
+  targetName,
   onEdit,
   onDelete,
   onTrigger,
@@ -45,6 +47,7 @@ function JobCard({
   isSelected
 }: {
   job: CronJob
+  targetName: string
   onEdit: () => void
   onDelete: () => void
   onTrigger: () => void
@@ -84,7 +87,7 @@ function JobCard({
           <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
             <span title="调度规则">⏰ {describeSchedule(schedule)}</span>
             <span title="目标">
-              {job.targetType === 'skill' ? '🧪' : '📊'} {job.targetId}
+              {job.targetType === 'skill' ? '🧪' : '📊'} {targetName}
             </span>
           </div>
         </div>
@@ -211,6 +214,7 @@ function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
 
 export default function CronPage() {
   const { jobs, loading, error, createJob, updateJob, deleteJob, triggerJob } = useCronJobs()
+  const { getCapabilityName } = useSkillNameMap()
   const [showForm, setShowForm] = useState(false)
   const [editingJob, setEditingJob] = useState<CronJob | null>(null)
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
@@ -298,6 +302,7 @@ export default function CronPage() {
                 <JobCard
                   key={job.id}
                   job={job}
+                  targetName={getCapabilityName(job.targetType, job.targetId)}
                   isSelected={selectedJobId === job.id}
                   onEdit={() => setEditingJob(job)}
                   onDelete={() => handleDelete(job.id)}

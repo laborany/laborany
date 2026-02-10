@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { API_BASE } from '../config'
+import { LaborAnyLogo } from '../components/ui/LaborAnyLogo'
 
 interface SetupStatus {
   claudeCode: {
@@ -197,7 +198,9 @@ export default function SetupPage({ onReady }: SetupPageProps) {
       <div className="max-w-lg w-full space-y-6">
         {/* Logo 和标题 */}
         <div className="text-center space-y-2">
-          <div className="text-5xl">🤖</div>
+          <div className="flex justify-center mb-2">
+            <LaborAnyLogo size={56} />
+          </div>
           <h1 className="text-2xl font-bold text-foreground">LaborAny</h1>
           <p className="text-muted-foreground">AI 驱动的自动化工作平台</p>
         </div>

@@ -5,8 +5,8 @@
  * ║  流程：分析 → 生成候选 → 用户确认 → 写入长期记忆                           ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { existsSync, readFileSync, readdirSync, appendFileSync } from 'fs'
-import { join } from 'path'
+import { existsSync, readFileSync, readdirSync, appendFileSync, writeFileSync, mkdirSync } from 'fs'
+import { dirname, join } from 'path'
 import { DATA_DIR } from '../paths.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -16,12 +16,14 @@ const MEMORY_DIR = join(DATA_DIR, 'memory')
 const GLOBAL_MEMORY_DIR = join(MEMORY_DIR, 'global')
 const SKILLS_MEMORY_DIR = join(MEMORY_DIR, 'skills')
 const GLOBAL_MEMORY_MD_PATH = join(DATA_DIR, 'MEMORY.md')
+const CANDIDATES_PATH = join(MEMORY_DIR, 'consolidation-candidates.json')
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface ConsolidationCandidate {
   id: string
+  createdAt: string
   scope: 'global' | 'skill'
   skillId?: string
   skillName?: string
@@ -61,11 +63,121 @@ const STOPWORDS = new Set([
   'could', 'should', 'may', 'might', 'not', 'no', 'so', 'if', 'then',
 ])
 
+const CONSOLIDATE_NOISE_PATTERNS = [
+  /工作流执行上下文/,
+  /当前步骤[:：]/,
+  /前序步骤结果/,
+  /输入参数/,
+  /\{\{\s*input\./,
+  /尚未确认|尚未指定|未确认|待确认/,
+  /LABORANY_ACTION|工具调用记录/,
+  /老板好|让我(先|继续|开始)|采集完成|执行完成/,
+]
+
+function isConsolidateNoise(text: string): boolean {
+  return CONSOLIDATE_NOISE_PATTERNS.some(pattern => pattern.test(text))
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           Memory Consolidator 类                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export class MemoryConsolidator {
   private candidates: Map<string, ConsolidationCandidate> = new Map()
+
+  constructor() {
+    this.loadCandidates()
+  }
+
+  private loadCandidates(): void {
+    try {
+      if (!existsSync(CANDIDATES_PATH)) return
+      const raw = readFileSync(CANDIDATES_PATH, 'utf-8').trim()
+      if (!raw) return
+      const parsed = JSON.parse(raw) as ConsolidationCandidate[]
+      if (!Array.isArray(parsed)) return
+      for (const item of parsed) {
+        if (!item || !item.id || !item.scope || !item.content) continue
+        this.candidates.set(item.id, item)
+      }
+    } catch {
+      // 忽略候选加载失败
+    }
+  }
+
+  private saveCandidates(): void {
+    try {
+      if (!existsSync(MEMORY_DIR)) {
+        mkdirSync(MEMORY_DIR, { recursive: true })
+      }
+      const all = Array.from(this.candidates.values())
+      writeFileSync(CANDIDATES_PATH, JSON.stringify(all, null, 2), 'utf-8')
+    } catch {
+      // 忽略候选持久化失败
+    }
+  }
+
+  private normalizeContent(content: string): string {
+    return content
+      .toLowerCase()
+      .replace(/[\s，。,.；;：:!?！？“”"'‘’（）()\[\]{}<>-]/g, '')
+      .slice(0, 160)
+  }
+
+  private findDuplicateCandidate(params: {
+    scope: 'global' | 'skill'
+    skillId?: string
+    category: string
+    content: string
+  }): ConsolidationCandidate | undefined {
+    const { scope, skillId, category, content } = params
+    const normalized = this.normalizeContent(content)
+
+    for (const item of this.candidates.values()) {
+      if (item.scope !== scope) continue
+      if ((item.skillId || '') !== (skillId || '')) continue
+      if (item.category !== category) continue
+      if (this.normalizeContent(item.content) === normalized) {
+        return item
+      }
+    }
+
+    return undefined
+  }
+
+  enqueueCandidate(params: {
+    scope: 'global' | 'skill'
+    skillId?: string
+    skillName?: string
+    category: string
+    content: string
+    source: string[]
+    confidence: number
+  }): { candidate: ConsolidationCandidate; isNew: boolean } {
+    const existing = this.findDuplicateCandidate(params)
+
+    if (existing) {
+      existing.confidence = Math.max(existing.confidence, params.confidence)
+      existing.source = [...new Set([...existing.source, ...params.source])]
+      this.saveCandidates()
+      return { candidate: existing, isNew: false }
+    }
+
+    const candidate: ConsolidationCandidate = {
+      id: this.generateId(),
+      createdAt: new Date().toISOString(),
+      scope: params.scope,
+      skillId: params.skillId,
+      skillName: params.skillName,
+      category: params.category,
+      content: params.content,
+      source: [...new Set(params.source)],
+      confidence: Math.max(0, Math.min(1, params.confidence)),
+    }
+
+    this.candidates.set(candidate.id, candidate)
+    this.saveCandidates()
+    return { candidate, isNew: true }
+  }
 
   /* ────────────────────────────────────────────────────────────────────────
    *  读取指定目录下的所有每日记忆
@@ -89,10 +201,11 @@ export class MemoryConsolidator {
       const sections = content.split(/\n## (\d{2}:\d{2})\n/)
       for (let i = 1; i < sections.length; i += 2) {
         const time = sections[i]
-        const text = sections[i + 1]?.trim()
-        if (time && text) {
+      const text = sections[i + 1]?.trim()
+      if (time && text) {
+          if (isConsolidateNoise(text)) continue
           entries.push({ date, time, content: text, filePath })
-        }
+      }
       }
     }
 
@@ -169,10 +282,12 @@ export class MemoryConsolidator {
       const representative = relatedEntries.reduce((a, b) =>
         a.content.length >= b.content.length ? a : b
       )
+      if (isConsolidateNoise(representative.content)) continue
       const sources = [...new Set(relatedEntries.map(e => `${e.date} ${e.time}`))]
 
       const candidate: ConsolidationCandidate = {
         id: this.generateId(),
+        createdAt: new Date().toISOString(),
         scope,
         skillId,
         skillName,
@@ -181,9 +296,16 @@ export class MemoryConsolidator {
         source: sources,
         confidence: this.calcConfidence(relatedEntries, entries.length),
       }
-
-      this.candidates.set(candidate.id, candidate)
-      candidates.push(candidate)
+      const enqueueResult = this.enqueueCandidate({
+        scope,
+        skillId,
+        skillName,
+        category: candidate.category,
+        content: candidate.content,
+        source: candidate.source,
+        confidence: candidate.confidence,
+      })
+      candidates.push(enqueueResult.candidate)
     }
 
     // 按置信度排序，取前 5 个
@@ -197,6 +319,10 @@ export class MemoryConsolidator {
    * ──────────────────────────────────────────────────────────────────────── */
   getCandidates(scope?: 'global' | 'skill', skillId?: string): ConsolidationCandidate[] {
     const all = Array.from(this.candidates.values())
+      .sort((a, b) => {
+        if (b.confidence !== a.confidence) return b.confidence - a.confidence
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      })
     if (!scope) return all
     return all.filter(c => c.scope === scope && (!skillId || c.skillId === skillId))
   }
@@ -208,36 +334,61 @@ export class MemoryConsolidator {
     return this.candidates.get(id)
   }
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  确认归纳：将候选写入长期记忆
-   * ──────────────────────────────────────────────────────────────────────── */
-  consolidate(params: ConsolidateParams): { success: boolean; consolidated: number } {
+  consolidateCandidates(params: ConsolidateParams): { success: boolean; consolidated: number } {
     const { candidateIds, scope, skillId } = params
     let consolidated = 0
-
-    const memoryPath = scope === 'global'
-      ? GLOBAL_MEMORY_MD_PATH
-      : join(SKILLS_MEMORY_DIR, skillId!, 'MEMORY.md')
+    const groupedByPath = new Map<string, ConsolidationCandidate[]>()
 
     for (const id of candidateIds) {
       const candidate = this.candidates.get(id)
       if (!candidate) continue
+      if (candidate.scope !== scope) continue
+      if (scope === 'skill' && skillId && candidate.skillId !== skillId) continue
 
-      // 构建要追加的内容
-      const timestamp = new Date().toISOString().split('T')[0]
-      const entry = `\n### ${candidate.category}\n\n${candidate.content}\n\n> 归纳自: ${candidate.source.join(', ')} | 归纳时间: ${timestamp}\n`
+      const memoryPath = candidate.scope === 'global'
+        ? GLOBAL_MEMORY_MD_PATH
+        : candidate.skillId
+          ? join(SKILLS_MEMORY_DIR, candidate.skillId, 'MEMORY.md')
+          : ''
+      if (!memoryPath) continue
 
-      // 追加到长期记忆
-      appendFileSync(memoryPath, entry, 'utf-8')
-
-      // 从候选列表中移除
-      this.candidates.delete(id)
-      consolidated++
+      const bucket = groupedByPath.get(memoryPath) || []
+      bucket.push(candidate)
+      groupedByPath.set(memoryPath, bucket)
     }
+
+    for (const [memoryPath, group] of groupedByPath) {
+      const parentDir = dirname(memoryPath)
+      if (!existsSync(parentDir)) {
+        mkdirSync(parentDir, { recursive: true })
+      }
+      if (!existsSync(memoryPath)) {
+        const heading = memoryPath === GLOBAL_MEMORY_MD_PATH
+          ? '# 全局长期记忆\n\n'
+          : '# 技能长期记忆\n\n'
+        writeFileSync(memoryPath, heading, 'utf-8')
+      }
+
+      for (const candidate of group) {
+        const timestamp = new Date().toISOString().split('T')[0]
+        const entry = `\n### ${candidate.category}\n\n${candidate.content}\n\n> 归档自: ${candidate.source.join(', ')} | 归档时间: ${timestamp}\n`
+        appendFileSync(memoryPath, entry, 'utf-8')
+        this.candidates.delete(candidate.id)
+        consolidated++
+      }
+    }
+
+    this.saveCandidates()
 
     return { success: true, consolidated }
   }
 
+  /* ────────────────────────────────────────────────────────────────────────
+   *  确认归纳：将候选写入长期记忆
+   * ──────────────────────────────────────────────────────────────────────── */
+  consolidate(params: ConsolidateParams): { success: boolean; consolidated: number } {
+    return this.consolidateCandidates(params)
+  }
   /* ────────────────────────────────────────────────────────────────────────
    *  拒绝候选（从列表中移除）
    * ──────────────────────────────────────────────────────────────────────── */
@@ -246,6 +397,7 @@ export class MemoryConsolidator {
     for (const id of candidateIds) {
       if (this.candidates.delete(id)) rejected++
     }
+    if (rejected > 0) this.saveCandidates()
     return rejected
   }
 
@@ -254,6 +406,7 @@ export class MemoryConsolidator {
    * ──────────────────────────────────────────────────────────────────────── */
   clearCandidates(): void {
     this.candidates.clear()
+    this.saveCandidates()
   }
 
   /* ────────────────────────────────────────────────────────────────────────

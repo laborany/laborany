@@ -44,6 +44,15 @@ export function useWorkers(): UseWorkersResult {
     fetchSkills()
   }, [fetchSkills])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onCapabilityChanged = () => {
+      fetchSkills()
+    }
+    window.addEventListener('capability:changed', onCapabilityChanged)
+    return () => window.removeEventListener('capability:changed', onCapabilityChanged)
+  }, [fetchSkills])
+
   // 过滤出可展示的员工（排除元类型如 skill-creator）
   const workers = filterDisplayWorkers(allSkills)
 

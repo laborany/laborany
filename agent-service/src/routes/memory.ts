@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Router, Request, Response } from 'express'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'fs'
 import { readdir, writeFile } from 'fs/promises'
 import { join, dirname, normalize, posix } from 'path'
 import { loadSkill } from 'laborany-shared'
@@ -17,15 +17,62 @@ import {
   memoryWriter,
   bossManager,
   globalMemoryManager,
-  memoryInjector,
   memoryConsolidator,
   memoryProcessor,
+  memoryOrchestrator,
+  memoryCliExtractor,
   profileManager,
   memCellStorage,
   episodeStorage,
 } from '../memory/index.js'
 
 const router = Router()
+
+const WORKFLOW_NOISE_PATTERNS = [
+  /工作流执行上下文/,
+  /当前步骤/,
+  /输入参数/,
+  /前序步骤结果/,
+  /\{\{\s*input\./,
+  /\*\*步骤\s*\d+\*\*/,
+]
+
+const TRANSIENT_FACT_PATTERNS = [
+  /尚未确认|尚未指定|未确认|待确认|暂未明确/,
+  /稍后再定|后续再说|先这样/,
+  /我需要先确认|我需要等.*继续/,
+  /请确认后|等待.*确认/,
+]
+
+const ASSISTANT_NOISE_PATTERNS = [
+  /让我(先|继续|开始)/,
+  /已采集|已生成|采集完成|执行完成/,
+  /工具调用记录|LABORANY_ACTION/,
+]
+
+const STRUCTURED_NOISE_PATTERNS = [
+  /```/,
+  /^\s*[\[{].*[\]}]\s*$/,
+  /\{\{[^}]+\}\}/,
+  /https?:\/\//i,
+  /<\/?[a-z][^>]*>/i,
+]
+
+function includesAny(text: string, patterns: RegExp[]): boolean {
+  return patterns.some(pattern => pattern.test(text))
+}
+
+function isNoiseFact(content: string): boolean {
+  return includesAny(content, WORKFLOW_NOISE_PATTERNS)
+    || includesAny(content, TRANSIENT_FACT_PATTERNS)
+    || includesAny(content, ASSISTANT_NOISE_PATTERNS)
+    || includesAny(content, STRUCTURED_NOISE_PATTERNS)
+}
+
+function isPotentialModelMemory(fact: { source?: string; content: string }): boolean {
+  if (fact.source === 'assistant') return true
+  return includesAny(fact.content, ASSISTANT_NOISE_PATTERNS)
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取 BOSS.md 内容                                   │
@@ -101,11 +148,12 @@ router.get('/memory-context/:skillId', (req: Request, res: Response) => {
   try {
     const { skillId } = req.params
     const { query } = req.query
-    const context = memoryInjector.buildContext({
+    const retrieved = memoryOrchestrator.retrieve({
       skillId,
-      userQuery: (query as string) || '',
+      query: (query as string) || '',
+      sessionId: String(req.query.sessionId || 'api-context'),
     })
-    res.json({ context })
+    res.json({ context: retrieved.context, sections: retrieved.sections, usedTokens: retrieved.usedTokens })
   } catch (error) {
     res.status(500).json({ error: '获取 Memory 上下文失败' })
   }
@@ -117,20 +165,25 @@ router.get('/memory-context/:skillId', (req: Request, res: Response) => {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 router.post('/memory/record-task', async (req: Request, res: Response) => {
   try {
-    const { skillId, userQuery, assistantResponse, summary } = req.body
+    const { sessionId, skillId, userQuery, assistantResponse, summary } = req.body
     if (!skillId || !userQuery) {
       res.status(400).json({ error: '缺少必要参数' })
       return
     }
 
-    // 使用新的三级记忆处理器
-    const result = await memoryProcessor.processConversationAsync({
+    if (skillId === '__converse__') {
+      res.json({ success: true, skipped: true, reason: 'converse session memory disabled' })
+      return
+    }
+
+    const result = await memoryOrchestrator.extractAndUpsert({
+      sessionId: sessionId || `api_${Date.now()}`,
       skillId,
       userQuery,
       assistantResponse: assistantResponse || summary || '',
     })
 
-    console.log(`[Memory] 已记录到三级记忆: cellId=${result.cellId}, method=${result.extractionMethod}`)
+    console.log(`[Memory] 已记录到三级记忆: method=${result.extractionMethod}`)
     res.json({ success: true, ...result })
   } catch (error) {
     console.error('[Memory] 记录任务失败:', error)
@@ -286,6 +339,102 @@ router.post('/memory/search', (req: Request, res: Response) => {
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       Retrieve（结构化注入预览）                           │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+router.post('/memory/retrieve', (req: Request, res: Response) => {
+  const { skillId, query, scene, maxResults, tokenBudget, sessionId } = req.body
+  if (!skillId) {
+    res.status(400).json({ error: '缺少 skillId 参数' })
+    return
+  }
+
+  try {
+    const result = memoryOrchestrator.retrieve({
+      sessionId: sessionId || `retrieve_${Date.now()}`,
+      skillId,
+      query: query || '',
+      scene,
+      maxResults,
+      tokenBudget,
+    })
+    res.json({
+      injectedSections: result.sections,
+      context: result.context,
+      usedTokens: result.usedTokens,
+    })
+  } catch (error) {
+    res.status(500).json({ error: 'retrieve 失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       提取并写入（CLI Pipeline）                           │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+router.post('/memory/upsert', async (req: Request, res: Response) => {
+  const { sessionId, skillId, userQuery, assistantResponse } = req.body
+  if (!sessionId || !skillId || !userQuery) {
+    res.status(400).json({ error: '缺少 sessionId/skillId/userQuery 参数' })
+    return
+  }
+
+  if (skillId === '__converse__') {
+    res.json({
+      written: { cells: 0, profile: 0, longTerm: 0, episodes: 0 },
+      conflicts: [],
+      extractionMethod: 'regex',
+      skipped: true,
+      reason: 'converse session memory disabled',
+    })
+    return
+  }
+
+  try {
+    const result = await memoryOrchestrator.extractAndUpsert({
+      sessionId,
+      skillId,
+      userQuery,
+      assistantResponse: assistantResponse || '',
+    })
+    res.json(result)
+  } catch (error) {
+    res.status(500).json({ error: 'upsert 失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       仅提取（CLI）                                       │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+router.post('/memory/extract-cli', async (req: Request, res: Response) => {
+  const { userQuery, assistantResponse } = req.body
+  if (!userQuery) {
+    res.status(400).json({ error: '缺少 userQuery 参数' })
+    return
+  }
+
+  try {
+    const result = await memoryCliExtractor.extract({
+      userQuery,
+      assistantResponse: assistantResponse || '',
+    })
+    res.json(result)
+  } catch (error) {
+    res.status(500).json({ error: 'extract-cli 失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       读取 Trace                                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+router.get('/memory/trace/:sessionId', (req: Request, res: Response) => {
+  try {
+    const events = memoryOrchestrator.readTrace(req.params.sessionId)
+    res.json({ events })
+  } catch (error) {
+    res.status(500).json({ error: '读取 trace 失败' })
+  }
+})
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       写入记忆（纠正/偏好/事实）                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 router.post('/memory/write', (req: Request, res: Response) => {
@@ -323,22 +472,33 @@ router.post('/memory/write', (req: Request, res: Response) => {
  * │  分析最近的每日记忆，生成归纳候选条目供用户确认                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 router.get('/memory/consolidation-candidates', async (req: Request, res: Response) => {
-  const { scope, skillId, days } = req.query
+  const { scope, skillId, days, analyze } = req.query
   try {
+    const resolvedScope = scope === 'global' || scope === 'skill' ? scope : undefined
+    const resolvedSkillId = typeof skillId === 'string' && skillId.trim() ? skillId : undefined
+    const shouldAnalyze = analyze !== 'false' && !!resolvedScope && (resolvedScope !== 'skill' || !!resolvedSkillId)
+
     let skillName: string | undefined
-    if (scope === 'skill' && skillId) {
-      const skill = await loadSkill.byId(skillId as string)
+    if (resolvedScope === 'skill' && resolvedSkillId) {
+      const skill = await loadSkill.byId(resolvedSkillId)
       skillName = skill?.meta?.name
     }
 
-    const candidates = memoryConsolidator.analyzeRecentMemories({
-      scope: (scope as 'global' | 'skill') || 'global',
-      skillId: skillId as string | undefined,
-      skillName,
-      days: days ? parseInt(days as string, 10) : 7,
-    })
+    if (shouldAnalyze && resolvedScope) {
+      memoryConsolidator.analyzeRecentMemories({
+        scope: resolvedScope,
+        skillId: resolvedSkillId,
+        skillName,
+        days: days ? parseInt(days as string, 10) : 7,
+      })
+    }
 
-    res.json({ candidates })
+    const candidates = memoryConsolidator.getCandidates(
+      resolvedScope,
+      resolvedScope === 'skill' ? resolvedSkillId : undefined,
+    )
+
+    res.json({ candidates, analyzed: shouldAnalyze })
   } catch (error) {
     res.status(500).json({ error: '获取归纳候选失败' })
   }
@@ -355,7 +515,7 @@ router.post('/memory/consolidate', (req: Request, res: Response) => {
     return
   }
   try {
-    const result = memoryConsolidator.consolidate({
+    const result = memoryConsolidator.consolidateCandidates({
       candidateIds,
       scope: scope || 'global',
       skillId,
@@ -412,6 +572,89 @@ router.get('/memory/stats', (_req: Request, res: Response) => {
  * │                       获取 MemCell 列表                                   │
  * │  返回最近 N 天的原子记忆列表（轻量摘要）                                  │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+router.get('/memory/quality-stats', (req: Request, res: Response) => {
+  try {
+    const days = req.query.days ? Math.max(1, parseInt(req.query.days as string, 10)) : 7
+
+    const cells = memCellStorage.listRecent(days)
+    const totalFacts = cells.reduce((sum, cell) => sum + cell.facts.length, 0)
+    const filteredFacts = cells.reduce(
+      (sum, cell) => sum + cell.facts.filter(fact => isNoiseFact(fact.content)).length,
+      0,
+    )
+    const modelFacts = cells.reduce(
+      (sum, cell) => sum + cell.facts.filter(fact => isPotentialModelMemory(fact)).length,
+      0,
+    )
+
+    const sourceBreakdown = cells.reduce(
+      (acc, cell) => {
+        for (const fact of cell.facts) {
+          const source = fact.source || 'user'
+          if (source === 'assistant') acc.assistant += 1
+          else if (source === 'event') acc.event += 1
+          else acc.user += 1
+        }
+        return acc
+      },
+      { user: 0, assistant: 0, event: 0 },
+    )
+
+    let autoLongTermWrites = 0
+    let candidateQueued = 0
+
+    const now = Date.now()
+    for (let index = 0; index < days; index++) {
+      const date = new Date(now - index * 24 * 60 * 60 * 1000)
+      const day = date.toISOString().split('T')[0]
+      const dir = join(DATA_DIR, 'memory', 'traces', day)
+      if (!existsSync(dir)) continue
+
+      const files = readdirSync(dir).filter(name => name.endsWith('.jsonl'))
+      for (const file of files) {
+        const content = readFileSync(join(dir, file), 'utf-8').trim()
+        if (!content) continue
+
+        const lines = content.split('\n').filter(Boolean)
+        for (const line of lines) {
+          try {
+            const event = JSON.parse(line) as {
+              stage?: string
+              payload?: { written?: { longTerm?: number }; candidateQueued?: number }
+            }
+            if (event.stage !== 'upsert') continue
+            autoLongTermWrites += event.payload?.written?.longTerm || 0
+            candidateQueued += event.payload?.candidateQueued || 0
+          } catch {
+            // ignore bad trace line
+          }
+        }
+      }
+    }
+
+    const candidatePool = memoryConsolidator.getCandidates().length
+    const suspiciousRate = totalFacts > 0 ? filteredFacts / totalFacts : 0
+    const autoWriteRate = autoLongTermWrites + candidateQueued > 0
+      ? autoLongTermWrites / (autoLongTermWrites + candidateQueued)
+      : 0
+
+    res.json({
+      days,
+      autoLongTermWrites,
+      candidateQueued,
+      candidatePool,
+      totalFacts,
+      filteredFacts,
+      modelFacts,
+      suspiciousRate,
+      autoWriteRate,
+      sourceBreakdown,
+    })
+  } catch (error) {
+    res.status(500).json({ error: '获取 quality stats 失败' })
+  }
+})
+
 router.get('/memory/cells', (req: Request, res: Response) => {
   try {
     const days = req.query.days ? parseInt(req.query.days as string, 10) : 7

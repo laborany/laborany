@@ -11,6 +11,10 @@ import { writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { stringify as stringifyYaml } from 'yaml'
 import type { WorkflowDefinition, WorkflowStep, WorkflowInputParam } from './types.js'
+import {
+  generateCapabilityId,
+  normalizeCapabilityId,
+} from 'laborany-shared'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       生成 SKILL.md 内容                                  │
@@ -118,7 +122,7 @@ export function generateSkillMd(workflow: WorkflowDefinition): string {
   lines.push('')
   lines.push('- 每完成一个步骤，简要报告结果并询问是否继续')
   lines.push('- 如果用户要求修改某个步骤的输出，重新执行该步骤')
-  lines.push('- 保持���话的连贯性，记住之前步骤的上下文')
+  lines.push('- 保持对话的连贯性，记住之前步骤的上下文')
   lines.push('- 最终输出应整合所有步骤的结果')
   lines.push('')
 
@@ -172,7 +176,8 @@ export async function convertWorkflowToSkill(
   workflow: WorkflowDefinition,
   outputDir: string
 ): Promise<string> {
-  const skillId = `workflow-${workflow.id}`
+  const workflowIdPart = normalizeCapabilityId(workflow.id, 'workflow')
+  const skillId = generateCapabilityId(`workflow-${workflowIdPart}`, 'skill')
   const skillDir = join(outputDir, skillId)
 
   // 创建技能目录

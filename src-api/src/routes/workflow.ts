@@ -7,6 +7,7 @@
 import { Hono } from 'hono'
 import { loadWorkflow } from '../core/workflow/index.js'
 import { loadSkill } from '../core/agent/index.js'
+import { normalizeCapabilityDisplayName } from 'laborany-shared'
 
 const workflow = new Hono()
 
@@ -36,14 +37,16 @@ workflow.get('/:workflowId', async (c) => {
  * │                       创建工作流                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 workflow.post('/create', async (c) => {
-  const { name, description, icon, steps, input, on_failure } = await c.req.json()
+  const { id, name, description, icon, steps, input, on_failure } = await c.req.json()
+  const normalizedName = normalizeCapabilityDisplayName(name)
 
-  if (!name || !steps || !Array.isArray(steps) || steps.length === 0) {
+  if (!normalizedName || !steps || !Array.isArray(steps) || steps.length === 0) {
     return c.json({ error: '缺少必要参数: name, steps' }, 400)
   }
 
   const workflowData = await loadWorkflow.create({
-    name,
+    id,
+    name: normalizedName,
     description: description || '',
     icon,
     steps,

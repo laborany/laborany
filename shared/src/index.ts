@@ -1,13 +1,3 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                     LaborAny Shared Module                               ║
- * ║                                                                          ║
- * ║  统一导出：Skill 加载器、路径工具                                          ║
- * ║  消除 src-api 和 agent-service 之间的代码冗余                              ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
-/* ────────────────────────────────────────────────────────────────────────────
- *  Skill 加载器
- * ──────────────────────────────────────────────────────────────────────────── */
 export {
   loadSkill,
   type Skill,
@@ -15,9 +5,6 @@ export {
   type SkillTool,
 } from './skill-loader.js'
 
-/* ──────��─────────────────────────────────────────────────────────────────────
- *  路径工具
- * ──────────────────────────────────────────────────────────────────────────── */
 export {
   isPackaged,
   BUILTIN_SKILLS_DIR,
@@ -26,3 +13,19 @@ export {
   getUserSkillsDir,
   getUserDir,
 } from './paths.js'
+
+export {
+  CAPABILITY_ID_MAX_LENGTH,
+  normalizeCapabilityDisplayName,
+  normalizeCapabilityId,
+  generateCapabilityId,
+  validateCapabilityId,
+  appendCapabilityIdSuffix,
+  pickUniqueCapabilityId,
+  type CapabilityType,
+} from './capability-naming.js'
+
+export {
+  wrapCmdForUtf8,
+  withUtf8Env,
+} from './encoding.js'

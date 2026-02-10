@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import type { SkillDetail } from '../../types'
+import { useSkillNameMap } from '../../hooks/useSkillNameMap'
 import { FileIcon } from '../shared/FileIcon'
 import { CodeRenderer, MarkdownRenderer, getExt, type FileArtifact } from '../preview'
 
@@ -15,6 +16,7 @@ interface SkillConfigPanelProps {
 }
 
 export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
+  const { getSkillName } = useSkillNameMap()
   const [detail, setDetail] = useState<SkillDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
@@ -23,7 +25,7 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
 
   useEffect(() => {
     fetchSkillDetail()
-  }, [skillId])
+  }, [skillId, getSkillName])
 
   async function fetchSkillDetail() {
     try {
@@ -37,7 +39,7 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
       // 模拟数据
       setDetail({
         id: skillId,
-        name: '金融研报助手',
+        name: getSkillName(skillId) || '技能配置',
         description: '分析财报数据，生成专业的金融研究报告',
         icon: '📊',
         category: '金融',

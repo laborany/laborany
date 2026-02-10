@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { AGENT_API_BASE } from '../../config/api'
+import { API_BASE } from '../../config/api'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -33,7 +33,7 @@ export function RunningTasksIndicator() {
   useEffect(() => {
     const fetchRunningTasks = async () => {
       try {
-        const res = await fetch(`${AGENT_API_BASE}/execute/running`)
+        const res = await fetch(`${API_BASE}/skill/runtime/running`)
         if (res.ok) {
           const data = await res.json()
           setTasks(data.tasks || [])
@@ -119,7 +119,7 @@ export function RunningTasksIndicator() {
             {tasks.map((task) => (
               <Link
                 key={task.sessionId}
-                to={`/skill/${task.skillId}`}
+                to={`/history/${task.sessionId}`}
                 onClick={() => setShowPanel(false)}
                 className="block px-4 py-3 border-b border-border last:border-b-0 hover:bg-accent/50 transition-colors"
               >

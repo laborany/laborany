@@ -11,6 +11,7 @@ import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { platform } from 'os'
 import { DEFAULT_PYTHON_VERSION } from './types.js'
+import { wrapCmdForUtf8, withUtf8Env } from 'laborany-shared'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -78,7 +79,7 @@ export function getUvPath(): string | null {
   // 4. 检查系统安装的 uv
   try {
     const whichCmd = os === 'win32' ? 'where' : 'which'
-    const result = execSync(`${whichCmd} uv`, { encoding: 'utf-8' }).trim()
+    const result = execSync(wrapCmdForUtf8(`${whichCmd} uv`), { encoding: 'utf-8' }).trim()
     if (result) {
       // Windows 的 where 命令返回 \r\n，需要处理
       const paths = result.split(/[\r\n]+/).map(p => p.trim()).filter(Boolean)
@@ -127,8 +128,8 @@ export async function execUv(
   return new Promise((resolve) => {
     const proc = spawn(uvPath, args, {
       cwd: options?.cwd || process.cwd(),
+      env: withUtf8Env({ ...process.env }),
       timeout: options?.timeout || 300000,  // 5 分钟默认超时
-      // Windows 上不使用 shell，直接执行
     })
 
     let stdout = ''
@@ -287,7 +288,7 @@ export async function runPython(options: RunPythonOptions): Promise<RunPythonRes
 
     const proc = spawn(uvPath, uvArgs, {
       cwd: workDir,
-      env: { ...process.env, ...env },
+      env: withUtf8Env({ ...process.env, ...env }),
       timeout,
       // Windows 上不使用 shell，直接执行
     })

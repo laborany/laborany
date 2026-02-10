@@ -6,10 +6,16 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { existsSync, readdirSync, readFileSync } from 'fs'
+import { createHash } from 'crypto'
 import { join } from 'path'
 import { MEMORY_DIR, SKILLS_MEMORY_DIR } from './file-manager.js'
 import { DATA_DIR } from '../paths.js'
-import { TFIDFIndexer, TFIDFSearcher, tokenize } from './tfidf.js'
+import {
+  TFIDFIndexer,
+  TFIDFSearcher,
+  tokenize,
+  type TFIDFIndex,
+} from './tfidf.js'
 import { indexCacheManager } from './index-cache.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -37,7 +43,7 @@ interface BM25Index {
   idf: Map<string, number>
 }
 
-/* ┌────────────────────────────────────────────────────────��─────────────────┐
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     BM25 参数                                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const K1 = 1.2
@@ -64,6 +70,12 @@ function extractSnippet(content: string, queryTokens: string[], maxLen = 200): s
     }
   }
   return content.slice(0, maxLen) + (content.length > maxLen ? '...' : '')
+}
+
+function getFilesCacheKey(prefix: string, files: string[]): string {
+  const normalized = [...files].sort().join('\n')
+  const hash = createHash('sha1').update(normalized).digest('hex').slice(0, 12)
+  return `${prefix}_${files.length}_${hash}`
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -117,7 +129,7 @@ export class MemorySearch {
    *  构建 BM25 索引（带缓存）
    * ──────────────────────────────────────────────────────────────────────── */
   private buildBM25Index(files: string[]): BM25Index {
-    const cacheKey = `bm25_${files.length}`
+    const cacheKey = getFilesCacheKey('bm25', files)
 
     return indexCacheManager.getOrBuild(cacheKey, files, () => {
       const documents = new Map<string, { content: string; tokens: string[] }>()
@@ -152,6 +164,19 @@ export class MemorySearch {
       }
 
       return { documents, avgDocLen, idf }
+    })
+  }
+
+  private buildTFIDFIndex(files: string[]): TFIDFIndex {
+    const cacheKey = getFilesCacheKey('tfidf', files)
+
+    return indexCacheManager.getOrBuild(cacheKey, files, () => {
+      const indexer = new TFIDFIndexer()
+      for (const file of files) {
+        const content = readFileSync(file, 'utf-8')
+        indexer.addDocument(file, content)
+      }
+      return indexer.build()
     })
   }
 
@@ -196,15 +221,10 @@ export class MemorySearch {
     query: string,
     maxResults: number
   ): Array<{ path: string; score: number }> {
-    const cacheKey = `tfidf_${files.length}`
+    const tfidfIndex = this.buildTFIDFIndex(files)
 
-    // 构建 TF-IDF 索引
-    const indexer = new TFIDFIndexer()
-    for (const file of files) {
-      const content = readFileSync(file, 'utf-8')
-      indexer.addDocument(file, content)
-    }
-    const tfidfIndex = indexer.build()
+    // TF-IDF 索引已由 buildTFIDFIndex 缓存构建
+    
 
     // 搜索
     const searcher = new TFIDFSearcher(tfidfIndex)

@@ -7,6 +7,7 @@
 
 import { useState, useEffect } from 'react'
 import { AGENT_API_BASE } from '../../config/api'
+import { useSkillNameMap } from '../../hooks/useSkillNameMap'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -15,6 +16,8 @@ interface CellFact {
   type: string
   content: string
   confidence: number
+  source?: 'user' | 'assistant' | 'event'
+  intent?: 'preference' | 'fact' | 'correction' | 'context' | 'response_style'
 }
 
 interface CellItem {
@@ -34,6 +37,7 @@ interface Props {
  * │                           主组件                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export function MemCellListPanel({ onClose }: Props) {
+  const { getSkillName } = useSkillNameMap()
   const [cells, setCells] = useState<CellItem[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -86,6 +90,7 @@ export function MemCellListPanel({ onClose }: Props) {
                 <CellRow
                   key={cell.id}
                   cell={cell}
+                  skillName={getSkillName(cell.skillId)}
                   expanded={expandedId === cell.id}
                   onToggle={() => setExpandedId(expandedId === cell.id ? null : cell.id)}
                 />
@@ -101,7 +106,12 @@ export function MemCellListPanel({ onClose }: Props) {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           单条记忆行                                      │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function CellRow({ cell, expanded, onToggle }: { cell: CellItem; expanded: boolean; onToggle: () => void }) {
+function CellRow({ cell, skillName, expanded, onToggle }: {
+  cell: CellItem
+  skillName: string
+  expanded: boolean
+  onToggle: () => void
+}) {
   const time = new Date(cell.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 
   return (
@@ -115,10 +125,11 @@ function CellRow({ cell, expanded, onToggle }: { cell: CellItem; expanded: boole
       </div>
       {expanded && (
         <div className="mt-2 rounded bg-muted/50 p-3 text-xs space-y-1">
-          <div className="text-muted-foreground">技能: {cell.skillId}</div>
+          <div className="text-muted-foreground">技能: {skillName}</div>
           {cell.facts.map((f, i) => (
             <div key={i} className="flex items-center gap-2">
               <span className="rounded bg-primary/10 px-1 text-primary">{f.type}</span>
+              <span className="rounded bg-amber-500/10 px-1 text-amber-600">{f.source || 'user'}</span>
               <span>{f.content}</span>
               <span className="text-muted-foreground">({(f.confidence * 100).toFixed(0)}%)</span>
             </div>

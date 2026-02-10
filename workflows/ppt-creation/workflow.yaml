@@ -1,0 +1,48 @@
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║                         PPT创建流水线                                      ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+name: PPT创建
+description: 从主题到完整演示文稿的自动化创建流程
+icon: "🎯"
+
+input:
+  topic:
+    type: string
+    description: 演示主题
+    required: true
+  style:
+    type: string
+    description: 演示风格
+    required: false
+    default: professional
+
+steps:
+  - skill: docx
+    name: 大纲生成
+    prompt: |
+      请为主题「{{input.topic}}」生成一份演示文稿大纲，风格为 {{input.style}}。
+
+      大纲需包含：
+      1. 封面标题与副标题
+      2. 目录结构（5-8个章节）
+      3. 每个章节的核心要点（3-5个要点）
+      4. 结尾总结与行动号召
+
+      请以结构化的格式输出，便于后续转换为 PPT。
+
+  - skill: pptx
+    name: PPT生成
+    prompt: |
+      基于以下大纲内容，生成一份完整的演示文稿（PPT），风格为 {{input.style}}。
+
+      大纲内容：
+      {{prev.output}}
+
+      要求：
+      1. 每页幻灯片内容精炼，突出核心信息
+      2. 合理使用标题、正文、列表等排版元素
+      3. 保持整体风格统一
+      4. 控制总页数在 15 页以内
+
+on_failure: stop

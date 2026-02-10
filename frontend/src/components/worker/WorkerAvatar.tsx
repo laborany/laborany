@@ -2,6 +2,8 @@
  * ║                      员工头像组件                                         ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
+import { LaborAnyLogo } from '../ui/LaborAnyLogo'
+
 interface WorkerAvatarProps {
   icon?: string
   size?: 'sm' | 'md' | 'lg'
@@ -18,7 +20,7 @@ export function WorkerAvatar({ icon, size = 'md' }: WorkerAvatarProps) {
     <div
       className={`${SIZE_MAP[size]} rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0`}
     >
-      {icon || '🤖'}
+      {icon || <LaborAnyLogo size={size === 'sm' ? 24 : size === 'lg' ? 36 : 28} />}
     </div>
   )
 }

@@ -406,3 +406,102 @@ POST /api/memory/write      - 写入记忆（纠正/偏好/事实）
 | 设计哲学 | 文件系统为主 | **文件系统为主**（与 OpenClaw 一致） |
 | 更新方式 | 手动编辑 + Agent 写入 | UI 编辑 + Agent 写入 |
 | 特色 | 通用 Agent | **按 Skill 组织记忆**（Laborany 特有） |
+
+---
+
+## 十、2026-02 记忆质量修复方案（防污染版）
+
+> 目的：彻底解决“错误信息、总结污染、临时状态误记忆、跨链路重复写入”问题。
+
+### 1) 写入分层与准入规则
+
+#### L0: MemCell（原子记忆，允许自动写入）
+- 仅记录单轮 `userQuery + assistantResponse` 的压缩快照。
+- 必须先做**噪声过滤**：
+  - 过滤工作流脚手架：`工作流执行上下文 / 当前步骤 / 输入参数 / 前序步骤结果 / {{input.xxx}}`
+  - 过滤临时状态：`尚未确认 / 尚未指定 / 待确认`
+  - 过滤助手流程语：`让我先... / 已完成 / 工具调用记录`
+- `__converse__` 会话默认**不写入** MemCell。
+
+#### L1: Profile（用户画像，中期记忆）
+- 只允许写入“用户稳定信息”：偏好、沟通风格、长期工作约束、稳定环境信息。
+- 默认门槛：
+  - 置信度 ≥ 0.65 才可候选更新；
+  - 发生冲突时按证据数量与置信度决策 `keep_old / merge / use_new`；
+  - 同条信息需去重（语义归一键）。
+- 自动分区：`工作偏好 / 沟通风格 / 技术栈 / 个人信息`，禁止全部塞到单一章节。
+
+#### L2: Long-Term MEMORY（长期记忆）
+- 只允许从 Profile 晋升，不直接从一次提取结果直写。
+- 晋升门槛：
+  - 非 provisional（高置信）；
+  - 同字段至少 2 条证据；
+  - 不含时间敏感表达（如“今天/本次/刚刚/具体日期”）。
+- 全局 MEMORY（`MEMORY.md`）仅保留跨 Skill 通用规则；
+  skill MEMORY 记录技能内长期约束与偏好。
+
+### 2) 高风险链路隔离
+
+- `__converse__` 仅负责意图决策，不参与长期记忆沉淀。
+- Workflow 执行链中，带 `工作流执行上下文` 的 prompt 不得直接入库。
+- 仅保留一条主写入链路（orchestrator），避免双写和重复写。
+
+### 3) 每日记忆（Daily）写入策略
+
+- Skill Daily 可记录任务摘要（可审计）。
+- Global Daily 仅在“高置信 + 用户中心 + 稳定”条件下写入，避免全局噪声膨胀。
+
+### 4) 注入（Retrieve）策略
+
+- 固定注入：`BOSS.md + Profile`。
+- 高优先：`全局长期 + 技能长期`。
+- 低优先：相似片段与最近 daily（带 token 预算）。
+- 禁止注入明显噪声片段（工作流脚手架、临时状态、助手流程话术）。
+
+### 5) 存量数据清洗机制
+
+- 提供一键脚本：`npm run memory:clean`。
+- 清洗范围：
+  - `data/MEMORY.md`
+  - `data/memory/profiles/PROFILE.md`
+  - `data/memory/cells/**/*.md`（仅清除噪声 fact）
+- 先自动备份再清洗：`data/memory/cleanup-backups/<timestamp>/`。
+
+### 6) 质量验收指标（必须满足）
+
+- P0：新写入数据中，工作流脚手架污染条目 = 0。
+- P0：`__converse__` 记忆写入 = 0。
+- P1：Profile 中“尚未确认/待确认”条目占比 < 1%。
+- P1：全局 MEMORY 中“新闻事实/一次性任务细节”条目占比 < 5%。
+- P1：同义重复条目（归一后）下降 80% 以上。
+
+### 7) 运维建议
+
+- 每日或每周执行一次 `memory:clean`（上线初期建议每日）。
+- 每周人工抽查 Top 20 新增长期记忆条目。
+- 当检测到污染阈值超标时，自动降级：暂停 long-term 自动晋升，仅保留候选。
+
+### 8) 二轮加固：长期记忆候选队列（2026-02-10）
+
+- 自动提取阶段不再直接写入长期记忆文件，仅写入候选队列：
+  - `data/memory/consolidation-candidates.json`
+- 候选的生成来源有两类：
+  - `orchestrator` 从高置信、非临时、双证据 Profile 字段晋升为候选；
+  - `consolidator` 从 daily 归纳得到高频模式后入队。
+- 候选确认采用“显式确认”工作流：
+  - `GET /memory/consolidation-candidates?scope=...&analyze=false`：仅查看候选；
+  - `GET /memory/consolidation-candidates?...&analyze=true&days=N`：先分析再返回；
+  - `POST /memory/consolidate`：人工确认后写入长期记忆；
+  - `POST /memory/reject-candidates`：人工拒绝候选。
+- 写入保护：`consolidate` 时按 candidate 自身 scope/skillId 校验，避免跨作用域误归档。
+
+### 9) 自动写入策略（你现在要的模式）
+
+- 默认目标：**自动提取 + 自动写入**，不要求用户每次确认。
+- 为避免脏写，采用“双轨制”：
+  - 高置信稳定信息：自动写入长期记忆；
+  - 边缘信息：自动进入候选池，不阻塞主流程。
+- 自动写入门槛（建议值）：
+  - Skill 长期：置信度 ≥ 0.90，证据数 ≥ 3，且通过稳定性过滤；
+  - Global 长期：置信度 ≥ 0.92，证据数 ≥ 4，且满足跨技能通用规则。
+- 过滤增强：在原有 workflow/临时态/助手话术过滤基础上，额外过滤结构化噪声（模板占位符、纯 JSON 块、URL、HTML 片段）。

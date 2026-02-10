@@ -85,7 +85,7 @@ auth.get('/me', async (c) => {
   )
 
   if (!user) {
-    return c.json({ error: '用户不存���' }, 404)
+    return c.json({ error: '用户不存在' }, 404)
   }
 
   return c.json(user)

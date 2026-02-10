@@ -18,6 +18,8 @@ export interface ExtractedFact {
   type: 'preference' | 'fact' | 'correction' | 'context'
   content: string
   confidence: number
+  source: 'user' | 'assistant' | 'event'
+  intent?: 'preference' | 'fact' | 'correction' | 'context' | 'response_style'
 }
 
 export interface MemCell {
@@ -109,7 +111,13 @@ export class MemCellExtractor {
         const matches = msg.content.match(regex)
         if (!matches) continue
         for (const match of matches) {
-          facts.push({ type, content: match.trim(), confidence })
+          facts.push({
+            type,
+            content: match.trim(),
+            confidence,
+            source: msg.role,
+            intent: type,
+          })
         }
       }
     }
@@ -119,7 +127,13 @@ export class MemCellExtractor {
       const userMsg = messages.find(m => m.role === 'user')
       if (userMsg) {
         const snippet = userMsg.content.slice(0, 50).trim()
-        facts.push({ type: 'context', content: snippet, confidence: 0.5 })
+        facts.push({
+          type: 'context',
+          content: snippet,
+          confidence: 0.5,
+          source: 'user',
+          intent: 'context',
+        })
       }
     }
 
@@ -172,5 +186,5 @@ export class MemCellExtractor {
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           导出单例                                        │
- * └──────────────────────────────────────────────────────────────���───────────┘ */
+ * └──────────────────────────────────────────────────────────────────────────┘ */
 export const memCellExtractor = new MemCellExtractor()

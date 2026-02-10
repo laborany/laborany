@@ -366,7 +366,8 @@ export default function WorkflowEditPage() {
     setInstalling(true)
     try {
       const skillId = await installAsSkill(workflowId!)
-      alert(`安装成功！技能 ID: ${skillId}`)
+      const skillName = name.trim() || skillId
+      alert(`安装成功！技能名称：${skillName}`)
       navigate('/skills')
     } catch {
       // 错误已在 hook 中处理

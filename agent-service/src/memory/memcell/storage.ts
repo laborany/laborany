@@ -1,23 +1,10 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                     MemCell 存储器                                        ║
- * ║                                                                          ║
- * ║  职责：MemCell 的持久化存储和读取                                          ║
- * ║  格式：Markdown 文件，按日期组织                                           ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'fs'
-import { join, dirname } from 'path'
+import { join } from 'path'
 import { DATA_DIR } from '../../paths.js'
 import type { MemCell, Message, ExtractedFact } from './extractor.js'
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           路径常量                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 const CELLS_DIR = join(DATA_DIR, 'memory', 'cells')
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     工具函数                                              │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 function formatDate(date: Date): string {
   return date.toISOString().split('T')[0]
 }
@@ -32,17 +19,45 @@ function ensureDir(dir: string): void {
   }
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     MemCell 存储器类                                      │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+function parseFactLine(line: string): ExtractedFact | null {
+  if (!line.startsWith('- [')) return null
+  const close = line.indexOf('] ')
+  if (close < 0) return null
+
+  const header = line.slice(3, close)
+  const rest = line.slice(close + 2)
+  const confMatch = rest.match(/\((?:置信度)[:：]?\s*([\d.]+)\)$/)
+  if (!confMatch) return null
+
+  const content = rest.slice(0, confMatch.index).trim()
+  const confidence = Number.parseFloat(confMatch[1])
+  if (!content || Number.isNaN(confidence)) return null
+
+  const [rawType, rawSource, rawIntent] = header.split('|').map(item => item.trim())
+  const type: ExtractedFact['type'] =
+    rawType === 'preference' || rawType === 'fact' || rawType === 'correction' || rawType === 'context'
+      ? rawType
+      : 'context'
+  const source: ExtractedFact['source'] =
+    rawSource === 'user' || rawSource === 'assistant' || rawSource === 'event'
+      ? rawSource
+      : 'user'
+  const intent: ExtractedFact['intent'] =
+    rawIntent === 'preference'
+    || rawIntent === 'fact'
+    || rawIntent === 'correction'
+    || rawIntent === 'context'
+    || rawIntent === 'response_style'
+      ? rawIntent
+      : type
+
+  return { type, content, confidence, source, intent }
+}
+
 export class MemCellStorage {
-  /* ────────────────────────────────────────────────────────────────────────
-   *  将 MemCell 转换为 Markdown
-   * ──────────────────────────────────────────────────────────────────────── */
   private toMarkdown(cell: MemCell): string {
     const lines: string[] = []
 
-    // YAML frontmatter
     lines.push('---')
     lines.push(`id: ${cell.id}`)
     lines.push(`timestamp: ${cell.timestamp.toISOString()}`)
@@ -51,7 +66,6 @@ export class MemCellStorage {
     lines.push('---')
     lines.push('')
 
-    // 原始对话
     lines.push('## 原始对话')
     lines.push('')
     for (const msg of cell.messages) {
@@ -61,12 +75,13 @@ export class MemCellStorage {
       lines.push('')
     }
 
-    // 提取的事实
     if (cell.facts.length > 0) {
       lines.push('## 提取的事实')
       lines.push('')
       for (const fact of cell.facts) {
-        lines.push(`- [${fact.type}] ${fact.content} (置信度: ${fact.confidence})`)
+        const source = fact.source || 'user'
+        const intent = fact.intent || fact.type
+        lines.push(`- [${fact.type}|${source}|${intent}] ${fact.content} (置信度: ${fact.confidence})`)
       }
       lines.push('')
     }
@@ -74,11 +89,7 @@ export class MemCellStorage {
     return lines.join('\n')
   }
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  从 Markdown 解析 MemCell
-   * ──────────────────────────────────────────────────────────────────────── */
   private fromMarkdown(content: string): MemCell | null {
-    // 解析 YAML frontmatter
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/)
     if (!frontmatterMatch) return null
 
@@ -91,12 +102,11 @@ export class MemCellStorage {
       }
     }
 
-    // 解析对话
     const messages: Message[] = []
     const dialogMatch = content.match(/## 原始对话\n\n([\s\S]*?)(?=\n## |$)/)
     if (dialogMatch) {
       const msgRegex = /\*\*(User|Assistant)(?:\s*\(([^)]+)\))?\*\*:\s*(.+)/g
-      let match
+      let match: RegExpExecArray | null
       while ((match = msgRegex.exec(dialogMatch[1])) !== null) {
         messages.push({
           role: match[1].toLowerCase() as 'user' | 'assistant',
@@ -106,18 +116,14 @@ export class MemCellStorage {
       }
     }
 
-    // 解析事实
     const facts: ExtractedFact[] = []
     const factsMatch = content.match(/## 提取的事实\n\n([\s\S]*?)(?=\n## |$)/)
     if (factsMatch) {
-      const factRegex = /- \[(\w+)\] (.+?) \(置信度: ([\d.]+)\)/g
-      let match
-      while ((match = factRegex.exec(factsMatch[1])) !== null) {
-        facts.push({
-          type: match[1] as ExtractedFact['type'],
-          content: match[2],
-          confidence: parseFloat(match[3]),
-        })
+      for (const rawLine of factsMatch[1].split('\n')) {
+        const line = rawLine.trim()
+        if (!line) continue
+        const fact = parseFactLine(line)
+        if (fact) facts.push(fact)
       }
     }
 
@@ -131,9 +137,6 @@ export class MemCellStorage {
     }
   }
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  保存 MemCell
-   * ──────────────────────────────────────────────────────────────────────── */
   save(cell: MemCell): string {
     const dateStr = formatDate(cell.timestamp)
     const dir = join(CELLS_DIR, dateStr)
@@ -146,11 +149,7 @@ export class MemCellStorage {
     return filePath
   }
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  读取单个 MemCell
-   * ──────────────────────────────────────────────────────────────────────── */
   load(id: string, date?: Date): MemCell | null {
-    // 如果提供了日期，直接定位
     if (date) {
       const dateStr = formatDate(date)
       const filePath = join(CELLS_DIR, dateStr, `${id}.md`)
@@ -160,7 +159,6 @@ export class MemCellStorage {
       return null
     }
 
-    // 否则遍历所有日期目录
     if (!existsSync(CELLS_DIR)) return null
     for (const dateDir of readdirSync(CELLS_DIR)) {
       const filePath = join(CELLS_DIR, dateDir, `${id}.md`)
@@ -171,9 +169,6 @@ export class MemCellStorage {
     return null
   }
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  列出指定日期的所有 MemCell
-   * ──────────────────────────────────────────────────────────────────────── */
   listByDate(date: Date): MemCell[] {
     const dateStr = formatDate(date)
     const dir = join(CELLS_DIR, dateStr)
@@ -190,9 +185,6 @@ export class MemCellStorage {
     return cells.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
   }
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  列出最近 N 天的所有 MemCell
-   * ──────────────────────────────────────────────────────────────────────── */
   listRecent(days = 7): MemCell[] {
     const cells: MemCell[] = []
     const now = new Date()
@@ -207,8 +199,6 @@ export class MemCellStorage {
   }
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           导出单例                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 export const memCellStorage = new MemCellStorage()
 export { CELLS_DIR }
+

@@ -1,18 +1,22 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                      场景快捷入口卡片                                      ║
  * ║                                                                          ║
- * ║  功能：首页快速开始场景卡片，支持自定义配置                                  ║
+ * ║  功能：首页快速开始场景卡片，支持选择引用与自定义配置                        ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { useQuickStartContext, QuickStartItem } from '../../contexts/QuickStartContext'
+import { useQuickStartContext, type QuickStartItem } from '../../contexts/QuickStartContext'
 import { QuickStartEditor } from './QuickStartEditor'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           主组件                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export function ScenarioCards() {
+interface ScenarioCardsProps {
+  selectedId?: string
+  onSelect?: (item: QuickStartItem) => void
+}
+
+export function ScenarioCards({ selectedId, onSelect }: ScenarioCardsProps) {
   const { scenarios, isCustomized } = useQuickStartContext()
   const [isEditing, setIsEditing] = useState(false)
 
@@ -42,7 +46,12 @@ export function ScenarioCards() {
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {scenarios.map((scenario) => (
-            <ScenarioCard key={scenario.skillId} scenario={scenario} />
+            <ScenarioCard
+              key={scenario.id}
+              scenario={scenario}
+              selected={scenario.id === selectedId}
+              onSelect={onSelect}
+            />
           ))}
         </div>
       )}
@@ -53,13 +62,28 @@ export function ScenarioCards() {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           场景卡片                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function ScenarioCard({ scenario }: { scenario: QuickStartItem }) {
-  const href = `/execute/${scenario.skillId}`
+function ScenarioCard({
+  scenario,
+  selected,
+  onSelect,
+}: {
+  scenario: QuickStartItem
+  selected: boolean
+  onSelect?: (item: QuickStartItem) => void
+}) {
+  const typeLabel = scenario.targetType === 'workflow' ? '任务流' : '技能'
 
   return (
-    <Link
-      to={href}
-      className="flex-shrink-0 w-32 p-4 rounded-xl bg-card border border-border hover:border-primary/50 hover:shadow-md transition-all text-center group"
+    <button
+      type="button"
+      onClick={() => onSelect?.(scenario)}
+      className={
+        `flex-shrink-0 w-32 p-4 rounded-xl bg-card border hover:shadow-md transition-all text-center group ` +
+        (selected
+          ? 'border-primary bg-primary/5'
+          : 'border-border hover:border-primary/50')
+      }
+      aria-pressed={selected}
     >
       <div className="text-3xl mb-2">{scenario.icon}</div>
       <div className="font-medium text-foreground text-sm group-hover:text-primary transition-colors">
@@ -68,6 +92,7 @@ function ScenarioCard({ scenario }: { scenario: QuickStartItem }) {
       <div className="text-xs text-muted-foreground mt-1 line-clamp-1">
         {scenario.description}
       </div>
-    </Link>
+      <div className="text-[10px] text-muted-foreground mt-1">{typeLabel}</div>
+    </button>
   )
 }

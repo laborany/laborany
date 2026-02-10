@@ -165,7 +165,19 @@ app.all('/agent-api/*', async (c) => {
 
   try {
     const headers = new Headers(c.req.raw.headers)
-    headers.delete('host')
+    const hopByHopHeaders = [
+      'host',
+      'connection',
+      'keep-alive',
+      'proxy-connection',
+      'transfer-encoding',
+      'upgrade',
+      'expect',
+      'content-length',
+    ]
+    for (const key of hopByHopHeaders) {
+      headers.delete(key)
+    }
 
     const response = await fetch(targetUrl, {
       method: c.req.method,
@@ -222,12 +234,12 @@ if (staticRoot) {
       const content = readFileSync(filePath)
       const ext = filePath.split('.').pop() || ''
       const mimeTypes: Record<string, string> = {
-        js: 'application/javascript',
-        css: 'text/css',
-        html: 'text/html',
+        js: 'application/javascript; charset=utf-8',
+        css: 'text/css; charset=utf-8',
+        html: 'text/html; charset=utf-8',
         png: 'image/png',
         jpg: 'image/jpeg',
-        svg: 'image/svg+xml',
+        svg: 'image/svg+xml; charset=utf-8',
         ico: 'image/x-icon',
       }
       return c.body(content, 200, {

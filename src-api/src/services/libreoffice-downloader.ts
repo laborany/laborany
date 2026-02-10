@@ -3,7 +3,6 @@
  * ║                                                                          ║
  * ║  职责：检测平台，下载并安装对应版本的 LibreOffice                           ║
  * ║  支持：Windows / macOS ARM64 / macOS x64 / Linux                         ║
- * ╚═════════════════════════════════════════════════════════════════════���════╝ */
 
 import { createWriteStream, existsSync, mkdirSync, chmodSync, unlinkSync } from 'fs'
 import { join } from 'path'

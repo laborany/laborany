@@ -1,14 +1,4 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                      消息类型定义                                         ║
- * ║                                                                          ║
- * ║  统一管理所有消息相关的类型定义                                             ║
- * ║  消除重复定义，确保类型一致性                                               ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           实时消息类型                                    │
- * │  用于 SSE 流式通信时的消息展示                                             │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentMessage {
   id: string
   type: 'user' | 'assistant' | 'tool' | 'error'
@@ -18,10 +8,6 @@ export interface AgentMessage {
   timestamp: Date
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           历史消息类型                                    │
- * │  用于从数据库获取的历史会话消息                                            │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface HistoryMessage {
   id: number
   type: string  // 'user', 'assistant', 'tool_use', 'tool_result'
@@ -32,10 +18,6 @@ export interface HistoryMessage {
   createdAt: string
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           会话类型                                        │
- * │  注意：字段命名与后端 API 保持一致（snake_case）                             │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface Session {
   id: string
   skill_id: string
@@ -50,9 +32,18 @@ export interface SessionDetail extends Session {
   work_dir?: string  // 工作目录，用于 Live Preview
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           任务文件类型                                    │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+
+export interface SessionLiveStatus {
+  sessionId: string
+  dbStatus: string
+  isRunning: boolean
+  source: 'runtime' | 'database'
+  startedAt: string
+  lastEventAt?: string
+  canAttach: boolean
+  runtimeStatus?: string
+}
+
 export interface TaskFile {
   name: string
   path: string
@@ -63,3 +54,4 @@ export interface TaskFile {
   stepIndex?: number    // 工作流步骤索引
   stepName?: string     // 工作流步骤名称
 }
+

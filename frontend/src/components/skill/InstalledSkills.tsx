@@ -4,6 +4,7 @@
 
 import { Link } from 'react-router-dom'
 import type { Skill } from '../../types'
+import { LaborAnyLogo } from '../ui/LaborAnyLogo'
 
 interface InstalledSkillsProps {
   skills: Skill[]
@@ -34,7 +35,7 @@ export function InstalledSkills({
       {skills.map((skill) => (
         <div key={skill.id} className="card-hover p-6">
           <div className="flex items-start gap-4">
-            <span className="text-3xl">{skill.icon || '🤖'}</span>
+            <span className="text-3xl">{skill.icon || <LaborAnyLogo size={32} />}</span>
             <div className="flex-1">
               <h3 className="font-semibold text-lg text-foreground">
                 {skill.name}

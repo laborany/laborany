@@ -7,7 +7,7 @@
 import { Hono } from 'hono'
 import { existsSync } from 'fs'
 import { dbHelper } from '../core/database.js'
-import { getTaskDir } from '../core/agent/index.js'
+import { getTaskDir, runtimeTaskManager } from '../core/agent/index.js'
 
 const session = new Hono()
 
@@ -95,6 +95,38 @@ session.get('/:sessionId', (c) => {
     ...sessionData,
     work_dir: workDir,
     messages: formattedMessages
+  })
+})
+
+session.get('/:sessionId/live-status', (c) => {
+  const sessionId = c.req.param('sessionId')
+
+  const sessionData = dbHelper.get<{
+    id: string
+    status: string
+    created_at: string
+  }>(`
+    SELECT id, status, created_at
+    FROM sessions
+    WHERE id = ?
+  `, [sessionId])
+
+  if (!sessionData) {
+    return c.json({ error: '会话不存在' }, 404)
+  }
+
+  const runtimeStatus = runtimeTaskManager.getStatus(sessionId)
+  const isRunning = runtimeStatus?.isRunning === true
+
+  return c.json({
+    sessionId,
+    dbStatus: sessionData.status,
+    isRunning,
+    source: runtimeStatus ? 'runtime' : 'database',
+    startedAt: runtimeStatus?.startedAt || sessionData.created_at,
+    lastEventAt: runtimeStatus?.lastEventAt,
+    canAttach: runtimeTaskManager.has(sessionId),
+    runtimeStatus: runtimeStatus?.status,
   })
 })
 

@@ -62,9 +62,9 @@ function getDataDir(): string {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     获取 Workflows 目录                                   │
+ * │                     获取用户 Workflows 目录（可写）                        │
  * │                                                                          │
- * │  Workflows 是用户创建的，需要存储在可写目录                                │
+ * │  用户创建/修改的工作流存储在此                                             │
  * │  开发模式：项目根目录下的 workflows                                       │
  * │  打包后：用户目录下的 workflows                                           │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -72,7 +72,6 @@ function getWorkflowsDir(): string {
   if (!isPkg) return join(__dirname, '../../workflows')
 
   const userWorkflowsDir = join(getUserDir(), 'workflows')
-  // 确保目录存在
   if (!existsSync(userWorkflowsDir)) {
     mkdirSync(userWorkflowsDir, { recursive: true })
   }
@@ -80,10 +79,23 @@ function getWorkflowsDir(): string {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     获取内置 Workflows 目录（只读）                        │
+ * │                                                                          │
+ * │  随应用打包的内置工作流，用户目录中找不到时回退到此处                       │
+ * │  开发模式：与用户目录相同（无需区分）                                      │
+ * │  打包后：resources/workflows                                              │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function getBuiltinWorkflowsDir(): string {
+  if (!isPkg) return join(__dirname, '../../workflows')
+  return join(getResourcesDir(), 'workflows')
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     导出路径常量                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export const RESOURCES_DIR = getResourcesDir()
 export const WORKFLOWS_DIR = getWorkflowsDir()
+export const BUILTIN_WORKFLOWS_DIR = getBuiltinWorkflowsDir()
 export const DATA_DIR = getDataDir()
 
 export { isPkg }

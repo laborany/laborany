@@ -100,12 +100,20 @@ function WorkflowCard({
       </div>
 
       {/* 操作按钮 */}
-      <Link
-        to={`/workflows/${workflow.id}/edit`}
-        className="block w-full py-2 text-center bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-      >
-        编辑工作流
-      </Link>
+      <div className="flex gap-2">
+        <button
+          onClick={() => navigate(`/workflow-run/${workflow.id}`)}
+          className="flex-1 py-2 text-center bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm"
+        >
+          执行
+        </button>
+        <Link
+          to={`/workflows/${workflow.id}/edit`}
+          className="flex-1 py-2 text-center border border-border text-foreground rounded-lg hover:bg-accent transition-colors text-sm"
+        >
+          编辑
+        </Link>
+      </div>
     </div>
   )
 }

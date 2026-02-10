@@ -4,7 +4,7 @@
  * ║  职责：管理工作流状态、CRUD 操作、安装为技能                                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { API_BASE, parseErrorMessage } from '../config'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -59,6 +59,15 @@ export function useWorkflowList() {
       setLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onCapabilityChanged = () => {
+      fetchWorkflows()
+    }
+    window.addEventListener('capability:changed', onCapabilityChanged)
+    return () => window.removeEventListener('capability:changed', onCapabilityChanged)
+  }, [fetchWorkflows])
 
   return { workflows, loading, error, fetchWorkflows }
 }

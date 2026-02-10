@@ -10,7 +10,23 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import type { WorkflowDefinition, WorkflowInputParam, WorkflowStep } from './types.js'
-import { WORKFLOWS_DIR } from '../paths.js'
+import { WORKFLOWS_DIR, BUILTIN_WORKFLOWS_DIR } from '../paths.js'
+import {
+  generateCapabilityId,
+  normalizeCapabilityDisplayName,
+  normalizeCapabilityId,
+  pickUniqueCapabilityId,
+} from 'laborany-shared'
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     工作流搜索路径                                         │
+ * │                                                                          │
+ * │  用户目录优先，内置目录兜底                                               │
+ * │  开发模式下两者相同，自然去重                                              │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const SEARCH_DIRS = WORKFLOWS_DIR === BUILTIN_WORKFLOWS_DIR
+  ? [WORKFLOWS_DIR]
+  : [WORKFLOWS_DIR, BUILTIN_WORKFLOWS_DIR]
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           工作流缓存                                       │
@@ -29,23 +45,54 @@ interface WorkflowYaml {
   on_failure?: 'stop' | 'continue' | 'retry'
 }
 
+async function collectExistingWorkflowIds(): Promise<Set<string>> {
+  const existingIds = new Set<string>()
+
+  if (existsSync(WORKFLOWS_DIR)) {
+    const dirs = await readdir(WORKFLOWS_DIR, { withFileTypes: true })
+    for (const dir of dirs) {
+      if (dir.isDirectory()) {
+        existingIds.add(dir.name)
+      }
+    }
+  }
+
+  if (BUILTIN_WORKFLOWS_DIR !== WORKFLOWS_DIR && existsSync(BUILTIN_WORKFLOWS_DIR)) {
+    const dirs = await readdir(BUILTIN_WORKFLOWS_DIR, { withFileTypes: true })
+    for (const dir of dirs) {
+      if (dir.isDirectory()) {
+        existingIds.add(dir.name)
+      }
+    }
+  }
+
+  return existingIds
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                       在搜索路径中定位工作流 YAML                          │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function findWorkflowYaml(workflowId: string): string | null {
+  for (const dir of SEARCH_DIRS) {
+    const yamlPath = join(dir, workflowId, 'workflow.yaml')
+    if (existsSync(yamlPath)) return yamlPath
+  }
+  return null
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       加载单个工作流                                       │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-async function loadSingleWorkflow(workflowDir: string): Promise<WorkflowDefinition | null> {
+async function loadSingleWorkflow(workflowId: string): Promise<WorkflowDefinition | null> {
   try {
-    const workflowPath = join(WORKFLOWS_DIR, workflowDir)
-    const yamlPath = join(workflowPath, 'workflow.yaml')
-
-    if (!existsSync(yamlPath)) {
-      return null
-    }
+    const yamlPath = findWorkflowYaml(workflowId)
+    if (!yamlPath) return null
 
     const yamlContent = await readFile(yamlPath, 'utf-8')
     const data = parseYaml(yamlContent) as WorkflowYaml
 
     return {
-      id: workflowDir,
+      id: workflowId,
       name: data.name,
       description: data.description,
       icon: data.icon,
@@ -74,37 +121,38 @@ export const loadWorkflow = {
     return workflow
   },
 
-  // 列出所有可用工作流
+  // 列出所有可用工作流（用户目录优先，同 ID 覆盖内置）
   async listAll(): Promise<WorkflowDefinition[]> {
-    // 确保目录存在
-    if (!existsSync(WORKFLOWS_DIR)) {
-      await mkdir(WORKFLOWS_DIR, { recursive: true })
-      return []
-    }
+    const seen = new Map<string, WorkflowDefinition>()
 
-    const dirs = await readdir(WORKFLOWS_DIR, { withFileTypes: true })
-    const workflows: WorkflowDefinition[] = []
-
-    for (const dir of dirs) {
-      if (!dir.isDirectory()) continue
-      const workflow = await this.byId(dir.name)
-      if (workflow) {
-        workflows.push(workflow)
+    for (const baseDir of SEARCH_DIRS) {
+      if (!existsSync(baseDir)) continue
+      const dirs = await readdir(baseDir, { withFileTypes: true })
+      for (const dir of dirs) {
+        if (!dir.isDirectory() || seen.has(dir.name)) continue
+        const workflow = await this.byId(dir.name)
+        if (workflow) seen.set(dir.name, workflow)
       }
     }
-    return workflows
+    return [...seen.values()]
   },
 
   // 创建新工作流
   async create(workflow: Omit<WorkflowDefinition, 'id'> & { id?: string }): Promise<WorkflowDefinition> {
-    const id = workflow.id || generateWorkflowId(workflow.name)
+    const normalizedName = normalizeCapabilityDisplayName(workflow.name)
+    const idBase = workflow.id
+      ? normalizeCapabilityId(workflow.id, 'workflow')
+      : generateCapabilityId(normalizedName, 'workflow')
+
+    const existingIds = await collectExistingWorkflowIds()
+    const id = pickUniqueCapabilityId(idBase, existingIds)
     const workflowPath = join(WORKFLOWS_DIR, id)
 
     // 确保目录存在
     await mkdir(workflowPath, { recursive: true })
 
     const yamlData: WorkflowYaml = {
-      name: workflow.name,
+      name: normalizedName,
       description: workflow.description,
       icon: workflow.icon,
       steps: workflow.steps,
@@ -115,7 +163,7 @@ export const loadWorkflow = {
     const yamlContent = stringifyYaml(yamlData)
     await writeFile(join(workflowPath, 'workflow.yaml'), yamlContent, 'utf-8')
 
-    const newWorkflow: WorkflowDefinition = { ...workflow, id }
+    const newWorkflow: WorkflowDefinition = { ...workflow, id, name: normalizedName }
     workflowCache.set(id, newWorkflow)
 
     return newWorkflow
@@ -126,7 +174,8 @@ export const loadWorkflow = {
     const existing = await this.byId(id)
     if (!existing) return null
 
-    const updated: WorkflowDefinition = { ...existing, ...workflow, id }
+    const normalizedName = normalizeCapabilityDisplayName(workflow.name ?? existing.name)
+    const updated: WorkflowDefinition = { ...existing, ...workflow, id, name: normalizedName }
     const workflowPath = join(WORKFLOWS_DIR, id)
 
     const yamlData: WorkflowYaml = {
@@ -170,10 +219,3 @@ export const loadWorkflow = {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       生成工作流 ID                                       │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function generateWorkflowId(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 50) || `workflow-${Date.now()}`
-}

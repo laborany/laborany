@@ -79,3 +79,6 @@ export {
  * │                     记忆处理器（协调三级结构）                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export { memoryProcessor, MemoryProcessor } from './processor.js'
+export { memoryOrchestrator, MemoryOrchestrator } from './orchestrator.js'
+export { memoryCliExtractor, MemoryCliExtractor, type CliExtractResult } from './cli-extractor.js'
+export type { MemoryScene, InjectedMemorySection, MemoryTraceEvent } from './types.js'

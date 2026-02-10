@@ -52,6 +52,7 @@
     "bundle:all:mac-arm64": "npm run bundle:cli:mac-arm64 && npm run bundle:uv:mac-arm64",
     "bundle:all:mac-universal": "npm run bundle:cli:mac-universal && npm run bundle:uv:mac-universal",
     "bundle:all:linux": "npm run bundle:cli:linux && npm run bundle:uv:linux",
+    "memory:clean": "node scripts/clean-memory.js",
     "build:electron": "npm run bundle:all:win && npm run fix:native:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && electron-builder --win --publish never",
     "build:electron:mac": "npm run bundle:all:mac-universal && npm run fix:native:mac && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && electron-builder --mac --publish never",
     "build:electron:linux": "npm run bundle:all:linux && npm run fix:native:linux && npm run build:api:linux && npm run build:agent:linux && npm run build:frontend && electron-builder --linux --publish never",
@@ -60,6 +61,7 @@
   "build": {
     "appId": "ai.thinkany.laborany",
     "productName": "LaborAny",
+    "afterPack": "./scripts/patch-icon.js",
     "directories": {
       "output": "release"
     },

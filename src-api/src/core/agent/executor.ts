@@ -11,6 +11,7 @@ import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import type { Skill } from 'laborany-shared'
+import { wrapCmdForUtf8, withUtf8Env } from 'laborany-shared'
 import { isZhipuApi, buildZhipuMcpServers, injectMcpServers } from './mcp/index.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -26,6 +27,23 @@ export interface AgentEvent {
   toolInput?: Record<string, unknown>
   toolResult?: string
   taskDir?: string
+}
+
+const WORKFLOW_CONTEXT_PATTERN = /##\s*工作流执行上下文/
+
+function shouldPersistMemory(skillId: string, userQuery: string): boolean {
+  if (skillId === '__converse__') return false
+  if (WORKFLOW_CONTEXT_PATTERN.test(userQuery)) return false
+  return true
+}
+
+function stripWorkflowContext(userQuery: string): string {
+  if (!WORKFLOW_CONTEXT_PATTERN.test(userQuery)) return userQuery
+  const parts = userQuery
+    .split(/\n-{3,}\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+  return parts.length > 0 ? parts[parts.length - 1] : userQuery
 }
 
 interface ExecuteOptions {
@@ -158,7 +176,7 @@ function findClaudeCodePath(): string | undefined {
   const whichCmd = os === 'win32' ? 'where' : 'which'
 
   try {
-    const result = execSync(`${whichCmd} claude`, { encoding: 'utf-8' }).trim()
+    const result = execSync(wrapCmdForUtf8(`${whichCmd} claude`), { encoding: 'utf-8' }).trim()
     if (result) {
       const paths = result.split('\n').map(p => p.trim())
       if (os === 'win32') {
@@ -255,7 +273,7 @@ function ensureClaudeCode(): ClaudeCodeConfig | undefined {
  * │                       构建环境配置                                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function buildEnvConfig(): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env }
+  const env: Record<string, string | undefined> = withUtf8Env({ ...process.env })
 
   if (process.env.ANTHROPIC_API_KEY) {
     env.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_API_KEY
@@ -311,13 +329,16 @@ function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) =>
 
   try {
     const msg: StreamMessage = JSON.parse(line)
+    let lastEvent: AgentEvent | null = null
+    const textChunks: string[] = []
 
     if (msg.type === 'assistant' && msg.message?.content) {
       for (const block of msg.message.content) {
         if (block.type === 'text' && block.text) {
           const event: AgentEvent = { type: 'text', content: block.text }
           onEvent(event)
-          return event
+          textChunks.push(block.text)
+          lastEvent = event
         } else if (block.type === 'tool_use' && block.name) {
           const event: AgentEvent = {
             type: 'tool_use',
@@ -326,9 +347,18 @@ function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) =>
             content: `调用工具: ${block.name}`,
           }
           onEvent(event)
-          return event
+          lastEvent = event
         }
       }
+
+      if (textChunks.length > 0) {
+        return {
+          type: 'text',
+          content: textChunks.join(''),
+        }
+      }
+
+      return lastEvent
     } else if (msg.type === 'user' && msg.message?.content) {
       for (const block of msg.message.content) {
         if (block.type === 'tool_result') {
@@ -341,9 +371,11 @@ function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) =>
             content: block.is_error ? `工具执行失败` : `工具执行完成`,
           }
           onEvent(event)
-          return event
+          lastEvent = event
         }
       }
+
+      return lastEvent
     }
   } catch {
     // 非 JSON 行，忽略
@@ -512,16 +544,18 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       // 任务完成后记录到三级记忆系统
       if (code === 0 && !signal.aborted && agentResponse.trim()) {
         try {
-          await fetch('http://localhost:3002/memory/record-task', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              skillId: skill.meta.id,
-              userQuery,
-              assistantResponse: agentResponse,
-            }),
-          })
-          console.log('[Agent] 已记录任务到三级记忆系统')
+          if (shouldPersistMemory(skill.meta.id, userQuery)) {
+            await fetch('http://localhost:3002/memory/record-task', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                skillId: skill.meta.id,
+                userQuery: stripWorkflowContext(userQuery),
+                assistantResponse: agentResponse,
+              }),
+            })
+            console.log('[Agent] 已记录任务到三级记忆系统')
+          }
         } catch (err) {
           console.error('[Agent] 记录记忆失败:', err)
         }

@@ -10,6 +10,7 @@ import { existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { homedir, platform } from 'os'
 import { execSync } from 'child_process'
+import { wrapCmdForUtf8 } from 'laborany-shared'
 
 const setup = new Hono()
 
@@ -49,7 +50,7 @@ function findClaudeCodePath(): string | undefined {
   const whichCmd = os === 'win32' ? 'where' : 'which'
 
   try {
-    const result = execSync(`${whichCmd} claude`, { encoding: 'utf-8' }).trim()
+    const result = execSync(wrapCmdForUtf8(`${whichCmd} claude`), { encoding: 'utf-8' }).trim()
     if (result) {
       const paths = result.split('\n').map(p => p.trim())
       if (os === 'win32') {

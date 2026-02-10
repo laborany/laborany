@@ -70,7 +70,7 @@ async function inlineAssets(html: string, baseUrl: string): Promise<string> {
   return result
 }
 
-/* ┌─────────────────────────────────────────────────────────────���─���──────────┐
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       HTML 渲染器组件                                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export function HtmlRenderer({ artifact }: RendererProps) {
