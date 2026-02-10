@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4361ee"/>
+      <stop offset="100%" style="stop-color:#7209b7"/>
+    </linearGradient>
+  </defs>
+  
+  <rect width="1920" height="1080" fill="#f8f9fa"/>
+  
+  <text x="960" y="120" font-family="SF Pro Display, -apple-system, Microsoft YaHei, sans-serif" font-size="64" font-weight="700" fill="#1a1a2e" text-anchor="middle">PDF 导出功能重构</text>
+  <text x="960" y="180" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="32" fill="#666666" text-anchor="middle">跨平台兼容性修复</text>
+  
+  <g transform="translate(160, 280)">
+    <rect width="700" height="500" rx="24" fill="#fff5f5" stroke="#ffcccc" stroke-width="3"/>
+    <text x="350" y="80" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="42" font-weight="600" fill="#e63946" text-anchor="middle">Before</text>
+    
+    <rect x="100" y="140" width="500" height="100" rx="16" fill="#ffffff" stroke="#ffcccc" stroke-width="2"/>
+    <text x="350" y="200" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="36" fill="#333333" text-anchor="middle">Python + CairoSVG</text>
+    
+    <text x="350" y="320" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="28" fill="#999999" text-anchor="middle">macOS 无法运行</text>
+    <text x="350" y="370" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="28" fill="#999999" text-anchor="middle">需要系统级依赖</text>
+    <text x="350" y="420" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="28" fill="#999999" text-anchor="middle">跨平台兼容性差</text>
+  </g>
+  
+  <g transform="translate(960, 480)">
+    <polygon points="0,0 80,50 0,100" fill="url(#accentGradient)"/>
+  </g>
+  
+  <g transform="translate(1060, 280)">
+    <rect width="700" height="500" rx="24" fill="#f0fff4" stroke="#86efac" stroke-width="3"/>
+    <text x="350" y="80" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="42" font-weight="600" fill="#22c55e" text-anchor="middle">After</text>
+    
+    <rect x="100" y="140" width="500" height="100" rx="16" fill="#ffffff" stroke="#86efac" stroke-width="2"/>
+    <text x="350" y="200" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="36" fill="#333333" text-anchor="middle">Node.js + Playwright</text>
+    
+    <text x="350" y="320" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="28" fill="#666666" text-anchor="middle">npm install 一键安装</text>
+    <text x="350" y="370" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="28" fill="#666666" text-anchor="middle">自动下载浏览器</text>
+    <text x="350" y="420" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="28" fill="#666666" text-anchor="middle">全平台支持</text>
+  </g>
+  
+  <g transform="translate(280, 860)">
+    <circle cx="50" cy="50" r="40" fill="#22c55e"/>
+    <text x="50" y="60" font-family="SF Pro Display, sans-serif" font-size="36" fill="#ffffff" text-anchor="middle">✓</text>
+    <text x="120" y="60" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="32" fill="#333333">macOS</text>
+  </g>
+  
+  <g transform="translate(680, 860)">
+    <circle cx="50" cy="50" r="40" fill="#22c55e"/>
+    <text x="50" y="60" font-family="SF Pro Display, sans-serif" font-size="36" fill="#ffffff" text-anchor="middle">✓</text>
+    <text x="120" y="60" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="32" fill="#333333">Windows</text>
+  </g>
+  
+  <g transform="translate(1100, 860)">
+    <circle cx="50" cy="50" r="40" fill="#22c55e"/>
+    <text x="50" y="60" font-family="SF Pro Display, sans-serif" font-size="36" fill="#ffffff" text-anchor="middle">✓</text>
+    <text x="120" y="60" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="32" fill="#333333">Linux</text>
+  </g>
+  
+  <text x="1700" y="1040" font-family="SF Pro Display, Microsoft YaHei, sans-serif" font-size="24" fill="#999999" text-anchor="end">2026-01-27</text>
+</svg>

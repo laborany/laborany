@@ -1,0 +1,24 @@
+# 输出目录
+ppt-output/
+
+# Node.js
+scripts/node_modules/
+scripts/package-lock.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 临时文件
+*.tmp
+*.temp
+
+# 会话目录
+.ppt-session/
+.sisyphus/

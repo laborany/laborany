@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SVG 风格对比预览</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #f5f5f5;
+      padding: 40px 20px;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 40px;
+      color: #333;
+      font-size: 28px;
+    }
+    .slide-section {
+      margin-bottom: 60px;
+    }
+    .slide-title {
+      font-size: 18px;
+      color: #666;
+      margin-bottom: 16px;
+      padding-left: 10px;
+      border-left: 4px solid #007AFF;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 16px;
+    }
+    .cell {
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .label {
+      font-weight: 600;
+      text-align: center;
+      padding: 12px 8px;
+      background: #fafafa;
+      border-bottom: 1px solid #e0e0e0;
+      font-size: 14px;
+      color: #333;
+    }
+    .svg-container {
+      padding: 8px;
+    }
+    .svg-container img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>PPT SVG 风格对比预览</h1>
+
+  <!-- Slide 01 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 01 - Cover</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-01-cover.svg" alt="极简风格 Slide 01">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-01-cover.svg" alt="瑞士平面 Slide 01">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-01-cover.svg" alt="科技暗黑 Slide 01">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-01-cover.svg" alt="AI 推荐 2 Slide 01">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-01-cover.svg" alt="品牌蓝（最终版） Slide 01">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 02 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 02 - Intro</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-02-intro.svg" alt="极简风格 Slide 02">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-02-intro.svg" alt="瑞士平面 Slide 02">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-02-intro.svg" alt="科技暗黑 Slide 02">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-02-intro.svg" alt="AI 推荐 2 Slide 02">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-02-intro.svg" alt="品牌蓝（最终版） Slide 02">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 03 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 03</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-03-point1.svg" alt="极简风格 Slide 03">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-03-what-is-skills.svg" alt="瑞士平面 Slide 03">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-03-identity-first.svg" alt="科技暗黑 Slide 03">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-03-chapter1.svg" alt="AI 推荐 2 Slide 03">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-03-identity-first.svg" alt="品牌蓝（最终版） Slide 03">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 04 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 04</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-04-point2.svg" alt="极简风格 Slide 04">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-04-skills-vs-mcp.svg" alt="瑞士平面 Slide 04">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-04-behavior-goal.svg" alt="科技暗黑 Slide 04">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-04-identity-change.svg" alt="AI 推荐 2 Slide 04">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-04-behavior-goal.svg" alt="品牌蓝（最终版） Slide 04">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 05 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 05</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-05-point3.svg" alt="极简风格 Slide 05">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-05-skill-structure.svg" alt="瑞士平面 Slide 05">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-05-identity-cycle.svg" alt="科技暗黑 Slide 05">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-05-chapter2.svg" alt="AI 推荐 2 Slide 05">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-05-identity-cycle.svg" alt="品牌蓝（最终版） Slide 05">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 06 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 06</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-06-point4.svg" alt="极简风格 Slide 06">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-06-advantage-1.svg" alt="瑞士平面 Slide 06">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-06-nine-stages.svg" alt="科技暗黑 Slide 06">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-06-subconscious.svg" alt="AI 推荐 2 Slide 06">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-06-nine-stages.svg" alt="品牌蓝（最终版） Slide 06">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 07 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 07</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-07-point5.svg" alt="极简风格 Slide 07">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-07-advantage-2.svg" alt="瑞士平面 Slide 07">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-07-cybernetics.svg" alt="科技暗黑 Slide 07">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-07-chapter3.svg" alt="AI 推荐 2 Slide 07">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-07-cybernetics.svg" alt="品牌蓝（最终版） Slide 07">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 08 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 08</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-08-transition.svg" alt="极简风格 Slide 08">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-08-advantage-3.svg" alt="瑞士平面 Slide 08">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-08-protocol-overview.svg" alt="科技暗黑 Slide 08">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-08-identity-cycle.svg" alt="AI 推荐 2 Slide 08">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-08-protocol-overview.svg" alt="品牌蓝（最终版） Slide 08">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 09 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 09</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-09-protocol1.svg" alt="极简风格 Slide 09">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-09-progressive-disclosure.svg" alt="瑞士平面 Slide 09">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-09-morning-protocol.svg" alt="科技暗黑 Slide 09">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-09-chapter4.svg" alt="AI 推荐 2 Slide 09">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-09-morning-protocol.svg" alt="品牌蓝（最终版） Slide 09">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 10 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 10</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-10-protocol2.svg" alt="极简风格 Slide 10">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-10-impact.svg" alt="瑞士平面 Slide 10">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-10-daytime-protocol.svg" alt="科技暗黑 Slide 10">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-10-nine-stages.svg" alt="AI 推荐 2 Slide 10">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-10-daytime-protocol.svg" alt="品牌蓝（最终版） Slide 10">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 11 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 11</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-11-protocol3.svg" alt="极简风格 Slide 11">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-11-tutorial-use.svg" alt="瑞士平面 Slide 11">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-11-evening-protocol.svg" alt="科技暗黑 Slide 11">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-11-chapter5.svg" alt="AI 推荐 2 Slide 11">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-11-evening-protocol.svg" alt="品牌蓝（最终版） Slide 11">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 12 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 12</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-12-point7.svg" alt="极简风格 Slide 12">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-12-tutorial-create.svg" alt="瑞士平面 Slide 12">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-12-gamification.svg" alt="科技暗黑 Slide 12">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-12-cybernetics.svg" alt="AI 推荐 2 Slide 12">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-12-gamification.svg" alt="品牌蓝（最终版） Slide 12">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Slide 13 -->
+  <section class="slide-section">
+    <h2 class="slide-title">Slide 13</h2>
+    <div class="grid">
+      <div class="cell">
+        <div class="label">极简风格</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E6%9E%81%E7%AE%80%E9%A3%8E%E6%A0%BC/ppt-output/slide-13-summary.svg" alt="极简风格 Slide 13">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">瑞士平面</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/ppt-output-%E7%91%9E%E5%A3%AB%E5%B9%B3%E9%9D%A2/slide-13-when-to-use.svg" alt="瑞士平面 Slide 13">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">科技暗黑</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skill%20%E7%B4%A0%E6%9D%90%20-%20%E7%A7%91%E6%8A%80%E6%9A%97%E9%BB%91/ppt-output/slide-13-conclusion.svg" alt="科技暗黑 Slide 13">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">AI 推荐 2</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/PPT%20skills%20%E7%B4%A0%E6%9D%90%20-%20AI%20%E6%8E%A8%E8%8D%90%202/ppt-output/slide-13-chapter6.svg" alt="AI 推荐 2 Slide 13">
+        </div>
+      </div>
+      <div class="cell">
+        <div class="label">品牌蓝（最终版）</div>
+        <div class="svg-container">
+          <img src="PPT%20skill%20%E7%B4%A0%E6%9D%90/%E7%AC%AC%E4%B8%89%E7%89%88-%E5%93%81%E7%89%8C%E8%93%9D%EF%BC%88%E6%9C%80%E7%BB%88%E7%89%88%EF%BC%89/slide-13-conclusion.svg" alt="品牌蓝（最终版） Slide 13">
+        </div>
+      </div>
+    </div>
+  </section>
+
+</body>
+</html>

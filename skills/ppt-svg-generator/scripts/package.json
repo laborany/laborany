@@ -1,0 +1,32 @@
+{
+  "name": "ppt-svg-export-scripts",
+  "version": "1.0.0",
+  "description": "Export scripts for PPT SVG Generator - converts SVG slides to PDF/PPTX",
+  "scripts": {
+    "export:pdf": "node export_pdf.js",
+    "export:pptx": "node export_pptx.js",
+    "postinstall": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "playwright": "^1.40.0",
+    "pptxgenjs": "^3.12.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "keywords": [
+    "ppt",
+    "svg",
+    "pdf",
+    "pptx",
+    "export",
+    "slides"
+  ],
+  "license": "MIT"
+}
