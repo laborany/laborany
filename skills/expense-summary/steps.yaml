@@ -1,0 +1,16 @@
+steps:
+  - skill: expense-assistant
+    name: 费用处理
+    prompt: |
+      处理并智能分类用户指定周期内的所有费用记录，
+      按类别归集金额，识别异常支出。
+      根据用户指定的费用类别进行筛选。
+
+  - skill: xlsx
+    name: 汇总报表
+    prompt: |
+      将费用分类汇总结果生成 Excel 报表，
+      包含分类小计、总计及占比分析。
+      数据来源：{{prev.output}}
+
+on_failure: stop

@@ -1,0 +1,16 @@
+steps:
+  - skill: stock-analyzer
+    name: 数据采集
+    prompt: |
+      批量采集以下公司的核心数据，包括市值、营收、
+      净利润、市盈率、市净率等可比指标。
+      目标公司列表：用户指定的多个公司名称
+
+  - skill: xlsx
+    name: 对比表格
+    prompt: |
+      将多家公司数据整理为横向对比表格，
+      每行一家公司，每列一个指标，便于直观比较。
+      数据来源：{{prev.output}}
+
+on_failure: stop

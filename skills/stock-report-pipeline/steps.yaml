@@ -1,0 +1,39 @@
+steps:
+  - skill: stock-analyzer
+    name: 数据采集
+    prompt: |
+      请获取用户指定股票的以下数据：
+      1. 基本面数据（市值、PE、PB、ROE 等）
+      2. 最近一年的股价走势
+      3. 最新的财务报表摘要
+      4. 近期重要新闻和公告
+
+      根据用户指定的分析深度（basic/detailed，默认 detailed）进行采集。
+
+  - skill: financial-report
+    name: 财务分析
+    prompt: |
+      基于上一步获取的数据，进行深度财务分析：
+
+      {{prev.output}}
+
+      请分析：
+      1. 盈利能力分析
+      2. 成长性分析
+      3. 估值水平分析
+      4. 风险因素识别
+      5. 投资建议
+
+  - skill: pdf
+    name: 报告生成
+    prompt: |
+      将以下分析结果生成一份专业的 PDF 研报：
+
+      {{prev.output}}
+
+      报告要求：
+      1. 包含封面、目录、正文、免责声明
+      2. 使用专业的金融报告格式
+      3. 包含必要的图表和数据表格
+
+on_failure: stop

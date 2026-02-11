@@ -1,0 +1,23 @@
+steps:
+  - skill: stock-analyzer
+    name: 数据采集
+    prompt: |
+      采集用户指定公司的核心财务数据，包括营收、净利润、
+      毛利率、资产负债率、现金流等关键指标。
+
+  - skill: financial-report
+    name: 财务分析
+    prompt: |
+      基于已采集的财务数据，进行深度分析。
+      分析维度：盈利能力、偿债能力、运营效率、成长性。
+      数据来源：{{prev.output}}
+      根据用户指定的分析周期进行分析。
+
+  - skill: pdf
+    name: 报告输出
+    prompt: |
+      将财务分析结果整理为专业 PDF 报告，
+      包含图表、关键指标摘要和投资建议。
+      分析内容：{{prev.output}}
+
+on_failure: stop

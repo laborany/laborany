@@ -1,0 +1,29 @@
+steps:
+  - skill: ai-productivity-column
+    name: 专栏内容准备
+    prompt: |
+      用户指定的任务模式（existing=把已有内容转PPT，new=先写新文再转PPT）。
+      用户的写作主题或转换要求。
+
+      如果用户提供了已有文章内容，请优先基于已有内容重写为适合演示文稿的 Markdown 结构；
+      如果没有提供，请根据用户要求先生成一篇新的专栏文章。
+
+      输出要求：
+      1. 只输出最终 Markdown 正文，不要解释
+      2. 标题层级清晰（#、##、###）
+      3. 内容适合拆分为 8-15 页演示文稿
+
+  - skill: ppt-svg-generator
+    name: 转换为SVG幻灯片
+    prompt: |
+      请将以下 Markdown 内容转换为可导入 PPT 的 SVG 幻灯片，风格使用用户指定的风格（默认为商务咨询）。
+
+      Markdown 内容：
+      {{prev.output}}
+
+      要求：
+      1. 输出到 ./ppt-output/ 目录
+      2. 文件命名为 slide-01-xxx.svg 递增编号
+      3. 结束时明确告知输出目录和生成页数
+
+on_failure: stop

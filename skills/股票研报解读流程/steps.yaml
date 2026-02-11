@@ -1,0 +1,14 @@
+steps:
+  - skill: pdf
+    name: pdf
+    prompt: |
+      请提取用户提供的 PDF 研报文档的完整内容。
+
+  - skill: financial-report
+    name: 金融研报助手
+    prompt: |
+      基于以下提取的研报内容，进行深度分析与解读：
+
+      {{prev.output}}
+
+on_failure: stop
