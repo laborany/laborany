@@ -1,222 +1,277 @@
-# LaborAny 首页分发与复合技能语义规范（V1）
+# LaborAny 首页分发规范（v0.3.0）
 
-## 1. 目标
-
-统一 LaborAny 的核心语义：
-
-- `workflow` 不再作为独立产品概念。
-- 所有能力统一为 `skill`，其中多步骤编排能力归类为 `composite skill`。
-- 首页对话框的职责是 **意图理解 + 分发决策**，最终执行始终由 **Claude Code CLI** 完成。
+> 本文档定义首页对话分发器在 `v0.3.0` 的产品语义、状态机和前后端契约。
 
 ---
 
-## 2. 统一术语
+## 1. 目标
 
-- **Skill**：单能力单元，可直接执行。
-- **Composite Skill**：多步骤技能，本质仍是 skill，只是带 `steps`。
-- **Capability**：前后端统一抽象，当前仅包含 skill/composite。
-- **首页分发器（Home Dispatcher）**：首页输入框背后的决策层。
-- **通用助手（General Assistant）**：不绑定单一 skill 的执行模式，但可按需调用已有 skill/composite。
+首页是 LaborAny 的“任务入口”和“路由中枢”，不直接等同于普通聊天。
 
-> 设计约束：对外展示尽量使用“技能 / 复合技能”，避免再暴露 workflow 文案。
+它的职责是：
+
+1. 理解用户意图。
+2. 在“已有能力 / 创建能力 / 通用执行 / 定时任务”中做分发。
+3. 在执行前给用户足够确认与可解释信息。
+
+---
+
+## 2. 术语
+
+- **Skill**：单步能力。
+- **Composite Skill**：多步能力（仍属于 skill 体系）。
+- **Capability**：统一抽象名词，当前只映射到 skill/composite。
+- **Home Dispatcher**：首页分发器。
+- **General Assistant**：通用执行模式，可按需调用能力。
 
 ---
 
 ## 3. 核心原则
 
-1. **单一执行内核**：所有执行都由 Claude Code CLI 驱动。
-2. **分发先于执行**：首页先决定“去哪执行”，再进入对应会话。
-3. **用户确认优先**：匹配不确定时，必须先确认。
-4. **明确意图可直达**：用户已明确指定目标 skill/composite 时直接跳转。
-5. **创建能力闭环**：匹配不到时，引导创建 skill/composite，并自动安装后进入会话。
+1. **分发先于执行**：首页先判定“去哪执行”。
+2. **确认优先**：匹配推荐必须经用户确认。
+3. **可解释**：推荐结果需包含理由和置信度。
+4. **可兜底**：服务异常或无匹配时可退到通用执行。
+5. **闭环创建**：无法匹配时可创建能力并自动进入执行。
 
 ---
 
-## 4. 首页分发状态机
+## 4. 状态机（实现对齐）
 
-## 4.1 状态定义
+前端 `HomePage` 的状态：
 
-- `idle`：等待用户输入。
-- `analyzing`：分析意图（调用 converse 决策）。
-- `candidate_found`：找到候选 skill/composite，等待确认。
-- `creating_proposal`：进入 skill-creator 方案草拟阶段。
-- `creating_confirm`：向用户确认“这样构建是否符合要求”。
-- `installing`：创建后安装到 LaborAny。
-- `routing`：跳转到目标会话页。
-- `fallback_general`：切到通用助手。
-- `error`：异常处理。
+- `idle`
+- `analyzing`
+- `candidate_found`
+- `plan_review`
+- `creating_proposal`
+- `creating_confirm`
+- `installing`
+- `routing`
+- `executing`
+- `fallback_general`
+- `done`
+- `error`
 
-## 4.2 事件定义
+### 4.1 状态说明
 
-- `USER_SUBMIT`
-- `INTENT_ANALYZED`
-- `USER_CONFIRM_YES`
-- `USER_CONFIRM_NO`
-- `CREATE_PLAN_READY`
-- `CREATE_PLAN_REJECT`
-- `CREATE_DONE`
-- `INSTALL_DONE`
-- `ROUTE_DONE`
-- `FAILED`
+- `idle`：等待输入。
+- `analyzing`：与 converse 交互中。
+- `candidate_found`：候选能力确认卡。
+- `plan_review`：通用执行计划审核。
+- `creating_*`：创建能力阶段（含问答确认）。
+- `installing`：创建后安装与跳转准备。
+- `executing`：进入统一执行面板。
+- `fallback_general`：通用助手执行，显示兜底提示。
+- `done`：本次执行完成。
+- `error`：异常态。
 
-## 4.3 转移规则（简化）
+### 4.2 关键转移
 
-1. `idle --USER_SUBMIT--> analyzing`
-2. `analyzing --明确指定 skill/composite--> routing`
-3. `analyzing --匹配到候选且置信度>=阈值--> candidate_found`
-4. `candidate_found --USER_CONFIRM_YES--> routing`
-5. `candidate_found --USER_CONFIRM_NO--> fallback_general`
-6. `analyzing --匹配失败且建议创建--> creating_proposal`
-7. `creating_proposal --CREATE_PLAN_READY--> creating_confirm`
-8. `creating_confirm --USER_CONFIRM_YES--> installing`
-9. `installing --INSTALL_DONE--> routing`
-10. `creating_confirm --USER_CONFIRM_NO--> fallback_general`
-11. `任意状态 --FAILED--> error`
-
----
-
-## 5. 首页分发决策规则
-
-## 5.1 显式选择优先
-
-当用户已选择目标（skill/composite 卡片、下拉、快捷入口）时：
-
-- 直接路由到对应会话。
-- 首页不再做二次猜测。
-
-## 5.2 未选择时的匹配策略
-
-建议输出结构：
-
-- `matchType`: `exact | candidate | none`
-- `targetType`: 固定 `skill`
-- `targetId`: 候选能力 ID
-- `confidence`: 0~1
-- `reason`: 可解释原因（关键词、历史偏好、最近使用）
-
-建议阈值：
-
-- `>= 0.80`：直接给推荐并请求确认。
-- `0.50 ~ 0.79`：给多个候选，强制确认。
-- `< 0.50`：视为无匹配，进入创建或通用助手分支。
-
-## 5.3 创建触发策略
-
-满足以下任意条件可建议创建 skill/composite：
-
-- 无候选且用户需求明确。
-- 有候选但用户连续拒绝。
-- 用户明确表达“新建一个能力/流程来做”。
+1. `idle -> analyzing`：用户提交任务。
+2. `analyzing -> candidate_found`：收到推荐/创建动作。
+3. `analyzing -> plan_review`：收到含 `planSteps` 的通用执行动作。
+4. `candidate_found -> routing`：用户确认使用候选。
+5. `candidate_found -> fallback_general`：用户拒绝候选。
+6. `plan_review -> executing`：用户批准计划。
+7. `executing -> done`：收到执行终态。
+8. 任意状态 `-> error`：执行异常。
 
 ---
 
-## 6. 创建闭环（skill-creator）
+## 5. Converse 动作契约
+
+Converse 可输出的动作：
+
+1. `recommend_capability`
+2. `execute_generic`
+3. `create_capability`
+4. `setup_schedule`
+
+### 5.1 recommend_capability
+
+必填字段：
+
+- `action = recommend_capability`
+- `targetId`
+- `query`
+
+推荐字段：
+
+- `confidence`（0~1）
+- `matchType`（`exact | candidate`）
+- `reason`
+
+约束：
+
+- 目标类型固定为 skill 体系。
+
+### 5.2 execute_generic
+
+字段：
+
+- `action = execute_generic`
+- `query`
+- `planSteps?: string[]`
+
+行为：
+
+- `planSteps` 非空：进入 `plan_review`。
+- 为空：直接进入通用执行。
+
+### 5.3 create_capability
+
+字段：
+
+- `action = create_capability`
+- `seedQuery`
+
+行为：
+
+- 进入 `skill-creator` 执行链。
+
+### 5.4 setup_schedule
+
+字段：
+
+- `action = setup_schedule`
+- `cronExpr`
+- `targetId`
+- `targetQuery`
+- `tz?`
+- `name?`
+
+行为：
+
+- 先展示是否创建定时任务的确认决策。
+- 确认后进入可编辑 `CronSetupCard` 再提交。
+
+---
+
+## 6. 问答与澄清协议
+
+当信息不足时，Converse 可输出结构化 `question` 事件（AskUserQuestion 语义）：
+
+- 支持多题。
+- 每题支持候选选项与说明。
+- 前端用 `QuestionInput` 收集答案并继续同会话。
+
+设计要求：
+
+- 优先提最少问题（减少决策摩擦）。
+- 问题文案聚焦“可执行输入”，避免开放式空泛追问。
+
+---
+
+## 7. UI 规范
+
+### 7.1 首页输入区
+
+- 明确“任务入口”定位。
+- 支持快速场景卡片 + 对话输入协同。
+
+### 7.2 候选确认卡（`CandidateConfirmView`）
+
+展示：
+
+- 目标能力名
+- 匹配理由
+- 匹配类型
+- 置信度（百分比）
+
+操作：
+
+- `使用这个能力`
+- `不使用`
+
+### 7.3 计划审核面板（`PlanReviewPanel`）
+
+展示：
+
+- `planSteps` 顺序清单
+
+操作：
+
+- `批准执行`
+- `修改计划`
+- `取消`
+
+### 7.4 通用执行提示（`FallbackBanner`）
+
+在 `fallback_general` 状态展示横幅，提示当前是“通用助手模式”。
+
+### 7.5 错误态（`ErrorView`）
+
+统一按钮：
+
+- `重试`
+- `返回首页`
+
+---
+
+## 8. 创建能力闭环
 
 流程：
 
-1. 将用户任务作为 `seedQuery` 交给 `skill-creator`。
-2. Claude Code CLI 生成能力草案（步骤、输入、输出、工具）。
-3. 向用户确认草案是否符合要求。
-4. 用户确认后落盘创建 skill/composite。
-5. 自动安装到 LaborAny（刷新 capability 列表）。
-6. 跳转到新能力会话，继续执行任务。
+1. 用户在首页触发 `create_capability`。
+2. 进入 `skill-creator` 执行。
+3. 执行中可能产生结构化追问（进入 `creating_confirm`）。
+4. 成功后触发 `created_capability` 事件。
+5. 前端进入 `installing` -> `routing`。
+6. 自动跳转到 `/execute/:newSkillId`，并带原始 query。
 
-关键要求：
+实现要求：
 
-- 创建过程中对用户展示“当前阶段”（草拟/确认/安装）。
-- 安装失败时提供“重试安装”和“转通用助手”两条兜底路径。
-
----
-
-## 7. 通用助手定义
-
-通用助手不是“无技能模式”，而是：
-
-- 默认会话不绑定单 skill。
-- 允许内部自动调用已有 skill/composite 完成子任务。
-- 对用户可见“已调用哪些能力”。
-
-体验上应与普通 Claude Code CLI 一致，但带有 LaborAny 能力目录感知。
+- 新能力 ID 必须做规范化与冲突处理。
+- 创建失败需可回退首页继续分发。
 
 ---
 
-## 8. 前后端契约建议
+## 9. 定时任务分发规则
 
-## 8.1 Converse 动作（建议保留）
+当识别到明确时间触发意图时：
 
-- `recommend_capability`
-- `create_capability`
-- `execute_generic`
-- `setup_schedule`
-
-兼容动作（保留解析，不对外展示）：
-
-- `navigate_skill`
-- `navigate_workflow`（按 skill 兼容处理）
-
-## 8.2 前端路由目标
-
-- 目标 skill/composite：`/execute/:skillId`
-- 创建入口：`/create`
-- 通用助手：`/`（首页会话模式）或独立 `general` 会话（可选）
+1. Converse 产出 `setup_schedule`。
+2. 前端展示 `DecisionCard`，先确认“是否创建”。
+3. 确认后显示 `CronSetupCard`，允许调整调度、名称、时区。
+4. 最终写入 `/agent-api/cron/jobs`。
 
 ---
 
-## 9. UI 行为规范
+## 10. 异常与降级
 
-## 9.1 首页输入框
-
-- 明确定位：这是“任务分发入口”。
-- 对用户显示：当前是“已选目标”还是“自动匹配中”。
-
-## 9.2 候选确认卡片
-
-- 展示能力名称、类型（技能/复合技能）、匹配理由、置信度。
-- 操作：`使用这个能力` / `不使用`。
-
-## 9.3 创建确认卡片
-
-- 展示拟创建能力结构（目标 + 步骤）。
-- 操作：`按此创建` / `继续调整` / `不创建，走通用助手`。
+1. converse 请求失败：提示并切换 `execute_generic` 兜底动作。
+2. agent-service 不可用：由 API 代理返回 503 + `retryAfter`。
+3. 创建/安装失败：进入 `error`，保留重新开始能力。
+4. 路由失败：回到首页，不丢失用户输入上下文。
 
 ---
 
-## 10. 异常与兜底
+## 11. 指标建议
 
-- 匹配服务异常：直接回退通用助手。
-- 创建失败：可重试，或回退通用助手。
-- 安装失败：提供“仅保存草稿”和“重试安装”。
-- 路由失败：回首页并保留上下文，不丢失输入。
+### 11.1 分发质量
 
----
+- 首次分发命中率。
+- 候选确认通过率。
+- 兜底通用执行比例。
 
-## 11. 指标与验收
+### 11.2 创建闭环
 
-建议观察指标：
+- 建议创建转化率。
+- 创建成功率。
+- 新能力二次复用率。
 
-- 首页分发成功率（首次进入正确能力）。
-- 用户确认通过率（候选匹配质量）。
-- 新建能力转化率（建议创建 -> 成功安装）。
-- 创建后复用率（新能力后续被再次调用次数）。
-- 兜底率（回退通用助手比例）。
+### 11.3 任务效率
 
-验收标准（V1）：
-
-- UI 不再出现 workflow 独立入口。
-- capability 统一走 skill/composite 语义。
-- 首页可完整走通四条路径：
-  - 已选直达
-  - 自动匹配并确认
-  - 创建并安装再跳转
-  - 通用助手兜底
+- 从首页输入到执行启动耗时。
+- 追问轮次均值。
 
 ---
 
-## 12. 实施建议（按优先级）
+## 12. 验收清单（v0.3.0）
 
-1. **P0**：完成术语收口（文案、注释、路由入口）。
-2. **P0**：稳定 converse 动作与前端分发状态机。
-3. **P1**：创建闭环中的“草案确认 + 安装反馈”可视化。
-4. **P1**：通用助手的能力调用可见性（调了哪些 skill）。
-5. **P2**：置信度策略迭代（历史行为 + 反馈学习）。
+- 首页四条路径全部可走通：直达、候选确认、创建闭环、兜底通用。
+- 所有对外文案不再暴露独立 workflow 概念。
+- `recommend_capability / execute_generic / create_capability / setup_schedule` 动作可稳定驱动 UI。
+- 计划审核、候选确认、定时确认都要求用户显式操作。
 

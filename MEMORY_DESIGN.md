@@ -1,507 +1,250 @@
-# Laborany Memory System 完整设计方案
+# LaborAny 记忆系统设计（v0.3.0）
 
-## 一、设计哲学
-
-### Boss-Employee 模型
-
-Laborany 是一个 AI Labor 平台：
-- **用户 = Boss**：全局管理者，制定规范，纠正错误
-- **Skills = Employees**：各司其职的数字员工，遵守规范，学习改进
-
-### Memory 的本质
-
-Memory 不是「数据库里的一行记录」，而是：
-- **纯 Markdown 文件**（参考 OpenClaw 设计）
-- **Boss 与数字员工团队之间关系的延续**
-- **让员工「记住」Boss 的偏好和纠正**
-- **让员工之间能够「通气」**
-- **透明可编辑**：用户可以直接查看和编辑记忆文件
-
-### 核心价值
-
-1. **减少重复沟通**：Boss 不需要每次都解释偏好
-2. **避免重复犯错**：纠正过的错误不会再犯
-3. **跨 Skill 连贯**：不同员工之间能共享上下文
-4. **透明可编辑**：用户可以直接查看和编辑记忆文件
+> 更新时间：2026-02-11
+> 适配版本：LaborAny v0.3.0
 
 ---
 
-## 二、Memory 文件结构（MD 文件为主）
+## 1. 设计目标
 
-```
-laborany/
-├── BOSS.md                           # 全局规范（公司制度）
-├── MEMORY.md                         # 全局长期记忆（精选知识）
-└── memory/
-    ├── global/                       # 全局记忆（跨 Skill）
-    │   ├── 2026-02-04.md            # 按日期的全局记忆
-    │   ├── 2026-02-03.md
-    │   └── ...
-    └── skills/                       # Skill 级别记忆
-        ├── stock-analyzer/
-        │   ├── 2026-02-04.md        # 该 Skill 的每日记忆
-        │   └── MEMORY.md            # 该 Skill 的长期记忆
-        ├── financial-report/
-        │   ├── 2026-02-04.md
-        │   └── MEMORY.md
-        └── ...
-```
+LaborAny 的记忆系统不是“聊天日志备份”，而是服务任务执行的工作记忆层。
 
-### 第一层：BOSS.md（全局规范）
+目标：
 
-**定位**：Boss 制定的「公司制度」，所有 Labor 必须遵守
-
-**内容**：
-- 基本原则（称呼、核心价值观）
-- 沟通规范（语言、回复风格）
-- 工作流程（任务开始/执行/完成）
-- 质量标准（通用/文档/分析/创作）
-- 学习与记忆（记住什么、如何记忆）
-- 禁止事项
-- 特别说明（动态补充）
-
-**更新方式**：
-- 用户直接编辑
-- Labor 建议更新（需用户确认）
-
-### 第二层：Memory（动态记忆）
-
-**双层记忆系统**（参考 OpenClaw）：
-
-1. **每日日志** `memory/global/YYYY-MM-DD.md` 或 `memory/skills/{skill-id}/YYYY-MM-DD.md`
-   - 只增不减的每日笔记
-   - Labor 一整天都会往这里写东西
-   - 记录纠正、偏好、事实、上下文
-
-2. **长期记忆** `MEMORY.md` 或 `memory/skills/{skill-id}/MEMORY.md`
-   - 精选过的、持久的知识库
-   - 重要的决定、偏好、经验教训
-
-**作用域**：
-- `global`：全局生效，所有 Skill 都能看到（`memory/global/`）
-- `skill`：Skill 级别，只对特定 Skill 生效（`memory/skills/{skill-id}/`）
+1. 让 Agent 记住长期偏好与上下文。
+2. 降低重复澄清、重复犯错。
+3. 在“自动学习”与“污染风险”之间保持平衡。
 
 ---
 
-## 三、数据模型
+## 2. 核心理念
 
-### BOSS.md 文件结构
+### 2.1 Boss-Employee 协作模型
 
-```markdown
-# 老板工作手册
+- `BOSS.md` 定义全局规则和工作风格。
+- 记忆系统用于补充“动态事实”，不是替代规则手册。
 
-## 一、基本原则
-## 二、沟通规范
-## 三、工作流程
-## 四、质量标准
-## 五、学习与记忆
-## 六、禁止事项
-## 七、特别说明（动态补充）
-## 八、手册更新
-```
+### 2.2 三层记忆架构
 
-### 每日记忆文件结构 `memory/global/YYYY-MM-DD.md`
+`v0.3.0` 实际采用：
 
-```markdown
-# 2026-02-04 工作记忆
+1. **MemCell（原子记忆）**：每轮对话提炼的最小事实单元。
+2. **Episode（情节记忆）**：将近期 MemCell 聚类成主题片段。
+3. **Profile（用户画像）**：稳定偏好与行为模式。
 
-## 10:30
-**用户偏好**
-用户提到更喜欢简洁的分析报告，不要太多废话。
+同时维护：
 
-## 14:15
-**纠正记录**
-- 原始：股票代码用小写
-- 正确：股票代码应该用大写，如 AAPL 而不是 aapl
-
-## 16:00
-**建议写入长期记忆**
-- 章节：重要决定
-- 内容：以后所有研报都要包含风险提示部分
-```
-
-### Skill 长期记忆文件结构 `memory/skills/{skill-id}/MEMORY.md`
-
-```markdown
-# Stock Analyzer 长期记忆
-
-## 用户偏好
-- 喜欢简洁的分析报告
-- 股票代码用大写
-- 需要包含风险提示
-
-## 重要决定
-- 2026-02-01: 采用 A 股和港股双市场分析
-- 2026-02-04: 研报必须包含风险提示
-
-## 常用股票
-- 腾讯 (0700.HK)
-- 阿里巴巴 (9988.HK)
-```
+- Global/Skill 长期记忆（Markdown）。
+- Daily 记忆（按日归档）。
 
 ---
 
-## 四、核心组件
+## 3. 数据结构
 
-### 1. Memory File Manager（file-manager.ts）
+### 3.1 MemCell
 
-```typescript
-interface MemoryFileManager {
-  // 读取记忆文件
-  readFile(path: string): string | null
+字段重点：
 
-  // 追加到每日日志
-  appendToDaily(params: {
-    scope: 'global' | 'skill'
-    skillId?: string
-    content: string
-    timestamp?: Date
-  }): void
+- `id`
+- `timestamp`
+- `skillId`
+- `summary`
+- `messages[]`
+- `facts[]`（`type/confidence/source/intent/content`）
 
-  // 读取最近几天的每日记忆
-  readRecentDaily(params: {
-    scope: 'global' | 'skill'
-    skillId?: string
-    days?: number
-  }): string
+### 3.2 Episode
 
-  // 确保目录结构存在
-  ensureSkillMemoryDir(skillId: string): void
-}
-```
+字段重点：
 
-### 2. Memory Injector（injector.ts）
+- `id`
+- `subject`
+- `summary`
+- `cellIds[]`
+- `keyFacts[]`
 
-```typescript
-interface MemoryInjector {
-  // 构建完整的上下文（BOSS.md + Memory）
-  buildContext(params: {
-    skillId: string
-    userQuery: string
-  }): string
-}
-```
+### 3.3 Profile
 
-**注入格式**：
-```markdown
-## 老板工作手册
-[BOSS.md 内容]
+字段重点：
 
-## 全局长期记忆
-[MEMORY.md 内容]
-
-## 最近全局记忆
-[memory/global/今天.md + 昨天.md 内容]
-
-## 当前技能长期记忆
-[memory/skills/{skill-id}/MEMORY.md 内容]
-
-## 当前技能最近记忆
-[memory/skills/{skill-id}/今天.md + 昨天.md 内容]
-```
-
-### 3. Memory Writer（writer.ts）
-
-```typescript
-interface MemoryWriter {
-  // 写入纠正记录
-  writeCorrection(params: {
-    skillId: string
-    original: string
-    corrected: string
-    context?: string
-  }): void
-
-  // 写入偏好记录
-  writePreference(params: {
-    skillId: string
-    preference: string
-    isGlobal?: boolean
-  }): void
-
-  // 写入事实记录
-  writeFact(params: {
-    skillId: string
-    fact: string
-    isGlobal?: boolean
-  }): void
-
-  // 写入长期记忆建议
-  writeLongTerm(params: {
-    skillId: string
-    section: string
-    content: string
-    isGlobal?: boolean
-  }): void
-}
-```
-
-### 4. Memory Search（search.ts）
-
-```typescript
-interface MemorySearch {
-  // BM25 全文搜索
-  search(params: {
-    query: string
-    scope?: 'global' | 'skill' | 'all'
-    skillId?: string
-    maxResults?: number
-  }): SearchResult[]
-}
-
-interface SearchResult {
-  path: string
-  snippet: string
-  score: number
-}
-```
-
-### 5. BOSS.md Manager（boss.ts）
-
-```typescript
-interface BossManager {
-  // 读取 BOSS.md
-  read(): string | null
-
-  // 更新 BOSS.md
-  update(content: string): void
-
-  // 建议更新（返回建议，不直接更新）
-  suggest(params: {
-    section: string
-    content: string
-    reason: string
-  }): UpdateSuggestion
-}
-```
+- 分节（偏好、工作方式、沟通风格等）
+- 每个字段带 evidence 证据链
+- 可生成 profile summary 注入 prompt
 
 ---
 
-## 五、集成点
+## 4. 存储分层
 
-### 1. executor.ts（BOSS.md 替代 CLAUDE.md）
+### 4.1 文件层
 
-**修改 `src-api/src/core/agent/executor.ts`**：
-- 将 `findClaudeMd()` 改为 `findBossMd()`
-- 将 `copyClaudeMdToDir()` 改为 `copyBossMdToDir()`
-- 加载 `BOSS.md` 而不是 `CLAUDE.md`
+- `BOSS.md`
+- `MEMORY.md`（global）
+- `memory/skills/<skill-id>/MEMORY.md`
+- `memory/global/<date>.md`
+- `memory/skills/<skill-id>/daily/<date>.md`
 
-### 2. agent-executor.ts（Memory 注入）
+### 4.2 结构化层
 
-**修改 `agent-service/src/agent-executor.ts`**：
-
-```typescript
-// 修改 executeAgent 函数
-export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query, sessionId, signal, onEvent } = options
-
-  // 新增：构建完整上下文（读取 MD 文件）
-  const memoryContext = memoryInjector.buildContext({
-    skillId: skill.meta.id,
-    userQuery: query,
-  })
-
-  // 修改：增强 Prompt
-  const prompt = isNewSession
-    ? `${memoryContext}\n\n---\n\n${skill.systemPrompt}\n\n---\n\n用户问题：${query}`
-    : query
-
-  // ... 执行 Agent ...
-}
-```
-
-### 3. API 端点
-
-```
-GET  /api/boss              - 获取 BOSS.md 内容
-PUT  /api/boss              - 更新 BOSS.md 内容
-
-GET  /api/memory/global     - 获取全局记忆文件列表
-GET  /api/memory/skill/:id  - 获取 Skill 记忆文件列表
-GET  /api/memory/file       - 读取记忆文件内容
-PUT  /api/memory/file       - 更新记忆文件内容
-POST /api/memory/search     - 搜索记忆
-POST /api/memory/write      - 写入记忆（纠正/偏好/事实）
-```
+- `MemCell` 存储目录
+- `Episode` 存储目录
+- `Profile` 存储目录
+- `trace` 日志（用于质量审计）
 
 ---
 
-## 六、关键文件
+## 5. 读路径（检索注入）
 
-| 文件 | 操作 | 说明 |
-|------|------|------|
-| `laborany/BOSS.md` | 已存在 | 老板工作手册 |
-| `laborany/MEMORY.md` | 新建 | 全局长期记忆 |
-| `laborany/memory/` | 新建 | 记忆文件目录结构 |
-| `src-api/src/core/agent/executor.ts` | 修改 | BOSS.md 替代 CLAUDE.md |
-| `agent-service/src/memory/file-manager.ts` | 新建 | Memory File Manager |
-| `agent-service/src/memory/search.ts` | 新建 | Memory Search（BM25） |
-| `agent-service/src/memory/injector.ts` | 新建 | Memory Injector |
-| `agent-service/src/memory/writer.ts` | 新建 | Memory Writer |
-| `agent-service/src/memory/boss.ts` | 新建 | BOSS.md Manager |
-| `agent-service/src/memory/index.ts` | 新建 | 导出入口 |
-| `agent-service/src/agent-executor.ts` | 修改 | 集成 Memory |
-| `agent-service/src/index.ts` | 修改 | Memory API 端点 |
+`MemoryInjector` 的上下文构建顺序（按优先级）：
 
----
+1. `BOSS.md`
+2. Profile summary
+3. 全局长期记忆
+4. 当前技能长期记忆
+5. 最近全局日记忆
+6. 最近技能日记忆
+7. 检索到的相关记忆片段（hybrid）
 
-## 七、实现状态
+注入规则：
 
-### Phase 1: 基础设施（文件系统）✅
-1. ✅ 创建 `memory/` 目录结构
-2. ✅ 创建 `MEMORY.md` 全局长期记忆文件
-3. ✅ 修改 `executor.ts`：BOSS.md 替代 CLAUDE.md
-4. ✅ 实现 Memory File Manager
-
-### Phase 2: BOSS.md 系统 ✅
-5. ✅ 实现 BOSS.md Manager
-6. ✅ 实现 BOSS.md API 端点
-7. ✅ 验证 BOSS.md 被正确加载
-
-### Phase 3: Memory 系统 ✅
-8. ✅ 实现 Memory Injector
-9. ✅ 实现 Memory Writer
-10. ✅ 实现 Memory Search（BM25 全文搜索）
-11. ✅ 集成到 agent-executor.ts
-
-### Phase 4: API 端点 + 前端 ✅
-12. ✅ 实现 Memory API 端点
-13. ✅ 前端 BOSS.md 编辑页（MemoryPage.tsx - 老板手册 Tab）
-14. ✅ 前端 Memory 管理页（MemoryPage.tsx - 记忆文件 Tab）
+- 受 token budget 控制。
+- 高优先内容可截断但尽量保留。
+- 检索结果去重后拼接。
 
 ---
 
-## 八、验证方案
+## 6. 写路径（抽取入库）
 
-1. **BOSS.md 注入测试**
-   - 执行 Skill，验证 BOSS.md 被正确注入
-   - 验证 Labor 遵守 BOSS.md 中的规范
+`MemoryOrchestrator.extractAndUpsert` 的主流程：
 
-2. **Memory 写入测试**
-   - 调用 `/api/memory/write` 写入记忆
-   - 验证记录被写入 `memory/skills/{skill-id}/YYYY-MM-DD.md`
-
-3. **Memory 注入测试**
-   - 新会话中验证相关记忆被注入
-   - 验证 Labor 能看到之前的记忆
-
-4. **跨 Skill 测试**
-   - 在 Skill A 中产生全局记忆
-   - 在 Skill B 中验证全局记忆被注入
-
-5. **文件可编辑测试**
-   - 用户直接编辑 memory/*.md 文件
-   - 验证下次会话能读取到修改后的内容
+1. 清洗 user/assistant 文本，去除流程脚手架噪音。
+2. 优先尝试 `MemoryCliExtractor`（Claude CLI）提取 summary + facts。
+3. 失败则 fallback（regex）。
+4. 过滤高噪声 facts（pipeline、模板、结构化垃圾）。
+5. 写入 MemCell。
+6. 对 user facts 进行分类并 upsert Profile。
+7. 追加 daily 记忆（skill 与可选 global）。
+8. 候选入池并按策略提升到长期记忆。
+9. 写 trace 日志，记录写入统计和冲突处理。
 
 ---
 
-## 九、与 OpenClaw 的差异
+## 7. 质量防污染策略（v0.3.0）
 
-| 方面 | OpenClaw | Laborany |
-|------|----------|----------|
-| 搜索方式 | 向量 + BM25 混合 | 纯 BM25 全文搜索（简化） |
-| 复杂度 | 2356 行 manager.ts | 约 500 行核心代码 |
-| 配置文件 | MEMORY.md + memory/*.md | BOSS.md + MEMORY.md + memory/*.md |
-| 目标用户 | 开发者 | 非技术用户 |
-| 设计哲学 | 文件系统为主 | **文件系统为主**（与 OpenClaw 一致） |
-| 更新方式 | 手动编辑 + Agent 写入 | UI 编辑 + Agent 写入 |
-| 特色 | 通用 Agent | **按 Skill 组织记忆**（Laborany 特有） |
+### 7.1 Source 约束
+
+facts 来源：
+
+- `user`
+- `assistant`
+- `event`
+
+优先保留 `user` 事实，`assistant` 更多用于辅助解释，不直接提升长期记忆。
+
+### 7.2 噪声过滤
+
+过滤模式包括：
+
+- pipeline 脚手架字段
+- 待确认/暂定语句
+- 工具调用残留
+- 大段结构化内容（JSON/HTML/模板变量）
+
+### 7.3 长期写入门控
+
+- 先进入候选池，再按可信度和证据数提升。
+- 自动写入与候选入池分离计数，便于审计。
+
+### 7.4 冲突处理
+
+Profile upsert 支持冲突策略记录：
+
+- `keep_old`
+- `use_new`
+- `merge`
+
+所有冲突写入 trace。
 
 ---
 
-## 十、2026-02 记忆质量修复方案（防污染版）
+## 8. 检索策略
 
-> 目的：彻底解决“错误信息、总结污染、临时状态误记忆、跨链路重复写入”问题。
+Memory Search 支持混合检索：
 
-### 1) 写入分层与准入规则
+- BM25
+- TF-IDF
+- RRF 融合
 
-#### L0: MemCell（原子记忆，允许自动写入）
-- 仅记录单轮 `userQuery + assistantResponse` 的压缩快照。
-- 必须先做**噪声过滤**：
-  - 过滤工作流脚手架：`工作流执行上下文 / 当前步骤 / 输入参数 / 前序步骤结果 / {{input.xxx}}`
-  - 过滤临时状态：`尚未确认 / 尚未指定 / 待确认`
-  - 过滤助手流程语：`让我先... / 已完成 / 工具调用记录`
-- `__converse__` 会话默认**不写入** MemCell。
+检索目标：在预算内给模型提供“高相关、低冗余”的记忆片段。
 
-#### L1: Profile（用户画像，中期记忆）
-- 只允许写入“用户稳定信息”：偏好、沟通风格、长期工作约束、稳定环境信息。
-- 默认门槛：
-  - 置信度 ≥ 0.65 才可候选更新；
-  - 发生冲突时按证据数量与置信度决策 `keep_old / merge / use_new`；
-  - 同条信息需去重（语义归一键）。
-- 自动分区：`工作偏好 / 沟通风格 / 技术栈 / 个人信息`，禁止全部塞到单一章节。
+---
 
-#### L2: Long-Term MEMORY（长期记忆）
-- 只允许从 Profile 晋升，不直接从一次提取结果直写。
-- 晋升门槛：
-  - 非 provisional（高置信）；
-  - 同字段至少 2 条证据；
-  - 不含时间敏感表达（如“今天/本次/刚刚/具体日期”）。
-- 全局 MEMORY（`MEMORY.md`）仅保留跨 Skill 通用规则；
-  skill MEMORY 记录技能内长期约束与偏好。
+## 9. API 设计（agent-service）
 
-### 2) 高风险链路隔离
+主要路由：
 
-- `__converse__` 仅负责意图决策，不参与长期记忆沉淀。
-- Workflow 执行链中，带 `工作流执行上下文` 的 prompt 不得直接入库。
-- 仅保留一条主写入链路（orchestrator），避免双写和重复写。
+- `GET /boss` / `PUT /boss`
+- `GET /memory/cells`
+- `GET /memory/episodes`
+- `POST /memory/cluster-episodes`
+- 其他 memory 统计、检索、归纳接口
 
-### 3) 每日记忆（Daily）写入策略
+前端页面 `/memory` 三标签对应：
 
-- Skill Daily 可记录任务摘要（可审计）。
-- Global Daily 仅在“高置信 + 用户中心 + 稳定”条件下写入，避免全局噪声膨胀。
+1. 工作手册（BOSS.md）
+2. 我的画像（Profile）
+3. 记忆档案（MemCell/Episode）
 
-### 4) 注入（Retrieve）策略
+---
 
-- 固定注入：`BOSS.md + Profile`。
-- 高优先：`全局长期 + 技能长期`。
-- 低优先：相似片段与最近 daily（带 token 预算）。
-- 禁止注入明显噪声片段（工作流脚手架、临时状态、助手流程话术）。
+## 10. 与执行链路的集成点
 
-### 5) 存量数据清洗机制
+### 10.1 执行前
 
-- 提供一键脚本：`npm run memory:clean`。
-- 清洗范围：
-  - `data/MEMORY.md`
-  - `data/memory/profiles/PROFILE.md`
-  - `data/memory/cells/**/*.md`（仅清除噪声 fact）
-- 先自动备份再清洗：`data/memory/cleanup-backups/<timestamp>/`。
+- 构建 system prompt 时注入记忆上下文。
 
-### 6) 质量验收指标（必须满足）
+### 10.2 执行后
 
-- P0：新写入数据中，工作流脚手架污染条目 = 0。
-- P0：`__converse__` 记忆写入 = 0。
-- P1：Profile 中“尚未确认/待确认”条目占比 < 1%。
-- P1：全局 MEMORY 中“新闻事实/一次性任务细节”条目占比 < 5%。
-- P1：同义重复条目（归一后）下降 80% 以上。
+- 由 orchestrator 从用户输入与助手输出提取记忆。
+- 写入结构化与 Markdown 双层存储。
 
-### 7) 运维建议
+### 10.3 Converse 分发场景
 
-- 每日或每周执行一次 `memory:clean`（上线初期建议每日）。
-- 每周人工抽查 Top 20 新增长期记忆条目。
-- 当检测到污染阈值超标时，自动降级：暂停 long-term 自动晋升，仅保留候选。
+- converse prompt 可注入用户记忆，提升匹配与追问质量。
 
-### 8) 二轮加固：长期记忆候选队列（2026-02-10）
+---
 
-- 自动提取阶段不再直接写入长期记忆文件，仅写入候选队列：
-  - `data/memory/consolidation-candidates.json`
-- 候选的生成来源有两类：
-  - `orchestrator` 从高置信、非临时、双证据 Profile 字段晋升为候选；
-  - `consolidator` 从 daily 归纳得到高频模式后入队。
-- 候选确认采用“显式确认”工作流：
-  - `GET /memory/consolidation-candidates?scope=...&analyze=false`：仅查看候选；
-  - `GET /memory/consolidation-candidates?...&analyze=true&days=N`：先分析再返回；
-  - `POST /memory/consolidate`：人工确认后写入长期记忆；
-  - `POST /memory/reject-candidates`：人工拒绝候选。
-- 写入保护：`consolidate` 时按 candidate 自身 scope/skillId 校验，避免跨作用域误归档。
+## 11. 可观测与运维
 
-### 9) 自动写入策略（你现在要的模式）
+### 11.1 Trace
 
-- 默认目标：**自动提取 + 自动写入**，不要求用户每次确认。
-- 为避免脏写，采用“双轨制”：
-  - 高置信稳定信息：自动写入长期记忆；
-  - 边缘信息：自动进入候选池，不阻塞主流程。
-- 自动写入门槛（建议值）：
-  - Skill 长期：置信度 ≥ 0.90，证据数 ≥ 3，且通过稳定性过滤；
-  - Global 长期：置信度 ≥ 0.92，证据数 ≥ 4，且满足跨技能通用规则。
-- 过滤增强：在原有 workflow/临时态/助手话术过滤基础上，额外过滤结构化噪声（模板占位符、纯 JSON 块、URL、HTML 片段）。
+记录：
+
+- 抽取方式（cli / regex）
+- 事实过滤结果
+- 写入计数（cells/profile/longTerm/episodes）
+- candidate 入池量
+- 冲突策略
+
+### 11.2 质量指标建议
+
+1. `filteredFacts / totalFacts`（噪声过滤率）
+2. `autoWriteRate`（自动写入比例）
+3. 候选池积压规模
+4. 画像冲突率
+
+---
+
+## 12. 风险与边界
+
+1. LLM 抽取不稳定：保留 fallback + trace 校验。
+2. 自动写入过强会污染长期记忆：通过候选池和阈值缓冲。
+3. 多技能场景上下文泄漏风险：按 scope 控制注入顺序与预算。
+
+---
+
+## 13. 后续演进建议
+
+1. 增加“记忆审阅”工作流（人审后提升长期记忆）。
+2. 引入 per-user/per-project 的隔离命名空间。
+3. 记忆命中效果评估（对分发准确率和执行成功率的提升）。
+4. 完整可视化 trace 工具，支持回放一次记忆写入链路。
+
