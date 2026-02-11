@@ -1,23 +1,8 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                      首页 - 对话式总控助手                               ║
- * ║                                                                        ║
- * ║  状态机：idle → conversing → plan_review → executing → done           ║
- * ║                                                                        ║
- * ║  idle        ：欢迎语 + HomeChat 输入框 + 引导横幅                     ║
- * ║  conversing  ：多轮对话（理解任务 → 匹配 skill → 询问用户）            ║
- * ║  plan_review ：执行计划审核（planSteps 展示 + 批准/修改/取消）         ║
- * ║  executing   ：三面板 ExecutionPanel 内联执行                           ║
- * ║  done        ：执行结果 + "新任务" 按钮                                ║
- * ║                                                                        ║
- * ║  执行模式：skill（useAgent）| workflow（useWorkflowRun）               ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useAgent } from '../hooks/useAgent'
-import { useWorkflowRun } from '../hooks/useWorkflowRun'
-import { useConverse } from '../hooks/useConverse'
+import { useConverse, type ConverseAction } from '../hooks/useConverse'
 import { useCronJobs } from '../hooks/useCron'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { type QuickStartItem } from '../contexts/QuickStartContext'
@@ -26,344 +11,223 @@ import { ScenarioCards } from '../components/home/ScenarioCards'
 import { HomeChat } from '../components/home/chat/HomeChat'
 import { ConversationPanel, type DecisionPrompt } from '../components/home/ConversationPanel'
 import { CronSetupCard } from '../components/execution'
-import { SkillExecutingView, WorkflowExecutingView, type HomePhase, type ExecutionContext } from '../components/home/ExecutingViews'
+import { SkillExecutingView, type HomePhase, type ExecutionContext } from '../components/home/ExecutingViews'
 import { PlanReviewPanel } from '../components/home/PlanReviewPanel'
+import { CandidateConfirmView, FallbackBanner, ErrorView } from '../components/home/DispatchViews'
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           本地接口定义                                   │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+interface CandidateInfo {
+  variant: 'recommend' | 'create'
+  targetId?: string
+  query: string
+  reason?: string
+  confidence?: number
+  matchType?: 'exact' | 'candidate'
+}
 
-/** 定时任务待确认数据 */
+interface GenericExecutionPlan {
+  query: string
+  originQuery: string
+  planSteps: string[]
+}
+
 interface CronPending {
   schedule: string
   timezone?: string
   name?: string
   targetQuery: string
-  targetType: 'skill' | 'workflow'
   targetId: string
 }
 
-interface PendingDecision {
-  action:
-    | 'recommend_capability'
-    | 'create_capability'
-    | 'execute_generic'
-    | 'setup_schedule'
-  payload: {
-    type?: 'skill' | 'workflow'
-    id?: string
-    query?: string
-    mode?: 'skill' | 'workflow'
-    cronExpr?: string
-    tz?: string
-    targetQuery?: string
-    name?: string
-    targetType?: 'skill' | 'workflow'
-    targetId?: string
-  }
-}
-
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                           主组件                                        ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
 export default function HomePage() {
   const { user } = useAuth()
   const navigate = useNavigate()
-  const { getSkillName, getWorkflowName } = useSkillNameMap()
+  const { getCapabilityName } = useSkillNameMap()
+
   const [phase, setPhase] = useState<HomePhase>('idle')
   const [execCtx, setExecCtx] = useState<ExecutionContext | null>(null)
   const [cronPending, setCronPending] = useState<CronPending | null>(null)
   const [selectedCase, setSelectedCase] = useState<QuickStartItem | null>(null)
-  const [pendingDecision, setPendingDecision] = useState<PendingDecision | null>(null)
-  const [planSteps, setPlanSteps] = useState<string[]>([])
-  const handledActionRef = useRef<string | null>(null)
+  const [candidate, setCandidate] = useState<CandidateInfo | null>(null)
+  const [genericPlan, setGenericPlan] = useState<GenericExecutionPlan | null>(null)
+  const [errorMsg, setErrorMsg] = useState('')
+  const [scheduleDecision, setScheduleDecision] = useState<DecisionPrompt | null>(null)
+  const [scheduleAction, setScheduleAction] = useState<ConverseAction | null>(null)
 
-  /* ── Hooks ── */
-  const skillId = execCtx?.type === 'skill' ? execCtx.id : ''
-  const workflowId = execCtx?.type === 'workflow' ? execCtx.id : ''
+  const handledActionRef = useRef<string | null>(null)
+  const latestUserQueryRef = useRef('')
+
+  const skillId = execCtx?.id || ''
   const agent = useAgent(skillId)
-  const wfRun = useWorkflowRun(workflowId)
   const converse = useConverse()
   const { createJob } = useCronJobs()
 
   useEffect(() => {
-    if (!converse.action) {
-      handledActionRef.current = null
-    }
+    if (!converse.action) handledActionRef.current = null
   }, [converse.action])
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  HomeChat 回调：有 skillId 直接跳转，否则进入对话阶段
-   * ──────────────────────────────────────────────────────────────────────── */
-  const handleExecute = useCallback((targetId: string, query: string, targetType: 'skill' | 'workflow' = 'skill') => {
-    if (execCtx) {
-      const sameTarget = targetId
-        && execCtx.id === targetId
-        && execCtx.type === targetType
-      if (!sameTarget) {
-        setExecCtx(null)
-      }
-    }
-
-    if (phase === 'executing') {
-      setPhase('conversing')
-    }
-
+  const handleExecute = useCallback((targetId: string, query: string) => {
+    latestUserQueryRef.current = query
     if (targetId) {
-      if (targetType === 'workflow') {
-        navigate(`/workflow-run/${targetId}?q=${encodeURIComponent(query)}`)
-        return
-      }
       navigate(`/execute/${targetId}?q=${encodeURIComponent(query)}`)
       return
     }
-    setPhase('conversing')
+    setPhase('analyzing')
     converse.sendMessage(query)
-  }, [navigate, converse.sendMessage, phase, execCtx])
+  }, [navigate, converse.sendMessage])
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  监听 converse action → 策略表分发
-   * ──────────────────────────────────────────────────────────────────────── */
   useEffect(() => {
-    if (!converse.action) return
-    if (converse.pendingQuestion) return
-    const a = converse.action
-    const actionKey = JSON.stringify(a)
+    if (!converse.action || converse.pendingQuestion) return
+    const action = converse.action
+    const actionKey = JSON.stringify(action)
     if (handledActionRef.current === actionKey) return
     handledActionRef.current = actionKey
 
-    const resolveRecommend = (): { type: 'skill' | 'workflow'; id: string; query: string } | null => {
-      if (a.action === 'recommend_capability') {
-        if (!a.targetType || !a.targetId || !a.query) return null
-        return { type: a.targetType, id: a.targetId, query: a.query }
-      }
-      if (a.action === 'navigate_skill') {
-        if (!a.skillId || !a.query) return null
-        return { type: 'skill', id: a.skillId, query: a.query }
-      }
-      if (a.action === 'navigate_workflow') {
-        if (!a.workflowId || !a.query) return null
-        return { type: 'workflow', id: a.workflowId, query: a.query }
-      }
-      return null
+    if (action.action === 'recommend_capability' && action.targetId && action.query) {
+      setCandidate({
+        variant: 'recommend',
+        targetId: action.targetId,
+        query: action.query,
+        reason: action.reason,
+        confidence: action.confidence,
+        matchType: action.matchType,
+      })
+      setPhase('candidate_found')
+      return
     }
 
-    const recommended = resolveRecommend()
-    if (recommended) {
-      /* ── 直接跳转，不再弹确认卡片 ── */
-      const sid = converse.sessionId || ''
-      if (recommended.type === 'workflow') {
-        navigate(`/workflow-run/${recommended.id}?q=${encodeURIComponent(recommended.query)}`)
+    if (action.action === 'execute_generic') {
+      const originQuery = latestUserQueryRef.current || action.query || ''
+      const query = action.query || originQuery
+      if (action.planSteps && action.planSteps.length > 0) {
+        setGenericPlan({ query, originQuery, planSteps: action.planSteps })
+        setPhase('plan_review')
       } else {
-        navigate(`/execute/${recommended.id}?q=${encodeURIComponent(recommended.query)}&sid=${sid}`)
+        setExecCtx({ type: 'skill', id: '__generic__', query, originQuery })
+        setPhase('fallback_general')
       }
       return
     }
 
-    if (a.action === 'execute_generic') {
-      const query = a.query || ''
-      const steps = a.planSteps || []
-      setPendingDecision({ action: 'execute_generic', payload: { query } })
-      setPlanSteps(steps)
+    if (action.action === 'create_capability') {
+      const seedQuery = action.seedQuery || action.query || latestUserQueryRef.current || ''
+      setCandidate({ variant: 'create', query: seedQuery, reason: action.reason })
+      setPhase('candidate_found')
       return
     }
 
-    if (a.action === 'create_capability' || a.action === 'create_skill') {
-      const query = a.seedQuery || a.query || ''
-      setPendingDecision({
-        action: 'create_capability',
-        payload: {
-          mode: a.mode || 'skill',
-          query,
-        },
-      })
-      return
-    }
+    if (action.action === 'setup_schedule') {
+      const cronExpr = action.cronExpr || ''
+      const targetQuery = action.targetQuery || action.query || ''
+      const targetId = action.targetId
+      if (!cronExpr || !targetQuery || !targetId) return
 
-    if (a.action === 'setup_schedule' || a.action === 'setup_cron') {
-      const cronExpr = a.cronExpr || a.cronSchedule || ''
-      const targetQuery = a.targetQuery || a.cronTargetQuery || a.query || ''
-      const targetType = a.targetType
-      const targetId = a.targetId
-
-      if (!cronExpr || !targetQuery || !targetType || !targetId) {
-        return
-      }
-
-      setPendingDecision({
-        action: 'setup_schedule',
-        payload: {
-          cronExpr,
-          tz: a.tz,
-          name: a.name,
-          targetQuery,
-          targetType,
-          targetId,
-        },
+      setScheduleAction(action)
+      setScheduleDecision({
+        title: '检测到定时任务意图，是否创建？',
+        description: `${cronExpr}\n将先进入可编辑确认卡，再创建任务。`,
+        actions: [
+          { key: 'confirm', label: '创建定时任务', variant: 'primary' },
+          { key: 'ask_more', label: '继续确认', variant: 'ghost' },
+        ],
       })
     }
-  }, [converse.action, converse.pendingQuestion, converse.sessionId, navigate])
+  }, [converse.action, converse.pendingQuestion])
 
   useEffect(() => {
-    if (!converse.pendingQuestion) return
-    setPendingDecision(null)
+    if (converse.error && phase === 'analyzing') {
+      setErrorMsg(converse.error)
+      setPhase('error')
+    }
+  }, [converse.error, phase])
+
+  useEffect(() => {
+    if (converse.pendingQuestion) {
+      setScheduleDecision(null)
+      setScheduleAction(null)
+    }
   }, [converse.pendingQuestion])
 
-  const applyDecision = useCallback((decision: PendingDecision) => {
-    if (decision.action === 'create_capability') {
-      const query = decision.payload.query || ''
-      const mode = decision.payload.mode || 'skill'
-      const creatorSeed = mode === 'workflow'
-        ? `请优先基于以下需求创建可复用 workflow，并在完成后返回可运行入口：\n${query}`
-        : query
+  const handleCandidateConfirm = useCallback(() => {
+    if (!candidate) return
+
+    if (candidate.variant === 'recommend' && candidate.targetId) {
+      const sid = converse.sessionId || ''
+      navigate(`/execute/${candidate.targetId}?q=${encodeURIComponent(candidate.query)}&sid=${sid}`)
+      return
+    }
+
+    if (candidate.variant === 'create') {
       setExecCtx({
         type: 'skill',
         id: 'skill-creator',
-        query: creatorSeed,
-        originQuery: query,
+        query: candidate.query,
+        originQuery: latestUserQueryRef.current || candidate.query,
       })
-      setPhase('executing')
-      return
+      setPhase('creating_proposal')
     }
+  }, [candidate, converse.sessionId, navigate])
 
-    if (decision.action === 'execute_generic') {
-      const query = decision.payload.query || ''
-      if (planSteps.length > 0) {
-        setPhase('plan_review')
-      } else {
-        setExecCtx({ type: 'skill', id: '__generic__', query })
-        setPhase('executing')
-      }
-      return
-    }
+  const handleCandidateReject = useCallback(() => {
+    const query = candidate?.query || ''
+    setCandidate(null)
+    setExecCtx({
+      type: 'skill',
+      id: '__generic__',
+      query,
+      originQuery: latestUserQueryRef.current || query,
+    })
+    setPhase('fallback_general')
+  }, [candidate])
 
-    if (decision.action === 'setup_schedule') {
-      const targetType = decision.payload.targetType
-      const targetId = decision.payload.targetId
-      const targetQuery = decision.payload.targetQuery
-      const schedule = decision.payload.cronExpr
-
-      if (!targetType || !targetId || !targetQuery || !schedule) {
-        return
-      }
-
+  const handleScheduleDecision = useCallback((key: string) => {
+    if (key === 'confirm' && scheduleAction) {
+      const cronExpr = scheduleAction.cronExpr || ''
+      const targetQuery = scheduleAction.targetQuery || scheduleAction.query || ''
+      const targetId = scheduleAction.targetId || ''
       setCronPending({
-        schedule,
-        timezone: decision.payload.tz,
-        name: decision.payload.name,
+        schedule: cronExpr,
+        timezone: scheduleAction.tz,
+        name: scheduleAction.name,
         targetQuery,
-        targetType,
         targetId,
       })
       setPhase('idle')
     }
-  }, [navigate])
+    setScheduleDecision(null)
+    setScheduleAction(null)
+  }, [scheduleAction])
 
-  const handleDecision = useCallback((key: string) => {
-    if (!pendingDecision) return
-
-    if (key === 'confirm') {
-      applyDecision(pendingDecision)
-      setPendingDecision(null)
-      return
-    }
-
-    if (key === 'generic') {
-      setPendingDecision(null)
-      setExecCtx({ type: 'skill', id: '__generic__', query: pendingDecision.payload.query || '' })
-      setPhase('executing')
-      return
-    }
-
-    if (key === 'ask_more') {
-      setPendingDecision(null)
-      return
-    }
-
-    setPendingDecision(null)
-  }, [applyDecision, pendingDecision])
-
-  const decisionPrompt: DecisionPrompt | null = (() => {
-    if (!pendingDecision) return null
-
-    if (pendingDecision.action === 'create_capability') {
-      const modeLabel = pendingDecision.payload.mode === 'workflow' ? 'workflow' : 'skill'
-      return {
-        title: '需要创建新技能/流程吗？',
-        description: `将进入 creator，优先沉淀为${modeLabel}；创建成功后会自动跳转到新能力。`,
-        actions: [
-          { key: 'confirm', label: '立即创建', variant: 'primary' },
-          { key: 'generic', label: '先用通用技能', variant: 'secondary' },
-          { key: 'ask_more', label: '再聊两句', variant: 'ghost' },
-        ],
-      }
-    }
-
-    if (pendingDecision.action === 'execute_generic') {
-      return {
-        title: '这个需求更适合先用通用技能执行。',
-        description: '如你愿意，后续可一键沉淀为新技能或工作流。',
-        actions: [
-          { key: 'confirm', label: '开始执行', variant: 'primary' },
-          { key: 'ask_more', label: '继续确认', variant: 'ghost' },
-        ],
-      }
-    }
-
-    return {
-      title: '检测到定时任务意图，是否创建？',
-      description: `${pendingDecision.payload.cronExpr || ''}\n将先进入可编辑确认卡，再创建任务。`,
-      actions: [
-        { key: 'confirm', label: '创建定时任务', variant: 'primary' },
-        { key: 'ask_more', label: '继续确认', variant: 'ghost' },
-      ],
-    }
-  })()
-
-  /* ────────────────────────────────────────────────────────────────────────
-   *  定时任务确认
-   * ──────────────────────────────────────────────────────────────────────── */
   const handleCronConfirm = useCallback(async (next: CronPending) => {
     await createJob({
       name: next.name || next.targetQuery.slice(0, 50) || '定时任务',
       description: next.targetQuery,
-      schedule: {
-        kind: 'cron',
-        expr: next.schedule,
-        tz: next.timezone,
-      },
-      target: {
-        type: next.targetType,
-        id: next.targetId,
-        query: next.targetQuery,
-      },
+      schedule: { kind: 'cron', expr: next.schedule, tz: next.timezone },
+      target: { type: 'skill', id: next.targetId, query: next.targetQuery },
     })
     setCronPending(null)
   }, [createJob])
 
-  const handleCronCancel = useCallback(() => setCronPending(null), [])
-
-  /* ────────────────────────────────────────────────────────────────────────
-   *  返回首页（重置一切）
-   * ──────────────────────────────────────────────────────────────────────── */
   const handleNewTask = useCallback(() => {
     agent.clear()
-    wfRun.clear()
     converse.reset()
     setPhase('idle')
     setSelectedCase(null)
     setExecCtx(null)
     setCronPending(null)
-    setPendingDecision(null)
-    setPlanSteps([])
+    setCandidate(null)
+    setGenericPlan(null)
+    setErrorMsg('')
+    setScheduleDecision(null)
+    setScheduleAction(null)
     handledActionRef.current = null
-  }, [agent.clear, wfRun.clear, converse.reset])
+  }, [agent.clear, converse.reset])
 
   const handleCapabilityCreated = useCallback((created: {
-    type: 'skill' | 'workflow'
+    type: 'skill'
     id: string
     originQuery?: string
   }) => {
+    setPhase('routing')
     const query = created.originQuery || execCtx?.originQuery || execCtx?.query || ''
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('capability:changed', {
@@ -374,14 +238,9 @@ export default function HomePage() {
         },
       }))
     }
-    if (created.type === 'workflow') {
-      navigate(`/workflow-run/${created.id}?q=${encodeURIComponent(query)}`)
-      return
-    }
     navigate(`/execute/${created.id}?q=${encodeURIComponent(query)}`)
   }, [execCtx?.originQuery, execCtx?.query, navigate])
 
-  /* ── idle 阶段 ── */
   if (phase === 'idle') {
     return <IdleView
       userName={user?.name}
@@ -391,12 +250,11 @@ export default function HomePage() {
       onClearSelectedCase={() => setSelectedCase(null)}
       cronPending={cronPending}
       onCronConfirm={handleCronConfirm}
-      onCronCancel={handleCronCancel}
+      onCronCancel={() => setCronPending(null)}
     />
   }
 
-  /* ── conversing 阶段 ── */
-  if (phase === 'conversing') {
+  if (phase === 'analyzing') {
     return <ConversationPanel
       messages={converse.messages}
       onSend={converse.sendMessage}
@@ -405,61 +263,107 @@ export default function HomePage() {
       respondToQuestion={converse.respondToQuestion}
       isThinking={converse.isThinking}
       error={converse.error}
-      decisionPrompt={decisionPrompt}
-      onDecision={handleDecision}
+      decisionPrompt={scheduleDecision}
+      onDecision={handleScheduleDecision}
       onBack={handleNewTask}
       stateSummary={converse.state}
     />
   }
 
-  /* ── plan_review 阶段 ── */
-  if (phase === 'plan_review') {
+  if (phase === 'candidate_found' && candidate) {
+    const displayName = candidate.variant === 'recommend' && candidate.targetId
+      ? getCapabilityName(candidate.targetId)
+      : '创建新技能'
+    return <CandidateConfirmView
+      targetName={displayName}
+      reason={candidate.reason}
+      confidence={candidate.confidence}
+      matchType={candidate.matchType}
+      onConfirm={handleCandidateConfirm}
+      onReject={handleCandidateReject}
+      onBack={handleNewTask}
+    />
+  }
+
+  if (phase === 'plan_review' && genericPlan) {
     return <PlanReviewPanel
-      planSteps={planSteps}
+      planSteps={genericPlan.planSteps}
       onApprove={() => {
-        const query = pendingDecision?.payload.query || planSteps.join('\n')
-        setExecCtx({ type: 'skill', id: '__generic__', query })
+        const planText = genericPlan.planSteps
+          .map((step, idx) => `${idx + 1}. ${step}`)
+          .join('\n')
+        const executionQuery = planText
+          ? [
+            genericPlan.query,
+            '',
+            '[执行计划]',
+            planText,
+            '',
+            '请按照这个计划执行，必要时可优化并说明调整原因。',
+          ].join('\n')
+          : genericPlan.query
+        setExecCtx({
+          type: 'skill',
+          id: '__generic__',
+          query: executionQuery,
+          originQuery: genericPlan.originQuery,
+        })
         setPhase('executing')
-        setPendingDecision(null)
-        setPlanSteps([])
+        setGenericPlan(null)
       }}
       onEdit={() => {
-        setPhase('conversing')
-        setPlanSteps([])
+        setPhase('analyzing')
+        setGenericPlan(null)
       }}
       onCancel={handleNewTask}
     />
   }
 
-  /* ── executing / done 阶段：按执行类型分发 ── */
-  if (execCtx?.type === 'workflow') {
-    return <WorkflowExecutingView
-      wfRun={wfRun}
-      execCtx={execCtx}
-      displayTitle={getWorkflowName(execCtx.id)}
-      phase={phase}
-      onPhaseChange={setPhase}
-      onNewTask={handleNewTask}
+  if (phase === 'error') {
+    return <ErrorView
+      message={errorMsg || '服务异常，请稍后重试'}
+      onRetry={handleNewTask}
+      onBack={handleNewTask}
     />
   }
 
-  return <SkillExecutingView
-    agent={agent}
-    execCtx={execCtx!}
-    displayTitle={getSkillName(execCtx!.id)}
-    phase={phase}
-    onPhaseChange={setPhase}
-    onNewTask={handleNewTask}
-    onCapabilityCreated={handleCapabilityCreated}
-  />
+  if (phase === 'installing') {
+    return (
+      <div className="h-[calc(100vh-64px)] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
+          <span className="text-sm text-muted-foreground">正在安装新能力…</span>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="h-[calc(100vh-64px)] flex flex-col">
+      {phase === 'fallback_general' && (
+        <div className="px-6 pt-4">
+          <FallbackBanner />
+        </div>
+      )}
+      <div className="flex-1">
+        <SkillExecutingView
+          agent={agent}
+          execCtx={execCtx!}
+          displayTitle={getCapabilityName(execCtx?.id || '')}
+          phase={phase}
+          onPhaseChange={setPhase}
+          onNewTask={handleNewTask}
+          onCapabilityCreated={handleCapabilityCreated}
+          onError={(msg) => { setErrorMsg(msg); setPhase('error') }}
+        />
+      </div>
+    </div>
+  )
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                      IdleView - 首页空闲态                              │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 function IdleView({ userName, onExecute, selectedCase, onSelectCase, onClearSelectedCase, cronPending, onCronConfirm, onCronCancel }: {
   userName?: string
-  onExecute: (targetId: string, query: string, targetType?: 'skill' | 'workflow') => void
+  onExecute: (targetId: string, query: string) => void
   selectedCase: QuickStartItem | null
   onSelectCase: (item: QuickStartItem) => void
   onClearSelectedCase: () => void
@@ -493,7 +397,6 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, onClearSele
             schedule={cronPending.schedule}
             timezone={cronPending.timezone}
             targetQuery={cronPending.targetQuery}
-            targetType={cronPending.targetType}
             targetId={cronPending.targetId}
             onConfirm={onCronConfirm}
             onCancel={onCronCancel}
@@ -503,3 +406,4 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, onClearSele
     </div>
   )
 }
+

@@ -17,13 +17,13 @@ export interface CronSetupCardProps {
   schedule: string
   timezone?: string
   targetQuery: string
-  targetType?: 'skill' | 'workflow'
+  targetType?: 'skill'
   targetId?: string
   onConfirm: (payload: {
     schedule: string
     timezone?: string
     targetQuery: string
-    targetType: 'skill' | 'workflow'
+    targetType: 'skill'
     targetId: string
   }) => void | Promise<void>
   onCancel: () => void
@@ -49,12 +49,12 @@ export function CronSetupCard({
   const [draftSchedule, setDraftSchedule] = useState(schedule)
   const [draftTimezone, setDraftTimezone] = useState(timezone || '')
   const [draftTargetQuery, setDraftTargetQuery] = useState(targetQuery)
-  const [draftTargetType, setDraftTargetType] = useState<'skill' | 'workflow'>(targetType || 'skill')
+  const [draftTargetType] = useState<'skill'>(targetType || 'skill')
   const [draftTargetId, setDraftTargetId] = useState(targetId || '')
   const humanDesc = cronToHuman(draftSchedule)
   const { getCapabilityName } = useSkillNameMap()
   const displayTargetName = draftTargetId
-    ? getCapabilityName(draftTargetType, draftTargetId)
+    ? getCapabilityName(draftTargetId)
     : ''
 
   async function handleConfirm() {
@@ -117,7 +117,6 @@ export function CronSetupCard({
         targetName={displayTargetName}
         targetId={draftTargetId}
         onTargetQueryChange={setDraftTargetQuery}
-        onTargetTypeChange={setDraftTargetType}
         onTargetIdChange={setDraftTargetId}
       />
       <Actions
@@ -195,18 +194,16 @@ function TaskRow({
   targetName,
   targetId,
   onTargetQueryChange,
-  onTargetTypeChange,
   onTargetIdChange,
 }: {
   targetQuery: string
-  targetType: 'skill' | 'workflow'
+  targetType: 'skill'
   targetName?: string
   targetId: string
   onTargetQueryChange: (value: string) => void
-  onTargetTypeChange: (value: 'skill' | 'workflow') => void
   onTargetIdChange: (value: string) => void
 }) {
-  const targetLabel = targetType === 'workflow' ? '任务流' : '能力单元'
+  const targetLabel = '能力单元'
 
   return (
     <div className="mb-3 p-2 rounded-lg bg-accent/50 space-y-2">
@@ -222,14 +219,11 @@ function TaskRow({
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="block text-xs text-muted-foreground mb-1">目标类型</label>
-          <select
+          <input
             value={targetType}
-            onChange={(e) => onTargetTypeChange(e.target.value === 'workflow' ? 'workflow' : 'skill')}
-            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-          >
-            <option value="skill">skill</option>
-            <option value="workflow">workflow</option>
-          </select>
+            disabled
+            className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-muted-foreground"
+          />
         </div>
         <div>
           <label className="block text-xs text-muted-foreground mb-1">目标 ID</label>
@@ -237,7 +231,7 @@ function TaskRow({
             value={targetId}
             onChange={(e) => onTargetIdChange(e.target.value)}
             className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-            placeholder={targetType === 'workflow' ? 'workflow-id' : 'skill-id'}
+            placeholder="skill-id"
           />
         </div>
       </div>

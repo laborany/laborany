@@ -71,7 +71,7 @@ function ScenarioCard({
   selected: boolean
   onSelect?: (item: QuickStartItem) => void
 }) {
-  const typeLabel = scenario.targetType === 'workflow' ? '任务流' : '技能'
+  const typeLabel = '技能'
 
   return (
     <button

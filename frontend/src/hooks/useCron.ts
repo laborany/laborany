@@ -31,7 +31,7 @@ export interface ScheduleCron {
 
 export type Schedule = ScheduleAt | ScheduleEvery | ScheduleCron
 
-export type TargetType = 'skill' | 'workflow'
+export type TargetType = 'skill'
 
 export interface ExecutionTarget {
   type: TargetType

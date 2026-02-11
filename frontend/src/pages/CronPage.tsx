@@ -87,7 +87,7 @@ function JobCard({
           <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
             <span title="调度规则">⏰ {describeSchedule(schedule)}</span>
             <span title="目标">
-              {job.targetType === 'skill' ? '🧪' : '📊'} {targetName}
+              🧪 {targetName}
             </span>
           </div>
         </div>
@@ -302,7 +302,7 @@ export default function CronPage() {
                 <JobCard
                   key={job.id}
                   job={job}
-                  targetName={getCapabilityName(job.targetType, job.targetId)}
+                  targetName={getCapabilityName(job.targetId)}
                   isSelected={selectedJobId === job.id}
                   onEdit={() => setEditingJob(job)}
                   onDelete={() => handleDelete(job.id)}

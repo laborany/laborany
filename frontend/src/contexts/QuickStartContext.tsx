@@ -1,18 +1,19 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                      首页案例 Context                                     ║
  * ║                                                                          ║
- * ║  功能：统一管理首页可引用案例（skill/workflow）                             ║
+ * ║  功能：统一管理首页可引用案例（skill/composite）                            ║
  * ║  特性：本地持久化、旧数据迁移、增删改排                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
+import type { CapabilityTargetType } from '../types'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface HomeCaseItem {
   id: string
-  targetType: 'skill' | 'workflow'
+  targetType: CapabilityTargetType
   targetId: string
   icon: string
   name: string
@@ -99,10 +100,10 @@ export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
   },
   {
     id: 'case-ai-column-ppt-svg',
-    targetType: 'workflow',
+    targetType: 'skill',
     targetId: 'ai-column-ppt-svg',
     icon: '🪄',
-    name: '专栏转PPT流水线',
+    name: '专栏转PPT复合技能',
     description: '已有内容或新文稿一键转 SVG 幻灯片',
   },
 ]
@@ -116,7 +117,7 @@ function isValidCaseItem(item: unknown): item is HomeCaseItem {
   const candidate = item as Partial<HomeCaseItem>
   return Boolean(
     candidate.id &&
-    (candidate.targetType === 'skill' || candidate.targetType === 'workflow') &&
+    candidate.targetType === 'skill' &&
     candidate.targetId &&
     candidate.name,
   )
@@ -133,7 +134,7 @@ function sanitizeItems(items: HomeCaseItem[]): HomeCaseItem[] {
     seen.add(key)
     deduped.push({
       id: raw.id || makeCaseId('case'),
-      targetType: raw.targetType,
+      targetType: 'skill',
       targetId: raw.targetId,
       icon: raw.icon || '🔧',
       name: raw.name,
@@ -269,7 +270,7 @@ export function QuickStartProvider({ children }: { children: ReactNode }) {
         ...current,
         ...patch,
         id: current.id,
-        targetType: patch.targetType === 'workflow' ? 'workflow' : patch.targetType === 'skill' ? 'skill' : current.targetType,
+        targetType: 'skill',
       }
 
       if (!merged.targetId.trim()) return prev

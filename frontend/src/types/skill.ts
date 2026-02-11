@@ -1,8 +1,9 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                      Skill 类型定义                                       ║
+ * ║                      Capability 统一类型定义                               ║
  * ║                                                                          ║
- * ║  统一管理所有 Skill/Worker 相关的类型定义                                   ║
- * ║  消除重复定义，确保类型一致性                                               ║
+ * ║  统一管理所有 Skill/Composite 相关的类型定义                                ║
+ * ║  设计哲学：skill 和 composite 共用同一套类型                                 ║
+ * ║  composite 只是带 steps 的 skill，调用方式完全一致                          ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -12,6 +13,11 @@
 /** Skill 类型：区分普通 Skill 和元类型（如 skill-creator） */
 export type SkillType = 'worker' | 'meta' | 'tool'
 
+/** capability 类型：单步 skill 或多步 composite */
+export type SkillKind = 'skill' | 'composite'
+
+export type CapabilityTargetType = 'skill'
+
 /** Skill 基础信息 */
 export interface Skill {
   id: string
@@ -20,6 +26,7 @@ export interface Skill {
   icon?: string
   category?: string
   type?: SkillType
+  kind?: SkillKind
 }
 
 /** 数字员工（人格化的 Skill） */
@@ -49,6 +56,7 @@ export interface SkillDetail {
   description: string
   icon?: string
   category?: string
+  kind?: SkillKind
   files: SkillFile[]
 }
 

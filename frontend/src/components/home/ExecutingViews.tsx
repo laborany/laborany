@@ -1,23 +1,33 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                  执行态视图组件 - 从 HomePage 提取                      ║
  * ║                                                                        ║
- * ║  ExecutionHeader       ：执行态顶部导航栏（复用于 Skill / Workflow）    ║
- * ║  SkillExecutingView    ：Skill 执行态（三面板布局）                     ║
- * ║  WorkflowExecutingView ：工作流执行态（带 StepProgress）               ║
+ * ║  ExecutionHeader       ：执行态顶部导航栏                               ║
+ * ║  SkillExecutingView    ：统一执行态（三面板布局）                        ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect } from 'react'
 import type { useAgent } from '../../hooks/useAgent'
-import type { useWorkflowRun } from '../../hooks/useWorkflowRun'
 import { ExecutionPanel } from '../execution'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           共享类型定义                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export type HomePhase = 'idle' | 'conversing' | 'plan_review' | 'executing' | 'done'
+export type HomePhase =
+  | 'idle'
+  | 'analyzing'
+  | 'candidate_found'
+  | 'creating_proposal'
+  | 'creating_confirm'
+  | 'installing'
+  | 'routing'
+  | 'plan_review'
+  | 'executing'
+  | 'fallback_general'
+  | 'done'
+  | 'error'
 
 export interface ExecutionContext {
-  type: 'skill' | 'workflow'
+  type: 'skill'
   id: string
   query: string
   originQuery?: string
@@ -26,7 +36,7 @@ export interface ExecutionContext {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │              ExecutionHeader - 执行态顶部导航栏                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function ExecutionHeader({ title, isRunning, isDone, onStop, onNewTask }: {
+export function ExecutionHeader({ title, isRunning, isDone, onStop, onNewTask }: {
   title: string
   isRunning: boolean
   isDone: boolean
@@ -69,16 +79,17 @@ function ExecutionHeader({ title, isRunning, isDone, onStop, onNewTask }: {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │              SkillExecutingView - Skill 执行态（三面板布局）             │
+ * │        SkillExecutingView - 统一 Capability 执行态（三面板布局）        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhaseChange, onNewTask, onCapabilityCreated }: {
+export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhaseChange, onNewTask, onCapabilityCreated, onError }: {
   agent: ReturnType<typeof useAgent>
   execCtx: ExecutionContext
   displayTitle: string
   phase: HomePhase
   onPhaseChange: (p: HomePhase) => void
   onNewTask: () => void
-  onCapabilityCreated: (created: { type: 'skill' | 'workflow'; id: string; originQuery?: string }) => void
+  onCapabilityCreated: (created: { type: 'skill'; id: string; originQuery?: string }) => void
+  onError: (msg: string) => void
 }) {
   const hasExecutedRef = useRef(false)
   const createdHandledRef = useRef<string | null>(null)
@@ -89,34 +100,61 @@ function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhaseChange
   }, [execCtx.id, execCtx.query])
 
   useEffect(() => {
-    if (hasExecutedRef.current) return
-    if (!execCtx.id) return
+    if (hasExecutedRef.current || !execCtx.id) return
     hasExecutedRef.current = true
-    agent.execute(execCtx.query, undefined, {
-      originQuery: execCtx.originQuery,
-    })
+    agent.execute(execCtx.query, undefined, { originQuery: execCtx.originQuery })
   }, [agent.execute, execCtx.id, execCtx.originQuery, execCtx.query])
 
+  const isExecutionPhase =
+    phase === 'executing'
+    || phase === 'fallback_general'
+    || phase === 'creating_proposal'
+    || phase === 'creating_confirm'
+    || phase === 'installing'
+    || phase === 'routing'
+
   useEffect(() => {
-    if (phase === 'executing' && !agent.isRunning && agent.messages.length > 0) {
+    if (execCtx.id === 'skill-creator') return
+    if (isExecutionPhase && !agent.isRunning && agent.messages.length > 0) {
       onPhaseChange('done')
     }
-  }, [phase, agent.isRunning, agent.messages.length, onPhaseChange])
+  }, [isExecutionPhase, agent.isRunning, agent.messages.length, execCtx.id, onPhaseChange])
+
+  useEffect(() => {
+    if (execCtx.id !== 'skill-creator') return
+    if (phase === 'creating_proposal' && agent.pendingQuestion) {
+      onPhaseChange('creating_confirm')
+      return
+    }
+    if (phase === 'creating_confirm' && !agent.pendingQuestion && agent.isRunning) {
+      onPhaseChange('creating_proposal')
+    }
+  }, [execCtx.id, phase, agent.pendingQuestion, agent.isRunning, onPhaseChange])
 
   useEffect(() => {
     if (execCtx.id !== 'skill-creator') return
     const created = agent.createdCapability
     if (!created) return
     const primary = created.primary || { type: created.type, id: created.id }
-    const key = `${primary.type}:${primary.id}`
+    const normalizedPrimary = { type: 'skill' as const, id: primary.id }
+    const key = `${normalizedPrimary.type}:${normalizedPrimary.id}`
     if (createdHandledRef.current === key) return
     createdHandledRef.current = key
+    onPhaseChange('installing')
     onCapabilityCreated({
-      type: primary.type,
-      id: primary.id,
+      type: normalizedPrimary.type,
+      id: normalizedPrimary.id,
       originQuery: created.originQuery || execCtx.originQuery || execCtx.query,
     })
-  }, [agent.createdCapability, execCtx.id, execCtx.originQuery, execCtx.query, onCapabilityCreated])
+  }, [agent.createdCapability, execCtx.id, execCtx.originQuery, execCtx.query, onCapabilityCreated, onPhaseChange])
+
+  /* ── skill-creator 出错时，上报错误状态 ── */
+  useEffect(() => {
+    if (execCtx.id !== 'skill-creator') return
+    if (agent.error && !agent.isRunning) {
+      onError(agent.error)
+    }
+  }, [execCtx.id, agent.error, agent.isRunning, onError])
 
   return (
     <div className="h-[calc(100vh-64px)]">
@@ -127,6 +165,8 @@ function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhaseChange
         taskFiles={agent.taskFiles}
         workDir={agent.workDir}
         filesVersion={agent.filesVersion}
+        compositeSteps={agent.compositeSteps}
+        currentCompositeStep={agent.currentCompositeStep}
         onSubmit={agent.execute}
         onStop={agent.stop}
         sessionId={agent.sessionId}
@@ -148,68 +188,3 @@ function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhaseChange
     </div>
   )
 }
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │          WorkflowExecutingView - 工作流执行态（带 StepProgress）        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function WorkflowExecutingView({ wfRun, execCtx, displayTitle, phase, onPhaseChange, onNewTask }: {
-  wfRun: ReturnType<typeof useWorkflowRun>
-  execCtx: ExecutionContext
-  displayTitle: string
-  phase: HomePhase
-  onPhaseChange: (p: HomePhase) => void
-  onNewTask: () => void
-}) {
-  const hasExecutedRef = useRef(false)
-  const isRunning = wfRun.status === 'running'
-
-  useEffect(() => {
-    if (hasExecutedRef.current) return
-    hasExecutedRef.current = true
-    wfRun.execute({ query: execCtx.query })
-  }, [wfRun.execute, execCtx.query])
-
-  useEffect(() => {
-    const terminal = wfRun.status === 'done' || wfRun.status === 'error'
-    if (phase === 'executing' && terminal && wfRun.messages.length > 0) {
-      onPhaseChange('done')
-    }
-  }, [phase, wfRun.status, wfRun.messages.length, onPhaseChange])
-
-  const noop = useCallback(() => {}, [])
-  const noopUrl = useCallback((p: string) => p, [])
-
-  return (
-    <div className="h-[calc(100vh-64px)]">
-      <ExecutionPanel
-        messages={wfRun.messages}
-        isRunning={isRunning}
-        error={wfRun.error}
-        taskFiles={[]}
-        workDir={null}
-        filesVersion={0}
-        onSubmit={noop}
-        onStop={wfRun.stop}
-        sessionId={null}
-        getFileUrl={noopUrl}
-        fetchTaskFiles={noop}
-        pendingQuestion={null}
-        respondToQuestion={noop}
-        placeholder="工作流执行中..."
-        workflowSteps={wfRun.steps}
-        currentWorkflowStep={wfRun.currentStep}
-        headerSlot={
-          <ExecutionHeader
-            title={displayTitle}
-            isRunning={isRunning}
-            isDone={phase === 'done'}
-            onStop={wfRun.stop}
-            onNewTask={onNewTask}
-          />
-        }
-      />
-    </div>
-  )
-}
-
-export { ExecutionHeader, SkillExecutingView, WorkflowExecutingView }

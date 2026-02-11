@@ -182,7 +182,7 @@ export default function CreatePage() {
           onSubmit={handleSubmit}
           onStop={stop}
           isRunning={isRunning}
-          placeholder="描述你想创建的工作流程..."
+          placeholder="描述你想创建的技能或复合技能..."
         />
       </div>
     </div>

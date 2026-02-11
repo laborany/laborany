@@ -27,9 +27,6 @@ const HistoryPage = lazy(() => import('./pages/HistoryPage').then(m => ({ defaul
 const SessionDetailPage = lazy(() => import('./pages/HistoryPage').then(m => ({ default: m.SessionDetailPage })))
 const SkillsPage = lazy(() => import('./pages/SkillsPage'))
 const CreatePage = lazy(() => import('./pages/CreatePage'))
-const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'))
-const WorkflowRunPage = lazy(() => import('./pages/WorkflowRunPage'))
-const WorkflowEditPage = lazy(() => import('./pages/WorkflowEditPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const CronPage = lazy(() => import('./pages/CronPage'))
 const MemoryPage = lazy(() => import('./pages/MemoryPage'))
@@ -48,6 +45,9 @@ function PageLoader() {
   )
 }
 
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                  统一执行入口：/execute/:id                              │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           受保护路由                                      │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -300,14 +300,6 @@ export default function App() {
                 }
               />
               <Route
-                path="/workflow-run/:workflowId"
-                element={
-                  <ProtectedRoute>
-                    <WorkflowRunPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
                 path="/history"
                 element={
                   <ProtectedRoute>
@@ -336,30 +328,6 @@ export default function App() {
                 element={
                   <ProtectedRoute>
                     <CreatePage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/workflows"
-                element={
-                  <ProtectedRoute>
-                    <WorkflowsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/workflows/new"
-                element={
-                  <ProtectedRoute>
-                    <WorkflowEditPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/workflows/:workflowId/edit"
-                element={
-                  <ProtectedRoute>
-                    <WorkflowEditPage />
                   </ProtectedRoute>
                 }
               />

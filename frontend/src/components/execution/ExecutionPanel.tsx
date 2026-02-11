@@ -21,7 +21,7 @@ import { QuestionInput } from '../shared/QuestionInput'
 import { PreviewPanel } from './PreviewPanel'
 import { FileSidebar } from './FileSidebar'
 import { StepProgress } from './StepProgress'
-import type { WorkflowStep as WorkflowStepUI } from './StepProgress'
+import type { CompositeStep as CompositeStepUI } from './StepProgress'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           Props 定义                                      │
@@ -56,9 +56,9 @@ export interface ExecutionPanelProps {
   /* 顶部栏插槽 —— 让调用方自定义导航和操作按钮 */
   headerSlot?: React.ReactNode
 
-  /* 工作流步骤进度（可选，有值时在消息流上方显示 StepProgress） */
-  workflowSteps?: WorkflowStepUI[]
-  currentWorkflowStep?: number
+  /* 复合技能步骤进度（可选，有值时在消息流上方显示 StepProgress） */
+  compositeSteps?: CompositeStepUI[]
+  currentCompositeStep?: number
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -124,8 +124,8 @@ export function ExecutionPanel({
   respondToQuestion,
   placeholder = '输入你的问题...',
   headerSlot,
-  workflowSteps,
-  currentWorkflowStep,
+  compositeSteps,
+  currentCompositeStep,
 }: ExecutionPanelProps) {
   /* ── 预览状态 ── */
   const [isPreviewVisible, setIsPreviewVisible] = useState(false)
@@ -214,8 +214,8 @@ export function ExecutionPanel({
         onSubmit={onSubmit}
         onStop={onStop}
         placeholder={placeholder}
-        workflowSteps={workflowSteps}
-        currentWorkflowStep={currentWorkflowStep}
+        compositeSteps={compositeSteps}
+        currentCompositeStep={currentCompositeStep}
       />
 
       {/* ════════════════════════════════════════════════════════════════════
@@ -282,8 +282,8 @@ interface ChatPanelProps {
   onSubmit: (message: string, files?: File[]) => void
   onStop: () => void
   placeholder: string
-  workflowSteps?: WorkflowStepUI[]
-  currentWorkflowStep?: number
+  compositeSteps?: CompositeStepUI[]
+  currentCompositeStep?: number
 }
 
 function ChatPanel({
@@ -298,8 +298,8 @@ function ChatPanel({
   onSubmit,
   onStop,
   placeholder,
-  workflowSteps,
-  currentWorkflowStep,
+  compositeSteps,
+  currentCompositeStep,
 }: ChatPanelProps) {
   return (
     <div
@@ -316,10 +316,10 @@ function ChatPanel({
       {/* 错误提示 */}
       {error && <ErrorBanner message={error} />}
 
-      {/* 工作流步骤进度 */}
-      {workflowSteps && workflowSteps.length > 0 && (
+      {/* 复合技能步骤进度 */}
+      {compositeSteps && compositeSteps.length > 0 && (
         <div className="shrink-0 mb-2">
-          <StepProgress steps={workflowSteps} currentStep={currentWorkflowStep} />
+          <StepProgress steps={compositeSteps} currentStep={currentCompositeStep} />
         </div>
       )}
 

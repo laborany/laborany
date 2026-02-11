@@ -12,13 +12,13 @@ import type { ShowcaseItem } from '../chat/ChatState'
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export const CAPABILITY_ITEMS: ShowcaseItem[] = [
   { id: 'stock-analyzer',       type: 'skill',    icon: '📈', name: '股票分析', description: '实时股票数据采集与分析', category: '金融' },
-  { id: 'weekly-report',        type: 'workflow', icon: '📋', name: '周报生成', description: '一键生成工作周报',       category: '办公' },
+  { id: 'weekly-report',        type: 'skill',    icon: '📋', name: '周报生成', description: '一键生成工作周报',       category: '办公' },
   { id: 'financial-report',     type: 'skill',    icon: '💹', name: '财务报告', description: '专业财务分析报告',       category: '金融' },
-  { id: 'ppt-creation',         type: 'workflow', icon: '🎯', name: 'PPT创建', description: '从大纲到演示文稿',       category: '办公' },
+  { id: 'ppt-creation',         type: 'skill',    icon: '🎯', name: 'PPT创建', description: '从大纲到演示文稿',       category: '办公' },
   { id: 'social-operator',      type: 'skill',    icon: '📱', name: '社媒运营', description: '多平台内容创作',         category: '内容' },
-  { id: 'data-analysis-report', type: 'workflow', icon: '📊', name: '数据分析', description: '数据分析与可视化报告',   category: '数据' },
+  { id: 'data-analysis-report', type: 'skill',    icon: '📊', name: '数据分析', description: '数据分析与可视化报告',   category: '数据' },
   { id: 'expense-assistant',    type: 'skill',    icon: '💰', name: '费用助手', description: '智能费用管理与汇总',     category: '金融' },
-  { id: 'data-monitor-daily',   type: 'workflow', icon: '📉', name: '数据日报', description: '每日数据监控报告',       category: '数据' },
+  { id: 'data-monitor-daily',   type: 'skill',    icon: '📉', name: '数据日报', description: '每日数据监控报告',       category: '数据' },
 ]
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

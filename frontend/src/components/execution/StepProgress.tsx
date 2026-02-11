@@ -10,7 +10,7 @@ import { useState } from 'react'
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                       │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export interface WorkflowStep {
+export interface CompositeStep {
   name: string
   status: 'pending' | 'running' | 'completed' | 'failed'
   output?: string
@@ -19,14 +19,14 @@ export interface WorkflowStep {
 }
 
 export interface StepProgressProps {
-  steps: WorkflowStep[]
+  steps: CompositeStep[]
   currentStep?: number
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │  状态样式表 —— 用数据结构消除分支                                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-const STATUS_STYLES: Record<WorkflowStep['status'], {
+const STATUS_STYLES: Record<CompositeStep['status'], {
   dot: string
   icon: string
   line: string
@@ -47,7 +47,7 @@ export function StepProgress({ steps, currentStep }: StepProgressProps) {
   return (
     <div className="py-3 px-4 border-b border-border bg-card/50">
       <p className="text-xs text-muted-foreground mb-2 font-medium">
-        工作流进度 ({steps.filter(s => s.status === 'completed').length}/{steps.length})
+        复合技能进度 ({steps.filter(s => s.status === 'completed').length}/{steps.length})
       </p>
       <div className="space-y-0">
         {steps.map((step, i) => (
@@ -68,7 +68,7 @@ export function StepProgress({ steps, currentStep }: StepProgressProps) {
  * │  垂直时间线：圆点 + 连接线 + 名称 + 可折叠输出                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function StepNode({ step, isLast, isCurrent }: {
-  step: WorkflowStep
+  step: CompositeStep
   isLast: boolean
   isCurrent: boolean
 }) {

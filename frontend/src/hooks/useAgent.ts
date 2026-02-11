@@ -32,13 +32,21 @@ interface AgentState {
   workDir: string | null
   pendingQuestion: PendingQuestion | null
   createdCapability: {
-    type: 'skill' | 'workflow'
+    type: 'skill'
     id: string
-    primary: { type: 'skill' | 'workflow'; id: string }
-    artifacts: Array<{ type: 'skill' | 'workflow'; id: string }>
+    primary: { type: 'skill'; id: string }
+    artifacts: Array<{ type: 'skill'; id: string }>
     originQuery?: string
   } | null
   filesVersion: number
+  compositeSteps: Array<{
+    name: string
+    status: 'pending' | 'running' | 'completed' | 'failed'
+    output?: string
+    startedAt?: string
+    completedAt?: string
+  }>
+  currentCompositeStep: number
 }
 
 
@@ -86,6 +94,8 @@ export function useAgent(skillId: string) {
     pendingQuestion: null,
     createdCapability: null,
     filesVersion: 0,
+    compositeSteps: [],
+    currentCompositeStep: -1,
   })
 
   const abortRef = useRef<AbortController | null>(null)
@@ -252,32 +262,106 @@ export function useAgent(skillId: string) {
           localStorage.removeItem(`lastSession_${skillId}`)
           break
 
+        case 'pipeline_start': {
+          const steps = Array.isArray(event.steps)
+            ? event.steps.map((item) => {
+              const step = item as Record<string, unknown>
+              return {
+                name: (step.name as string) || '步骤',
+                status: 'pending' as const,
+              }
+            })
+            : []
+          setState((s) => ({
+            ...s,
+            compositeSteps: steps,
+            currentCompositeStep: steps.length > 0 ? 0 : -1,
+          }))
+          break
+        }
+
+        case 'step_start': {
+          const stepIndex = Number(event.stepIndex)
+          if (Number.isNaN(stepIndex) || stepIndex < 0) break
+          setState((s) => ({
+            ...s,
+            currentCompositeStep: stepIndex,
+            compositeSteps: s.compositeSteps.map((step, idx) => {
+              if (idx === stepIndex) return { ...step, status: 'running', startedAt: new Date().toISOString() }
+              if (idx < stepIndex && step.status === 'pending') return { ...step, status: 'completed' }
+              return step
+            }),
+          }))
+          break
+        }
+
+        case 'step_done': {
+          const stepIndex = Number(event.stepIndex)
+          const result = event.result as Record<string, unknown> | undefined
+          if (Number.isNaN(stepIndex) || stepIndex < 0 || !result) break
+          setState((s) => ({
+            ...s,
+            compositeSteps: s.compositeSteps.map((step, idx) => {
+              if (idx !== stepIndex) return step
+              return {
+                ...step,
+                status: 'completed',
+                output: (result.output as string) || step.output,
+                startedAt: (result.startedAt as string) || step.startedAt,
+                completedAt: (result.completedAt as string) || new Date().toISOString(),
+              }
+            }),
+          }))
+          break
+        }
+
+        case 'step_error': {
+          const stepIndex = Number(event.stepIndex)
+          const error = (event.error as string) || '步骤失败'
+          if (Number.isNaN(stepIndex) || stepIndex < 0) break
+          setState((s) => ({
+            ...s,
+            compositeSteps: s.compositeSteps.map((step, idx) => {
+              if (idx !== stepIndex) return step
+              return {
+                ...step,
+                status: 'failed',
+                output: error,
+                completedAt: new Date().toISOString(),
+              }
+            }),
+          }))
+          break
+        }
+
+        case 'pipeline_done':
+          setState((s) => ({ ...s, currentCompositeStep: -1 }))
+          break
+
         case 'created_capability': {
-          const capabilityType: 'skill' | 'workflow' =
-            event.capabilityType === 'workflow' ? 'workflow' : 'skill'
+          const capabilityType: 'skill' = 'skill'
           const capabilityId = event.capabilityId as string
           if (capabilityId) {
-            const primaryRaw = event.primary as { type?: 'skill' | 'workflow'; id?: string } | undefined
-            const primary: { type: 'skill' | 'workflow'; id: string } = {
-              type: primaryRaw?.type === 'workflow' ? 'workflow' : capabilityType,
+            const primaryRaw = event.primary as { type?: 'skill'; id?: string } | undefined
+            const primary: { type: 'skill'; id: string } = {
+              type: capabilityType,
               id: primaryRaw?.id || capabilityId,
             }
 
             const artifactsRaw = Array.isArray(event.artifacts)
-              ? event.artifacts as Array<{ type?: 'skill' | 'workflow'; id?: string }>
+              ? event.artifacts as Array<{ type?: 'skill'; id?: string }>
               : []
 
-            const artifacts: Array<{ type: 'skill' | 'workflow'; id: string }> = artifactsRaw
+            const artifacts: Array<{ type: 'skill'; id: string }> = artifactsRaw
               .map((item) => {
-                const type: 'skill' | 'workflow' = item.type === 'workflow' ? 'workflow' : 'skill'
                 return {
-                  type,
+                  type: 'skill' as const,
                   id: item.id || '',
                 }
               })
               .filter((item) => item.id)
 
-            const normalizedArtifacts: Array<{ type: 'skill' | 'workflow'; id: string }> =
+            const normalizedArtifacts: Array<{ type: 'skill'; id: string }> =
               artifacts.length > 0 ? artifacts : [primary]
             const originQuery = typeof event.originQuery === 'string' ? event.originQuery : undefined
 
@@ -413,6 +497,7 @@ export function useAgent(skillId: string) {
         isRunning: true,
         error: null,
         createdCapability: null,
+        pendingQuestion: null,
       }))
 
       // 中止上一轮未完成请求（防止快速连点导致竞态）
@@ -525,6 +610,8 @@ export function useAgent(skillId: string) {
       pendingQuestion: null,
       createdCapability: null,
       filesVersion: 0,
+      compositeSteps: [],
+      currentCompositeStep: -1,
     })
   }, [])
 

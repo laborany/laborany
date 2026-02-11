@@ -51,7 +51,6 @@ export interface TaskFile {
   ext?: string
   size?: number
   children?: TaskFile[]
-  stepIndex?: number    // 工作流步骤索引
-  stepName?: string     // 工作流步骤名称
+  stepIndex?: number    // 复合技能步骤索引
+  stepName?: string     // 复合技能步骤名称
 }
-

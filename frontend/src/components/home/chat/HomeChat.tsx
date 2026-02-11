@@ -4,7 +4,7 @@
  * ║  核心理念：对话框是唯一执行入口                                            ║
  * ║  用户输入 → onExecute 回调 → HomePage 编排调度                           ║
  * ║                                                                          ║
- * ║  有选中案例 → onExecute(targetId, query, type) → 跳转执行               ║
+ * ║  有选中案例 → onExecute(targetId, query) → 跳转执行                     ║
  * ║  无选中案例 → onExecute('', query) → 进入 converse 决策                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
@@ -16,7 +16,7 @@ import type { QuickStartItem } from '../../../contexts/QuickStartContext'
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 interface HomeChatProps {
-  onExecute: (targetId: string, query: string, targetType?: 'skill' | 'workflow') => void
+  onExecute: (targetId: string, query: string) => void
   selectedCase: QuickStartItem | null
   onClearSelectedCase: () => void
 }
@@ -28,25 +28,21 @@ export function HomeChat({ onExecute, selectedCase, onClearSelectedCase }: HomeC
   const [input, setInput] = useState('')
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  提交：有选中案例传 targetId + targetType，否则传空串走编排
+   *  提交：有选中案例传 targetId，否则传空串走编排
    * ──────────────────────────────────────────────────────────────────────── */
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
     const q = input.trim()
     if (!q) return
-    onExecute(selectedCase?.targetId || '', q, selectedCase?.targetType || 'skill')
+    onExecute(selectedCase?.targetId || '', q)
     setInput('')
   }
 
   /* ────────────────────────────────────────────────────────────────────────
-   *  智能建议选中 → 直接执行（带 skillId）
+   *  智能建议选中 → 直接执行（带 capabilityId）
    * ──────────────────────────────────────────────────────────────────────── */
   const handleSuggestionSelect = (match: { id: string; name: string; type: string }) => {
-    onExecute(
-      match.id,
-      input.trim() || match.name,
-      match.type === 'workflow' ? 'workflow' : 'skill',
-    )
+    onExecute(match.id, input.trim() || match.name)
   }
 
   return (
@@ -56,9 +52,6 @@ export function HomeChat({ onExecute, selectedCase, onClearSelectedCase }: HomeC
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm bg-primary/10 border border-primary/30 text-primary">
           <span>{selectedCase.icon || '🔧'}</span>
           <span>{selectedCase.name}</span>
-          <span className="text-xs text-primary/70">
-            · {selectedCase.targetType === 'workflow' ? '任务流' : '技能'}
-          </span>
           <button
             onClick={onClearSelectedCase}
             className="ml-1 hover:text-primary/70"

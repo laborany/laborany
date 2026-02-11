@@ -3,31 +3,32 @@ import { AGENT_API_BASE } from '../config/api'
 import type { PendingQuestion } from './useAgent'
 import type { AgentMessage } from '../types/message'
 
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │  ConverseAction - 对话引擎返回的统一动作                                │
+ * │                                                                        │
+ * │  四种动作覆盖全部场景：                                                  │
+ * │    recommend_capability  → 匹配到已有 capability，直接跳转执行          │
+ * │    execute_generic       → 通用执行模式                                 │
+ * │    create_capability     → 需要创建新 capability                        │
+ * │    setup_schedule        → 定时任务意图                                 │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface ConverseAction {
   action:
     | 'recommend_capability'
     | 'execute_generic'
     | 'create_capability'
     | 'setup_schedule'
-    | 'navigate_skill'
-    | 'navigate_workflow'
-    | 'create_skill'
-    | 'setup_cron'
-  targetType?: 'skill' | 'workflow'
   targetId?: string
-  mode?: 'skill' | 'workflow'
   seedQuery?: string
+  confidence?: number
+  matchType?: 'exact' | 'candidate'
   reason?: string
   name?: string
   tz?: string
   cronExpr?: string
   targetQuery?: string
   planSteps?: string[]
-  skillId?: string
-  workflowId?: string
   query?: string
-  cronSchedule?: string
-  cronTargetQuery?: string
 }
 
 export interface UseConverseReturn {

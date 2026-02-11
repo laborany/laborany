@@ -1,20 +1,14 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                      首页案例编辑器                                      ║
- * ║                                                                          ║
- * ║  功能：自定义首页案例映射（名称/图标/描述/目标类型/目标）                 ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   useQuickStartContext,
   type HomeCaseItem,
   type QuickStartItem,
 } from '../../contexts/QuickStartContext'
 import { useWorkers } from '../../hooks/useWorkers'
-import { useWorkflowList } from '../../hooks/useWorkflow'
+import type { CapabilityTargetType } from '../../types'
 
 type CapabilityOption = {
-  targetType: 'skill' | 'workflow'
+  targetType: CapabilityTargetType
   targetId: string
   name: string
   icon: string
@@ -43,40 +37,25 @@ export function QuickStartEditor() {
     isCustomized,
     maxItems,
   } = useQuickStartContext()
-  const { workers, loading: skillsLoading } = useWorkers()
-  const { workflows, loading: workflowsLoading, fetchWorkflows } = useWorkflowList()
+  const { workers, loading } = useWorkers()
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null)
 
-  useEffect(() => {
-    fetchWorkflows()
-  }, [fetchWorkflows])
-
   const capabilityOptions = useMemo<CapabilityOption[]>(() => {
-    const skillOptions: CapabilityOption[] = workers.map(worker => ({
+    return workers.map(worker => ({
       targetType: 'skill',
       targetId: worker.id,
       name: worker.name,
       icon: worker.icon || '🔧',
       description: worker.description || '',
     }))
-
-    const workflowOptions: CapabilityOption[] = workflows.map(workflow => ({
-      targetType: 'workflow',
-      targetId: workflow.id,
-      name: workflow.name,
-      icon: workflow.icon || '🔄',
-      description: workflow.description || '',
-    }))
-
-    return [...skillOptions, ...workflowOptions]
-  }, [workers, workflows])
+  }, [workers])
 
   const selectedTargets = new Set(scenarios.map(item => `${item.targetType}:${item.targetId}`))
   const availableOptions = capabilityOptions.filter(
     option => !selectedTargets.has(`${option.targetType}:${option.targetId}`),
   )
 
-  const selectedScenario = scenarios.find(s => s.id === selectedCaseId) || null
+  const selectedScenario = scenarios.find(scenario => scenario.id === selectedCaseId) || null
 
   const handleAdd = (option: CapabilityOption) => {
     if (scenarios.length >= maxItems) return
@@ -126,14 +105,14 @@ export function QuickStartEditor() {
         <ScenarioForm
           scenario={selectedScenario}
           options={capabilityOptions}
-          onChange={(patch) => updateScenario(selectedScenario.id, patch)}
+          onChange={patch => updateScenario(selectedScenario.id, patch)}
         />
       )}
 
       <section>
-        <span className="text-sm text-muted-foreground mb-2 block">可添加的能力</span>
+        <span className="text-sm text-muted-foreground mb-2 block">可添加的技能</span>
 
-        {(skillsLoading || workflowsLoading) ? (
+        {loading ? (
           <div className="text-sm text-muted-foreground">加载中...</div>
         ) : availableOptions.length === 0 ? (
           <div className="text-sm text-muted-foreground">暂无更多可添加项</div>
@@ -143,13 +122,14 @@ export function QuickStartEditor() {
               <button
                 key={`${option.targetType}:${option.targetId}`}
                 onClick={() => handleAdd(option)}
-                disabled={scenarios.length >= maxItems}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-muted/50 hover:bg-muted rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-2 py-1 rounded border border-border hover:border-primary/60 hover:bg-primary/5 text-left"
               >
-                <span>{option.icon}</span>
-                <span>{option.name}</span>
-                <span className="text-xs text-muted-foreground">{option.targetType === 'workflow' ? '任务流' : '技能'}</span>
-                <span className="text-muted-foreground">+</span>
+                <div className="text-xs font-medium text-foreground">
+                  {option.icon} {option.name}
+                </div>
+                {!!option.description && (
+                  <div className="text-[10px] text-muted-foreground mt-0.5">{option.description}</div>
+                )}
               </button>
             ))}
           </div>
@@ -164,24 +144,14 @@ function ScenarioForm({
   options,
   onChange,
 }: {
-  scenario: HomeCaseItem
+  scenario: QuickStartItem
   options: CapabilityOption[]
   onChange: (patch: Partial<HomeCaseItem>) => void
 }) {
-  const filtered = options.filter(option => option.targetType === scenario.targetType)
-  const activeHasOption = filtered.some(option => option.targetId === scenario.targetId)
-
-  const handleTargetTypeChange = (nextType: 'skill' | 'workflow') => {
-    const nextOptions = options.filter(option => option.targetType === nextType)
-    const nextTargetId = nextOptions[0]?.targetId || ''
-    onChange({
-      targetType: nextType,
-      ...(nextTargetId ? { targetId: nextTargetId } : {}),
-    })
-  }
+  const activeHasOption = options.some(option => option.targetId === scenario.targetId)
 
   return (
-    <section className="rounded-lg border border-border p-3 space-y-3">
+    <section className="p-3 border border-border rounded-lg bg-muted/20 space-y-3">
       <div className="text-sm font-medium text-foreground">编辑案例</div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -190,7 +160,7 @@ function ScenarioForm({
           <input
             type="text"
             value={scenario.name}
-            onChange={(e) => onChange({ name: e.target.value })}
+            onChange={event => onChange({ name: event.target.value })}
             className="w-full px-2 py-1.5 rounded border border-border bg-card text-foreground"
           />
         </label>
@@ -200,37 +170,25 @@ function ScenarioForm({
           <input
             type="text"
             value={scenario.icon}
-            onChange={(e) => onChange({ icon: e.target.value })}
+            onChange={event => onChange({ icon: event.target.value })}
             className="w-full px-2 py-1.5 rounded border border-border bg-card text-foreground"
           />
         </label>
 
         <label className="text-xs text-muted-foreground space-y-1">
-          <span>类型</span>
-          <select
-            value={scenario.targetType}
-            onChange={(e) => handleTargetTypeChange(e.target.value as 'skill' | 'workflow')}
-            className="w-full px-2 py-1.5 rounded border border-border bg-card text-foreground"
-          >
-            <option value="skill">技能</option>
-            <option value="workflow">任务流</option>
-          </select>
-        </label>
-
-        <label className="text-xs text-muted-foreground space-y-1">
-          <span>目标</span>
+          <span>目标技能</span>
           <select
             value={activeHasOption ? scenario.targetId : ''}
-            onChange={(e) => onChange({ targetId: e.target.value })}
+            onChange={event => onChange({ targetId: event.target.value })}
             className="w-full px-2 py-1.5 rounded border border-border bg-card text-foreground"
           >
             {!activeHasOption && (
               <option value="" disabled>
-                请选择目标
+                请选择目标技能
               </option>
             )}
-            {filtered.map(option => (
-              <option key={`${option.targetType}:${option.targetId}`} value={option.targetId}>
+            {options.map(option => (
+              <option key={option.targetId} value={option.targetId}>
                 {option.name}
               </option>
             ))}
@@ -242,7 +200,7 @@ function ScenarioForm({
           <input
             type="text"
             value={scenario.description}
-            onChange={(e) => onChange({ description: e.target.value })}
+            onChange={event => onChange({ description: event.target.value })}
             className="w-full px-2 py-1.5 rounded border border-border bg-card text-foreground"
           />
         </label>
@@ -279,16 +237,17 @@ function SelectedItem({
       }`}
     >
       <button type="button" onClick={onSelect} className="flex items-center gap-1">
-      <span>{scenario.icon}</span>
-      <span className="text-sm font-medium">{scenario.name}</span>
-      <span className="text-[10px] text-muted-foreground ml-1">
-        {scenario.targetType === 'workflow' ? '任务流' : '技能'}
-      </span>
+        <span>{scenario.icon}</span>
+        <span className="text-sm font-medium">{scenario.name}</span>
+        <span className="text-[10px] text-muted-foreground ml-1">技能</span>
       </button>
       <div className="flex items-center gap-0.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); onMoveUp() }}
+          onClick={event => {
+            event.stopPropagation()
+            onMoveUp()
+          }}
           disabled={index === 0}
           className="p-0.5 hover:bg-primary/20 rounded disabled:opacity-30"
           title="上移"
@@ -300,7 +259,10 @@ function SelectedItem({
 
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); onMoveDown() }}
+          onClick={event => {
+            event.stopPropagation()
+            onMoveDown()
+          }}
           disabled={index === total - 1}
           className="p-0.5 hover:bg-primary/20 rounded disabled:opacity-30"
           title="下移"
@@ -312,7 +274,10 @@ function SelectedItem({
 
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); onRemove() }}
+          onClick={event => {
+            event.stopPropagation()
+            onRemove()
+          }}
           className="p-0.5 hover:bg-destructive/20 hover:text-destructive rounded"
           title="移除"
         >

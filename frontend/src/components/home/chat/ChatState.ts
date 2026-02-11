@@ -9,7 +9,7 @@
  * │                           路由匹配结果                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface MatchResult {
-  type: 'skill' | 'workflow' | 'none'
+  type: 'skill' | 'none'
   id: string
   name: string
   confidence: number
@@ -21,7 +21,7 @@ export interface MatchResult {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface ShowcaseItem {
   id: string
-  type: 'skill' | 'workflow'
+  type: 'skill'
   icon: string
   name: string
   description: string

@@ -26,11 +26,11 @@ export function ActionBar({ userName }: ActionBarProps) {
           招聘新员工
         </Link>
         <Link
-          to="/workflows/new"
+          to="/create"
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors text-sm font-medium"
         >
-          <WorkflowIcon />
-          创建工作流
+          <CompositeIcon />
+          创建复合技能
         </Link>
         <Link
           to="/skills"
@@ -55,7 +55,7 @@ function PlusIcon() {
   )
 }
 
-function WorkflowIcon() {
+function CompositeIcon() {
   return (
     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6z" />
