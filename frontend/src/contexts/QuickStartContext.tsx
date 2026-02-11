@@ -49,6 +49,21 @@ const STORAGE_KEY = 'laborany:home-cases:v2'
 const LEGACY_STORAGE_KEY = 'laborany:quick-start'
 const MAX_ITEMS = 8
 
+const LEGACY_TARGET_ID_MAP: Record<string, string> = {
+  'ai-column-ppt-svg': 'ppt-svg-generator',
+  'ppt-creation': 'pptx',
+  'data-analysis-report': 'xlsx',
+  'data-monitor-daily': 'data-monitor',
+  'expense-summary': 'expense-assistant',
+  'financial-analysis': 'financial-report',
+  'social-content-pack': 'social-operator',
+  'stock-report-pipeline': 'stock-analyzer',
+  'competitor-comparison': 'deep-research',
+  'contract-review': 'paper-editor',
+  'weekly-report': 'topic-collector',
+  '股票研报解读流程': 'stock-analyzer',
+}
+
 export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
   {
     id: 'case-docx',
@@ -99,11 +114,11 @@ export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
     description: '协作写作 AI 生产力系统专栏',
   },
   {
-    id: 'case-ai-column-ppt-svg',
+    id: 'case-ppt-svg-generator',
     targetType: 'skill',
-    targetId: 'ai-column-ppt-svg',
+    targetId: 'ppt-svg-generator',
     icon: '🪄',
-    name: '专栏转PPT复合技能',
+    name: '专栏转PPT技能',
     description: '已有内容或新文稿一键转 SVG 幻灯片',
   },
 ]
@@ -129,13 +144,15 @@ function sanitizeItems(items: HomeCaseItem[]): HomeCaseItem[] {
 
   for (const raw of items) {
     if (!isValidCaseItem(raw)) continue
-    const key = `${raw.targetType}:${raw.targetId}`
+    const normalizedTargetId = LEGACY_TARGET_ID_MAP[raw.targetId] || raw.targetId
+    if (!normalizedTargetId) continue
+    const key = `${raw.targetType}:${normalizedTargetId}`
     if (seen.has(key)) continue
     seen.add(key)
     deduped.push({
       id: raw.id || makeCaseId('case'),
       targetType: 'skill',
-      targetId: raw.targetId,
+      targetId: normalizedTargetId,
       icon: raw.icon || '🔧',
       name: raw.name,
       description: raw.description || '',

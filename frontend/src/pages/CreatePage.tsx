@@ -42,6 +42,7 @@ export default function CreatePage() {
     messages, isRunning, error, pendingQuestion,
     execute, stop, clear, respondToQuestion,
   } = useAgent('skill-creator')
+  const effectiveRunning = isRunning && !pendingQuestion
 
   const [userSkillsDir, setUserSkillsDir] = useState<string | null>(null)
   const [knownIds, setKnownIds] = useState<string[]>([])
@@ -69,7 +70,7 @@ export default function CreatePage() {
    *  每轮对话结束后检测新 skill
    * ──────────────────────────────────────────────────────────────────────── */
   useEffect(() => {
-    if (prevRunning.current && !isRunning && knownIds.length > 0) {
+    if (prevRunning.current && !effectiveRunning && knownIds.length > 0) {
       const token = localStorage.getItem('token')
       fetch(`${API_BASE}/skill/detect-new`, {
         method: 'POST',
@@ -89,8 +90,8 @@ export default function CreatePage() {
         })
         .catch(() => {})
     }
-    prevRunning.current = isRunning
-  }, [isRunning, knownIds])
+    prevRunning.current = effectiveRunning
+  }, [effectiveRunning, knownIds])
 
   /* ────────────────────────────────────────────────────────────────────────
    *  首条消息附加 userSkillsDir 路径提示
@@ -162,7 +163,7 @@ export default function CreatePage() {
             </div>
           </div>
         ) : (
-          <MessageList messages={messages} isRunning={isRunning} />
+          <MessageList messages={messages} isRunning={effectiveRunning} />
         )}
       </div>
 
@@ -181,7 +182,7 @@ export default function CreatePage() {
         <ChatInput
           onSubmit={handleSubmit}
           onStop={stop}
-          isRunning={isRunning}
+          isRunning={effectiveRunning}
           placeholder="描述你想创建的技能或复合技能..."
         />
       </div>

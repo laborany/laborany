@@ -325,7 +325,7 @@ function ChatPanel({
 
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto mb-4 min-h-0">
-        {messages.length === 0 ? <EmptyState /> : (
+        {messages.length === 0 ? <EmptyState isRunning={isRunning} /> : (
           <MessageList messages={messages} isRunning={isRunning} />
         )}
       </div>
@@ -342,7 +342,7 @@ function ChatPanel({
         <ChatInput
           onSubmit={onSubmit}
           onStop={onStop}
-          isRunning={isRunning || Boolean(pendingQuestion)}
+          isRunning={isRunning}
           placeholder={placeholder}
         />
       </div>
@@ -353,7 +353,21 @@ function ChatPanel({
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           空状态                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function EmptyState() {
+function EmptyState({ isRunning }: { isRunning: boolean }) {
+  if (isRunning) {
+    return (
+      <div className="h-full flex items-center justify-center text-muted-foreground">
+        <div className="text-center">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+            <div className="w-7 h-7 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          </div>
+          <p className="text-lg font-medium text-foreground mb-1">正在处理任务</p>
+          <p className="text-sm">已开始执行，请稍候，结果会实时显示在这里</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="h-full flex items-center justify-center text-muted-foreground">
       <div className="text-center">

@@ -5,7 +5,7 @@
  * ║  设计：从 store.ts 拆分，遵循单一职责原则                                  ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import Database, { createDatabase } from './db.js'
+import Database, { createDatabase } from './store.js'
 import { join } from 'path'
 import { mkdirSync, existsSync } from 'fs'
 import { DATA_DIR } from '../paths.js'

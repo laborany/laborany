@@ -387,3 +387,79 @@ export class MemoryFileManager {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export const memoryFileManager = new MemoryFileManager()
 export { BOSS_MD_PATH, GLOBAL_MEMORY_MD_PATH, MEMORY_DIR, SKILLS_MEMORY_DIR }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Memory Writer（写入纠正、偏好、事实、长期记忆）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+interface WriteCorrectionParams {
+  skillId: string
+  original: string
+  corrected: string
+  context?: string
+}
+
+interface WritePreferenceParams {
+  skillId: string
+  preference: string
+  isGlobal?: boolean
+}
+
+interface WriteFactParams {
+  skillId: string
+  fact: string
+  isGlobal?: boolean
+}
+
+interface WriteLongTermParams {
+  skillId: string
+  section: string
+  content: string
+  isGlobal?: boolean
+}
+
+export class MemoryWriter {
+  writeCorrection(params: WriteCorrectionParams): void {
+    const { skillId, original, corrected, context } = params
+    const content = [
+      '**纠正记录**',
+      `- 原始：${original}`,
+      `- 正确：${corrected}`,
+      context ? `- 上下文：${context}` : '',
+    ].filter(Boolean).join('\n')
+
+    memoryFileManager.appendToDaily({ scope: 'skill', skillId, content })
+  }
+
+  writePreference(params: WritePreferenceParams): void {
+    const { skillId, preference, isGlobal = false } = params
+    const content = `**用户偏好**\n${preference}`
+
+    memoryFileManager.appendToDaily({ scope: 'skill', skillId, content })
+    if (isGlobal) {
+      memoryFileManager.appendToDaily({ scope: 'global', content })
+    }
+  }
+
+  writeFact(params: WriteFactParams): void {
+    const { skillId, fact, isGlobal = false } = params
+    const content = `**事实记录**\n${fact}`
+
+    memoryFileManager.appendToDaily({ scope: 'skill', skillId, content })
+    if (isGlobal) {
+      memoryFileManager.appendToDaily({ scope: 'global', content })
+    }
+  }
+
+  writeLongTerm(params: WriteLongTermParams): void {
+    const { skillId, section, content, isGlobal = false } = params
+    const entry = `**建议写入长期记忆**\n- 章节：${section}\n- 内容：${content}`
+
+    memoryFileManager.appendToDaily({ scope: 'skill', skillId, content: entry })
+    if (isGlobal) {
+      memoryFileManager.appendToDaily({ scope: 'global', content: entry })
+    }
+  }
+}
+
+export const memoryWriter = new MemoryWriter()

@@ -53,6 +53,13 @@ type ConversePhase = NonNullable<UseConverseReturn['state']>['phase']
 
 const ACTION_MARKER_RE = /\n?LABORANY_ACTION:\s*\{[\s\S]*?\}\s*$/
 
+function isAbortLikeError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  if (err.name === 'AbortError') return true
+  const text = `${err.message || ''}`.toLowerCase()
+  return text.includes('aborted') || text.includes('bodystreambuffer')
+}
+
 function stripActionMarker(text: string): string {
   return text.replace(ACTION_MARKER_RE, '').trim()
 }
@@ -142,6 +149,8 @@ export function useConverse(): UseConverseReturn {
 
       if (eventType === 'question') {
         setPendingQuestion(data as unknown as PendingQuestion)
+        setIsThinking(false)
+        shouldTerminate = true
         return
       }
 
@@ -248,6 +257,10 @@ export function useConverse(): UseConverseReturn {
     const q = text.trim()
     if (!q) return
 
+    // 先中止上一轮未结束请求，避免问答等待态和新请求并发导致状态滞后
+    abortRef.current?.abort()
+    abortRef.current = null
+
     const userMessage: AgentMessage = {
       id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       type: 'user',
@@ -300,7 +313,7 @@ export function useConverse(): UseConverseReturn {
 
       await processSSEStream(res, updated)
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
+      if (isAbortLikeError(err)) {
         return
       }
       const message = err instanceof Error ? err.message : '对话服务异常'

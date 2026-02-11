@@ -9,11 +9,11 @@
  * │                     核心模块                                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export { memoryFileManager, MemoryFileManager, type MemoryScope } from './file-manager.js'
-export { memoryInjector, MemoryInjector } from './injector.js'
-export { memoryWriter, MemoryWriter } from './writer.js'
+export { memoryInjector, MemoryInjector } from './io.js'
+export { memoryWriter, MemoryWriter } from './file-manager.js'
 export { memorySearch, MemorySearch, type SearchResult, type SearchStrategy } from './search.js'
-export { bossManager, BossManager } from './boss.js'
-export { globalMemoryManager, GlobalMemoryManager } from './global-memory.js'
+export { bossManager, BossManager } from './markdown-files.js'
+export { globalMemoryManager, GlobalMemoryManager } from './markdown-files.js'
 export {
   memoryConsolidator,
   MemoryConsolidator,
@@ -30,9 +30,10 @@ export {
   tokenize,
   type TFIDFDocument,
   type TFIDFIndex,
-} from './tfidf.js'
-
-export { indexCacheManager, IndexCacheManager, INDEX_DIR } from './index-cache.js'
+  indexCacheManager,
+  IndexCacheManager,
+  INDEX_DIR,
+} from './search.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     三级记忆结构                                          │
@@ -78,7 +79,7 @@ export {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     记忆处理器（协调三级结构）                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export { memoryProcessor, MemoryProcessor } from './processor.js'
+export { memoryProcessor, MemoryProcessor } from './consolidator.js'
 export { memoryOrchestrator, MemoryOrchestrator } from './orchestrator.js'
-export { memoryCliExtractor, MemoryCliExtractor, type CliExtractResult } from './cli-extractor.js'
+export { memoryCliExtractor, MemoryCliExtractor, type CliExtractResult } from './io.js'
 export type { MemoryScene, InjectedMemorySection, MemoryTraceEvent } from './types.js'

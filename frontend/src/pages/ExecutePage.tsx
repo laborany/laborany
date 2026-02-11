@@ -7,10 +7,11 @@
  * ║  3. 页面级关注点 —— URL 参数、对话框、导航栏                                ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAgent } from '../hooks/useAgent'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
+import { API_BASE } from '../config/api'
 import { ExecutionPanel } from '../components/execution'
 import { Tooltip } from '../components/ui'
 import {
@@ -25,10 +26,13 @@ import { Button } from '../components/ui'
 
 export default function ExecutePage() {
   const { skillId } = useParams<{ skillId: string }>()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const agent = useAgent(skillId || '')
   const { getSkillName } = useSkillNameMap()
   const displaySkillName = getSkillName(skillId)
+  const handledCreatedRef = useRef<string | null>(null)
+  const effectiveRunning = agent.isRunning && !agent.pendingQuestion
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      页面级状态（对话框 + 断线重连）                       │
@@ -41,6 +45,8 @@ export default function ExecutePage() {
    * │                      断线重连：检查正在执行的任务                          │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   useEffect(() => {
+    if (searchParams.get('q')) return
+
     async function checkTask() {
       const runningId = await agent.checkRunningTask()
       if (runningId) {
@@ -57,15 +63,114 @@ export default function ExecutePage() {
   const hasAutoExecutedRef = useRef(false)
 
   useEffect(() => {
+    hasAutoExecutedRef.current = false
+    handledCreatedRef.current = null
+  }, [skillId])
+
+  useEffect(() => {
     if (hasAutoExecutedRef.current) return
     const query = searchParams.get('q')
     if (!query) return
 
     hasAutoExecutedRef.current = true
-    // sid 参数用于关联 converse 会话（未来会话合并用）
-    setSearchParams({}, { replace: true })
-    agent.execute(query)
-  }, [searchParams, setSearchParams, agent.execute])
+
+    const token = localStorage.getItem('token')
+    const sid = searchParams.get('sid')
+
+    const tryAttachRunningSession = async (targetSessionId: string): Promise<boolean> => {
+      if (!targetSessionId || !token) return false
+      try {
+        const statusRes = await fetch(`${API_BASE}/sessions/${targetSessionId}/live-status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!statusRes.ok) return false
+
+        const live = await statusRes.json() as {
+          isRunning?: boolean
+          canAttach?: boolean
+        }
+
+        if (live.isRunning && live.canAttach) {
+          agent.resumeSession(targetSessionId)
+          await agent.attachToSession(targetSessionId)
+          return true
+        }
+        return false
+      } catch {
+        return false
+      }
+    }
+
+    const findSameRunningSession = async (): Promise<string | null> => {
+      if (!token || !skillId) return null
+      try {
+        const res = await fetch(`${API_BASE}/sessions`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) return null
+
+        const list = await res.json() as Array<{
+          id: string
+          skill_id: string
+          query: string
+          status: string
+        }>
+
+        const normalizedQuery = query.trim()
+        const matched = list.find(item =>
+          item.status === 'running'
+          && item.skill_id === skillId
+          && (item.query || '').trim() === normalizedQuery,
+        )
+
+        return matched?.id || null
+      } catch {
+        return null
+      }
+    }
+
+    const bootstrap = async () => {
+      let attached = false
+
+      if (sid) {
+        attached = await tryAttachRunningSession(sid)
+      }
+
+      if (!attached) {
+        const matchedSessionId = await findSameRunningSession()
+        if (matchedSessionId) {
+          attached = await tryAttachRunningSession(matchedSessionId)
+        }
+      }
+
+      if (!attached) {
+        await agent.execute(query)
+      }
+
+      setSearchParams({}, { replace: true })
+    }
+
+    void bootstrap()
+  }, [searchParams, setSearchParams, agent.execute, agent.attachToSession, agent.resumeSession, skillId])
+
+  useEffect(() => {
+    if (skillId !== 'skill-creator') return
+
+    const created = agent.createdCapability
+    if (!created?.id) return
+
+    const key = `skill:${created.id}`
+    if (handledCreatedRef.current === key) return
+    handledCreatedRef.current = key
+
+    const firstUserMessage = agent.messages.find((m) => m.type === 'user')?.content || ''
+    const originQuery = (created.originQuery || firstUserMessage || '').trim()
+    const nextUrl = originQuery
+      ? `/execute/${created.id}?q=${encodeURIComponent(originQuery)}`
+      : `/execute/${created.id}`
+
+    navigate(nextUrl, { replace: true })
+  }, [skillId, agent.createdCapability, agent.messages, navigate])
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      页面级回调                                          │
@@ -106,7 +211,7 @@ export default function ExecutePage() {
         </h2>
       </div>
       <div className="flex items-center gap-3">
-        {agent.isRunning ? (
+        {effectiveRunning ? (
           <button
             onClick={agent.stop}
             className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm transition-colors"
@@ -121,7 +226,7 @@ export default function ExecutePage() {
             新对话
           </button>
         ) : null}
-        {agent.messages.length > 0 && !agent.isRunning && (
+        {agent.messages.length > 0 && !effectiveRunning && (
           <Tooltip content="清空当前对话记录" side="bottom">
             <button
               onClick={() => setShowClearDialog(true)}
@@ -139,7 +244,7 @@ export default function ExecutePage() {
     <div className="h-[calc(100vh-64px)]">
       <ExecutionPanel
         messages={agent.messages}
-        isRunning={agent.isRunning}
+        isRunning={effectiveRunning}
         error={agent.error}
         taskFiles={agent.taskFiles}
         workDir={agent.workDir}

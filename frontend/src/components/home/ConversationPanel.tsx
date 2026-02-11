@@ -93,7 +93,7 @@ export function ConversationPanel({
       {/* ── 消息列表（复用 shared/MessageList） ── */}
       <div className="flex-1 overflow-y-auto px-6 py-4">
         <div className="max-w-3xl mx-auto">
-          <MessageList messages={messages} isRunning={isThinking} />
+          <MessageList messages={messages} isRunning={isThinking && !pendingQuestion} />
 
           {error && <p className="text-sm text-red-500 text-center mt-4">{error}</p>}
 
@@ -129,7 +129,7 @@ export function ConversationPanel({
           <ChatInput
             onSubmit={(q) => onSend(q)}
             onStop={onStop || (() => {})}
-            isRunning={isThinking || Boolean(pendingQuestion)}
+            isRunning={isThinking}
             placeholder="输入消息..."
           />
         </div>

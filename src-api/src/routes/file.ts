@@ -425,10 +425,19 @@ file.post('/files/open', async (c) => {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 file.get('/convert/check', (c) => {
-  return c.json({
-    available: isLibreOfficeAvailable(),
-    ...getConverterDiagnostic(),
-  })
+  try {
+    return c.json({
+      available: isLibreOfficeAvailable(),
+      ...getConverterDiagnostic(),
+    })
+  } catch (err) {
+    console.error('[File] convert/check error:', err)
+    return c.json({
+      available: false,
+      error: err instanceof Error ? err.message : '转换器检查失败',
+      ...getConverterDiagnostic(),
+    })
+  }
 })
 
 file.post('/convert/pdf', async (c) => {

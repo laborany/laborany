@@ -1,7 +1,131 @@
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║                     Memory I/O                                         ║
+ * ║                                                                        ║
+ * ║  包含：MemoryInjector（注入上下文）+ MemoryCliExtractor（提取记忆）     ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝ */
+
 import { spawn } from 'child_process'
 import { platform } from 'os'
+import { memoryFileManager } from './file-manager.js'
+import { memorySearch } from './search.js'
+import { profileManager } from './profile/index.js'
 import { buildClaudeEnvConfig, findClaudeCodePath } from '../claude-cli.js'
 import type { ExtractedFact } from './memcell/index.js'
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Memory Injector（注入记忆上下文到 prompt）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+interface BuildContextParams {
+  skillId: string
+  userQuery: string
+  tokenBudget?: number
+}
+
+interface MemorySection {
+  title: string
+  content: string
+  priority: number
+  tokens: number
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 2.5)
+}
+
+export class MemoryInjector {
+  private collectSections(skillId: string): MemorySection[] {
+    const sections: MemorySection[] = []
+
+    const bossMd = memoryFileManager.readBossMd()
+    if (bossMd) {
+      sections.push({ title: '老板工作手册', content: bossMd, priority: 1, tokens: estimateTokens(bossMd) })
+    }
+
+    const profileSummary = profileManager.getSummary()
+    if (profileSummary && profileSummary.trim()) {
+      sections.push({ title: '用户画像', content: profileSummary, priority: 1, tokens: estimateTokens(profileSummary) })
+    }
+
+    const globalMemory = memoryFileManager.readGlobalMemory()
+    if (globalMemory) {
+      sections.push({ title: '全局长期记忆', content: globalMemory, priority: 2, tokens: estimateTokens(globalMemory) })
+    }
+
+    const skillMemory = memoryFileManager.readSkillMemory(skillId)
+    if (skillMemory) {
+      sections.push({ title: '当前技能长期记忆', content: skillMemory, priority: 2, tokens: estimateTokens(skillMemory) })
+    }
+
+    const recentGlobal = memoryFileManager.readRecentDaily({ scope: 'global', days: 2 })
+    if (recentGlobal) {
+      sections.push({ title: '最近全局记忆', content: recentGlobal, priority: 3, tokens: estimateTokens(recentGlobal) })
+    }
+
+    const recentSkill = memoryFileManager.readRecentDaily({ scope: 'skill', skillId, days: 2 })
+    if (recentSkill) {
+      sections.push({ title: '当前技能最近记忆', content: recentSkill, priority: 3, tokens: estimateTokens(recentSkill) })
+    }
+
+    return sections
+  }
+
+  private searchRelevantMemories(userQuery: string, skillId: string, maxResults = 5): MemorySection[] {
+    const results = memorySearch.search({ query: userQuery, scope: 'all', skillId, maxResults, strategy: 'hybrid' })
+    return results.map((result, index) => ({
+      title: `相关记忆 #${index + 1}`,
+      content: result.snippet,
+      priority: 3,
+      tokens: estimateTokens(result.snippet),
+    }))
+  }
+
+  buildContext(params: BuildContextParams): string {
+    const { skillId, userQuery, tokenBudget = 4000 } = params
+    const sections = this.collectSections(skillId)
+
+    if (userQuery.trim()) {
+      const relevant = this.searchRelevantMemories(userQuery, skillId)
+      const existingPrefixes = new Set(sections.map(section => section.content.slice(0, 100)))
+      const unique = relevant.filter(result => !existingPrefixes.has(result.content.slice(0, 100)))
+      sections.push(...unique)
+    }
+
+    sections.sort((a, b) => a.priority - b.priority)
+
+    const selected: MemorySection[] = []
+    let usedTokens = 0
+    const maxPerItem = Math.floor(tokenBudget * 0.4)
+
+    for (const section of sections) {
+      if (section.priority === 1) {
+        if (section.tokens > maxPerItem) {
+          section.content = section.content.slice(0, Math.floor(maxPerItem * 2.5))
+          section.tokens = maxPerItem
+        }
+        selected.push(section)
+        usedTokens += section.tokens
+        continue
+      }
+      if (usedTokens + section.tokens <= tokenBudget) {
+        selected.push(section)
+        usedTokens += section.tokens
+      }
+    }
+
+    return selected.map(section => `## ${section.title}\n\n${section.content}`).join('\n\n---\n\n')
+  }
+
+  buildContextSimple(skillId: string): string {
+    return this.buildContext({ skillId, userQuery: '' })
+  }
+}
+
+export const memoryInjector = new MemoryInjector()
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Memory CLI Extractor（通过 Claude CLI 提取结构化记忆）
+ * ══════════════════════════════════════════════════════════════════════════ */
 
 export interface CliExtractResult {
   summary: string
@@ -139,11 +263,7 @@ function sanitizeFacts(rawFacts: unknown): ExtractedFact[] {
   const allowedType = new Set<ExtractedFact['type']>(['preference', 'fact', 'correction', 'context'])
   const allowedSource = new Set<ExtractedFact['source']>(['user', 'assistant', 'event'])
   const allowedIntent = new Set<NonNullable<ExtractedFact['intent']>>([
-    'preference',
-    'fact',
-    'correction',
-    'context',
-    'response_style',
+    'preference', 'fact', 'correction', 'context', 'response_style',
   ])
 
   const sanitized: Array<ExtractedFact | null> = rawFacts.map(item => {
@@ -157,13 +277,7 @@ function sanitizeFacts(rawFacts: unknown): ExtractedFact[] {
     const source = candidate.source && allowedSource.has(candidate.source) ? candidate.source : 'user'
     const intent = candidate.intent && allowedIntent.has(candidate.intent) ? candidate.intent : candidate.type
 
-    return {
-      type: candidate.type,
-      content: candidate.content.trim(),
-      confidence,
-      source,
-      intent,
-    }
+    return { type: candidate.type, content: candidate.content.trim(), confidence, source, intent }
   })
 
   return sanitized.filter((item): item is ExtractedFact => item !== null)
@@ -182,9 +296,7 @@ export class MemoryCliExtractor {
 
   async extract(params: ExtractParams): Promise<CliExtractResult> {
     const claudePath = findClaudeCodePath()
-    if (!claudePath) {
-      return this.fallback(params)
-    }
+    if (!claudePath) return this.fallback(params)
 
     const prompt = `${EXTRACTION_PROMPT}\n${HARD_NEGATIVE_FEW_SHOTS}\n${this.buildConversation(params.userQuery, params.assistantResponse)}`
     const args = ['--print', '--dangerously-skip-permissions']
@@ -204,20 +316,13 @@ export class MemoryCliExtractor {
 
       let stdout = ''
       let stderr = ''
-
-      proc.stdout.on('data', chunk => {
-        stdout += chunk.toString('utf-8')
-      })
-      proc.stderr.on('data', chunk => {
-        stderr += chunk.toString('utf-8')
-      })
+      proc.stdout.on('data', chunk => { stdout += chunk.toString('utf-8') })
+      proc.stderr.on('data', chunk => { stderr += chunk.toString('utf-8') })
 
       proc.stdin.write(prompt, 'utf-8')
       proc.stdin.end()
 
-      const timer = setTimeout(() => {
-        proc.kill('SIGTERM')
-      }, timeout)
+      const timer = setTimeout(() => { proc.kill('SIGTERM') }, timeout)
 
       const exitCode = await new Promise<number>((resolve, reject) => {
         proc.on('close', code => resolve(code ?? 1))
@@ -230,10 +335,7 @@ export class MemoryCliExtractor {
       }
 
       const parsed = parseJSON<{
-        summary?: string
-        facts?: unknown
-        keywords?: unknown
-        sentiment?: unknown
+        summary?: string; facts?: unknown; keywords?: unknown; sentiment?: unknown
       }>(stdout.trim())
 
       const summary = (parsed.summary || '').trim()
@@ -242,20 +344,11 @@ export class MemoryCliExtractor {
         ? parsed.keywords.filter(item => typeof item === 'string').map(item => item.trim()).slice(0, 8)
         : []
       const sentiment = parsed.sentiment === 'positive' || parsed.sentiment === 'negative'
-        ? parsed.sentiment
-        : 'neutral'
+        ? parsed.sentiment : 'neutral'
 
-      if (!summary) {
-        throw new Error('CLI 提取结果缺少 summary')
-      }
+      if (!summary) throw new Error('CLI 提取结果缺少 summary')
 
-      return {
-        summary,
-        facts,
-        keywords,
-        sentiment,
-        extractionMethod: 'cli',
-      }
+      return { summary, facts, keywords, sentiment, extractionMethod: 'cli' }
     }
 
     try {

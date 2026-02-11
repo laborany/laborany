@@ -1,5 +1,5 @@
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import type { AgentMessage, TaskFile } from '../types'
 import { API_BASE } from '../config/api'
 
@@ -26,6 +26,7 @@ export interface PendingQuestion {
 interface AgentState {
   messages: AgentMessage[]
   isRunning: boolean
+  runCompletedAt: string | null
   sessionId: string | null
   error: string | null
   taskFiles: TaskFile[]
@@ -83,10 +84,83 @@ async function fetchWithRetry(
   throw lastError || new Error('请求失败，已达最大重试次数')
 }
 
+function isAbortLikeError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  if (err.name === 'AbortError') return true
+  const text = `${err.message || ''}`.toLowerCase()
+  return text.includes('aborted') || text.includes('bodystreambuffer')
+}
+
+function normalizeAgentQuestions(payload: Record<string, unknown>): AgentQuestion[] {
+  const rawQuestions = Array.isArray(payload.questions)
+    ? payload.questions
+    : (() => {
+      const singleQuestion = typeof payload.question === 'string' ? payload.question.trim() : ''
+      if (!singleQuestion) return []
+      return [{
+        question: singleQuestion,
+        header: typeof payload.header === 'string' && payload.header.trim()
+          ? payload.header.trim()
+          : '问题',
+        options: Array.isArray(payload.options) ? payload.options : [],
+        multiSelect: Boolean(payload.multiSelect),
+      }]
+    })()
+
+  const normalizedQuestions = rawQuestions
+    .map((q) => {
+      if (!q || typeof q !== 'object') return null
+      const item = q as Record<string, unknown>
+      const question = typeof item.question === 'string' ? item.question.trim() : ''
+      if (!question) return null
+      const header = typeof item.header === 'string' && item.header.trim()
+        ? item.header.trim()
+        : '问题'
+      const options = Array.isArray(item.options)
+        ? item.options
+          .map((opt) => {
+            if (typeof opt === 'string') {
+              const label = opt.trim()
+              if (!label) return null
+              return { label, description: '' }
+            }
+            if (!opt || typeof opt !== 'object') return null
+            const option = opt as Record<string, unknown>
+            const label = typeof option.label === 'string' ? option.label.trim() : ''
+            if (!label) return null
+            return {
+              label,
+              description: typeof option.description === 'string' ? option.description : '',
+            }
+          })
+          .filter(Boolean) as QuestionOption[]
+        : []
+      return {
+        question,
+        header,
+        options,
+        multiSelect: Boolean(item.multiSelect),
+      }
+    })
+    .filter(Boolean) as AgentQuestion[]
+
+  if (!normalizedQuestions.length) {
+    normalizedQuestions.push({
+      question: '请补充当前任务缺失信息，以便继续执行。',
+      header: '信息补充',
+      options: [],
+      multiSelect: false,
+    })
+  }
+
+  return normalizedQuestions
+}
+
 export function useAgent(skillId: string) {
   const [state, setState] = useState<AgentState>({
     messages: [],
     isRunning: false,
+    runCompletedAt: null,
     sessionId: null,
     error: null,
     taskFiles: [],
@@ -104,6 +178,40 @@ export function useAgent(skillId: string) {
   const currentTextRef = useRef('')
   const sessionIdRef = useRef<string | null>(null)
   const assistantIdRef = useRef<string>(crypto.randomUUID())
+  const terminalEventRef = useRef(false)
+  const prevSkillIdRef = useRef(skillId)
+
+  useEffect(() => {
+    if (prevSkillIdRef.current === skillId) {
+      return
+    }
+
+    abortRef.current?.abort()
+    abortRef.current = null
+    abortByQuestionRef.current = false
+    requestSeqRef.current = 0
+    sessionIdRef.current = null
+    assistantIdRef.current = crypto.randomUUID()
+    currentTextRef.current = ''
+    terminalEventRef.current = false
+
+    setState({
+      messages: [],
+      isRunning: false,
+      runCompletedAt: null,
+      sessionId: null,
+      error: null,
+      taskFiles: [],
+      workDir: null,
+      pendingQuestion: null,
+      createdCapability: null,
+      filesVersion: 0,
+      compositeSteps: [],
+      currentCompositeStep: -1,
+    })
+
+    prevSkillIdRef.current = skillId
+  }, [skillId])
 
   const handleEvent = useCallback(
     (event: Record<string, unknown>) => {
@@ -153,66 +261,7 @@ export function useAgent(skillId: string) {
 
           const isAskUserQuestion = /^AskU(?:ser|er)Question$/i.test(toolName || '')
           if (isAskUserQuestion) {
-            const rawQuestions = Array.isArray(toolInput.questions)
-              ? toolInput.questions
-              : (() => {
-                const singleQuestion = typeof toolInput.question === 'string' ? toolInput.question.trim() : ''
-                if (!singleQuestion) return []
-                return [{
-                  question: singleQuestion,
-                  header: typeof toolInput.header === 'string' && toolInput.header.trim()
-                    ? toolInput.header.trim()
-                    : '问题',
-                  options: Array.isArray(toolInput.options) ? toolInput.options : [],
-                  multiSelect: Boolean(toolInput.multiSelect),
-                }]
-              })()
-
-            const normalizedQuestions = rawQuestions
-              .map((q) => {
-                if (!q || typeof q !== 'object') return null
-                const item = q as Record<string, unknown>
-                const question = typeof item.question === 'string' ? item.question.trim() : ''
-                if (!question) return null
-                const header = typeof item.header === 'string' && item.header.trim()
-                  ? item.header.trim()
-                  : '问题'
-                const options = Array.isArray(item.options)
-                  ? item.options
-                    .map((opt) => {
-                      if (typeof opt === 'string') {
-                        const label = opt.trim()
-                        if (!label) return null
-                        return { label, description: '' }
-                      }
-                      if (!opt || typeof opt !== 'object') return null
-                      const option = opt as Record<string, unknown>
-                      const label = typeof option.label === 'string' ? option.label.trim() : ''
-                      if (!label) return null
-                      return {
-                        label,
-                        description: typeof option.description === 'string' ? option.description : '',
-                      }
-                    })
-                    .filter(Boolean) as QuestionOption[]
-                  : []
-                return {
-                  question,
-                  header,
-                  options,
-                  multiSelect: Boolean(item.multiSelect),
-                }
-              })
-              .filter(Boolean) as AgentQuestion[]
-
-            if (!normalizedQuestions.length) {
-              normalizedQuestions.push({
-                question: '请补充当前任务缺失信息，以便继续执行。',
-                header: '信息补充',
-                options: [],
-                multiSelect: false,
-              })
-            }
+            const normalizedQuestions = normalizeAgentQuestions(toolInput)
 
             setState((s) => ({
               ...s,
@@ -254,6 +303,30 @@ export function useAgent(skillId: string) {
           // tool_use 后重置文本累计状态
           currentTextRef.current = ''
           assistantIdRef.current = crypto.randomUUID()
+          break
+        }
+
+        case 'question': {
+          const payload = event as Record<string, unknown>
+          const normalizedQuestions = normalizeAgentQuestions(payload)
+          setState((s) => ({
+            ...s,
+            isRunning: false,
+            pendingQuestion: {
+              id: (payload.id as string) || `question_${Date.now()}`,
+              toolUseId: (payload.toolUseId as string) || `tool_${Date.now()}`,
+              questions: normalizedQuestions,
+            },
+          }))
+          abortByQuestionRef.current = true
+          abortRef.current?.abort()
+          if (sessionIdRef.current) {
+            const token = localStorage.getItem('token')
+            fetch(`${API_BASE}/skill/stop/${sessionIdRef.current}`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+            })
+          }
           break
         }
 
@@ -392,7 +465,12 @@ export function useAgent(skillId: string) {
         case 'stopped':
         case 'done':
         case 'aborted':
+          terminalEventRef.current = true
           localStorage.removeItem(`lastSession_${skillId}`)
+          setState((s) => ({
+            ...s,
+            runCompletedAt: new Date().toISOString(),
+          }))
           break
       }
     },
@@ -443,7 +521,17 @@ export function useAgent(skillId: string) {
       }
 
       while (true) {
-        const { done, value } = await reader.read()
+        let readResult: ReadableStreamReadResult<Uint8Array>
+        try {
+          readResult = await reader.read()
+        } catch (err) {
+          if (shouldTerminate || isAbortLikeError(err)) {
+            break
+          }
+          throw err
+        }
+
+        const { done, value } = readResult
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
@@ -495,10 +583,13 @@ export function useAgent(skillId: string) {
         ...s,
         messages: [...s.messages, userMessage],
         isRunning: true,
+        runCompletedAt: null,
         error: null,
         createdCapability: null,
         pendingQuestion: null,
       }))
+
+      terminalEventRef.current = false
 
       // 中止上一轮未完成请求（防止快速连点导致竞态）
       abortRef.current?.abort()
@@ -554,12 +645,12 @@ export function useAgent(skillId: string) {
 
         await readSseStream(res)
       } catch (err) {
-        if ((err as Error).name === 'AbortError' && abortByQuestionRef.current) {
+        if (isAbortLikeError(err) && abortByQuestionRef.current) {
           abortByQuestionRef.current = false
-        } else {
+        } else if (!isAbortLikeError(err)) {
           console.error('[useAgent] 执行错误:', err)
         }
-        if ((err as Error).name !== 'AbortError') {
+        if (!isAbortLikeError(err)) {
           setState((s) => (requestSeq === requestSeqRef.current
             ? {
               ...s,
@@ -570,7 +661,11 @@ export function useAgent(skillId: string) {
       } finally {
         if (requestSeq === requestSeqRef.current) {
           abortByQuestionRef.current = false
-          setState((s) => ({ ...s, isRunning: false }))
+          setState((s) => ({
+            ...s,
+            isRunning: false,
+            runCompletedAt: s.runCompletedAt || (terminalEventRef.current ? new Date().toISOString() : s.runCompletedAt),
+          }))
           abortRef.current = null
         }
       }
@@ -603,6 +698,7 @@ export function useAgent(skillId: string) {
     setState({
       messages: [],
       isRunning: false,
+      runCompletedAt: null,
       sessionId: null,
       error: null,
       taskFiles: [],
@@ -677,15 +773,27 @@ export function useAgent(skillId: string) {
     if (!lastSessionId) return null
 
     try {
-      const res = await fetch(`${API_BASE}/skill/runtime/status/${lastSessionId}`)
+      const res = await fetch(`${API_BASE}/skill/runtime/running`)
       if (!res.ok) {
         localStorage.removeItem(`lastSession_${skillId}`)
         return null
       }
 
-      const status = await res.json()
-      if (status.isRunning || status.status === 'running') {
+      const runningData = await res.json().catch(() => null)
+      const tasks = Array.isArray(runningData?.tasks) ? runningData.tasks : []
+      const matched = tasks.find((task: unknown) => {
+        if (!task || typeof task !== 'object') return false
+        const item = task as Record<string, unknown>
+        return item.sessionId === lastSessionId && item.skillId === skillId
+      })
+
+      if (matched) {
         return lastSessionId
+      }
+
+      if (!runningData) {
+        localStorage.removeItem(`lastSession_${skillId}`)
+        return null
       }
 
       localStorage.removeItem(`lastSession_${skillId}`)
@@ -706,11 +814,13 @@ export function useAgent(skillId: string) {
       setState((s) => ({
         ...s,
         isRunning: true,
+        runCompletedAt: null,
         sessionId: targetSessionId,
         error: null,
       }))
 
       sessionIdRef.current = targetSessionId
+      terminalEventRef.current = false
       abortRef.current = new AbortController()
 
       assistantIdRef.current = crypto.randomUUID()
@@ -732,14 +842,18 @@ export function useAgent(skillId: string) {
 
         await readSseStream(res)
       } catch (err) {
-        if ((err as Error).name !== 'AbortError') {
+        if (!isAbortLikeError(err)) {
           setState((s) => ({
             ...s,
             error: (err as Error).message,
           }))
         }
       } finally {
-        setState((s) => ({ ...s, isRunning: false }))
+        setState((s) => ({
+          ...s,
+          isRunning: false,
+          runCompletedAt: s.runCompletedAt || (terminalEventRef.current ? new Date().toISOString() : s.runCompletedAt),
+        }))
         abortRef.current = null
       }
     },
@@ -757,6 +871,7 @@ export function useAgent(skillId: string) {
     respondToQuestion,
     checkRunningTask,
     attachToSession,
+    runCompletedAt: state.runCompletedAt,
   }
 }
 

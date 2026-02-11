@@ -1,15 +1,12 @@
 
-import { existsSync, readFileSync } from 'fs'
-import { join } from 'path'
 import { memoryFileManager } from './file-manager.js'
 import { memorySearch } from './search.js'
 import { profileManager } from './profile/index.js'
 import { memoryConsolidator } from './consolidator.js'
 import { memCellStorage, type MemCell, type ExtractedFact } from './memcell/index.js'
 import { episodeStorage } from './episode/index.js'
-import { memoryCliExtractor } from './cli-extractor.js'
-import { memoryTraceLogger } from './trace.js'
-import { DATA_DIR } from '../paths.js'
+import { memoryCliExtractor } from './io.js'
+import { memoryTraceLogger, readTrace } from './types.js'
 import type { InjectedMemorySection, MemoryScene } from './types.js'
 
 interface RetrieveParams {
@@ -794,12 +791,7 @@ export class MemoryOrchestrator {
   }
 
   readTrace(sessionId: string): string[] {
-    const day = new Date().toISOString().split('T')[0]
-    const tracePath = join(DATA_DIR, 'memory', 'traces', day, `${sessionId}.jsonl`)
-    if (!existsSync(tracePath)) return []
-    const content = readFileSync(tracePath, 'utf-8').trim()
-    if (!content) return []
-    return content.split('\n').filter(Boolean)
+    return readTrace(sessionId)
   }
 }
 

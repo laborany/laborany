@@ -93,6 +93,7 @@ export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhas
 }) {
   const hasExecutedRef = useRef(false)
   const createdHandledRef = useRef<string | null>(null)
+  const effectiveRunning = agent.isRunning && !agent.pendingQuestion
 
   useEffect(() => {
     hasExecutedRef.current = false
@@ -115,10 +116,22 @@ export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhas
 
   useEffect(() => {
     if (execCtx.id === 'skill-creator') return
-    if (isExecutionPhase && !agent.isRunning && agent.messages.length > 0) {
+    if (
+      isExecutionPhase
+      && !effectiveRunning
+      && agent.messages.length > 0
+      && Boolean(agent.runCompletedAt)
+    ) {
       onPhaseChange('done')
     }
-  }, [isExecutionPhase, agent.isRunning, agent.messages.length, execCtx.id, onPhaseChange])
+  }, [
+    isExecutionPhase,
+    effectiveRunning,
+    agent.messages.length,
+    agent.runCompletedAt,
+    execCtx.id,
+    onPhaseChange,
+  ])
 
   useEffect(() => {
     if (execCtx.id !== 'skill-creator') return
@@ -126,10 +139,10 @@ export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhas
       onPhaseChange('creating_confirm')
       return
     }
-    if (phase === 'creating_confirm' && !agent.pendingQuestion && agent.isRunning) {
+    if (phase === 'creating_confirm' && !agent.pendingQuestion && effectiveRunning) {
       onPhaseChange('creating_proposal')
     }
-  }, [execCtx.id, phase, agent.pendingQuestion, agent.isRunning, onPhaseChange])
+  }, [execCtx.id, phase, agent.pendingQuestion, effectiveRunning, onPhaseChange])
 
   useEffect(() => {
     if (execCtx.id !== 'skill-creator') return
@@ -151,16 +164,21 @@ export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhas
   /* ── skill-creator 出错时，上报错误状态 ── */
   useEffect(() => {
     if (execCtx.id !== 'skill-creator') return
-    if (agent.error && !agent.isRunning) {
+    if (agent.error && !effectiveRunning) {
+      const normalized = agent.error.toLowerCase()
+      if (normalized.includes('timeout') || normalized.includes('超时')) {
+        onError('创建技能超时，请点击“新任务”后重试，或精简需求后再创建。')
+        return
+      }
       onError(agent.error)
     }
-  }, [execCtx.id, agent.error, agent.isRunning, onError])
+  }, [execCtx.id, agent.error, effectiveRunning, onError])
 
   return (
     <div className="h-[calc(100vh-64px)]">
       <ExecutionPanel
         messages={agent.messages}
-        isRunning={agent.isRunning}
+        isRunning={effectiveRunning}
         error={agent.error}
         taskFiles={agent.taskFiles}
         workDir={agent.workDir}
@@ -178,7 +196,7 @@ export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhas
         headerSlot={
           <ExecutionHeader
             title={displayTitle}
-            isRunning={agent.isRunning}
+            isRunning={effectiveRunning}
             isDone={phase === 'done'}
             onStop={agent.stop}
             onNewTask={onNewTask}

@@ -5,7 +5,7 @@
  * ║  算法：TF-IDF 相似度 + 时间窗口的增量聚类                                  ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { TFIDFIndexer, TFIDFSearcher, tokenize } from '../tfidf.js'
+import { TFIDFIndexer, TFIDFSearcher, tokenize } from '../search.js'
 import type { MemCell } from '../memcell/index.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

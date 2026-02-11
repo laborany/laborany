@@ -85,6 +85,8 @@ interface RuntimeTask {
   sessionId: string
   skillId: string
   skillName: string
+  query: string
+  workDir: string
   status: RuntimeTaskStatus
   startedAt: number
   completedAt?: number
@@ -128,6 +130,9 @@ class RuntimeTaskManager {
   private tasks = new Map<string, RuntimeTask>()
   private cleanupTimer: ReturnType<typeof setInterval> | null = null
 
+  private static readonly DEFAULT_TIMEOUT_MS = 30 * 60 * 1000
+  private static readonly SKILL_CREATOR_TIMEOUT_MS = 8 * 60 * 1000
+
   constructor() {
     this.cleanupTimer = setInterval(() => this.cleanup(), 5 * 60 * 1000)
   }
@@ -143,10 +148,14 @@ class RuntimeTaskManager {
       resolveDone = resolve
     })
 
+    const workDir = ensureTaskDir(options.sessionId)
+
     const task: RuntimeTask = {
       sessionId: options.sessionId,
       skillId: options.skillId,
       skillName: options.skill.meta.name || options.skillId,
+      query: options.query,
+      workDir,
       status: 'running',
       startedAt: Date.now(),
       stopRequested: false,
@@ -160,8 +169,35 @@ class RuntimeTaskManager {
     }
 
     this.tasks.set(task.sessionId, task)
+    this.ensureSessionRecord(task)
     this.runTask(task, options)
     return task
+  }
+
+  private resolveTimeoutMs(skillId: string): number {
+    if (skillId === 'skill-creator') {
+      return RuntimeTaskManager.SKILL_CREATOR_TIMEOUT_MS
+    }
+    return RuntimeTaskManager.DEFAULT_TIMEOUT_MS
+  }
+
+  private ensureSessionRecord(task: RuntimeTask): void {
+    dbHelper.run(
+      `INSERT OR IGNORE INTO sessions (id, user_id, skill_id, query, status, work_dir) VALUES (?, ?, ?, ?, ?, ?)`,
+      [task.sessionId, 'default', task.skillId, task.query, 'running', task.workDir],
+    )
+
+    const userMessageCount = dbHelper.get<{ count: number }>(
+      `SELECT COUNT(1) as count FROM messages WHERE session_id = ? AND type = ?`,
+      [task.sessionId, 'user'],
+    )
+
+    if ((userMessageCount?.count || 0) === 0) {
+      dbHelper.run(
+        `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+        [task.sessionId, 'user', task.query],
+      )
+    }
   }
 
   subscribe(
@@ -325,6 +361,7 @@ class RuntimeTaskManager {
           query: options.query,
           sessionId: task.sessionId,
           signal: task.controller.signal,
+          timeoutMs: this.resolveTimeoutMs(options.skillId),
           onEvent: (event) => this.handleAgentEvent(task, event),
         })
       }
@@ -489,6 +526,7 @@ class RuntimeTaskManager {
         sessionId: stepSessionId,
         signal: task.controller.signal,
         workDir: options.workDir,
+        timeoutMs: this.resolveTimeoutMs(stepSkill.meta.id),
         onEvent: (event) => {
           if (event.type === 'text' && event.content) {
             output += event.content

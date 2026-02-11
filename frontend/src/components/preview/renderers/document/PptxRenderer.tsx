@@ -39,6 +39,7 @@ export function PptxRenderer({ artifact }: RendererProps) {
   const loadPptx = useCallback(async (forceSkipLibreOffice = false) => {
     const blobUrls: string[] = []
     setMode('loading')
+    setError(null)
 
     try {
       /* ┌────────────────────────────────────────────────────────────────────┐
@@ -46,7 +47,9 @@ export function PptxRenderer({ artifact }: RendererProps) {
        * └────────────────────────────────────────────────────────────────────┘ */
       if (!forceSkipLibreOffice && artifact.path) {
         const checkRes = await fetch(`${API_BASE}/convert/check`)
-        const checkData = await checkRes.json()
+        const checkData = checkRes.ok
+          ? await checkRes.json().catch(() => ({}))
+          : { available: false }
 
         if (checkData.available) {
           /* ┌────────────────────────────────────────────────────────────────────┐
@@ -69,7 +72,7 @@ export function PptxRenderer({ artifact }: RendererProps) {
               return
             }
           }
-        } else if (!skipDownload) {
+        } else if (checkRes.ok && !skipDownload) {
           /* LibreOffice 未安装，提示下载 */
           setMode('need-download')
           return

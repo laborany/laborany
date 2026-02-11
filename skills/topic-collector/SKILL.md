@@ -19,8 +19,7 @@ description: AI热点采集工具。从Twitter/X、Product Hunt、Reddit、Hacke
 ### 方式一：查看搜索查询（推荐）
 
 ```bash
-cd D:/repo/laborany
-python .agents/skills/topic-collector/scripts/collect.py
+python skills/topic-collector/scripts/collect.py
 ```
 
 这会显示当前日期应该使用的搜索查询列表。
@@ -29,22 +28,22 @@ python .agents/skills/topic-collector/scripts/collect.py
 
 ```bash
 # 生成 Markdown 文件
-python .agents/skills/topic-collector/scripts/collect.py --output-md
+python skills/topic-collector/scripts/collect.py --output-md
 
 # 生成 HTML 文件
-python .agents/skills/topic-collector/scripts/collect.py --output-html
+python skills/topic-collector/scripts/collect.py --output-html
 
 # 同时生成两种格式
-python .agents/skills/topic-collector/scripts/collect.py --all
+python skills/topic-collector/scripts/collect.py --all
 
 # 静默模式
-python .agents/skills/topic-collector/scripts/collect.py --all --quiet
+python skills/topic-collector/scripts/collect.py --all --quiet
 ```
 
 ### 方式三：静默模式（仅输出文件路径）
 
 ```bash
-python .agents/skills/topic-collector/scripts/collect.py --all --quiet
+python skills/topic-collector/scripts/collect.py --all --quiet
 ```
 
 ---
@@ -56,7 +55,7 @@ python .agents/skills/topic-collector/scripts/collect.py --all --quiet
 ### 第一步：获取搜索查询
 
 ```bash
-python .agents/skills/topic-collector/scripts/collect.py
+python skills/topic-collector/scripts/collect.py
 ```
 
 输出示例：

@@ -1,12 +1,13 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                     Cron 定时任务 - 数据库存储                            ║
  * ║                                                                          ║
+ * ║  包含：SQLite 加载器 + Job/Run CRUD + 通知重导出                          ║
  * ║  使用 better-sqlite3 实现同步 SQLite 操作                                 ║
- * ║  设计哲学：扁平化存储，避免 JSON 解析，便于查询和索引                       ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import Database, { createDatabase } from './db.js'
-import { join } from 'path'
+import Database from 'better-sqlite3'
+import type { Database as DatabaseType } from 'better-sqlite3'
+import { join, dirname } from 'path'
 import { mkdirSync, existsSync } from 'fs'
 import { v4 as uuid } from 'uuid'
 import {
@@ -22,6 +23,27 @@ import type {
 } from './types.js'
 import { computeNextRunAtMs, jobToSchedule } from './schedule.js'
 import { DATA_DIR } from '../paths.js'
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                     SQLite 数据库加载器                                   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const isPkg = typeof (process as any).pkg !== 'undefined'
+
+const getNativeBindingPath = (): string | undefined => {
+  const envPath = process.env.BETTER_SQLITE3_BINDING
+  if (envPath && existsSync(envPath)) return envPath
+  if (!isPkg) return undefined
+  const nativePath = join(dirname(process.execPath), 'better_sqlite3.node')
+  return existsSync(nativePath) ? nativePath : undefined
+}
+
+export const createDatabase = (filename: string, options?: { readonly?: boolean }): DatabaseType => {
+  const nativeBinding = getNativeBindingPath()
+  return new Database(filename, {
+    ...options,
+    ...(nativeBinding ? { nativeBinding } : {})
+  })
+}
 
 const DB_PATH = join(DATA_DIR, 'cron.db')
 
@@ -452,3 +474,5 @@ export {
   type Notification,
   type CreateNotificationRequest
 } from './notification-store.js'
+
+export default Database

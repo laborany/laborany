@@ -10,7 +10,7 @@ import { Router, Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { executeAgent } from '../agent-executor.js'
 import { buildConverseSystemPrompt } from '../converse-prompt.js'
-import { memoryInjector } from '../memory/injector.js'
+import { memoryInjector } from '../memory/io.js'
 import { loadCatalog } from '../catalog.js'
 import type { Skill } from 'laborany-shared'
 
@@ -635,7 +635,7 @@ router.post('/', async (req: Request, res: Response) => {
       query,
       sessionId,
       signal: abortController.signal,
-      timeoutMs: 2 * 60 * 1000,
+      timeoutMs: 3 * 60 * 1000,
       onEvent: (event) => {
         if (event.type === 'tool_use') {
           if (/^AskU(?:ser|er)Question$/i.test(event.toolName || '')) {
