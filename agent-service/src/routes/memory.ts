@@ -28,8 +28,9 @@ import {
 
 const router = Router()
 
-const WORKFLOW_NOISE_PATTERNS = [
-  /工作流执行上下文/,
+const PIPELINE_NOISE_PATTERNS = [
+  /复合\s*Skill\s*执行上下文/,
+  /执行上下文/,
   /当前步骤/,
   /输入参数/,
   /前序步骤结果/,
@@ -63,7 +64,7 @@ function includesAny(text: string, patterns: RegExp[]): boolean {
 }
 
 function isNoiseFact(content: string): boolean {
-  return includesAny(content, WORKFLOW_NOISE_PATTERNS)
+  return includesAny(content, PIPELINE_NOISE_PATTERNS)
     || includesAny(content, TRANSIENT_FACT_PATTERNS)
     || includesAny(content, ASSISTANT_NOISE_PATTERNS)
     || includesAny(content, STRUCTURED_NOISE_PATTERNS)

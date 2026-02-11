@@ -20,15 +20,15 @@ import { DATA_DIR } from './paths.js'
  * ════════════════════════════════════════════════════════════════════════════ */
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000
 
-const WORKFLOW_CONTEXT_PATTERN = /##\s*工作流执行上下文/
+const PIPELINE_CONTEXT_PATTERN = /##\s*.*执行上下文/
 
 function shouldPersistMemory(skillId: string, userQuery: string): boolean {
-  if (WORKFLOW_CONTEXT_PATTERN.test(userQuery)) return false
+  if (PIPELINE_CONTEXT_PATTERN.test(userQuery)) return false
   return true
 }
 
-function stripWorkflowContext(userQuery: string): string {
-  if (!WORKFLOW_CONTEXT_PATTERN.test(userQuery)) return userQuery
+function stripPipelineContext(userQuery: string): string {
+  if (!PIPELINE_CONTEXT_PATTERN.test(userQuery)) return userQuery
   const parts = userQuery
     .split(/\n-{3,}\n/)
     .map(item => item.trim())
@@ -331,7 +331,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
               const result = await memoryOrchestrator.extractAndUpsert({
                 sessionId,
                 skillId: skill.meta.id,
-                userQuery: stripWorkflowContext(userQuery),
+                userQuery: stripPipelineContext(userQuery),
                 assistantResponse: toolSummary
                   ? `${agentResponse}\n\n## 工具调用记录\n${toolSummary}`
                   : agentResponse,

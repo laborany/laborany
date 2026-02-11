@@ -270,7 +270,7 @@ function buildEmailHtml(
       </div>
       <div class="info-row">
         <span class="info-label">执行类型</span>
-        <span class="info-value">${job.targetType === 'skill' ? 'Skill' : 'Workflow'}</span>
+        <span class="info-value">Skill</span>
       </div>
       <div class="info-row">
         <span class="info-label">会话 ID</span>

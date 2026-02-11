@@ -64,7 +64,8 @@ const STOPWORDS = new Set([
 ])
 
 const CONSOLIDATE_NOISE_PATTERNS = [
-  /工作流执行上下文/,
+  /复合\s*Skill\s*执行上下文/,
+  /执行上下文/,
   /当前步骤[:：]/,
   /前序步骤结果/,
   /输入参数/,

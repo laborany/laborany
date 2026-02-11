@@ -95,8 +95,8 @@ function normalizeFactKey(content: string): string {
     .slice(0, 30) || content.slice(0, 20)
 }
 
-const WORKFLOW_NOISE_PATTERNS = [
-  /工作流执行上下文/,
+const PIPELINE_NOISE_PATTERNS = [
+  /执行上下文/,
   /当前步骤[:：]/,
   /前序步骤结果/,
   /输入参数/,
@@ -143,11 +143,11 @@ function normalizeWhitespace(text: string): string {
     .trim()
 }
 
-function stripWorkflowScaffold(text: string): string {
+function stripPipelineScaffold(text: string): string {
   let cleaned = normalizeWhitespace(text)
   if (!cleaned) return cleaned
 
-  if (cleaned.includes('## 工作流执行上下文')) {
+  if (cleaned.includes('## 执行上下文')) {
     const segments = cleaned
       .split(/\n-{3,}\n/)
       .map(item => item.trim())
@@ -162,7 +162,7 @@ function stripWorkflowScaffold(text: string): string {
     .filter(line => {
       const normalized = line.trim()
       if (!normalized) return true
-      return !WORKFLOW_NOISE_PATTERNS.some(pattern => pattern.test(normalized))
+      return !PIPELINE_NOISE_PATTERNS.some(pattern => pattern.test(normalized))
     })
 
   return normalizeWhitespace(lines.join('\n'))
@@ -193,7 +193,7 @@ export class MemoryOrchestrator {
   private readonly policyVersion = 'v4-auto-safe'
 
   private sanitizeUserQueryForMemory(userQuery: string): string {
-    const cleaned = stripWorkflowScaffold(userQuery)
+    const cleaned = stripPipelineScaffold(userQuery)
     return clip(cleaned, 1200)
   }
 
@@ -204,7 +204,7 @@ export class MemoryOrchestrator {
 
   private sanitizeSummary(summary: string, fallback: string): string {
     const base = normalizeWhitespace(summary || fallback)
-    return clip(stripWorkflowScaffold(base), 320)
+    return clip(stripPipelineScaffold(base), 320)
   }
 
   private isUserCentricFact(content: string): boolean {
@@ -212,7 +212,7 @@ export class MemoryOrchestrator {
   }
 
   private isStableFact(content: string): boolean {
-    if (includesAny(content, WORKFLOW_NOISE_PATTERNS)) return false
+    if (includesAny(content, PIPELINE_NOISE_PATTERNS)) return false
     if (includesAny(content, TRANSIENT_FACT_PATTERNS)) return false
     if (includesAny(content, ASSISTANT_NOISE_PATTERNS)) return false
     if (includesAny(content, STRUCTURED_NOISE_PATTERNS)) return false

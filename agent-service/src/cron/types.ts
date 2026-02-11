@@ -1,78 +1,49 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                     Cron 定时任务 - 类型定义                              ║
- * ║                                                                          ║
- * ║  三种调度类型统一抽象：at（一次性）、every（周期）、cron（表达式）           ║
- * ║  设计哲学：扁平化存储，消除 JSON 解析，让查询和索引自然高效                  ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           调度类型定义                                    │
- * │  三种类型统一为 Schedule 联合类型，通过 kind 字段区分                       │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+/**
+ * Cron scheduling and execution target types.
+ *
+ * Note: execution target is unified as `skill`.
+ * Composite skills are represented by skill metadata and handled by runtime.
+ */
 
 export type ScheduleKind = 'at' | 'every' | 'cron'
 
-/** 一次性任务：指定时间点执行 */
 export interface ScheduleAt {
   kind: 'at'
-  atMs: number  // 执行时间戳（毫秒）
+  atMs: number
 }
 
-/** 周期性任务：固定间隔执行 */
 export interface ScheduleEvery {
   kind: 'every'
-  everyMs: number  // 间隔毫秒数
+  everyMs: number
 }
 
-/** Cron 表达式任务 */
 export interface ScheduleCron {
   kind: 'cron'
-  expr: string     // Cron 表达式，如 "0 9 * * 1-5"
-  tz?: string      // 时区，默认 Asia/Shanghai
+  expr: string
+  tz?: string
 }
 
 export type Schedule = ScheduleAt | ScheduleEvery | ScheduleCron
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           执行目标定义                                    │
- * │  支持 Skill 和 Workflow 两种执行目标                                      │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-
-export type TargetType = 'skill' | 'workflow'
+export type TargetType = 'skill'
 
 export interface ExecutionTarget {
   type: TargetType
-  id: string       // skillId 或 workflowId
-  query: string    // 执行时的 prompt 或 input
+  id: string
+  query: string
 }
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           重试策略定义                                    │
- * │  支持失败后自动重试，使用指数退避算法                                      │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 
 export interface RetryPolicy {
-  maxRetries: number      // 最大重试次数，0 表示不重试
-  backoffMs: number       // 退避基数（毫秒），实际延迟 = backoffMs * 2^retryCount
+  maxRetries: number
+  backoffMs: number
 }
 
-/** 默认重试策略：不重试 */
 export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxRetries: 0,
-  backoffMs: 1000
+  backoffMs: 1000,
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           任务状态定义                                    │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-
 export type JobStatus = 'ok' | 'error' | 'running' | null
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           核心数据结构                                    │
- * │  CronJob：定时任务定义                                                    │
- * │  CronRun：执行记录                                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 
 export interface CronJob {
   id: string
@@ -80,29 +51,25 @@ export interface CronJob {
   description?: string
   enabled: boolean
 
-  // 调度配置（扁平化存储）
   scheduleKind: ScheduleKind
   scheduleAtMs?: number
   scheduleEveryMs?: number
   scheduleCronExpr?: string
   scheduleCronTz?: string
 
-  // 执行目标
   targetType: TargetType
   targetId: string
   targetQuery: string
 
-  // 重试配置
   retryMaxRetries: number
   retryBackoffMs: number
 
-  // 运行状态
   nextRunAtMs?: number
   lastRunAtMs?: number
   lastStatus?: JobStatus
   lastError?: string
-  runningSessionId?: string  // 并发锁：正在执行的会话 ID
-  retryCount: number         // 当前重试次数
+  runningSessionId?: string
+  retryCount: number
 
   createdAt: string
   updatedAt: string
@@ -119,21 +86,15 @@ export interface CronRun {
   completedAt?: string
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           API 请求/响应类型                               │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-
-/** 创建任务请求 */
 export interface CreateJobRequest {
   name: string
   description?: string
   schedule: Schedule
   target: ExecutionTarget
   enabled?: boolean
-  retry?: RetryPolicy  // 可选的重试策略
+  retry?: RetryPolicy
 }
 
-/** 更新任务请求 */
 export interface UpdateJobRequest {
   name?: string
   description?: string
@@ -143,12 +104,6 @@ export interface UpdateJobRequest {
   retry?: RetryPolicy
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           辅助函数：Schedule 转换                         │
- * │  在 API 层的 Schedule 对象和数据库扁平字段之间转换                         │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-
-/** 从 Schedule 对象提取扁平字段 */
 export function flattenSchedule(s: Schedule): {
   scheduleKind: ScheduleKind
   scheduleAtMs?: number
@@ -163,7 +118,6 @@ export function flattenSchedule(s: Schedule): {
   return { ...base, scheduleCronExpr: s.expr, scheduleCronTz: s.tz }
 }
 
-/** 从扁平字段重建 Schedule 对象 */
 export function unflattenSchedule(job: CronJob): Schedule {
   if (job.scheduleKind === 'at') {
     return { kind: 'at', atMs: job.scheduleAtMs! }
@@ -174,6 +128,7 @@ export function unflattenSchedule(job: CronJob): Schedule {
   return {
     kind: 'cron',
     expr: job.scheduleCronExpr!,
-    tz: job.scheduleCronTz
+    tz: job.scheduleCronTz,
   }
 }
+

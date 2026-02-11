@@ -9,7 +9,7 @@
 import { Router, Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { executeAgent } from '../agent-executor.js'
-import { buildConverseSystemPrompt } from './converse-prompt.js'
+import { buildConverseSystemPrompt } from '../converse-prompt.js'
 import { memoryInjector } from '../memory/injector.js'
 import { loadCatalog } from '../catalog.js'
 import type { Skill } from 'laborany-shared'
@@ -29,10 +29,10 @@ function sseWrite(res: Response, event: string, data: unknown): void {
  * │  从 agent 文本输出中提取 LABORANY_ACTION 决策                           │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-const ACTION_PATTERN = /LABORANY_ACTION:\s*(\{[\s\S]*?\})\s*$/
+const ACTION_PATTERN = /LABORANY_ACTION:\s*(\{[\s\S]*?\})/g
 const ASK_USER_QUESTION_PATTERN = /AskU(?:ser|er)Question\(\s*([\s\S]*?)\s*\)/i
 
-type ActionTargetType = 'skill' | 'workflow'
+type ActionTargetType = 'skill'
 
 type ConverseActionPayload =
   | {
@@ -40,6 +40,8 @@ type ConverseActionPayload =
       targetType: ActionTargetType
       targetId: string
       query: string
+      confidence?: number
+      matchType?: 'exact' | 'candidate'
       reason?: string
     }
   | {
@@ -134,7 +136,7 @@ function asString(value: unknown): string {
 }
 
 function asTargetType(value: unknown): ActionTargetType | null {
-  return value === 'skill' || value === 'workflow' ? value : null
+  return value === 'skill' ? value : null
 }
 
 function asBoolean(value: unknown, fallback = false): boolean {
@@ -265,20 +267,8 @@ function buildScheduleQuestion(
     })
   }
 
-  if (missing.includes('targetType')) {
-    questions.push({
-      header: '执行目标类型',
-      question: '这个定时任务应执行 skill 还是 workflow？',
-      multiSelect: false,
-      options: [
-        { label: 'skill', description: '执行某个技能' },
-        { label: 'workflow', description: '执行某个工作流' },
-      ],
-    })
-  }
-
   if (missing.includes('targetId')) {
-    const expectedType = partial.targetType || 'skill'
+    const expectedType = 'skill'
     questions.push({
       header: '执行目标 ID',
       question: `请提供要定时执行的 ${expectedType} ID。`,
@@ -327,7 +317,7 @@ function guardAction(action: ConverseActionPayload): GuardResult {
           multiSelect: false,
           options: [
             { label: '用通用技能执行', description: '先完成一次任务' },
-            { label: '创建新能力', description: '沉淀为 skill/workflow' },
+            { label: '创建新能力', description: '沉淀为 skill' },
             { label: '继续匹配', description: '让我重新匹配现有能力' },
           ],
         },
@@ -342,14 +332,16 @@ function guardAction(action: ConverseActionPayload): GuardResult {
       }
     }
 
-    return { ok: true, action, phase: 'ready', approvalRequired: true }
+    return { ok: true, action, phase: 'match', approvalRequired: false }
   }
 
   if (action.action === 'setup_schedule') {
     const missing: string[] = []
     if (!action.cronExpr || !isValidCronExpr(action.cronExpr)) missing.push('cronExpr')
     if (!action.tz) missing.push('tz')
-    if (!action.targetType) missing.push('targetType')
+    if (!action.targetType) {
+      action.targetType = 'skill'
+    }
     if (!action.targetId) missing.push('targetId')
     if (!action.targetQuery) missing.push('targetQuery')
 
@@ -370,15 +362,15 @@ function guardAction(action: ConverseActionPayload): GuardResult {
       }
     }
 
-    return { ok: true, action, phase: 'ready', approvalRequired: true }
+    return { ok: true, action, phase: 'schedule_wizard', approvalRequired: false }
   }
 
   if (action.action === 'execute_generic') {
-    return { ok: true, action, phase: 'plan_review', approvalRequired: true }
+    return { ok: true, action, phase: 'plan_review', approvalRequired: false }
   }
 
   if (action.action === 'create_capability') {
-    return { ok: true, action, phase: 'choose_strategy', approvalRequired: true }
+    return { ok: true, action, phase: 'choose_strategy', approvalRequired: false }
   }
 
   return { ok: true, action, phase: 'clarify', approvalRequired: false }
@@ -392,11 +384,15 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
     const targetId = asString(raw.targetId)
     const query = asString(raw.query)
     if (!targetType || !targetId || !query) return null
+    const confidence = typeof raw.confidence === 'number' ? raw.confidence : undefined
+    const matchType = raw.matchType === 'exact' || raw.matchType === 'candidate' ? raw.matchType : undefined
     return {
       action: 'recommend_capability',
       targetType,
       targetId,
       query,
+      confidence,
+      matchType,
       reason: asString(raw.reason) || undefined,
     }
   }
@@ -411,7 +407,7 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
   }
 
   if (action === 'create_capability') {
-    const mode = asTargetType(raw.mode) || 'skill'
+    const mode: ActionTargetType = 'skill'
     const seedQuery = asString(raw.seedQuery) || asString(raw.query)
     if (!seedQuery) return null
     return { action: 'create_capability', mode, seedQuery }
@@ -425,7 +421,7 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
       action: 'setup_schedule',
       cronExpr,
       tz: asString(raw.tz) || undefined,
-      targetType: asTargetType(raw.targetType) || undefined,
+      targetType: 'skill',
       targetId: asString(raw.targetId) || undefined,
       targetQuery,
       name: asString(raw.name) || undefined,
@@ -446,16 +442,18 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
     }
   }
 
+  // Legacy compatibility: historical clients may still emit `navigate_workflow`.
+  // We normalize it to unified skill/capability routing semantics.
   if (action === 'navigate_workflow') {
     const targetId = asString(raw.workflowId)
     const query = asString(raw.query)
     if (!targetId || !query) return null
     return {
       action: 'recommend_capability',
-      targetType: 'workflow',
+      targetType: 'skill',
       targetId,
       query,
-      reason: '兼容旧动作: navigate_workflow',
+      reason: '兼容旧动作: navigate_workflow，按复合技能处理',
     }
   }
 
@@ -480,14 +478,71 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
 }
 
 function extractAction(text: string): ConverseActionPayload | null {
-  const match = text.match(ACTION_PATTERN)
-  if (!match) return null
-  try {
-    const raw = JSON.parse(match[1]) as Record<string, unknown>
-    return normalizeAction(raw)
-  } catch {
-    return null
+  let found: ConverseActionPayload | null = null
+  for (const match of text.matchAll(ACTION_PATTERN)) {
+    try {
+      const raw = JSON.parse(match[1]) as Record<string, unknown>
+      const normalized = normalizeAction(raw)
+      if (normalized) {
+        found = normalized
+      }
+    } catch {
+    }
   }
+  return found
+}
+
+function inferFallbackAction(query: string, fullText: string): ConverseActionPayload | null {
+  const combined = `${query}\n${fullText}`
+
+  const rejectCreate = /不想创建|不要创建|不创建|不需要创建|不要新技能|不用新技能|don't\s+create|do\s+not\s+create|no\s+new\s+skill/i.test(combined)
+  const acceptCreate = /创建新技能|新建技能|创建一个技能|帮我创建|沉淀为技能|create\s+(a\s+)?new\s+skill|create_skill|create\s+capability/i.test(combined)
+  const genericSignal = /直接做|直接执行|通用助手|generic/i.test(combined)
+
+  if (acceptCreate && !rejectCreate) {
+    return {
+      action: 'create_capability',
+      mode: 'skill',
+      seedQuery: query || '请创建一个新技能来完成该任务',
+    }
+  }
+
+  if (rejectCreate || genericSignal) {
+    return {
+      action: 'execute_generic',
+      query: query || '请直接执行这个任务，不创建新技能',
+      planSteps: [],
+    }
+  }
+
+  return null
+}
+
+function detectDirectIntentAction(query: string): ConverseActionPayload | null {
+  const text = query.trim()
+  if (!text) return null
+
+  const rejectCreate = /不想创建|不要创建|不创建|不需要创建|不要新技能|不用新技能|don't\s+create|do\s+not\s+create|no\s+new\s+skill/i.test(text)
+  const acceptCreate = /创建新技能|新建技能|创建一个技能|帮我创建|沉淀为技能|create\s+(a\s+)?new\s+skill|create_skill|create\s+capability/i.test(text)
+  const genericSignal = /直接做|直接执行|通用助手|generic/i.test(text)
+
+  if (acceptCreate && !rejectCreate) {
+    return {
+      action: 'create_capability',
+      mode: 'skill',
+      seedQuery: text,
+    }
+  }
+
+  if (rejectCreate || genericSignal) {
+    return {
+      action: 'execute_generic',
+      query: text,
+      planSteps: [],
+    }
+  }
+
+  return null
 }
 
 /* ╔══════════════════════════════════════════════════════════════════════════╗
@@ -526,6 +581,36 @@ router.post('/', async (req: Request, res: Response) => {
   const latestMsg = rawMessages[rawMessages.length - 1]
   const query = typeof latestMsg?.content === 'string' ? latestMsg.content : ''
 
+  const directAction = detectDirectIntentAction(query)
+  if (directAction) {
+    const guard = guardAction(directAction)
+    const state = setSessionState(sessionId, {
+      phase: guard.phase,
+      approvalRequired: guard.approvalRequired,
+    })
+    sseWrite(res, 'state', {
+      ...state,
+      validationErrors: guard.validationErrors || [],
+    })
+    if (guard.ok && guard.action) {
+      sseWrite(res, 'action', guard.action)
+    } else if (guard.question) {
+      sseWrite(res, 'question', guard.question)
+    }
+    sseWrite(res, 'done', {})
+    res.end()
+    return
+  }
+
+  /* ── 中止控制器（需在 try 外声明，finally 中清理） ── */
+  const abortController = new AbortController()
+  const onClientClose = () => {
+    if (!abortController.signal.aborted) {
+      abortController.abort()
+    }
+  }
+  res.on('close', onClientClose)
+
   try {
     /* ── 构建 converse skill ── */
     const memoryCtx = memoryInjector.buildContext({
@@ -535,20 +620,13 @@ router.post('/', async (req: Request, res: Response) => {
     const systemPrompt = buildConverseSystemPrompt(memoryCtx)
 
     const skill = {
-      meta: { id: '__converse__', name: '对话助手', description: '多轮对话' },
+      meta: { id: '__converse__', name: '对话助手', description: '多轮对话', kind: 'skill' as const },
       systemPrompt,
       scriptsDir: '',
       tools: [],
     } as Skill
 
     /* ── 通过 CLI 执行对话 ── */
-    const abortController = new AbortController()
-    const onClientClose = () => {
-      if (!abortController.signal.aborted) {
-        abortController.abort()
-      }
-    }
-    res.on('close', onClientClose)
     let fullText = ''
     let hasPendingQuestion = false
 
@@ -634,7 +712,7 @@ router.post('/', async (req: Request, res: Response) => {
           }
 
           /* ── 从累积文本中提取决策标记 ── */
-          const action = extractAction(fullText)
+          const action = extractAction(fullText) || inferFallbackAction(query, fullText)
           if (action) {
             const guard = guardAction(action)
 

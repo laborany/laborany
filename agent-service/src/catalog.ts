@@ -1,11 +1,11 @@
 import fs from 'fs'
 import path from 'path'
 import { parse as parseYaml } from 'yaml'
-import { RESOURCES_DIR, WORKFLOWS_DIR } from './paths.js'
+import { RESOURCES_DIR } from './paths.js'
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from 'laborany-shared'
 
 export interface CatalogItem {
-  type: 'skill' | 'workflow'
+  type: 'skill'
   id: string
   name: string
   description: string
@@ -14,7 +14,6 @@ export interface CatalogItem {
 
 const CATALOG_DIRS = {
   skills: [path.join(RESOURCES_DIR, 'skills'), BUILTIN_SKILLS_DIR, USER_SKILLS_DIR],
-  workflows: [WORKFLOWS_DIR],
 }
 
 export function extractKeywords(text: string): string[] {
@@ -106,10 +105,6 @@ function computeCatalogVersion(): string {
     parts.push(`${dir}:${directoryMtimeMs(dir)}`)
   }
 
-  for (const dir of CATALOG_DIRS.workflows) {
-    parts.push(`${dir}:${directoryMtimeMs(dir)}`)
-  }
-
   return parts.join('|')
 }
 
@@ -137,38 +132,6 @@ export function scanSkills(): CatalogItem[] {
   return items
 }
 
-export function scanWorkflows(): CatalogItem[] {
-  if (!fs.existsSync(WORKFLOWS_DIR)) {
-    return []
-  }
-
-  return fs
-    .readdirSync(WORKFLOWS_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => {
-      const workflowYaml = path.join(WORKFLOWS_DIR, entry.name, 'workflow.yaml')
-      if (!fs.existsSync(workflowYaml)) {
-        return null
-      }
-
-      try {
-        const doc = parseYaml(fs.readFileSync(workflowYaml, 'utf-8')) as Record<string, unknown>
-        const name = (doc.name as string) || entry.name
-        const description = (doc.description as string) || ''
-        return {
-          type: 'workflow' as const,
-          id: entry.name,
-          name,
-          description,
-          keywords: extractKeywords(`${name} ${description}`),
-        }
-      } catch {
-        return null
-      }
-    })
-    .filter(Boolean) as CatalogItem[]
-}
-
 let cachedCatalog: CatalogItem[] = []
 let cacheVersion = ''
 
@@ -183,8 +146,7 @@ export function loadCatalog(): CatalogItem[] {
     return cachedCatalog
   }
 
-  cachedCatalog = [...scanSkills(), ...scanWorkflows()]
+  cachedCatalog = [...scanSkills()]
   cacheVersion = nextVersion
   return cachedCatalog
 }
-

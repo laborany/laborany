@@ -129,6 +129,7 @@ async function loadCreatorSkill() {
       id: 'skill-creator-builtin',
       name: 'Skill 创建助手',
       description: '帮助用户创建新的 Skill',
+      kind: 'skill' as const,
     },
     systemPrompt: FALLBACK_CREATOR_PROMPT,
     scriptsDir: '',
@@ -136,10 +137,10 @@ async function loadCreatorSkill() {
   }
 }
 
-const FALLBACK_CREATOR_PROMPT = `你是一个 Skill 创建助手，帮助用户通过对话创建完整的 AI 工作流程（Skill）。
+const FALLBACK_CREATOR_PROMPT = `你是一个 Skill 创建助手，帮助用户通过对话创建完整的 AI 技能（含复合技能）。
 
 ## 你的职责
-1. 理解用户想要创建的工作流程
+1. 理解用户想要创建的技能目标
 2. 引导用户明确流程的各个步骤
 3. 确定需要的输入、输出和工具
 4. 最终生成完整的 Skill 文件结构
@@ -153,7 +154,7 @@ const FALLBACK_CREATOR_PROMPT = `你是一个 Skill 创建助手，帮助用户�
 
 ## 对话流程
 1. 首先了解用户想创建什么类型的助手
-2. 询问具体的工作流程步骤
+2. 询问具体的执行步骤
 3. 确认需要的工具和 API
 4. 生成完整的 Skill 结构
 
@@ -183,6 +184,7 @@ function buildOptimizerSkill() {
       id: 'skill-optimizer',
       name: 'Skill 优化助手',
       description: '帮助用户优化和改进现有的 Skill',
+      kind: 'skill' as const,
     },
     systemPrompt: OPTIMIZER_PROMPT,
     scriptsDir: '',
@@ -190,7 +192,7 @@ function buildOptimizerSkill() {
   }
 }
 
-const OPTIMIZER_PROMPT = `你是一个 Skill 优化专家，帮助用户改进和优化现有的 AI 工作流程（Skill）。
+const OPTIMIZER_PROMPT = `你是一个 Skill 优化专家，帮助用户改进和优化现有的 AI 技能（含复合技能）。
 
 ## 你的职责
 1. 分析现有 Skill 的代码和结构

@@ -32,10 +32,11 @@ import { DATA_DIR } from './paths.js'
 import { startCronTimer } from './cron/index.js'
 import {
   memoryRouter, cronRouter, notificationsRouter, filesRouter,
-  createSkillsRouter, createExecuteRouter, createWorkflowsRouter,
-  orchestrateRouter, converseRouter,
+  createSkillsRouter, createExecuteRouter,
+  createCapabilitiesRouter,
+  converseRouter,
+  smartRouter,
 } from './routes/index.js'
-import { smartRouter } from './routes/router.js'
 
 const app = express()
 const PORT = process.env.AGENT_PORT || 3002
@@ -54,12 +55,11 @@ app.use(memoryRouter)
 app.use('/cron', cronRouter)
 app.use('/notifications', notificationsRouter)
 app.use('/route', smartRouter)
-app.use('/orchestrate', orchestrateRouter)
 app.use('/converse', converseRouter)
 app.use(filesRouter)
 app.use(createSkillsRouter(sessionManager))
 app.use(createExecuteRouter(sessionManager, taskManager))
-app.use(createWorkflowsRouter(sessionManager))
+app.use(createCapabilitiesRouter(sessionManager))
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           启动服务                                        │
