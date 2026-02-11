@@ -14,7 +14,6 @@ import {
   runtimeTaskManager,
   type RuntimeEvent,
 } from '../core/agent/index.js'
-import { loadWorkflow } from '../core/workflow/index.js'
 import { dbHelper } from '../core/database.js'
 
 const skill = new Hono()
@@ -229,17 +228,10 @@ skill.post('/execute', async (c) => {
   }
 
   const beforeSkillIds = new Set<string>()
-  const beforeWorkflowIds = new Set<string>()
   if (skillId === 'skill-creator') {
     try {
       const dirs = await readdir(loadSkill.getUserSkillsDir(), { withFileTypes: true })
       dirs.filter(d => d.isDirectory()).forEach(d => beforeSkillIds.add(d.name))
-    } catch {
-    }
-
-    try {
-      const dirs = await readdir(loadWorkflow.getWorkflowsDir(), { withFileTypes: true })
-      dirs.filter(d => d.isDirectory()).forEach(d => beforeWorkflowIds.add(d.name))
     } catch {
     }
   }
@@ -275,7 +267,6 @@ skill.post('/execute', async (c) => {
     query: finalQuery,
     originQuery: skillId === 'skill-creator' ? (originQuery || query) : undefined,
     beforeSkillIds: skillId === 'skill-creator' ? beforeSkillIds : undefined,
-    beforeWorkflowIds: skillId === 'skill-creator' ? beforeWorkflowIds : undefined,
   })
 
   return streamSSE(c, async (stream) => {

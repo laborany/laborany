@@ -1,4 +1,4 @@
-export type CapabilityType = 'skill' | 'workflow'
+export type CapabilityType = 'skill' | 'composite'
 
 export const CAPABILITY_ID_MAX_LENGTH = 64
 

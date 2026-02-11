@@ -29,16 +29,16 @@ export interface AgentEvent {
   taskDir?: string
 }
 
-const WORKFLOW_CONTEXT_PATTERN = /##\s*工作流执行上下文/
+const PIPELINE_CONTEXT_PATTERN = /##\s*.*执行上下文/
 
 function shouldPersistMemory(skillId: string, userQuery: string): boolean {
   if (skillId === '__converse__') return false
-  if (WORKFLOW_CONTEXT_PATTERN.test(userQuery)) return false
+  if (PIPELINE_CONTEXT_PATTERN.test(userQuery)) return false
   return true
 }
 
-function stripWorkflowContext(userQuery: string): string {
-  if (!WORKFLOW_CONTEXT_PATTERN.test(userQuery)) return userQuery
+function stripPipelineContext(userQuery: string): string {
+  if (!PIPELINE_CONTEXT_PATTERN.test(userQuery)) return userQuery
   const parts = userQuery
     .split(/\n-{3,}\n/)
     .map(item => item.trim())
@@ -52,7 +52,7 @@ interface ExecuteOptions {
   sessionId: string
   signal: AbortSignal
   onEvent: (event: AgentEvent) => void
-  workDir?: string  // 可选的工作目录，用于工作流共享目录
+  workDir?: string  // 可选的工作目录，用于复合技能共享目录
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -550,7 +550,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 skillId: skill.meta.id,
-                userQuery: stripWorkflowContext(userQuery),
+                userQuery: stripPipelineContext(userQuery),
                 assistantResponse: agentResponse,
               }),
             })

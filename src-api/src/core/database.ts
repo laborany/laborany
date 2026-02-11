@@ -136,61 +136,10 @@ function createTables(db: Database): void {
     )
   `)
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS workflows (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT,
-      icon TEXT,
-      definition TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      is_public INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    )
-  `)
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS workflow_runs (
-      id TEXT PRIMARY KEY,
-      workflow_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      status TEXT DEFAULT 'running',
-      input TEXT NOT NULL,
-      context TEXT,
-      current_step INTEGER DEFAULT 0,
-      total_steps INTEGER NOT NULL,
-      started_at TEXT DEFAULT (datetime('now')),
-      completed_at TEXT,
-      FOREIGN KEY (workflow_id) REFERENCES workflows(id),
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    )
-  `)
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS workflow_step_runs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id TEXT NOT NULL,
-      step_index INTEGER NOT NULL,
-      skill_id TEXT NOT NULL,
-      session_id TEXT,
-      status TEXT DEFAULT 'pending',
-      output TEXT,
-      error TEXT,
-      started_at TEXT,
-      completed_at TEXT,
-      FOREIGN KEY (run_id) REFERENCES workflow_runs(id)
-    )
-  `)
-
   // 创建索引
   db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_files_user_id ON files(user_id)`)
-  db.run(`CREATE INDEX IF NOT EXISTS idx_workflows_user_id ON workflows(user_id)`)
-  db.run(`CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow_id ON workflow_runs(workflow_id)`)
-  db.run(`CREATE INDEX IF NOT EXISTS idx_workflow_step_runs_run_id ON workflow_step_runs(run_id)`)
 
   // 数据库迁移：为旧表添加新字段
   migrateDatabase(db)

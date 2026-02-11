@@ -66,8 +66,8 @@ interface TaskFile {
   ext?: string
   size?: number
   children?: TaskFile[]
-  stepIndex?: number    // 工作流步骤索引
-  stepName?: string     // 工作流步骤名称
+  stepIndex?: number    // 复合技能步骤索引
+  stepName?: string     // 复合技能步骤名称
 }
 
 async function listTaskFiles(baseDir: string, relativePath: string): Promise<TaskFile[]> {
@@ -86,7 +86,7 @@ async function listTaskFiles(baseDir: string, relativePath: string): Promise<Tas
   }
 
   /* ┌────────────────────────────────────────────────────────────────────────┐
-   * │  解析工作流步骤目录：step-N-名称                                         │
+   * │  解析复合技能步骤目录：step-N-名称                                       │
    * └────────────────────────────────────────────────────────────────────────┘ */
   const stepPattern = /^step-(\d+)-(.+)$/
   const parseStepDir = (name: string): { stepIndex: number; stepName: string } | null => {
@@ -249,7 +249,7 @@ file.get('/task/:sessionId/files/*', (c) => handleFileDownload(c, 'task'))
 file.get('/tasks/:sessionId/files/*', (c) => handleFileDownload(c, 'tasks'))
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       文件上传（工作流输入）                               │
+ * │                       文件上传（复合技能输入）                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getUploadsDir(): string {
   const isProduction = process.env.NODE_ENV === 'production'

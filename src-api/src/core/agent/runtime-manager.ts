@@ -1,14 +1,13 @@
 import { readdir, rename, stat } from 'fs/promises'
-import type { Skill } from 'laborany-shared'
+import type { Skill, CompositeStep } from 'laborany-shared'
 import {
   loadSkill,
   generateCapabilityId,
   normalizeCapabilityDisplayName,
   pickUniqueCapabilityId,
 } from 'laborany-shared'
-import { loadWorkflow } from '../workflow/index.js'
 import { dbHelper } from '../database.js'
-import { executeAgent, type AgentEvent } from './executor.js'
+import { executeAgent, ensureTaskDir, type AgentEvent } from './executor.js'
 import { sessionManager } from './session-manager.js'
 import { join } from 'path'
 import { existsSync } from 'fs'
@@ -20,22 +19,65 @@ export type RuntimeEvent =
   | { type: 'session'; sessionId: string }
   | { type: 'aborted' }
   | {
+      type: 'pipeline_start'
+      totalSteps: number
+      steps: Array<{ name: string; skillId: string }>
+    }
+  | {
+      type: 'step_start'
+      stepIndex: number
+      stepName: string
+      skillId: string
+    }
+  | {
+      type: 'step_done'
+      stepIndex: number
+      result: {
+        stepIndex: number
+        stepName: string
+        skillId: string
+        status: 'completed' | 'failed'
+        output: string
+        files: string[]
+        startedAt: string
+        completedAt: string
+      }
+    }
+  | {
+      type: 'step_error'
+      stepIndex: number
+      error: string
+    }
+  | {
+      type: 'pipeline_done'
+      results: Array<{
+        stepIndex: number
+        stepName: string
+        skillId: string
+        status: 'completed' | 'failed'
+        output: string
+        files: string[]
+        startedAt: string
+        completedAt: string
+      }>
+    }
+  | {
       type: 'created_capability'
-      capabilityType: 'skill' | 'workflow'
+      capabilityType: 'skill'
       capabilityId: string
       primary: {
-        type: 'skill' | 'workflow'
+        type: 'skill'
         id: string
       }
       artifacts: Array<{
-        type: 'skill' | 'workflow'
+        type: 'skill'
         id: string
       }>
       originQuery?: string
     }
 
 interface CapabilityRef {
-  type: 'skill' | 'workflow'
+  type: 'skill'
   id: string
 }
 
@@ -64,7 +106,17 @@ interface StartTaskOptions {
   query: string
   originQuery?: string
   beforeSkillIds?: Set<string>
-  beforeWorkflowIds?: Set<string>
+}
+
+interface CompositeStepResult {
+  stepIndex: number
+  stepName: string
+  skillId: string
+  status: 'completed' | 'failed'
+  output: string
+  files: string[]
+  startedAt: string
+  completedAt: string
 }
 
 interface SubscribeOptions {
@@ -265,18 +317,21 @@ class RuntimeTaskManager {
     sessionManager.register(task.sessionId, task.controller)
 
     try {
-      await executeAgent({
-        skill: options.skill,
-        query: options.query,
-        sessionId: task.sessionId,
-        signal: task.controller.signal,
-        onEvent: (event) => this.handleAgentEvent(task, event),
-      })
+      if (options.skill.meta.kind === 'composite' && options.skill.steps?.length) {
+        await this.runCompositeTask(task, options)
+      } else {
+        await executeAgent({
+          skill: options.skill,
+          query: options.query,
+          sessionId: task.sessionId,
+          signal: task.controller.signal,
+          onEvent: (event) => this.handleAgentEvent(task, event),
+        })
+      }
 
-      if (options.skillId === 'skill-creator' && options.beforeSkillIds && options.beforeWorkflowIds) {
+      if (options.skillId === 'skill-creator' && options.beforeSkillIds) {
         const createdArtifacts = await this.detectCreatedCapabilities(
           options.beforeSkillIds,
-          options.beforeWorkflowIds,
         )
 
         if (createdArtifacts.primary) {
@@ -329,6 +384,158 @@ class RuntimeTaskManager {
 
       task.resolveDone()
     }
+  }
+
+  private async runCompositeTask(task: RuntimeTask, options: StartTaskOptions): Promise<void> {
+    const steps = options.skill.steps || []
+    const totalSteps = steps.length
+    const sharedWorkDir = ensureTaskDir(task.sessionId)
+    const results: CompositeStepResult[] = []
+    let previousOutput = ''
+
+    this.emitEvent(task, {
+      type: 'pipeline_start',
+      totalSteps,
+      steps: steps.map(step => ({
+        name: step.name,
+        skillId: step.skill,
+      })),
+    })
+
+    for (let index = 0; index < steps.length; index++) {
+      if (task.controller.signal.aborted) {
+        return
+      }
+
+      const step = steps[index]
+      this.emitEvent(task, {
+        type: 'step_start',
+        stepIndex: index,
+        stepName: step.name,
+        skillId: step.skill,
+      })
+
+      const result = await this.executeCompositeStep(task, step, index, totalSteps, {
+        baseQuery: options.query,
+        previousOutput,
+        workDir: sharedWorkDir,
+      })
+
+      results.push(result)
+
+      if (result.status === 'completed') {
+        previousOutput = result.output
+        this.emitEvent(task, {
+          type: 'step_done',
+          stepIndex: index,
+          result,
+        })
+      } else {
+        this.emitEvent(task, {
+          type: 'step_error',
+          stepIndex: index,
+          error: result.output || '步骤执行失败',
+        })
+
+        if (options.skill.onFailure !== 'continue') {
+          task.hasError = true
+          break
+        }
+      }
+    }
+
+    this.emitEvent(task, {
+      type: 'pipeline_done',
+      results,
+    })
+  }
+
+  private async executeCompositeStep(
+    task: RuntimeTask,
+    step: CompositeStep,
+    stepIndex: number,
+    totalSteps: number,
+    options: {
+      baseQuery: string
+      previousOutput: string
+      workDir: string
+    },
+  ): Promise<CompositeStepResult> {
+    const startedAt = new Date().toISOString()
+    const stepSkill = await loadSkill.byId(step.skill)
+
+    if (!stepSkill) {
+      return {
+        stepIndex,
+        stepName: step.name,
+        skillId: step.skill,
+        status: 'failed',
+        output: `步骤技能不存在: ${step.skill}`,
+        files: [],
+        startedAt,
+        completedAt: new Date().toISOString(),
+      }
+    }
+
+    const stepSessionId = `${task.sessionId}-step-${stepIndex + 1}`
+    let output = ''
+    let stepFailed = false
+    const prompt = this.buildCompositePrompt(step, stepIndex, totalSteps, options.baseQuery, options.previousOutput)
+
+    try {
+      await executeAgent({
+        skill: stepSkill,
+        query: prompt,
+        sessionId: stepSessionId,
+        signal: task.controller.signal,
+        workDir: options.workDir,
+        onEvent: (event) => {
+          if (event.type === 'text' && event.content) {
+            output += event.content
+          }
+          if (event.type === 'error' && event.content) {
+            stepFailed = true
+          }
+          this.handleAgentEvent(task, event)
+        },
+      })
+    } catch (error) {
+      stepFailed = true
+      output = output || (error instanceof Error ? error.message : '步骤执行失败')
+    }
+
+    return {
+      stepIndex,
+      stepName: step.name,
+      skillId: step.skill,
+      status: stepFailed ? 'failed' : 'completed',
+      output,
+      files: [],
+      startedAt,
+      completedAt: new Date().toISOString(),
+    }
+  }
+
+  private buildCompositePrompt(
+    step: CompositeStep,
+    stepIndex: number,
+    totalSteps: number,
+    baseQuery: string,
+    previousOutput: string,
+  ): string {
+    const renderedTemplate = step.prompt.replace(/\{\{\s*prev\.output\s*\}\}/g, previousOutput)
+    return [
+      `你正在执行复合技能步骤 ${stepIndex + 1}/${totalSteps}。`,
+      `当前步骤：${step.name}`,
+      '',
+      '[原始用户任务]',
+      baseQuery,
+      '',
+      '[步骤指令]',
+      renderedTemplate,
+      '',
+      '请只输出本步骤结果，保持可供下一步继续使用。',
+    ].join('\n')
   }
 
   private handleAgentEvent(task: RuntimeTask, event: AgentEvent): void {
@@ -411,21 +618,14 @@ class RuntimeTaskManager {
 
   private async detectCreatedCapabilities(
     beforeSkillIds: Set<string>,
-    beforeWorkflowIds: Set<string>,
   ): Promise<{ primary: CapabilityRef | null; artifacts: CapabilityRef[] }> {
-    const createdWorkflows = await this.detectCreatedWorkflowIds(beforeWorkflowIds)
     const createdSkills = await this.detectCreatedSkillIds(beforeSkillIds)
-
-    const workflowArtifacts: CapabilityRef[] = createdWorkflows.map((id) => ({
-      type: 'workflow',
-      id,
-    }))
     const skillArtifacts: CapabilityRef[] = createdSkills.map((id) => ({
       type: 'skill',
       id,
     }))
 
-    const artifacts = [...workflowArtifacts, ...skillArtifacts]
+    const artifacts = [...skillArtifacts]
     const primary = artifacts[0] || null
 
     return { primary, artifacts }
@@ -442,14 +642,6 @@ class RuntimeTaskManager {
         normalized.push(await this.normalizeCreatedSkillId(skillId))
       }
       return normalized
-    } catch {
-      return []
-    }
-  }
-
-  private async detectCreatedWorkflowIds(beforeWorkflowIds: Set<string>): Promise<string[]> {
-    try {
-      return this.listNewDirectoryIds(loadWorkflow.getWorkflowsDir(), beforeWorkflowIds)
     } catch {
       return []
     }

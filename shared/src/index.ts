@@ -3,6 +3,8 @@ export {
   type Skill,
   type SkillMeta,
   type SkillTool,
+  type SkillKind,
+  type CompositeStep,
 } from './skill-loader.js'
 
 export {

@@ -79,10 +79,6 @@
         "to": "skills"
       },
       {
-        "from": "workflows",
-        "to": "workflows"
-      },
-      {
         "from": ".env.example",
         "to": ".env.example"
       },
@@ -93,12 +89,16 @@
       {
         "from": "cli-bundle",
         "to": "cli-bundle",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "uv-bundle",
         "to": "uv-bundle",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -139,27 +139,38 @@
         {
           "from": "cli-bundle-arm64",
           "to": "cli-bundle-arm64",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         },
         {
           "from": "cli-bundle-x64",
           "to": "cli-bundle-x64",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         },
         {
           "from": "uv-bundle-arm64",
           "to": "uv-bundle-arm64",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         },
         {
           "from": "uv-bundle-x64",
           "to": "uv-bundle-x64",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         }
       ]
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "src-tauri/icons/icon.png",
       "category": "Utility",
       "extraResources": [
@@ -190,5 +201,8 @@
     "concurrently": "^8.2.2",
     "electron": "^40.0.0",
     "electron-builder": "^26.4.0"
+  },
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
   }
 }

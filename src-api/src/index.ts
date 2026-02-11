@@ -70,7 +70,6 @@ import { serveStatic } from '@hono/node-server/serve-static'
 
 import authRoutes from './routes/auth.js'
 import skillRoutes from './routes/skill.js'
-import workflowRoutes from './routes/workflow.js'
 import fileRoutes from './routes/file.js'
 import configRoutes from './routes/config.js'
 import sessionRoutes from './routes/session.js'
@@ -103,7 +102,6 @@ app.get('/health', (c) => {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 app.route('/api/auth', authRoutes)
 app.route('/api/skill', skillRoutes)
-app.route('/api/workflow', workflowRoutes)
 app.route('/api/config', configRoutes)
 app.route('/api/sessions', sessionRoutes)
 app.route('/api/setup', setupRoutes)
