@@ -10,7 +10,8 @@
   "dependencies": {
     "pdf-lib": "^1.17.1",
     "playwright": "^1.40.0",
-    "pptxgenjs": "^3.12.0"
+    "pptxgenjs": "^3.12.0",
+    "sharp": "^0.34.5"
   },
   "engines": {
     "node": ">=16.0.0"

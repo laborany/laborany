@@ -1,20 +1,29 @@
 #!/usr/bin/env node
 /**
- * Export SVG slides to PPTX
+ * Export SVG slides to PPTX (with embedded PNG images)
+ * Converts SVG -> PNG via sharp, then embeds as base64 into PPTX
  * Usage: node export_pptx.js <input_dir> [output_path]
  */
 
 const fs = require('fs');
 const path = require('path');
 
-// Check for pptxgenjs
-let PptxGenJS;
+// Check for dependencies
+let PptxGenJS, sharp;
 try {
   PptxGenJS = require('pptxgenjs');
 } catch (e) {
   console.error('❌ Missing dependency: pptxgenjs');
-  console.error('\nInstall required package:');
-  console.error('  npm install pptxgenjs');
+  console.error('\nInstall required packages:');
+  console.error('  npm install pptxgenjs sharp');
+  process.exit(1);
+}
+try {
+  sharp = require('sharp');
+} catch (e) {
+  console.error('❌ Missing dependency: sharp');
+  console.error('\nInstall required packages:');
+  console.error('  npm install sharp');
   process.exit(1);
 }
 
@@ -106,30 +115,35 @@ async function exportToPptx(inputDir, outputPath) {
   const pptx = new PptxGenJS();
   pptx.layout = 'LAYOUT_16x9';
   
-  // Add slides
+  // Add slides (SVG -> PNG -> base64 embed)
   console.log(`\n📊 Creating presentation with ${svgFiles.length} slide(s)...`);
   for (const svgFile of svgFiles) {
     const svgPath = path.join(inputDir, svgFile);
+    const svgContent = fs.readFileSync(svgPath);
+
+    // Convert SVG to PNG at 1920x1080 via sharp
+    const pngBuffer = await sharp(svgContent, { density: 150 })
+      .resize(1920, 1080)
+      .png()
+      .toBuffer();
+
+    const base64 = pngBuffer.toString('base64');
+    const dataUri = `image/png;base64,${base64}`;
+
     const slide = pptx.addSlide();
-    
-    try {
-      slide.addImage({
-        path: svgPath,
-        x: 0,
-        y: 0,
-        w: '100%',
-        h: '100%'
-      });
-      console.log(`  ✓ Added: ${svgFile}`);
-    } catch (err) {
-      console.error(`  ✗ Error adding ${svgFile}: ${err.message}`);
-      process.exit(1);
-    }
+    slide.addImage({
+      data: dataUri,
+      x: 0,
+      y: 0,
+      w: '100%',
+      h: '100%',
+    });
+    console.log(`  ✓ ${svgFile} → PNG → embedded`);
   }
-  
+
   // Save presentation
   try {
-    pptx.writeFile(outputPath);
+    await pptx.writeFile({ fileName: outputPath });
     console.log(`\n✅ PPTX exported: ${outputPath} (${svgFiles.length} slides)\n`);
   } catch (err) {
     console.error(`❌ Error saving PPTX: ${err.message}`);
