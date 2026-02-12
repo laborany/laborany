@@ -219,10 +219,12 @@ function startAgentServer() {
  * │                           创建窗口                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function createWindow() {
+  const iconPath = path.join(__dirname, '..', 'src-tauri', 'icons', 'icon.png')
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'LaborAny',
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
     show: false,  // 先隐藏，等加载完成再显示
     webPreferences: {
       nodeIntegration: false,

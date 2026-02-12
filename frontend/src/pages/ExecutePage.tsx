@@ -77,6 +77,24 @@ export default function ExecutePage() {
     const token = localStorage.getItem('token')
     const sid = searchParams.get('sid')
 
+    const canContinueSession = async (targetSessionId: string): Promise<boolean> => {
+      if (!targetSessionId || !token || !skillId) return false
+      try {
+        const res = await fetch(`${API_BASE}/sessions/${targetSessionId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) return false
+
+        const detail = await res.json() as {
+          skill_id?: string
+        }
+
+        return detail.skill_id === skillId
+      } catch {
+        return false
+      }
+    }
+
     const tryAttachRunningSession = async (targetSessionId: string): Promise<boolean> => {
       if (!targetSessionId || !token) return false
       try {
@@ -101,7 +119,7 @@ export default function ExecutePage() {
       }
     }
 
-    const findSameRunningSession = async (): Promise<string | null> => {
+    const findSameSession = async (): Promise<{ id: string; isRunning: boolean } | null> => {
       if (!token || !skillId) return null
       try {
         const res = await fetch(`${API_BASE}/sessions`, {
@@ -114,16 +132,20 @@ export default function ExecutePage() {
           skill_id: string
           query: string
           status: string
+          created_at?: string
         }>
 
         const normalizedQuery = query.trim()
-        const matched = list.find(item =>
-          item.status === 'running'
-          && item.skill_id === skillId
-          && (item.query || '').trim() === normalizedQuery,
-        )
+        const matched = list.find(item => (
+          item.skill_id === skillId
+          && (item.query || '').trim() === normalizedQuery
+        ))
 
-        return matched?.id || null
+        if (!matched) return null
+        return {
+          id: matched.id,
+          isRunning: matched.status === 'running',
+        }
       } catch {
         return null
       }
@@ -131,19 +153,31 @@ export default function ExecutePage() {
 
     const bootstrap = async () => {
       let attached = false
+      let continuedBySid = false
 
       if (sid) {
         attached = await tryAttachRunningSession(sid)
-      }
-
-      if (!attached) {
-        const matchedSessionId = await findSameRunningSession()
-        if (matchedSessionId) {
-          attached = await tryAttachRunningSession(matchedSessionId)
+        if (!attached && await canContinueSession(sid)) {
+          agent.resumeSession(sid)
+          await agent.execute(query)
+          continuedBySid = true
         }
       }
 
-      if (!attached) {
+      if (!attached && !continuedBySid) {
+        const matchedSession = await findSameSession()
+        if (matchedSession?.id) {
+          if (matchedSession.isRunning) {
+            attached = await tryAttachRunningSession(matchedSession.id)
+          } else {
+            agent.resumeSession(matchedSession.id)
+            await agent.execute(query)
+            continuedBySid = true
+          }
+        }
+      }
+
+      if (!attached && !continuedBySid) {
         await agent.execute(query)
       }
 

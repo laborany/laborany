@@ -1,13 +1,14 @@
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { useAgent } from '../hooks/useAgent'
+import { useAgent, type PendingQuestion } from '../hooks/useAgent'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { useVitePreview } from '../hooks/useVitePreview'
 import type { TaskFile, Session, SessionDetail, SessionLiveStatus } from '../types'
 import { API_BASE } from '../config'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
+import { QuestionInput } from '../components/shared/QuestionInput'
 import { RightSidebar } from '../components/shared/RightSidebar'
 import { ResizeHandle, useResizablePanel } from '../components/shared/ResizeHandle'
 import {
@@ -159,6 +160,97 @@ function toFileArtifact(
   }
 }
 
+function buildPendingQuestionFromHistory(session: SessionDetail | null): PendingQuestion | null {
+  if (!session?.messages?.length) return null
+
+  let lastAskIndex = -1
+  for (let index = session.messages.length - 1; index >= 0; index--) {
+    const msg = session.messages[index]
+    if (msg.type === 'tool_use' && /^AskU(?:ser|er)Question$/i.test(msg.toolName || '')) {
+      lastAskIndex = index
+      break
+    }
+  }
+
+  if (lastAskIndex === -1) return null
+
+  const hasUserReply = session.messages
+    .slice(lastAskIndex + 1)
+    .some((msg) => msg.type === 'user' && Boolean((msg.content || '').trim()))
+
+  if (hasUserReply) return null
+
+  const askMessage = session.messages[lastAskIndex]
+  const toolInput = askMessage.toolInput && typeof askMessage.toolInput === 'object'
+    ? askMessage.toolInput as Record<string, unknown>
+    : {}
+
+  const rawQuestions = Array.isArray(toolInput.questions)
+    ? toolInput.questions
+    : (() => {
+      const question = typeof toolInput.question === 'string' ? toolInput.question.trim() : ''
+      if (!question) return []
+      return [{
+        question,
+        header:
+          typeof toolInput.header === 'string' && toolInput.header.trim()
+            ? toolInput.header.trim()
+            : '问题',
+        options: Array.isArray(toolInput.options) ? toolInput.options : [],
+        multiSelect: Boolean(toolInput.multiSelect),
+      }]
+    })()
+
+  const questions = rawQuestions
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const candidate = item as Record<string, unknown>
+      const question = typeof candidate.question === 'string' ? candidate.question.trim() : ''
+      if (!question) return null
+
+      const header =
+        typeof candidate.header === 'string' && candidate.header.trim()
+          ? candidate.header.trim()
+          : '问题'
+
+      const options = Array.isArray(candidate.options)
+        ? candidate.options
+          .map((opt) => {
+            if (typeof opt === 'string') {
+              const label = opt.trim()
+              if (!label) return null
+              return { label, description: '' }
+            }
+            if (!opt || typeof opt !== 'object') return null
+            const option = opt as Record<string, unknown>
+            const label = typeof option.label === 'string' ? option.label.trim() : ''
+            if (!label) return null
+            return {
+              label,
+              description: typeof option.description === 'string' ? option.description : '',
+            }
+          })
+          .filter(Boolean) as Array<{ label: string; description: string }>
+        : []
+
+      return {
+        question,
+        header,
+        options,
+        multiSelect: Boolean(candidate.multiSelect),
+      }
+    })
+    .filter(Boolean) as PendingQuestion['questions']
+
+  if (!questions.length) return null
+
+  return {
+    id: `history_question_${session.id}_${askMessage.id}`,
+    toolUseId: `history_tool_${askMessage.id}`,
+    questions,
+  }
+}
+
 const CHAT_PANEL_MIN = 300
 const CHAT_PANEL_MAX = 800
 const CHAT_PANEL_DEFAULT = 450
@@ -193,6 +285,10 @@ export function SessionDetailPage() {
   })
 
   const agent = useAgent(session?.skill_id || '')
+  const historyPendingQuestion = useMemo(
+    () => buildPendingQuestionFromHistory(session),
+    [session],
+  )
 
   // Live Preview hook
   const {
@@ -346,6 +442,7 @@ export function SessionDetailPage() {
       type: 'user' | 'assistant' | 'tool' | 'error'
       content: string
       toolName?: string
+      toolInput?: Record<string, unknown>
       timestamp: Date
     }> = []
 
@@ -365,11 +462,17 @@ export function SessionDetailPage() {
           timestamp: new Date(msg.createdAt),
         })
       } else if (msg.type === 'tool_use' && msg.toolName) {
+        const parsedToolInput =
+          msg.toolInput && typeof msg.toolInput === 'object'
+            ? msg.toolInput as Record<string, unknown>
+            : undefined
+
         messages.push({
           id: String(msg.id),
           type: 'tool',
           content: msg.toolInput ? JSON.stringify(msg.toolInput, null, 2) : '',
           toolName: msg.toolName,
+          toolInput: parsedToolInput,
           timestamp: new Date(msg.createdAt),
         })
       } else if (msg.type === 'tool_result' && msg.toolResult) {
@@ -403,6 +506,19 @@ export function SessionDetailPage() {
     agent.execute(query)
   }
 
+  const handleQuestionSubmit = useCallback(
+    async (_questionId: string, answers: Record<string, string>) => {
+      const answerText = Object.values(answers)
+        .map((answer) => answer.trim())
+        .filter(Boolean)
+        .join('\n')
+
+      if (!answerText) return
+      await handleContinue(answerText)
+    },
+    [handleContinue],
+  )
+
   useEffect(() => {
     if (continuing && !agent.isRunning && agent.messages.length > 0) {
       fetchTaskFiles()
@@ -432,6 +548,7 @@ export function SessionDetailPage() {
 
   const historyMessages = convertMessages()
   const allMessages = continuing ? [...historyMessages, ...agent.messages] : historyMessages
+  const activePendingQuestion = agent.pendingQuestion || (!continuing ? historyPendingQuestion : null)
 
   // 计算是否显示分隔条
   const showResizeHandle = isPreviewVisible || isRightSidebarVisible
@@ -505,13 +622,25 @@ export function SessionDetailPage() {
 
         {/* 继续对话输入框 */}
         <div className="border-t border-border pt-4 shrink-0">
-          <p className="text-sm text-muted-foreground mb-2">继续对话：</p>
-          <ChatInput
-            onSubmit={handleContinue}
-            onStop={agent.stop}
-            isRunning={agent.isRunning}
-            placeholder="输入新的问题继续对话..."
-          />
+          {activePendingQuestion ? (
+            <>
+              <p className="text-sm text-muted-foreground mb-2">请先回答当前问题：</p>
+              <QuestionInput
+                pendingQuestion={activePendingQuestion}
+                onSubmit={agent.pendingQuestion ? agent.respondToQuestion : handleQuestionSubmit}
+              />
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground mb-2">继续对话：</p>
+              <ChatInput
+                onSubmit={handleContinue}
+                onStop={agent.stop}
+                isRunning={agent.isRunning}
+                placeholder="输入新的问题继续对话..."
+              />
+            </>
+          )}
         </div>
       </div>
 
