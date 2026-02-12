@@ -635,7 +635,6 @@ router.post('/', async (req: Request, res: Response) => {
       query,
       sessionId,
       signal: abortController.signal,
-      timeoutMs: 3 * 60 * 1000,
       onEvent: (event) => {
         if (event.type === 'tool_use') {
           if (/^AskU(?:ser|er)Question$/i.test(event.toolName || '')) {

@@ -18,7 +18,6 @@ import { DATA_DIR } from './paths.js'
  *  默认超时时间：30 分钟
  *  防止 Claude Code CLI 卡住导致任务永远挂起
  * ════════════════════════════════════════════════════════════════════════════ */
-const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000
 
 const PIPELINE_CONTEXT_PATTERN = /##\s*.*执行上下文/
 
@@ -56,7 +55,6 @@ interface ExecuteOptions {
   sessionId: string
   signal: AbortSignal
   onEvent: (event: AgentEvent) => void
-  timeoutMs?: number  // 执行超时时间（毫秒），默认 30 分钟
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -169,8 +167,7 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): Ag
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, timeoutMs } = options
-  const effectiveTimeout = timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const { skill, query: userQuery, sessionId, signal, onEvent } = options
 
   if (signal.aborted) {
     throw new DOMException('Aborted', 'AbortError')
@@ -300,16 +297,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   /* ────────────────────────────────────────────────────────────────────────
    *  超时保护：防止任务无限挂起
    * ──────────────────────────────────────────────────────────────────────── */
-  let timedOut = false
-  const timeoutId = setTimeout(() => {
-    timedOut = true
-    console.warn(`[Agent] 任务超时 (${effectiveTimeout / 1000}s)，强制终止`)
-    proc.kill('SIGTERM')
-  }, effectiveTimeout)
-
   return new Promise((resolve) => {
     proc.on('close', async (code) => {
-      clearTimeout(timeoutId)
       signal.removeEventListener('abort', abortHandler)
       if (lineBuffer.trim()) {
         parseStreamLine(lineBuffer, wrappedOnEvent)
@@ -321,8 +310,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
        * ────────────────────────────────────────────────────────────────────── */
       if (signal.aborted) {
         onEvent({ type: 'stopped', content: '任务已停止' })
-      } else if (timedOut) {
-        onEvent({ type: 'error', content: `执行超时 (${effectiveTimeout / 1000}s)` })
       } else {
         // 正常完成：记录记忆 + 发送 done
         if (code === 0 && agentResponse.trim()) {
@@ -352,7 +339,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     })
 
     proc.on('error', (err) => {
-      clearTimeout(timeoutId)
       signal.removeEventListener('abort', abortHandler)
       onEvent({ type: 'error', content: err.message })
       resolve()

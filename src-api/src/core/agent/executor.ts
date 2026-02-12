@@ -53,17 +53,6 @@ interface ExecuteOptions {
   signal: AbortSignal
   onEvent: (event: AgentEvent) => void
   workDir?: string  // 可选的工作目录，用于复合技能共享目录
-  timeoutMs?: number
-}
-
-const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000
-
-function formatTimeoutLabel(timeoutMs: number): string {
-  const minutes = timeoutMs / 60_000
-  if (Number.isInteger(minutes)) {
-    return `${minutes}分钟`
-  }
-  return `${Math.round(timeoutMs / 1000)}秒`
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -402,8 +391,7 @@ function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) =>
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, workDir, timeoutMs } = options
-  const effectiveTimeout = timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const { skill, query: userQuery, sessionId, signal, onEvent, workDir } = options
 
   if (signal.aborted) {
     throw new DOMException('Aborted', 'AbortError')
@@ -541,24 +529,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const abortHandler = () => proc.kill('SIGTERM')
   signal.addEventListener('abort', abortHandler)
 
-  let timedOut = false
-  const timeoutId = setTimeout(() => {
-    timedOut = true
-    console.warn(`[Agent] 任务超时 (${formatTimeoutLabel(effectiveTimeout)})，强制终止`)
-    if (platform() === 'win32') {
-      try {
-        execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'ignore' })
-      } catch {
-        proc.kill('SIGTERM')
-      }
-    } else {
-      proc.kill('SIGTERM')
-    }
-  }, effectiveTimeout)
-
   return new Promise((resolve) => {
     proc.on('close', async (code) => {
-      clearTimeout(timeoutId)
       signal.removeEventListener('abort', abortHandler)
       if (lineBuffer.trim()) {
         const event = parseStreamLineWithReturn(lineBuffer, onEvent)
@@ -569,8 +541,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
       if (signal.aborted) {
         onEvent({ type: 'error', content: '执行被中止' })
-      } else if (timedOut) {
-        onEvent({ type: 'error', content: `执行超时 (${formatTimeoutLabel(effectiveTimeout)})` })
       } else if (code !== 0) {
         onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
       }
@@ -600,7 +570,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     })
 
     proc.on('error', (err) => {
-      clearTimeout(timeoutId)
       signal.removeEventListener('abort', abortHandler)
       onEvent({ type: 'error', content: err.message })
       onEvent({ type: 'done' })
