@@ -21,12 +21,19 @@ const __dirname = dirname(__filename)
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentEvent {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'error' | 'done'
+  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
   toolResult?: string
   taskDir?: string
+}
+
+const IDLE_WARNING_THRESHOLD_MS = 10 * 60 * 1000
+const IDLE_WARNING_CHECK_INTERVAL_MS = 60 * 1000
+
+function isProgressEvent(event: AgentEvent): boolean {
+  return event.type === 'text' || event.type === 'tool_use' || event.type === 'tool_result'
 }
 
 const PIPELINE_CONTEXT_PATTERN = /##\s*.*执行上下文/
@@ -393,6 +400,16 @@ function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) =>
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const { skill, query: userQuery, sessionId, signal, onEvent, workDir } = options
 
+  let lastProgressAt = Date.now()
+  let idleWarningSent = false
+  const emitEvent = (event: AgentEvent) => {
+    if (isProgressEvent(event)) {
+      lastProgressAt = Date.now()
+      idleWarningSent = false
+    }
+    onEvent(event)
+  }
+
   if (signal.aborted) {
     throw new DOMException('Aborted', 'AbortError')
   }
@@ -414,7 +431,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   console.log(`[Agent] Task directory: ${taskDir}`)
   console.log(`[Agent] Is new session: ${isNewSession}`)
 
-  onEvent({ type: 'init', taskDir, content: `任务目录: ${taskDir}` })
+  emitEvent({ type: 'init', taskDir, content: `任务目录: ${taskDir}` })
 
   const timestamp = new Date().toISOString()
   const historyEntry = `\n[${timestamp}] User:\n${userQuery}\n`
@@ -423,21 +440,21 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   // 确保 Claude Code 可用（优先使用内置 Bundle）
   const claudeConfig = ensureClaudeCode()
   if (!claudeConfig) {
-    onEvent({
+    emitEvent({
       type: 'error',
       content: 'Claude Code 未找到且安装失败。请手动运行: npm install -g @anthropic-ai/claude-code',
     })
-    onEvent({ type: 'done' })
+    emitEvent({ type: 'done' })
     return
   }
 
   // 检查 API Key 配置
   if (!process.env.ANTHROPIC_API_KEY) {
-    onEvent({
+    emitEvent({
       type: 'error',
       content: 'ANTHROPIC_API_KEY 未配置。请在设置页面配置 API 密钥。',
     })
-    onEvent({ type: 'done' })
+    emitEvent({ type: 'done' })
     return
   }
 
@@ -514,7 +531,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     const lines = lineBuffer.split('\n')
     lineBuffer = lines.pop() || ''
     for (const line of lines) {
-      const event = parseStreamLineWithReturn(line, onEvent)
+      const event = parseStreamLineWithReturn(line, emitEvent)
       // 收集文本输出用于记忆
       if (event?.type === 'text' && event.content) {
         agentResponse += event.content
@@ -529,20 +546,37 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const abortHandler = () => proc.kill('SIGTERM')
   signal.addEventListener('abort', abortHandler)
 
+  const idleWarningTimer = setInterval(() => {
+    if (signal.aborted) return
+    if (proc.exitCode !== null || proc.killed) return
+
+    const idleMs = Date.now() - lastProgressAt
+    if (idleMs < IDLE_WARNING_THRESHOLD_MS || idleWarningSent) {
+      return
+    }
+
+    idleWarningSent = true
+    emitEvent({
+      type: 'warning',
+      content: '任务执行时间较长，已超过 10 分钟无新输出。任务仍在继续，请耐心等待。',
+    })
+  }, IDLE_WARNING_CHECK_INTERVAL_MS)
+
   return new Promise((resolve) => {
     proc.on('close', async (code) => {
+      clearInterval(idleWarningTimer)
       signal.removeEventListener('abort', abortHandler)
       if (lineBuffer.trim()) {
-        const event = parseStreamLineWithReturn(lineBuffer, onEvent)
+        const event = parseStreamLineWithReturn(lineBuffer, emitEvent)
         if (event?.type === 'text' && event.content) {
           agentResponse += event.content
         }
       }
 
       if (signal.aborted) {
-        onEvent({ type: 'error', content: '执行被中止' })
+        emitEvent({ type: 'error', content: '执行被中止' })
       } else if (code !== 0) {
-        onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
+        emitEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
       }
 
       // 任务完成后记录到三级记忆系统
@@ -565,14 +599,15 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
         }
       }
 
-      onEvent({ type: 'done' })
+      emitEvent({ type: 'done' })
       resolve()
     })
 
     proc.on('error', (err) => {
+      clearInterval(idleWarningTimer)
       signal.removeEventListener('abort', abortHandler)
-      onEvent({ type: 'error', content: err.message })
-      onEvent({ type: 'done' })
+      emitEvent({ type: 'error', content: err.message })
+      emitEvent({ type: 'done' })
       resolve()
     })
   })

@@ -330,6 +330,24 @@ export function useAgent(skillId: string) {
           break
         }
 
+        case 'warning': {
+          const warningText = (event.content || event.message) as string | undefined
+          if (!warningText) break
+          setState((s) => ({
+            ...s,
+            messages: [
+              ...s.messages,
+              {
+                id: crypto.randomUUID(),
+                type: 'assistant',
+                content: `⚠️ 提醒：${warningText}`,
+                timestamp: new Date(),
+              },
+            ],
+          }))
+          break
+        }
+
         case 'error':
           setState((s) => ({ ...s, error: (event.message || event.content) as string }))
           localStorage.removeItem(`lastSession_${skillId}`)

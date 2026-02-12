@@ -39,7 +39,7 @@ function stripPipelineContext(userQuery: string): string {
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentEvent {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'error' | 'done' | 'stopped'
+  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done' | 'stopped'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
@@ -48,6 +48,9 @@ export interface AgentEvent {
   taskDir?: string
   isError?: boolean  // 结构化错误标记，用于判断执行是否失败
 }
+
+const IDLE_WARNING_THRESHOLD_MS = 10 * 60 * 1000
+const IDLE_WARNING_CHECK_INTERVAL_MS = 60 * 1000
 
 interface ExecuteOptions {
   skill: Skill
@@ -169,6 +172,9 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): Ag
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const { skill, query: userQuery, sessionId, signal, onEvent } = options
 
+  let lastProgressAt = Date.now()
+  let idleWarningSent = false
+
   if (signal.aborted) {
     throw new DOMException('Aborted', 'AbortError')
   }
@@ -260,11 +266,19 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const wrappedOnEvent = (event: AgentEvent) => {
     onEvent(event)
     if (event.type === 'text' && event.content) {
+      lastProgressAt = Date.now()
+      idleWarningSent = false
       agentResponse += event.content
     }
     if (event.type === 'tool_use' && event.toolName) {
+      lastProgressAt = Date.now()
+      idleWarningSent = false
       const desc = event.toolInput?.description || event.toolInput?.file_path || event.toolInput?.command || ''
       toolSummary += `[工具: ${event.toolName}] ${String(desc).slice(0, 100)}\n`
+    }
+    if (event.type === 'tool_result') {
+      lastProgressAt = Date.now()
+      idleWarningSent = false
     }
   }
 
@@ -294,11 +308,28 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   }
   signal.addEventListener('abort', abortHandler)
 
+  const idleWarningTimer = setInterval(() => {
+    if (signal.aborted) return
+    if (proc.exitCode !== null || proc.killed) return
+
+    const idleMs = Date.now() - lastProgressAt
+    if (idleMs < IDLE_WARNING_THRESHOLD_MS || idleWarningSent) {
+      return
+    }
+
+    idleWarningSent = true
+    onEvent({
+      type: 'warning',
+      content: '任务执行时间较长，已超过 10 分钟无新输出。任务仍在继续，请耐心等待。',
+    })
+  }, IDLE_WARNING_CHECK_INTERVAL_MS)
+
   /* ────────────────────────────────────────────────────────────────────────
    *  超时保护：防止任务无限挂起
    * ──────────────────────────────────────────────────────────────────────── */
   return new Promise((resolve) => {
     proc.on('close', async (code) => {
+      clearInterval(idleWarningTimer)
       signal.removeEventListener('abort', abortHandler)
       if (lineBuffer.trim()) {
         parseStreamLine(lineBuffer, wrappedOnEvent)
@@ -339,6 +370,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     })
 
     proc.on('error', (err) => {
+      clearInterval(idleWarningTimer)
       signal.removeEventListener('abort', abortHandler)
       onEvent({ type: 'error', content: err.message })
       resolve()
