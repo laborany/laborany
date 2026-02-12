@@ -24,7 +24,7 @@ interface RetrieveResult {
   usedTokens: number
 }
 
-interface ExtractAndUpsertParams {
+export interface ExtractAndUpsertParams {
   sessionId: string
   skillId: string
   userQuery: string
@@ -44,7 +44,7 @@ interface MemoryPatch {
   intent?: ExtractedFact['intent']
 }
 
-interface UpsertResult {
+export interface UpsertResult {
   written: {
     cells: number
     profile: number

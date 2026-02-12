@@ -20,6 +20,7 @@ import {
   memoryConsolidator,
   memoryProcessor,
   memoryOrchestrator,
+  memoryAsyncQueue,
   memoryCliExtractor,
   profileManager,
   memCellStorage,
@@ -166,7 +167,7 @@ router.get('/memory-context/:skillId', (req: Request, res: Response) => {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 router.post('/memory/record-task', async (req: Request, res: Response) => {
   try {
-    const { sessionId, skillId, userQuery, assistantResponse, summary } = req.body
+    const { sessionId, skillId, userQuery, assistantResponse, summary, sync } = req.body
     if (!skillId || !userQuery) {
       res.status(400).json({ error: '缺少必要参数' })
       return
@@ -177,18 +178,40 @@ router.post('/memory/record-task', async (req: Request, res: Response) => {
       return
     }
 
-    const result = await memoryOrchestrator.extractAndUpsert({
+    const memoryParams = {
       sessionId: sessionId || `api_${Date.now()}`,
       skillId,
       userQuery,
       assistantResponse: assistantResponse || summary || '',
-    })
+    }
 
+    const forceSync = sync === true || sync === 'true'
+    if (!forceSync && memoryAsyncQueue.isEnabled()) {
+      const queued = memoryAsyncQueue.enqueue(memoryParams)
+      console.log(`[Memory] 记忆任务已入队: jobId=${queued.jobId}`)
+      res.json({
+        success: true,
+        queued: true,
+        jobId: queued.jobId,
+        acceptedAt: queued.acceptedAt,
+      })
+      return
+    }
+
+    const result = await memoryAsyncQueue.runSync(memoryParams)
     console.log(`[Memory] 已记录到三级记忆: method=${result.extractionMethod}`)
-    res.json({ success: true, ...result })
+    res.json({ success: true, queued: false, ...result })
   } catch (error) {
     console.error('[Memory] 记录任务失败:', error)
     res.status(500).json({ error: '记录任务失败' })
+  }
+})
+
+router.get('/memory/queue/stats', (_req: Request, res: Response) => {
+  try {
+    res.json({ success: true, stats: memoryAsyncQueue.getStats() })
+  } catch (error) {
+    res.status(500).json({ error: '获取记忆队列状态失败' })
   }
 })
 

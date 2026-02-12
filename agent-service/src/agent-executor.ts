@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { platform } from 'os'
 import { join } from 'path'
 import type { Skill } from 'laborany-shared'
-import { memoryFileManager, memoryOrchestrator } from './memory/index.js'
+import { memoryFileManager, memoryOrchestrator, memoryAsyncQueue } from './memory/index.js'
 import { buildClaudeEnvConfig, resolveClaudeCliLaunch } from './claude-cli.js'
 import { DATA_DIR } from './paths.js'
 
@@ -348,15 +348,21 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
         if (code === 0 && agentResponse.trim()) {
           try {
             if (shouldPersistMemory(skill.meta.id, userQuery)) {
-              const result = await memoryOrchestrator.extractAndUpsert({
+              const memoryParams = {
                 sessionId,
                 skillId: skill.meta.id,
                 userQuery: stripPipelineContext(userQuery),
                 assistantResponse: toolSummary
                   ? `${agentResponse}\n\n## 工具调用记录\n${toolSummary}`
                   : agentResponse,
-              })
-              console.log(`[Agent] 已记录到三级记忆: method=${result.extractionMethod}, cells=${result.written.cells}`)
+              }
+              if (memoryAsyncQueue.isEnabled()) {
+                const queued = memoryAsyncQueue.enqueue(memoryParams)
+                console.log(`[Agent] Memory task queued: jobId=${queued.jobId}`)
+              } else {
+                const result = await memoryAsyncQueue.runSync(memoryParams)
+                console.log(`[Agent] Memory write completed: method=${result.extractionMethod}, cells=${result.written.cells}`)
+              }
             }
           } catch (err) {
             console.error('[Agent] 记录记忆失败:', err)
