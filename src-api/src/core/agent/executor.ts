@@ -53,6 +53,51 @@ function stripPipelineContext(userQuery: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : userQuery
 }
 
+const AGENT_SERVICE_URL = (process.env.AGENT_SERVICE_URL || 'http://localhost:3002').replace(/\/+$/, '')
+const AGENT_SERVICE_TIMEOUT_MS = 15_000
+
+interface JsonFetchResult<T> {
+  ok: boolean
+  status: number
+  data: T | null
+  rawText: string
+}
+
+async function fetchJsonWithTimeout<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs = AGENT_SERVICE_TIMEOUT_MS,
+): Promise<JsonFetchResult<T>> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(`${AGENT_SERVICE_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+    })
+
+    const rawText = await response.text()
+    let data: T | null = null
+    if (rawText) {
+      try {
+        data = JSON.parse(rawText) as T
+      } catch {
+        console.warn(`[Agent] JSON parse failed for ${path}: ${rawText.slice(0, 240)}`)
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data,
+      rawText,
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 interface ExecuteOptions {
   skill: Skill
   query: string
@@ -108,10 +153,9 @@ async function writeClaudeMdWithMemory(
   try {
     // 从 agent-service 获取 Memory 上下文（传入 userQuery 用于智能检索）
     const queryParam = userQuery ? `?query=${encodeURIComponent(userQuery)}` : ''
-    const response = await fetch(`http://localhost:3002/memory-context/${skillId}${queryParam}`)
-    if (response.ok) {
-      const data = await response.json() as { context?: string }
-      const memoryContext = data.context || ''
+    const result = await fetchJsonWithTimeout<{ context?: string }>(`/memory-context/${skillId}${queryParam}`)
+    if (result.ok) {
+      const memoryContext = result.data?.context || ''
 
       // 组合完整的系统提示词
       const fullPrompt = memoryContext
@@ -123,6 +167,9 @@ async function writeClaudeMdWithMemory(
     } else {
       // 如果获取失败，只写入 skill 的系统提示词
       writeFileSync(claudeMdPath, skillSystemPrompt, 'utf-8')
+      console.warn(
+        `[Agent] Memory context request failed: status=${result.status} body=${result.rawText.slice(0, 240)}`,
+      )
       console.log(`[Agent] 已写入 CLAUDE.md（无 Memory）: ${claudeMdPath}`)
     }
   } catch (err) {
@@ -583,19 +630,50 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       if (code === 0 && !signal.aborted && agentResponse.trim()) {
         try {
           if (shouldPersistMemory(skill.meta.id, userQuery)) {
-            await fetch('http://localhost:3002/memory/record-task', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                skillId: skill.meta.id,
-                userQuery: stripPipelineContext(userQuery),
-                assistantResponse: agentResponse,
-              }),
-            })
-            console.log('[Agent] 已记录任务到三级记忆系统')
+            const result = await fetchJsonWithTimeout<{
+              success?: boolean
+              skipped?: boolean
+              reason?: string
+              extractionMethod?: string
+              written?: { cells?: number }
+            }>(
+              '/memory/record-task',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  skillId: skill.meta.id,
+                  userQuery: stripPipelineContext(userQuery),
+                  assistantResponse: agentResponse,
+                }),
+              },
+              20_000,
+            )
+
+            if (!result.ok) {
+              throw new Error(`status=${result.status} body=${result.rawText.slice(0, 240)}`)
+            }
+
+            const payload = result.data ?? {}
+
+            if (!payload.success) {
+              throw new Error(`invalid response body=${JSON.stringify(payload).slice(0, 240)}`)
+            }
+
+            if (payload.skipped) {
+              console.log(`[Agent] Memory write skipped: ${payload.reason || 'unknown reason'}`)
+            } else {
+              console.log(
+                `[Agent] Memory write completed: method=${payload.extractionMethod || 'unknown'}, cells=${payload.written?.cells ?? 0}`,
+              )
+            }
           }
         } catch (err) {
           console.error('[Agent] 记录记忆失败:', err)
+          emitEvent({
+            type: 'warning',
+            content: '记忆写入失败，本次任务结果已保留，但不会更新记忆。',
+          })
         }
       }
 

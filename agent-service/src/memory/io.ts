@@ -5,11 +5,10 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { spawn } from 'child_process'
-import { platform } from 'os'
 import { memoryFileManager } from './file-manager.js'
 import { memorySearch } from './search.js'
 import { profileManager } from './profile/index.js'
-import { buildClaudeEnvConfig, findClaudeCodePath } from '../claude-cli.js'
+import { buildClaudeEnvConfig, resolveClaudeCliLaunch } from '../claude-cli.js'
 import type { ExtractedFact } from './memcell/index.js'
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -294,23 +293,55 @@ export class MemoryCliExtractor {
     return { summary: '', facts: [], keywords: [], sentiment: 'neutral', extractionMethod: 'regex' }
   }
 
+  private buildCliErrorLog(params: {
+    stage: string
+    source?: string
+    command?: string
+    args?: string[]
+    exitCode?: number
+    stderr?: string
+    reason?: unknown
+  }): string {
+    const details: string[] = [
+      `stage=${params.stage}`,
+      `source=${params.source || 'unknown'}`,
+      `command=${params.command || 'none'}`,
+    ]
+    if (params.args && params.args.length > 0) {
+      details.push(`args=${params.args.join(' ')}`)
+    }
+    if (typeof params.exitCode === 'number') {
+      details.push(`exitCode=${params.exitCode}`)
+    }
+    if (params.stderr) {
+      details.push(`stderr=${params.stderr.slice(0, 240)}`)
+    }
+    if (params.reason) {
+      details.push(`reason=${String(params.reason).slice(0, 240)}`)
+    }
+    return `[MemoryCLI] ${details.join(' | ')}`
+  }
+
   async extract(params: ExtractParams): Promise<CliExtractResult> {
-    const claudePath = findClaudeCodePath()
-    if (!claudePath) return this.fallback(params)
+    const cliLaunch = resolveClaudeCliLaunch()
+    if (!cliLaunch) {
+      console.warn(this.buildCliErrorLog({ stage: 'resolve', reason: 'Claude CLI not found' }))
+      return this.fallback(params)
+    }
 
     const prompt = `${EXTRACTION_PROMPT}\n${HARD_NEGATIVE_FEW_SHOTS}\n${this.buildConversation(params.userQuery, params.assistantResponse)}`
     const args = ['--print', '--dangerously-skip-permissions']
     if (process.env.ANTHROPIC_MODEL) {
       args.push('--model', process.env.ANTHROPIC_MODEL)
     }
+    const spawnArgs = [...cliLaunch.argsPrefix, ...args]
 
     const timeout = params.timeoutMs ?? this.timeoutMs
-    const isWindows = platform() === 'win32'
 
     const runOnce = async (): Promise<CliExtractResult> => {
-      const proc = spawn(claudePath, args, {
+      const proc = spawn(cliLaunch.command, spawnArgs, {
         env: buildClaudeEnvConfig(),
-        shell: isWindows,
+        shell: cliLaunch.shell,
         stdio: ['pipe', 'pipe', 'pipe'],
       })
 
@@ -331,6 +362,14 @@ export class MemoryCliExtractor {
       clearTimeout(timer)
 
       if (exitCode !== 0) {
+        console.warn(this.buildCliErrorLog({
+          stage: 'spawn',
+          source: cliLaunch.source,
+          command: cliLaunch.command,
+          args: spawnArgs,
+          exitCode,
+          stderr,
+        }))
         throw new Error(`CLI 提取失败: code=${exitCode} stderr=${stderr.slice(0, 240)}`)
       }
 
@@ -353,11 +392,25 @@ export class MemoryCliExtractor {
 
     try {
       return await runOnce()
-    } catch {
+    } catch (firstError) {
+      console.warn(this.buildCliErrorLog({
+        stage: 'retry-1',
+        source: cliLaunch.source,
+        command: cliLaunch.command,
+        args: spawnArgs,
+        reason: firstError,
+      }))
       try {
         await new Promise(resolve => setTimeout(resolve, 1000))
         return await runOnce()
-      } catch {
+      } catch (secondError) {
+        console.warn(this.buildCliErrorLog({
+          stage: 'fallback',
+          source: cliLaunch.source,
+          command: cliLaunch.command,
+          args: spawnArgs,
+          reason: secondError,
+        }))
         return this.fallback(params)
       }
     }

@@ -11,7 +11,7 @@ import { platform } from 'os'
 import { join } from 'path'
 import type { Skill } from 'laborany-shared'
 import { memoryFileManager, memoryOrchestrator } from './memory/index.js'
-import { buildClaudeEnvConfig, findClaudeCodePath } from './claude-cli.js'
+import { buildClaudeEnvConfig, resolveClaudeCliLaunch } from './claude-cli.js'
 import { DATA_DIR } from './paths.js'
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -194,8 +194,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const historyEntry = `\n[${timestamp}] User:\n${userQuery}\n`
   writeFileSync(historyFile, historyEntry, { flag: 'a' })
 
-  const claudeCodePath = findClaudeCodePath()
-  if (!claudeCodePath) {
+  const cliLaunch = resolveClaudeCliLaunch()
+  if (!cliLaunch) {
     onEvent({
       type: 'error',
       content: 'Claude Code 未安装。请运行: npm install -g @anthropic-ai/claude-code',
@@ -204,10 +204,10 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     return
   }
 
-  console.log(`[Agent] Claude Code: ${claudeCodePath}`)
+  console.log(`[Agent] Claude CLI source: ${cliLaunch.source}`)
+  console.log(`[Agent] Claude CLI command: ${cliLaunch.command}`)
   console.log(`[Agent] Model: ${process.env.ANTHROPIC_MODEL || 'default'}`)
 
-  const isWindows = platform() === 'win32'
   const args = [
     '--print',
     '--output-format', 'stream-json',
@@ -246,10 +246,12 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   console.log(`[Agent] Args: ${args.join(' ')}`)
 
-  const proc = spawn(claudeCodePath, args, {
+  const spawnArgs = [...cliLaunch.argsPrefix, ...args]
+
+  const proc = spawn(cliLaunch.command, spawnArgs, {
     cwd: taskDir,
     env: buildClaudeEnvConfig(),
-    shell: isWindows,
+    shell: cliLaunch.shell,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
 

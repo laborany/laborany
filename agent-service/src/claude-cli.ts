@@ -1,8 +1,69 @@
 import { execSync } from 'child_process'
 import { existsSync } from 'fs'
 import { homedir, platform } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { wrapCmdForUtf8, withUtf8Env } from 'laborany-shared'
+import { RESOURCES_DIR } from './paths.js'
+
+export interface ClaudeCliLaunchConfig {
+  command: string
+  argsPrefix: string[]
+  shell: boolean
+  source: 'bundled' | 'system' | 'env'
+}
+
+function getBundledDirNames(): string[] {
+  const os = platform()
+  const arch = process.arch
+
+  if (os === 'darwin') {
+    const archSpecific = arch === 'arm64' ? 'cli-bundle-arm64' : 'cli-bundle-x64'
+    return [archSpecific, 'cli-bundle']
+  }
+
+  return ['cli-bundle']
+}
+
+function getBundledSearchBases(): string[] {
+  const exeDir = dirname(process.execPath)
+  const parentDir = dirname(exeDir)
+
+  const rawBases = [
+    RESOURCES_DIR,
+    exeDir,
+    parentDir,
+    join(exeDir, 'resources'),
+    join(parentDir, 'resources'),
+    process.cwd(),
+  ]
+
+  return Array.from(new Set(rawBases.map(base => base.replace(/[\\/]+$/, ''))))
+}
+
+function findBundledClaudeLaunch(): ClaudeCliLaunchConfig | undefined {
+  const os = platform()
+  const nodeBinName = os === 'win32' ? 'node.exe' : 'node'
+
+  for (const base of getBundledSearchBases()) {
+    for (const dirName of getBundledDirNames()) {
+      const bundleDir = join(base, dirName)
+      const nodeBin = join(bundleDir, nodeBinName)
+      const cliJs = join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'cli.js')
+
+      if (existsSync(nodeBin) && existsSync(cliJs)) {
+        console.log(`[ClaudeCLI] Using bundled CLI: ${bundleDir}`)
+        return {
+          command: nodeBin,
+          argsPrefix: [cliJs],
+          shell: false,
+          source: 'bundled',
+        }
+      }
+    }
+  }
+
+  return undefined
+}
 
 export function findClaudeCodePath(): string | undefined {
   const os = platform()
@@ -22,7 +83,7 @@ export function findClaudeCodePath(): string | undefined {
       }
     }
   } catch {
-    // 命令路径检测失败则继续尝试默认路径
+    // 鍛戒护璺緞妫€娴嬪け璐ュ垯缁х画灏濊瘯榛樿璺緞
   }
 
   const home = homedir()
@@ -47,6 +108,24 @@ export function findClaudeCodePath(): string | undefined {
   }
 
   return undefined
+}
+
+export function resolveClaudeCliLaunch(): ClaudeCliLaunchConfig | undefined {
+  const bundled = findBundledClaudeLaunch()
+  if (bundled) return bundled
+
+  const claudePath = findClaudeCodePath()
+  if (!claudePath) return undefined
+
+  const isEnvPath = Boolean(process.env.CLAUDE_CODE_PATH && process.env.CLAUDE_CODE_PATH === claudePath)
+  const isCmdShim = platform() === 'win32' && claudePath.toLowerCase().endsWith('.cmd')
+
+  return {
+    command: claudePath,
+    argsPrefix: [],
+    shell: isCmdShim,
+    source: isEnvPath ? 'env' : 'system',
+  }
 }
 
 export function buildClaudeEnvConfig(): Record<string, string | undefined> {
