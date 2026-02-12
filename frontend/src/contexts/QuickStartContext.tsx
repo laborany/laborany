@@ -66,12 +66,44 @@ const LEGACY_TARGET_ID_MAP: Record<string, string> = {
 
 export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
   {
-    id: 'case-docx',
+    id: 'case-skill-creator',
     targetType: 'skill',
-    targetId: 'docx',
-    icon: '📝',
-    name: 'Word文档助手',
-    description: '创建和编辑 Word 文档',
+    targetId: 'skill-creator',
+    icon: '🛠️',
+    name: 'Skill Creator',
+    description: '创建与迭代新的自动化技能',
+  },
+  {
+    id: 'case-xhs-note-creator',
+    targetType: 'skill',
+    targetId: 'xhs-note-creator',
+    icon: '📕',
+    name: '小红书笔记',
+    description: '生成小红书风格文案与配图素材',
+  },
+  {
+    id: 'case-wechat-writer',
+    targetType: 'skill',
+    targetId: 'wechat-writer',
+    icon: '✍️',
+    name: '微信写作',
+    description: '公众号文章策划、写作与排版',
+  },
+  {
+    id: 'case-stock-analyzer',
+    targetType: 'skill',
+    targetId: 'stock-analyzer',
+    icon: '📈',
+    name: '股票分析',
+    description: '实时股票数据采集与分析',
+  },
+  {
+    id: 'case-deep-research',
+    targetType: 'skill',
+    targetId: 'deep-research',
+    icon: '📊',
+    name: '深度研究',
+    description: '多源调研与报告生成',
   },
   {
     id: 'case-pptx',
@@ -81,48 +113,22 @@ export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
     name: 'PPT演示助手',
     description: '制作精美演示文稿',
   },
-  {
-    id: 'case-xlsx',
-    targetType: 'skill',
-    targetId: 'xlsx',
-    icon: '📈',
-    name: 'Excel表格助手',
-    description: '数据分析与可视化',
-  },
-  {
-    id: 'case-email',
-    targetType: 'skill',
-    targetId: 'email-assistant',
-    icon: '✉️',
-    name: '邮件助手',
-    description: '邮件整理、撰写与回复',
-  },
-  {
-    id: 'case-paper',
-    targetType: 'skill',
-    targetId: 'paper-explainer',
-    icon: '📚',
-    name: '论文助手',
-    description: '论文讲解与重点提炼',
-  },
-  {
-    id: 'case-ai-productivity-column',
-    targetType: 'skill',
-    targetId: 'ai-productivity-column',
-    icon: '✍️',
-    name: 'AI生产力专栏助手',
-    description: '协作写作 AI 生产力系统专栏',
-  },
-  {
-    id: 'case-ppt-svg-generator',
-    targetType: 'skill',
-    targetId: 'ppt-svg-generator',
-    icon: '🪄',
-    name: '专栏转PPT技能',
-    description: '已有内容或新文稿一键转 SVG 幻灯片',
-  },
 ]
 
+const LEGACY_DEFAULT_SCENARIO_TARGET_IDS = [
+  'docx',
+  'pptx',
+  'xlsx',
+  'email-assistant',
+  'paper-explainer',
+  'ai-productivity-column',
+  'ppt-svg-generator',
+]
+
+function matchesLegacyDefault(items: HomeCaseItem[]): boolean {
+  if (items.length !== LEGACY_DEFAULT_SCENARIO_TARGET_IDS.length) return false
+  return items.every((item, index) => item.targetId === LEGACY_DEFAULT_SCENARIO_TARGET_IDS[index])
+}
 function makeCaseId(prefix = 'case'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -198,6 +204,10 @@ function loadInitialScenarios(): { items: HomeCaseItem[]; customized: boolean } 
       if (Array.isArray(parsed)) {
         const items = sanitizeItems(parsed)
         if (items.length > 0) {
+          if (matchesLegacyDefault(items)) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SCENARIOS))
+            return { items: DEFAULT_SCENARIOS, customized: false }
+          }
           return { items, customized: !sameAsDefault(items) }
         }
       }
