@@ -14,6 +14,7 @@ import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { API_BASE } from '../config/api'
 import { ExecutionPanel } from '../components/execution'
 import { Tooltip } from '../components/ui'
+import { takePendingFiles } from '../utils/pendingFiles'
 import {
   Dialog,
   DialogContent,
@@ -154,12 +155,13 @@ export default function ExecutePage() {
     const bootstrap = async () => {
       let attached = false
       let continuedBySid = false
+      const pendingFiles = takePendingFiles()
 
       if (sid) {
         attached = await tryAttachRunningSession(sid)
         if (!attached && await canContinueSession(sid)) {
           agent.resumeSession(sid)
-          await agent.execute(query)
+          await agent.execute(query, pendingFiles.length > 0 ? pendingFiles : undefined)
           continuedBySid = true
         }
       }
@@ -171,14 +173,14 @@ export default function ExecutePage() {
             attached = await tryAttachRunningSession(matchedSession.id)
           } else {
             agent.resumeSession(matchedSession.id)
-            await agent.execute(query)
+            await agent.execute(query, pendingFiles.length > 0 ? pendingFiles : undefined)
             continuedBySid = true
           }
         }
       }
 
       if (!attached && !continuedBySid) {
-        await agent.execute(query)
+        await agent.execute(query, pendingFiles.length > 0 ? pendingFiles : undefined)
       }
 
       setSearchParams({}, { replace: true })

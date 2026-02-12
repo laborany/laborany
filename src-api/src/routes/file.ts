@@ -251,7 +251,7 @@ file.get('/tasks/:sessionId/files/*', (c) => handleFileDownload(c, 'tasks'))
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       文件上传（复合技能输入）                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function getUploadsDir(): string {
+export function getUploadsDir(): string {
   const isProduction = process.env.NODE_ENV === 'production'
 
   if (isProduction) {

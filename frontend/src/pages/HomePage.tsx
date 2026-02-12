@@ -8,7 +8,8 @@ import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { type QuickStartItem } from '../contexts/QuickStartContext'
 import { GuideBanner } from '../components/home/GuideBanner'
 import { ScenarioCards } from '../components/home/ScenarioCards'
-import { HomeChat } from '../components/home/chat/HomeChat'
+import ChatInput from '../components/shared/ChatInput'
+import { setPendingFiles } from '../utils/pendingFiles'
 import { ConversationPanel, type DecisionPrompt } from '../components/home/ConversationPanel'
 import { CronSetupCard } from '../components/execution'
 import { SkillExecutingView, type HomePhase, type ExecutionContext } from '../components/home/ExecutingViews'
@@ -65,8 +66,9 @@ export default function HomePage() {
     if (!converse.action) handledActionRef.current = null
   }, [converse.action])
 
-  const handleExecute = useCallback((targetId: string, query: string) => {
+  const handleExecute = useCallback((targetId: string, query: string, files?: File[]) => {
     latestUserQueryRef.current = query
+    if (files && files.length > 0) setPendingFiles(files)
     if (targetId) {
       navigate(`/execute/${targetId}?q=${encodeURIComponent(query)}`)
       return
@@ -247,7 +249,6 @@ export default function HomePage() {
       onExecute={handleExecute}
       selectedCase={selectedCase}
       onSelectCase={setSelectedCase}
-      onClearSelectedCase={() => setSelectedCase(null)}
       cronPending={cronPending}
       onCronConfirm={handleCronConfirm}
       onCronCancel={() => setCronPending(null)}
@@ -361,12 +362,11 @@ export default function HomePage() {
   )
 }
 
-function IdleView({ userName, onExecute, selectedCase, onSelectCase, onClearSelectedCase, cronPending, onCronConfirm, onCronCancel }: {
+function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending, onCronConfirm, onCronCancel }: {
   userName?: string
-  onExecute: (targetId: string, query: string) => void
+  onExecute: (targetId: string, query: string, files?: File[]) => void
   selectedCase: QuickStartItem | null
   onSelectCase: (item: QuickStartItem) => void
-  onClearSelectedCase: () => void
   cronPending: CronPending | null
   onCronConfirm: (next: CronPending) => Promise<void>
   onCronCancel: () => void
@@ -386,10 +386,16 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, onClearSele
           selectedId={selectedCase?.id}
           onSelect={onSelectCase}
         />
-        <HomeChat
-          onExecute={onExecute}
-          selectedCase={selectedCase}
-          onClearSelectedCase={onClearSelectedCase}
+        <ChatInput
+          onSubmit={(query, files) => onExecute(selectedCase?.targetId || '', query, files)}
+          onStop={() => {}}
+          isRunning={false}
+          variant="home"
+          placeholder={selectedCase
+            ? `向 ${selectedCase.name} 描述你的任务...`
+            : '描述你想完成的任务...'
+          }
+          autoFocus
         />
         <GuideBanner />
         {cronPending && (

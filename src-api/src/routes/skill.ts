@@ -4,7 +4,7 @@ import { streamSSE } from 'hono/streaming'
 import { v4 as uuid } from 'uuid'
 import { readFile, readdir, writeFile, mkdir, rm } from 'fs/promises'
 import { join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readdirSync } from 'fs'
 import { stat } from 'fs/promises'
 import {
   loadSkill,
@@ -15,6 +15,18 @@ import {
   type RuntimeEvent,
 } from '../core/agent/index.js'
 import { dbHelper } from '../core/database.js'
+import { getUploadsDir } from './file.js'
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │  将前端上传的文件 ID 解析为绝对路径                                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function resolveUploadedFileId(fileId: string): string | null {
+  const uploadsDir = getUploadsDir()
+  if (!existsSync(uploadsDir)) return null
+  const files = readdirSync(uploadsDir)
+  const matched = files.find(f => f.startsWith(fileId))
+  return matched ? join(uploadsDir, matched) : null
+}
 
 const skill = new Hono()
 
@@ -214,6 +226,29 @@ skill.post('/execute', async (c) => {
       }
     } catch (err) {
       console.error('保存文件失败:', err)
+    }
+  }
+
+  /* ┌──────────────────────────────────────────────────────────────────────────┐
+   * │  解析 query 中的文件 ID 为绝对路径                                        │
+   * │  前端上传文件后 query 包含 [已上传文件 ID: uuid1, uuid2]                  │
+   * │  需要将 ID 解析为 agent 可访问的绝对路径                                  │
+   * └──────────────────────────────────────────────────────────────────────────┘ */
+  const fileIdPattern = /\[已上传文件 ID:\s*([^\]]+)\]/
+  const fileIdMatch = query.match(fileIdPattern)
+
+  if (fileIdMatch) {
+    const ids = fileIdMatch[1].split(',').map(s => s.trim()).filter(Boolean)
+    for (const id of ids) {
+      const resolved = resolveUploadedFileId(id)
+      if (resolved) {
+        uploadedFilePaths.push(resolved)
+      } else {
+        console.warn(`[Skill] 无法解析文件 ID: ${id}`)
+      }
+    }
+    if (uploadedFilePaths.length > 0) {
+      query = query.replace(fileIdPattern, '').trim()
     }
   }
 
