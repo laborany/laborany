@@ -105,7 +105,6 @@
     "win": {
       "target": "nsis",
       "icon": "src-tauri/icons/icon.ico",
-      "signAndEditExecutable": false,
       "extraResources": [
         {
           "from": "src-api/dist/laborany-api.exe",
