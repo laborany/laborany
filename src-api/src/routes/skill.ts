@@ -2,8 +2,8 @@
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { v4 as uuid } from 'uuid'
-import { readFile, readdir, writeFile, mkdir, rm } from 'fs/promises'
-import { join } from 'path'
+import { readFile, readdir, writeFile, mkdir, rm, copyFile } from 'fs/promises'
+import { join, extname } from 'path'
 import { existsSync, readdirSync } from 'fs'
 import { stat } from 'fs/promises'
 import {
@@ -26,6 +26,28 @@ function resolveUploadedFileId(fileId: string): string | null {
   const files = readdirSync(uploadsDir)
   const matched = files.find(f => f.startsWith(fileId))
   return matched ? join(uploadsDir, matched) : null
+}
+
+function sanitizeFileName(fileName: string): string {
+  const normalized = (fileName || '').replace(/\\/g, '/').split('/').pop()?.trim() || ''
+  const safe = normalized.replace(/[<>:"|?*\x00-\x1f]/g, '_')
+  return safe || `upload-${Date.now()}`
+}
+
+function ensureUniqueTaskFileName(taskDir: string, preferredName: string): string {
+  const safeName = sanitizeFileName(preferredName)
+  const extension = extname(safeName)
+  const baseName = safeName.slice(0, safeName.length - extension.length) || 'upload'
+
+  let counter = 0
+  while (true) {
+    const suffix = counter === 0 ? '' : `-${counter}`
+    const candidateName = `${baseName}${suffix}${extension}`
+    if (!existsSync(join(taskDir, candidateName))) {
+      return candidateName
+    }
+    counter += 1
+  }
 }
 
 const skill = new Hono()
@@ -212,17 +234,26 @@ skill.post('/execute', async (c) => {
   }
 
   const sessionId = existingSessionId || uuid()
+  const taskDir = ensureTaskDir(sessionId)
 
-  // 淇濆瓨涓婁紶鐨勬枃浠?
-  const uploadedFilePaths: string[] = []
+  // 淇濆瓨涓婁紶鏂囦欢鍒?task 鐩綍锛堢‘淇?cwd 鍙洿鎺ヨ闂級
+  const uploadedFileNames: string[] = []
+  const uploadedFileNameSet = new Set<string>()
+  const addUploadedFileName = (name: string) => {
+    if (!uploadedFileNameSet.has(name)) {
+      uploadedFileNameSet.add(name)
+      uploadedFileNames.push(name)
+    }
+  }
+
   if (files.length > 0) {
     try {
-      const taskDir = ensureTaskDir(sessionId)
       for (const file of files) {
         const arrayBuffer = await file.arrayBuffer()
-        const filePath = join(taskDir, file.name)
+        const safeName = ensureUniqueTaskFileName(taskDir, file.name)
+        const filePath = join(taskDir, safeName)
         await writeFile(filePath, Buffer.from(arrayBuffer))
-        uploadedFilePaths.push(filePath)
+        addUploadedFileName(safeName)
       }
     } catch (err) {
       console.error('保存文件失败:', err)
@@ -234,28 +265,41 @@ skill.post('/execute', async (c) => {
    * │  前端上传文件后 query 包含 [已上传文件 ID: uuid1, uuid2]                  │
    * │  需要将 ID 解析为 agent 可访问的绝对路径                                  │
    * └──────────────────────────────────────────────────────────────────────────┘ */
-  const fileIdPattern = /\[已上传文件 ID:\s*([^\]]+)\]/
-  const fileIdMatch = query.match(fileIdPattern)
+  const fileIdPattern = /\[(?:已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
+  const fileIdMatches = [...query.matchAll(fileIdPattern)]
 
-  if (fileIdMatch) {
-    const ids = fileIdMatch[1].split(',').map(s => s.trim()).filter(Boolean)
-    for (const id of ids) {
-      const resolved = resolveUploadedFileId(id)
-      if (resolved) {
-        uploadedFilePaths.push(resolved)
-      } else {
-        console.warn(`[Skill] 无法解析文件 ID: ${id}`)
+  if (fileIdMatches.length > 0) {
+    for (const match of fileIdMatches) {
+      const ids = (match[1] || '')
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean)
+
+      for (const id of ids) {
+        const resolvedPath = resolveUploadedFileId(id)
+        if (!resolvedPath) {
+          console.warn(`[Skill] 无法解析文件 ID: ${id}`)
+          continue
+        }
+
+        try {
+          const sourceFileName = resolvedPath.split(/[\\/]/).pop() || `${id}.bin`
+          const safeName = ensureUniqueTaskFileName(taskDir, sourceFileName)
+          await copyFile(resolvedPath, join(taskDir, safeName))
+          addUploadedFileName(safeName)
+        } catch (error) {
+          console.error(`[Skill] 复制上传文件到 task 目录失败: ${id}`, error)
+        }
       }
     }
-    if (uploadedFilePaths.length > 0) {
-      query = query.replace(fileIdPattern, '').trim()
-    }
+
+    query = query.replace(fileIdPattern, '').trim()
   }
 
   let finalQuery = query
-  if (uploadedFilePaths.length > 0) {
-    const fileList = uploadedFilePaths.map(p => `- ${p}`).join('\n')
-    finalQuery = `${query}\n\n[Uploaded files]\n${fileList}\n\nPlease read these files first, then process the user request.`
+  if (uploadedFileNames.length > 0) {
+    const fileList = uploadedFileNames.map(name => `- ${name}`).join('\n')
+    finalQuery = `${query}\n\n[Uploaded files in current task directory]\n${fileList}\n\n这些文件都在当前任务工作目录下，请先读取这些文件，再处理用户请求。`
   }
 
   if (existingSessionId && runtimeTaskManager.isRunning(existingSessionId)) {
@@ -271,7 +315,7 @@ skill.post('/execute', async (c) => {
     }
   }
 
-  const workDir = ensureTaskDir(sessionId)
+  const workDir = taskDir
 
   if (!existingSessionId) {
     dbHelper.run(
