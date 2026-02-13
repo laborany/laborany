@@ -125,9 +125,27 @@ const LEGACY_DEFAULT_SCENARIO_TARGET_IDS = [
   'ppt-svg-generator',
 ]
 
+const LEGACY_QUICK_START_DEFAULT_TARGET_IDS = [
+  'docx',
+  'pptx',
+  'xlsx',
+  'paper-explainer',
+  'diagram',
+  'video-creator',
+]
+
 function matchesLegacyDefault(items: HomeCaseItem[]): boolean {
   if (items.length !== LEGACY_DEFAULT_SCENARIO_TARGET_IDS.length) return false
   return items.every((item, index) => item.targetId === LEGACY_DEFAULT_SCENARIO_TARGET_IDS[index])
+}
+
+function matchesLegacyQuickStartDefault(items: HomeCaseItem[]): boolean {
+  if (items.length !== LEGACY_QUICK_START_DEFAULT_TARGET_IDS.length) return false
+  return items.every((item, index) => item.targetId === LEGACY_QUICK_START_DEFAULT_TARGET_IDS[index])
+}
+
+function shouldResetToLatestDefault(items: HomeCaseItem[]): boolean {
+  return matchesLegacyDefault(items) || matchesLegacyQuickStartDefault(items)
 }
 function makeCaseId(prefix = 'case'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -204,7 +222,7 @@ function loadInitialScenarios(): { items: HomeCaseItem[]; customized: boolean } 
       if (Array.isArray(parsed)) {
         const items = sanitizeItems(parsed)
         if (items.length > 0) {
-          if (matchesLegacyDefault(items)) {
+          if (shouldResetToLatestDefault(items)) {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SCENARIOS))
             return { items: DEFAULT_SCENARIOS, customized: false }
           }
@@ -223,6 +241,11 @@ function loadInitialScenarios(): { items: HomeCaseItem[]; customized: boolean } 
       if (Array.isArray(parsed)) {
         const migrated = migrateLegacyItems(parsed as LegacyQuickStartItem[])
         if (migrated.length > 0) {
+          if (shouldResetToLatestDefault(migrated)) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SCENARIOS))
+            localStorage.removeItem(LEGACY_STORAGE_KEY)
+            return { items: DEFAULT_SCENARIOS, customized: false }
+          }
           localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated))
           localStorage.removeItem(LEGACY_STORAGE_KEY)
           return { items: migrated, customized: true }
