@@ -1,17 +1,8 @@
 import { useCallback, useRef, useState } from 'react'
-import { AGENT_API_BASE } from '../config/api'
+import { AGENT_API_BASE, API_BASE } from '../config/api'
 import type { PendingQuestion } from './useAgent'
 import type { AgentMessage } from '../types/message'
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │  ConverseAction - 对话引擎返回的统一动作                                │
- * │                                                                        │
- * │  四种动作覆盖全部场景：                                                  │
- * │    recommend_capability  → 匹配到已有 capability，直接跳转执行          │
- * │    execute_generic       → 通用执行模式                                 │
- * │    create_capability     → 需要创建新 capability                        │
- * │    setup_schedule        → 定时任务意图                                 │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface ConverseAction {
   action:
     | 'recommend_capability'
@@ -33,7 +24,7 @@ export interface ConverseAction {
 
 export interface UseConverseReturn {
   messages: AgentMessage[]
-  sendMessage: (text: string) => Promise<void>
+  sendMessage: (text: string, files?: File[]) => Promise<void>
   stop: () => void
   respondToQuestion: (questionId: string, answers: Record<string, string>) => Promise<void>
   action: ConverseAction | null
@@ -45,6 +36,7 @@ export interface UseConverseReturn {
   } | null
   isThinking: boolean
   sessionId: string | null
+  sessionFileIds: string[]
   error: string | null
   reset: () => void
 }
@@ -52,6 +44,7 @@ export interface UseConverseReturn {
 type ConversePhase = NonNullable<UseConverseReturn['state']>['phase']
 
 const ACTION_MARKER_RE = /\n?LABORANY_ACTION:\s*\{[\s\S]*?\}\s*$/
+const FILE_IDS_MARKER_RE = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
 
 function isAbortLikeError(err: unknown): boolean {
   if (!(err instanceof Error)) return false
@@ -64,6 +57,59 @@ function stripActionMarker(text: string): string {
   return text.replace(ACTION_MARKER_RE, '').trim()
 }
 
+function mergeUniqueIds(...lists: string[][]): string[] {
+  const merged = new Set<string>()
+  for (const list of lists) {
+    for (const rawId of list) {
+      const id = rawId.trim()
+      if (id) {
+        merged.add(id)
+      }
+    }
+  }
+  return Array.from(merged)
+}
+
+function appendFileIdMarker(text: string, fileIds: string[]): string {
+  const cleaned = text.replace(FILE_IDS_MARKER_RE, '').trim()
+  if (!fileIds.length) {
+    return cleaned
+  }
+  return `${cleaned}\n\n[LABORANY_FILE_IDS: ${fileIds.join(', ')}]`
+}
+
+async function uploadFiles(files: File[]): Promise<string[]> {
+  const token = localStorage.getItem('token')
+  const headers: HeadersInit = {}
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const uploadedIds: string[] = []
+  for (const file of files) {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      const res = await fetch(`${API_BASE}/files/upload`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      })
+      if (!res.ok) continue
+
+      const payload = await res.json().catch(() => null) as { id?: string } | null
+      if (payload?.id) {
+        uploadedIds.push(payload.id)
+      }
+    } catch {
+      // keep uploading the rest
+    }
+  }
+
+  return uploadedIds
+}
+
 export function useConverse(): UseConverseReturn {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [action, setAction] = useState<ConverseAction | null>(null)
@@ -71,9 +117,11 @@ export function useConverse(): UseConverseReturn {
   const [state, setState] = useState<UseConverseReturn['state']>(null)
   const [isThinking, setIsThinking] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionFileIds, setSessionFileIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
 
   const sessionIdRef = useRef<string | null>(null)
+  const sessionFileIdsRef = useRef<string[]>([])
   const messagesRef = useRef<AgentMessage[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const requestSeqRef = useRef(0)
@@ -86,10 +134,7 @@ export function useConverse(): UseConverseReturn {
     setIsThinking(false)
   }, [])
 
-  const processSSEStream = useCallback(async (
-    res: globalThis.Response,
-    _userMessageList: AgentMessage[],
-  ) => {
+  const processSSEStream = useCallback(async (res: globalThis.Response) => {
     const reader = res.body?.getReader()
     if (!reader) return
 
@@ -216,7 +261,7 @@ export function useConverse(): UseConverseReturn {
         const data = JSON.parse(dataText) as Record<string, unknown>
         handleEvent(eventType, data)
       } catch {
-        // 忽略单条 SSE 解析错误
+        // ignore malformed SSE block
       }
     }
 
@@ -252,19 +297,20 @@ export function useConverse(): UseConverseReturn {
     }
   }, [])
 
-  const sendMessage = useCallback(async (text: string) => {
+  const sendMessage = useCallback(async (text: string, files: File[] = []) => {
     const requestSeq = ++requestSeqRef.current
     const q = text.trim()
-    if (!q) return
+    if (!q && files.length === 0) return
 
-    // 先中止上一轮未结束请求，避免问答等待态和新请求并发导致状态滞后
+    const userInput = q || 'I uploaded files. Please read them first and continue.'
+
     abortRef.current?.abort()
     abortRef.current = null
 
     const userMessage: AgentMessage = {
       id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       type: 'user',
-      content: q,
+      content: userInput,
       timestamp: new Date(),
     }
 
@@ -279,18 +325,38 @@ export function useConverse(): UseConverseReturn {
     abortRef.current = controller
 
     try {
+      let mergedFileIds = sessionFileIdsRef.current
+      if (files.length > 0) {
+        const newFileIds = await uploadFiles(files)
+        if (newFileIds.length > 0) {
+          mergedFileIds = mergeUniqueIds(sessionFileIdsRef.current, newFileIds)
+          sessionFileIdsRef.current = mergedFileIds
+          setSessionFileIds(mergedFileIds)
+        }
+      }
+
+      const payloadMessages = updated
+        .filter((item) => item.type !== 'tool')
+        .map((item) => ({
+          role: item.type === 'assistant' ? 'assistant' : 'user',
+          content: item.content,
+        }))
+
+      if (payloadMessages.length > 0) {
+        const lastIdx = payloadMessages.length - 1
+        payloadMessages[lastIdx] = {
+          ...payloadMessages[lastIdx],
+          content: appendFileIdMarker(userInput, mergedFileIds),
+        }
+      }
+
       const res = await fetch(`${AGENT_API_BASE}/converse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
           sessionId: sessionIdRef.current,
-          messages: updated
-            .filter((item) => item.type !== 'tool')
-            .map((item) => ({
-              role: item.type === 'assistant' ? 'assistant' : 'user',
-              content: item.content,
-            })),
+          messages: payloadMessages,
         }),
       })
 
@@ -305,13 +371,13 @@ export function useConverse(): UseConverseReturn {
               timestamp: new Date(),
             },
           ]))
-          setAction({ action: 'execute_generic', query: q, planSteps: [] })
+          setAction({ action: 'execute_generic', query: userInput, planSteps: [] })
           return
         }
         throw new Error(`请求失败: ${res.status}`)
       }
 
-      await processSSEStream(res, updated)
+      await processSSEStream(res)
     } catch (err) {
       if (isAbortLikeError(err)) {
         return
@@ -355,8 +421,10 @@ export function useConverse(): UseConverseReturn {
     setPendingQuestion(null)
     setState(null)
     setSessionId(null)
+    setSessionFileIds([])
     setError(null)
     sessionIdRef.current = null
+    sessionFileIdsRef.current = []
   }, [stop])
 
   return {
@@ -369,6 +437,7 @@ export function useConverse(): UseConverseReturn {
     state,
     isThinking,
     sessionId,
+    sessionFileIds,
     error,
     reset,
   }

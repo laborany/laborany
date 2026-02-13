@@ -1,4 +1,4 @@
-import { readdir, rename, stat } from 'fs/promises'
+import { copyFile, mkdir, readdir, rename, stat } from 'fs/promises'
 import type { Skill, CompositeStep } from 'laborany-shared'
 import {
   loadSkill,
@@ -9,10 +9,32 @@ import {
 import { dbHelper } from '../database.js'
 import { executeAgent, ensureTaskDir, type AgentEvent } from './executor.js'
 import { sessionManager } from './session-manager.js'
-import { join } from 'path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'path'
 import { existsSync } from 'fs'
 
 type RuntimeTaskStatus = 'running' | 'completed' | 'failed' | 'aborted'
+
+const EXTERNAL_SYNC_DIR = '_external'
+const TOOL_PATH_KEYS = new Set([
+  'path',
+  'file',
+  'filePath',
+  'file_path',
+  'output',
+  'outputPath',
+  'output_path',
+  'savePath',
+  'save_path',
+  'destination',
+  'dest',
+  'target',
+  'targetPath',
+  'target_path',
+  'cwd',
+  'workdir',
+  'workDir',
+  'command',
+])
 
 export type RuntimeEvent =
   | AgentEvent
@@ -97,6 +119,7 @@ interface RuntimeTask {
   controller: AbortController
   events: RuntimeEvent[]
   subscribers: Set<(event: RuntimeEvent) => void | Promise<void>>
+  externalPathCandidates: Set<string>
   donePromise: Promise<void>
   resolveDone: () => void
 }
@@ -161,6 +184,7 @@ class RuntimeTaskManager {
       controller: new AbortController(),
       events: [],
       subscribers: new Set(),
+      externalPathCandidates: new Set(),
       donePromise,
       resolveDone,
     }
@@ -339,6 +363,198 @@ class RuntimeTaskManager {
     this.tasks.clear()
   }
 
+  private isPathLikeText(value: string): boolean {
+    const text = value.trim()
+    if (!text || text.length > 1024) return false
+    if (/^[a-z]+:\/\//i.test(text)) return false
+    if (text.startsWith('file://')) return true
+    if (/^[a-zA-Z]:[\\/]/.test(text)) return true
+    if (/^(?:~|\.{1,2})[\\/]/.test(text)) return true
+    if (text.startsWith('/') || text.includes('\\')) return true
+    if (text.includes('/')) return true
+    return false
+  }
+
+  private normalizeCandidatePath(rawPath: string, workDir: string): string | null {
+    let candidate = rawPath.trim()
+    if (!candidate) return null
+    candidate = candidate.replace(/^[`"'(]+|[`"')]+$/g, '')
+    if (!candidate) return null
+
+    if (candidate.startsWith('file://')) {
+      try {
+        candidate = decodeURIComponent(candidate.slice('file://'.length))
+      } catch {
+        candidate = candidate.slice('file://'.length)
+      }
+    }
+
+    if (candidate.startsWith('~')) {
+      return null
+    }
+
+    const absolute = isAbsolute(candidate) ? resolve(candidate) : resolve(workDir, candidate)
+    return absolute
+  }
+
+  private extractPathCandidatesFromText(text: string): string[] {
+    const values: string[] = []
+
+    const quotedRegex = /["'`]([^"'`\r\n]+)["'`]/g
+    for (const match of text.matchAll(quotedRegex)) {
+      const token = (match[1] || '').trim()
+      if (this.isPathLikeText(token)) {
+        values.push(token)
+      }
+    }
+
+    for (const rawToken of text.split(/\s+/)) {
+      const token = rawToken.trim().replace(/^[`"'(]+|[`"'),;]+$/g, '')
+      if (this.isPathLikeText(token)) {
+        values.push(token)
+      }
+    }
+
+    return values
+  }
+
+  private collectPathCandidatesFromToolInput(toolInput: Record<string, unknown>): string[] {
+    const values: string[] = []
+
+    const visit = (node: unknown, keyHint = ''): void => {
+      if (typeof node === 'string') {
+        const key = keyHint.toLowerCase()
+        const keyLooksLikePath = TOOL_PATH_KEYS.has(keyHint)
+          || /(?:path|file|output|dest|target|cwd|workdir)/i.test(keyHint)
+        if (key === 'command') {
+          values.push(...this.extractPathCandidatesFromText(node))
+          return
+        }
+        if (keyLooksLikePath && this.isPathLikeText(node)) {
+          values.push(node)
+          return
+        }
+        if (this.isPathLikeText(node) && node.length < 300) {
+          values.push(node)
+        }
+        return
+      }
+
+      if (Array.isArray(node)) {
+        node.forEach(item => visit(item, keyHint))
+        return
+      }
+
+      if (!node || typeof node !== 'object') {
+        return
+      }
+
+      for (const [nestedKey, nestedValue] of Object.entries(node as Record<string, unknown>)) {
+        visit(nestedValue, nestedKey)
+      }
+    }
+
+    visit(toolInput)
+    return Array.from(new Set(values))
+  }
+
+  private collectExternalPathCandidates(task: RuntimeTask, event: AgentEvent): void {
+    const candidates = new Set<string>()
+
+    if (event.type === 'tool_use' && event.toolInput && typeof event.toolInput === 'object') {
+      const fromToolInput = this.collectPathCandidatesFromToolInput(event.toolInput)
+      fromToolInput.forEach(item => candidates.add(item))
+    }
+
+    if (event.type === 'tool_result' && event.toolResult) {
+      const fromToolResult = this.extractPathCandidatesFromText(event.toolResult)
+      fromToolResult.forEach(item => candidates.add(item))
+    }
+
+    for (const rawPath of candidates) {
+      const normalized = this.normalizeCandidatePath(rawPath, task.workDir)
+      if (!normalized) continue
+      task.externalPathCandidates.add(normalized)
+    }
+  }
+
+  private isPathInside(baseDir: string, targetPath: string): boolean {
+    const normalizedBase = resolve(baseDir)
+    const normalizedTarget = resolve(targetPath)
+
+    const baseKey = process.platform === 'win32' ? normalizedBase.toLowerCase() : normalizedBase
+    const targetKey = process.platform === 'win32' ? normalizedTarget.toLowerCase() : normalizedTarget
+    const rel = relative(baseKey, targetKey)
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  }
+
+  private toExternalRelativePath(sourcePath: string): string {
+    let normalized = resolve(sourcePath).replace(/\\/g, '/')
+    normalized = normalized.replace(/^[a-zA-Z]:\//, (matched) => `drive-${matched[0].toLowerCase()}/`)
+    normalized = normalized.replace(/^\/+/, 'root/')
+
+    const segments = normalized
+      .split('/')
+      .filter(Boolean)
+      .map(segment => segment.replace(/[<>:"|?*\x00-\x1f]/g, '_'))
+
+    if (segments.length === 0) {
+      return 'external-file'
+    }
+
+    return join(...segments)
+  }
+
+  private ensureUniqueDestinationPath(initialPath: string): string {
+    if (!existsSync(initialPath)) {
+      return initialPath
+    }
+
+    const parentDir = dirname(initialPath)
+    const ext = extname(initialPath)
+    const name = basename(initialPath, ext)
+
+    let counter = 1
+    while (true) {
+      const candidate = join(parentDir, `${name}-${counter}${ext}`)
+      if (!existsSync(candidate)) {
+        return candidate
+      }
+      counter += 1
+    }
+  }
+
+  private async syncExternalArtifacts(task: RuntimeTask): Promise<string[]> {
+    if (task.externalPathCandidates.size === 0) return []
+
+    const copied: string[] = []
+    const externalRoot = join(task.workDir, EXTERNAL_SYNC_DIR)
+
+    for (const candidatePath of task.externalPathCandidates) {
+      if (this.isPathInside(task.workDir, candidatePath)) {
+        continue
+      }
+
+      try {
+        const info = await stat(candidatePath)
+        if (!info.isFile()) continue
+        if (info.mtimeMs < task.startedAt) continue
+
+        const relativePath = this.toExternalRelativePath(candidatePath)
+        const destination = this.ensureUniqueDestinationPath(join(externalRoot, relativePath))
+        await mkdir(dirname(destination), { recursive: true })
+        await copyFile(candidatePath, destination)
+
+        const taskRelativePath = relative(task.workDir, destination).replace(/\\/g, '/')
+        copied.push(taskRelativePath)
+      } catch {
+        continue
+      }
+    }
+
+    return copied
+  }
+
   private async runTask(task: RuntimeTask, options: StartTaskOptions): Promise<void> {
     sessionManager.register(task.sessionId, task.controller)
 
@@ -377,6 +593,14 @@ class RuntimeTaskManager {
       this.emitEvent(task, { type: 'error', content: message })
     } finally {
       sessionManager.unregister(task.sessionId)
+
+      const syncedExternalArtifacts = await this.syncExternalArtifacts(task)
+      if (syncedExternalArtifacts.length > 0) {
+        this.emitEvent(task, {
+          type: 'warning',
+          content: `已同步 ${syncedExternalArtifacts.length} 个外部产物到 ${EXTERNAL_SYNC_DIR} 目录`,
+        })
+      }
 
       if (!task.events.some((event) => event.type === 'done')) {
         this.emitEvent(task, { type: 'done' })
@@ -584,6 +808,8 @@ class RuntimeTaskManager {
     if (event.type === 'text' && event.content) {
       task.assistantContent += event.content
     }
+
+    this.collectExternalPathCandidates(task, event)
 
     if (event.type === 'tool_use') {
       dbHelper.run(

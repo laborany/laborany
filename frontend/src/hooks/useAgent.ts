@@ -636,7 +636,7 @@ export function useAgent(skillId: string) {
 
         let finalQuery = query
         if (fileIds.length > 0) {
-          finalQuery = `${query}\n\n[已上传文件 ID: ${fileIds.join(', ')}]`
+          finalQuery = `${query}\n\n[LABORANY_FILE_IDS: ${fileIds.join(', ')}]`
         }
 
         headers['Content-Type'] = 'application/json'

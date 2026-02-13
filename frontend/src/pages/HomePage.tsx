@@ -16,6 +16,8 @@ import { SkillExecutingView, type HomePhase, type ExecutionContext } from '../co
 import { PlanReviewPanel } from '../components/home/PlanReviewPanel'
 import { CandidateConfirmView, FallbackBanner, ErrorView } from '../components/home/DispatchViews'
 
+const FILE_IDS_MARKER_RE = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
+
 interface CandidateInfo {
   variant: 'recommend' | 'create'
   targetId?: string
@@ -66,15 +68,26 @@ export default function HomePage() {
     if (!converse.action) handledActionRef.current = null
   }, [converse.action])
 
+  const appendSessionFilesMarker = useCallback((rawQuery: string): string => {
+    const query = rawQuery.trim()
+    if (!query) return query
+
+    const fileIds = converse.sessionFileIds
+    if (!fileIds.length) return query
+
+    const cleaned = query.replace(FILE_IDS_MARKER_RE, '').trim()
+    return `${cleaned}\n\n[LABORANY_FILE_IDS: ${fileIds.join(', ')}]`
+  }, [converse.sessionFileIds])
+
   const handleExecute = useCallback((targetId: string, query: string, files?: File[]) => {
     latestUserQueryRef.current = query
-    if (files && files.length > 0) setPendingFiles(files)
     if (targetId) {
+      if (files && files.length > 0) setPendingFiles(files)
       navigate(`/execute/${targetId}?q=${encodeURIComponent(query)}`)
       return
     }
     setPhase('analyzing')
-    converse.sendMessage(query)
+    converse.sendMessage(query, files)
   }, [navigate, converse.sendMessage])
 
   useEffect(() => {
@@ -88,7 +101,7 @@ export default function HomePage() {
       setCandidate({
         variant: 'recommend',
         targetId: action.targetId,
-        query: action.query,
+        query: appendSessionFilesMarker(action.query),
         reason: action.reason,
         confidence: action.confidence,
         matchType: action.matchType,
@@ -99,7 +112,7 @@ export default function HomePage() {
 
     if (action.action === 'execute_generic') {
       const originQuery = latestUserQueryRef.current || action.query || ''
-      const query = action.query || originQuery
+      const query = appendSessionFilesMarker(action.query || originQuery)
       if (action.planSteps && action.planSteps.length > 0) {
         setGenericPlan({ query, originQuery, planSteps: action.planSteps })
         setPhase('plan_review')
@@ -112,7 +125,7 @@ export default function HomePage() {
 
     if (action.action === 'create_capability') {
       const seedQuery = action.seedQuery || action.query || latestUserQueryRef.current || ''
-      setCandidate({ variant: 'create', query: seedQuery, reason: action.reason })
+      setCandidate({ variant: 'create', query: appendSessionFilesMarker(seedQuery), reason: action.reason })
       setPhase('candidate_found')
       return
     }
@@ -133,7 +146,7 @@ export default function HomePage() {
         ],
       })
     }
-  }, [converse.action, converse.pendingQuestion])
+  }, [appendSessionFilesMarker, converse.action, converse.pendingQuestion])
 
   useEffect(() => {
     if (converse.error && phase === 'analyzing') {
@@ -162,15 +175,15 @@ export default function HomePage() {
       setExecCtx({
         type: 'skill',
         id: 'skill-creator',
-        query: candidate.query,
+        query: appendSessionFilesMarker(candidate.query),
         originQuery: latestUserQueryRef.current || candidate.query,
       })
       setPhase('creating_proposal')
     }
-  }, [candidate, converse.sessionId, navigate])
+  }, [appendSessionFilesMarker, candidate, converse.sessionId, navigate])
 
   const handleCandidateReject = useCallback(() => {
-    const query = candidate?.query || ''
+    const query = appendSessionFilesMarker(candidate?.query || '')
     setCandidate(null)
     setExecCtx({
       type: 'skill',
@@ -179,7 +192,7 @@ export default function HomePage() {
       originQuery: latestUserQueryRef.current || query,
     })
     setPhase('fallback_general')
-  }, [candidate])
+  }, [appendSessionFilesMarker, candidate])
 
   const handleScheduleDecision = useCallback((key: string) => {
     if (key === 'confirm' && scheduleAction) {
@@ -230,7 +243,7 @@ export default function HomePage() {
     originQuery?: string
   }) => {
     setPhase('routing')
-    const query = created.originQuery || execCtx?.originQuery || execCtx?.query || ''
+    const query = appendSessionFilesMarker(created.originQuery || execCtx?.originQuery || execCtx?.query || '')
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('capability:changed', {
         detail: {
@@ -241,7 +254,7 @@ export default function HomePage() {
       }))
     }
     navigate(`/execute/${created.id}?q=${encodeURIComponent(query)}`)
-  }, [execCtx?.originQuery, execCtx?.query, navigate])
+  }, [appendSessionFilesMarker, execCtx?.originQuery, execCtx?.query, navigate])
 
   if (phase === 'idle') {
     return <IdleView
@@ -306,7 +319,7 @@ export default function HomePage() {
         setExecCtx({
           type: 'skill',
           id: '__generic__',
-          query: executionQuery,
+          query: appendSessionFilesMarker(executionQuery),
           originQuery: genericPlan.originQuery,
         })
         setPhase('executing')

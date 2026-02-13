@@ -28,7 +28,7 @@ export interface DecisionPrompt {
 /* ── 主面板 Props ── */
 interface ConversationPanelProps {
   messages: AgentMessage[]
-  onSend: (text: string) => void
+  onSend: (text: string, files?: File[]) => void
   onStop?: () => void
   pendingQuestion?: PendingQuestion | null
   respondToQuestion?: (questionId: string, answers: Record<string, string>) => void
@@ -127,7 +127,7 @@ export function ConversationPanel({
       <div className="shrink-0 border-t border-border">
         <div className="max-w-3xl mx-auto">
           <ChatInput
-            onSubmit={(q) => onSend(q)}
+            onSubmit={(q, files) => onSend(q, files)}
             onStop={onStop || (() => {})}
             isRunning={isThinking}
             placeholder="输入消息..."

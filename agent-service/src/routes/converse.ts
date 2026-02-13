@@ -8,10 +8,14 @@
 
 import { Router, Request, Response } from 'express'
 import { randomUUID } from 'crypto'
+import { copyFile, mkdir } from 'fs/promises'
+import { existsSync, readdirSync } from 'fs'
+import { basename, dirname, extname, join } from 'path'
 import { executeAgent } from '../agent-executor.js'
 import { buildConverseSystemPrompt } from '../converse-prompt.js'
 import { memoryInjector } from '../memory/io.js'
 import { loadCatalog } from '../catalog.js'
+import { DATA_DIR } from '../paths.js'
 import type { Skill } from 'laborany-shared'
 
 const router = Router()
@@ -22,6 +26,89 @@ const router = Router()
 
 function sseWrite(res: Response, event: string, data: unknown): void {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+}
+
+const FILE_ID_PATTERN = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
+
+function getUploadsDir(): string {
+  return join(dirname(DATA_DIR), 'uploads')
+}
+
+function resolveUploadedFileId(fileId: string): string | null {
+  const uploadsDir = getUploadsDir()
+  if (!existsSync(uploadsDir)) return null
+  const files = readdirSync(uploadsDir)
+  const matched = files.find((fileName) => fileName.startsWith(fileId))
+  return matched ? join(uploadsDir, matched) : null
+}
+
+function sanitizeFileName(fileName: string): string {
+  const normalized = (fileName || '').replace(/\\/g, '/').split('/').pop()?.trim() || ''
+  const safe = normalized.replace(/[<>:"|?*\x00-\x1f]/g, '_')
+  return safe || `upload-${Date.now()}`
+}
+
+function ensureUniqueTaskFileName(taskDir: string, preferredName: string): string {
+  const safeName = sanitizeFileName(preferredName)
+  const extension = extname(safeName)
+  const baseName = safeName.slice(0, safeName.length - extension.length) || 'upload'
+
+  let counter = 0
+  while (true) {
+    const suffix = counter === 0 ? '' : `-${counter}`
+    const candidateName = `${baseName}${suffix}${extension}`
+    if (!existsSync(join(taskDir, candidateName))) {
+      return candidateName
+    }
+    counter += 1
+  }
+}
+
+function extractFileIdsFromQuery(rawQuery: string): { query: string; fileIds: string[] } {
+  const fileIds = new Set<string>()
+  const matches = [...rawQuery.matchAll(FILE_ID_PATTERN)]
+  for (const match of matches) {
+    const ids = (match[1] || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+    ids.forEach(id => fileIds.add(id))
+  }
+
+  const query = rawQuery.replace(FILE_ID_PATTERN, '').trim()
+  return { query, fileIds: Array.from(fileIds) }
+}
+
+async function hydrateUploadsToTaskDir(fileIds: string[], taskDir: string): Promise<string[]> {
+  if (fileIds.length === 0) return []
+
+  const copiedFiles: string[] = []
+  await mkdir(taskDir, { recursive: true })
+  for (const fileId of fileIds) {
+    const sourcePath = resolveUploadedFileId(fileId)
+    if (!sourcePath) {
+      console.warn(`[Converse] cannot resolve uploaded file id: ${fileId}`)
+      continue
+    }
+
+    try {
+      const sourceName = basename(sourcePath) || `${fileId}.bin`
+      const targetName = ensureUniqueTaskFileName(taskDir, sourceName)
+      await copyFile(sourcePath, join(taskDir, targetName))
+      copiedFiles.push(targetName)
+    } catch (error) {
+      console.warn(`[Converse] failed to copy uploaded file ${fileId}:`, error)
+    }
+  }
+
+  return copiedFiles
+}
+
+function buildConverseQuery(query: string, uploadedFiles: string[]): string {
+  if (!uploadedFiles.length) return query
+  const list = uploadedFiles.map((name) => `- ${name}`).join('\n')
+  const baseQuery = query.trim() || '我上传了一些文件，请先读取文件再继续处理。'
+  return `${baseQuery}\n\n[Uploaded files in current task directory]\n${list}\n\n这些文件都在当前任务工作目录下，请先读取这些文件，再处理用户请求。`
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -579,9 +666,11 @@ router.post('/', async (req: Request, res: Response) => {
 
   /* ── 提取最新用户消息（CLI 通过 --continue 维护历史） ── */
   const latestMsg = rawMessages[rawMessages.length - 1]
-  const query = typeof latestMsg?.content === 'string' ? latestMsg.content : ''
+  const rawQuery = typeof latestMsg?.content === 'string' ? latestMsg.content : ''
+  const extracted = extractFileIdsFromQuery(rawQuery)
+  const baseQuery = extracted.query || rawQuery.trim()
 
-  const directAction = detectDirectIntentAction(query)
+  const directAction = detectDirectIntentAction(baseQuery)
   if (directAction) {
     const guard = guardAction(directAction)
     const state = setSessionState(sessionId, {
@@ -612,6 +701,12 @@ router.post('/', async (req: Request, res: Response) => {
   res.on('close', onClientClose)
 
   try {
+    const taskDir = join(DATA_DIR, 'tasks', sessionId)
+    const uploadedFiles = await hydrateUploadsToTaskDir(extracted.fileIds, taskDir)
+    if (extracted.fileIds.length > 0 && uploadedFiles.length === 0) {
+      sseWrite(res, 'warning', { content: '未能解析上传文件，请重新上传后重试。' })
+    }
+    const query = buildConverseQuery(baseQuery, uploadedFiles)
     /* ── 构建 converse skill ── */
     const memoryCtx = memoryInjector.buildContext({
       skillId: '__converse__',

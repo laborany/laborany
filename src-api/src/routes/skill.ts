@@ -265,7 +265,7 @@ skill.post('/execute', async (c) => {
    * │  前端上传文件后 query 包含 [已上传文件 ID: uuid1, uuid2]                  │
    * │  需要将 ID 解析为 agent 可访问的绝对路径                                  │
    * └──────────────────────────────────────────────────────────────────────────┘ */
-  const fileIdPattern = /\[(?:已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
+  const fileIdPattern = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
   const fileIdMatches = [...query.matchAll(fileIdPattern)]
 
   if (fileIdMatches.length > 0) {
