@@ -11,7 +11,7 @@ description: |
   - 用户要求生成股票分析可视化页面
 
   支持市场：美股(NYSE/NASDAQ)、A股(上交所/深交所)
-icon: 📊
+icon: 📈
 category: 金融
 ---
 

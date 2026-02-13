@@ -3,6 +3,7 @@ name: three-bullet-summary
 description: |
   三点摘要：将输入文本提炼为三个要点。适用于：用户提供一段文字并要求总结、提炼要点、
   生成摘要，或明确要求"三个要点""三点总结""bullet points"等场景。
+icon: 📌
 ---
 
 # 三点摘要

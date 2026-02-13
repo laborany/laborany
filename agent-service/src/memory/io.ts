@@ -166,6 +166,7 @@ Schema:
 4) source 必须标注来源：用户陈述= user，助手自述/建议= assistant，对任务过程的客观概括= event；
 5) 风格偏好类尽量标注 intent=response_style 或 preference；
 6) 输出必须可直接 JSON.parse。
+7) 不要把“用户称呼助手为老板/老大”等互动礼貌话术写成用户长期事实。
 
 Few-shot 示例：
 
@@ -242,7 +243,20 @@ User: 以后都先给结论，再给步骤。
 Assistant: 收到。
 Bad fact: {"type":"context","content":"助手将先给结论再给步骤","source":"assistant"}
 Good fact: {"type":"preference","content":"以后先给结论再给步骤","source":"user","intent":"response_style"}
+
+Example D (do NOT persist addressing-assistant etiquette as user memory)
+User: 帮我分析这个图片。
+Assistant: 老板好，我先看下你上传的内容。
+Bad fact: {"type":"fact","content":"用户称呼助手为老板","source":"user"}
+Good fact: {"type":"context","content":"助手使用了礼貌称呼","source":"assistant","intent":"context"}
 `
+
+const FACT_NOISE_PATTERNS = [
+  /(?:用户|我).{0,8}(?:称呼|叫|喊|称作|叫做).{0,8}(?:助手|你|AI|机器人).{0,6}(?:为|成|叫)?(?:老板|老大|哥|姐)/,
+  /(?:助手|你).{0,8}(?:被|让).{0,8}(?:称呼|叫|喊|称作|叫做).{0,6}(?:老板|老大|哥|姐)/,
+  /(?:call|address).{0,12}(?:assistant|ai).{0,8}(?:boss|sir|bro)/i,
+  /^\s*(?:老板好|老板您好|好的老板|收到老板)\s*$/,
+]
 
 function parseJSON<T>(raw: string): T {
   try {
@@ -270,13 +284,16 @@ function sanitizeFacts(rawFacts: unknown): ExtractedFact[] {
     const candidate = item as Partial<ExtractedFact>
     if (!candidate.type || !allowedType.has(candidate.type)) return null
     if (!candidate.content || typeof candidate.content !== 'string') return null
+    const content = candidate.content.trim()
+    if (!content) return null
+    if (FACT_NOISE_PATTERNS.some(pattern => pattern.test(content))) return null
 
     const parsedConfidence = typeof candidate.confidence === 'number' ? candidate.confidence : 0.6
     const confidence = Math.max(0.5, Math.min(1, parsedConfidence))
     const source = candidate.source && allowedSource.has(candidate.source) ? candidate.source : 'user'
     const intent = candidate.intent && allowedIntent.has(candidate.intent) ? candidate.intent : candidate.type
 
-    return { type: candidate.type, content: candidate.content.trim(), confidence, source, intent }
+    return { type: candidate.type, content, confidence, source, intent }
   })
 
   return sanitized.filter((item): item is ExtractedFact => item !== null)

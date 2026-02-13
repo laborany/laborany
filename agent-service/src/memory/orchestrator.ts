@@ -129,10 +129,17 @@ const ASSISTANT_TONE_PATTERNS = [
   /已(完成|处理|提交|修复)/,
 ]
 
+const META_ADDRESSING_NOISE_PATTERNS = [
+  /(?:用户|我).{0,8}(?:称呼|叫|喊|称作|叫做).{0,8}(?:助手|你|AI|机器人).{0,6}(?:为|成|叫)?(?:老板|老大|哥|姐)/,
+  /(?:助手|你).{0,8}(?:被|让).{0,8}(?:称呼|叫|喊|称作|叫做).{0,6}(?:老板|老大|哥|姐)/,
+  /(?:call|address).{0,12}(?:assistant|ai).{0,8}(?:boss|sir|bro)/i,
+  /^\s*(?:老板好|老板您好|好的老板|收到老板)\s*$/,
+]
+
 const USER_CENTRIC_PATTERNS = [
-  /用户|老板/,
-  /我(喜欢|偏好|习惯|希望|需要|常用|正在|是)/,
-  /项目名称|工作目录|目标分支|提交的文件|技术栈|沟通风格/,
+  /用户(喜欢|偏好|习惯|希望|需要|常用|正在|是|要求|倾向)/,
+  /我(喜欢|偏好|习惯|希望|需要|常用|正在|是|要求|倾向)/,
+  /请叫我|称呼我|叫我|对我使用|回复风格|沟通风格|项目名称|工作目录|目标分支|提交的文件|技术栈/,
 ]
 
 const GLOBAL_STABLE_PATTERNS = [
@@ -249,6 +256,7 @@ export class MemoryOrchestrator {
     if (includesAny(content, PIPELINE_NOISE_PATTERNS)) return false
     if (includesAny(content, TRANSIENT_FACT_PATTERNS)) return false
     if (includesAny(content, ASSISTANT_NOISE_PATTERNS)) return false
+    if (includesAny(content, META_ADDRESSING_NOISE_PATTERNS)) return false
     if (includesAny(content, STRUCTURED_NOISE_PATTERNS)) return false
     if (includesAny(content, SYSTEM_PATH_PATTERNS)) return false
     if (content.length < 4) return false
@@ -256,6 +264,7 @@ export class MemoryOrchestrator {
   }
 
   private normalizeFactSource(fact: ExtractedFact): ExtractedFact['source'] {
+    if (includesAny(fact.content, META_ADDRESSING_NOISE_PATTERNS)) return 'assistant'
     if (includesAny(fact.content, ASSISTANT_TONE_PATTERNS)) return 'assistant'
     if (this.isUserCentricFact(fact.content)) return 'user'
     return fact.source || 'user'
