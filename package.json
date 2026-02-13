@@ -84,10 +84,6 @@
         "to": ".env.example"
       },
       {
-        "from": "CLAUDE.md",
-        "to": "CLAUDE.md"
-      },
-      {
         "from": "cli-bundle",
         "to": "cli-bundle",
         "filter": [

@@ -1,255 +1,170 @@
-# LaborAny v0.3.0
+<p align="center">
+  <img src="src-tauri/icons/icon.png" width="120" alt="LaborAny Logo" />
+</p>
 
-> 让不会编程的人，也能稳定调度和复用 AI 劳动力。
+<h3 align="center">LaborAny — 桌面 AI 工作台</h3>
 
-LaborAny 是一个面向桌面场景的 AI Agent 工作台。`v0.3.0` 的核心升级是：
+<p align="center">
+  像招聘数字员工一样使用 AI：技能驱动、意图分发、记忆感知。
+</p>
 
-- 首页从“普通聊天”升级为**分发中枢**（意图识别 → 候选确认 → 执行/创建/定时）。
-- 能力模型统一为 **Skill / Composite Skill**，不再把 `workflow` 作为独立产品概念。
-- 执行链路统一到 **Claude Code CLI**，前后端围绕同一运行时协议（SSE 事件）协作。
-- 新增更完整的运行态体验：计划审核、断线重连、运行中任务、通知中心、记忆管理。
-
----
-
-## v0.3.0 重点变化
-
-### 1) 首页分发器（Home Dispatcher）
-
-首页输入不再直接“盲执行”，而是先走分发状态机：
-
-1. `analyzing`：理解意图
-2. `candidate_found`：发现候选能力并确认
-3. `plan_review`：通用执行前审核计划
-4. `creating_proposal` / `creating_confirm`：创建能力闭环
-5. `executing` / `fallback_general`：进入统一执行面板
-
-支持 4 类动作（由 `/agent-api/converse` 决策输出）：
-
-- `recommend_capability`
-- `execute_generic`
-- `create_capability`
-- `setup_schedule`
-
-### 2) 语义统一：Skill / Composite Skill
-
-- `skill`：单步能力。
-- `composite`：多步编排能力（通过 `steps.yaml` 定义）。
-- 对外统一称“能力（Capability）”，但底层仍以 `skill` 目录存储。
-
-### 3) 统一执行内核
-
-- 所有执行最终由 `agent-service` 调用 Claude Code CLI 完成。
-- 前端通过 SSE 消费统一事件流：`text`、`tool_use`、`question`、`step_*`、`done` 等。
-
-### 4) 全局工作记忆体系
-
-新增「记忆管理」页面，支持：
-
-- `BOSS.md`（全局工作手册）编辑。
-- 用户画像（Profile）查看。
-- 记忆档案（MemCell / Episode）浏览与聚合。
+<p align="center">
+  <a href="#why-laborany">为什么选 LaborAny</a> ·
+  <a href="#architecture">架构</a> ·
+  <a href="#quick-start">快速开始</a> ·
+  <a href="#feature-overview">功能速览</a> ·
+  <a href="#acknowledgments">致谢</a> ·
+  <a href="#license--contributing">许可与贡献</a>
+</p>
 
 ---
 
-## 系统架构
+## Why LaborAny
+
+AI 模型能力越来越强，但普通用户很难稳定地调度和复用它们。LaborAny 把 AI 能力封装为「技能」，让非开发者也能像管理员工一样管理 AI 劳动力。
+
+设计亮点：
+
+- 技能驱动 — 不是聊天优先，而是任务优先。每个技能是一个可复用的工作单元。
+- 意图分发 — 首页输入自然语言，系统自动识别意图并匹配最合适的技能执行。
+- 记忆感知 — 跨会话上下文记忆，AI 能记住你的偏好和工作习惯。
+
+核心能力：
+
+- 25+ 内置技能（翻译、写作、数据分析、代码生成、文档转换等）
+- 智能意图分发（自然语言 → 意图识别 → 候选确认 → 执行）
+- 对话式技能创建（用自然语言描述需求，自动生成新技能）
+- 定时调度（支持 at / every / cron 三种模式）
+- 全局记忆系统（用户画像、工作手册、记忆档案）
+- 跨平台桌面应用（Windows / macOS / Linux）
+- 本地运行，数据不离开你的电脑
+
+---
+
+## Architecture
 
 ```text
-Frontend (React + Vite, dev:3000)
-    │
-    ├─ /api/*        -> src-api (Hono, :3620)
-    └─ /agent-api/*  -> agent-service (Express, :3002)
-
-src-api
-  - 认证、配置、Skill 管理、会话历史
-  - Runtime 任务管理与断线重连入口
-  - 文件系统 / 预览 / 转换 / 沙盒 Provider
-  - 生产模式下托管前端静态资源
-
-agent-service
-  - converse（首页分发对话）
-  - execute / capabilities 执行协议
-  - cron 定时任务与通知
-  - memory 记忆读写与归纳
+┌─────────────────────────────────────────────────────────┐
+│                    Electron Shell                        │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │           Frontend (React + Vite :3000)            │  │
+│  └──────────┬────────────────────────┬───────────────┘  │
+│             │ /api/*                 │ /agent-api/*      │
+│  ┌──────────▼──────────┐  ┌─────────▼────────────────┐  │
+│  │  src-api (Hono)     │  │  agent-service (Express)  │  │
+│  │  :3620              │  │  :3002                    │  │
+│  │  认证 / 配置 / 技能  │  │  分发 / 执行 / 定时 / 记忆 │  │
+│  └─────────────────────┘  └──────────┬───────────────┘  │
+│                                      │                   │
+│                           ┌──────────▼───────────────┐  │
+│                           │   Claude Code CLI         │  │
+│                           └──────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
 ```
 
----
+- Frontend：React SPA，负责交互与预览渲染
+- src-api：统一 REST API 层，管理认证、配置、技能、会话、文件
+- agent-service：AI 执行引擎，负责意图分发、技能执行、定时调度、记忆归纳
+- Claude Code CLI：底层 AI 运行时，所有执行最终通过 CLI 完成
 
-## 功能地图（UI）
-
-- `/` 首页：任务分发 + 快速场景 + 通用执行入口。
-- `/execute/:skillId`：统一执行面板（三栏：对话 / 预览 / 文件树）。
-- `/skills`：能力库（我的能力 / 官方市场占位 / 创建入口）。
-- `/create`：对话式招聘新员工（skill-creator 闭环）。
-- `/cron`：定时任务配置、手动触发、执行历史。
-- `/history`：会话列表与详情（支持继续对话、产物预览、Live Preview）。
-- `/memory`：工作手册、画像、记忆档案。
-- `/settings`：环境配置、通知邮箱配置、测试邮件。
+> 详细设计文档见 [docs/](docs/) 目录。
 
 ---
 
-## 快速开始（开发）
+## Quick Start
 
-### 环境要求
+### 下载安装（终端用户）
 
-- Node.js `>= 20`（推荐 `20.18+`）
-- npm `>= 9`
+前往 [GitHub Releases](https://github.com/laborany/laborany/releases) 下载对应平台安装包：
 
-### 1) 安装依赖
+- Windows：`.exe` 安装程序
+- macOS：`.dmg` 镜像
+- Linux：`.AppImage` 或 `.deb`
+
+首次运行：进入设置页填写 API Key → 回到首页输入任务即可开始。
+
+### 本地开发（贡献者）
+
+环境要求：Node.js >= 20
 
 ```bash
+git clone https://github.com/laborany/laborany.git
+cd laborany
+cp .env.example .env        # 编辑 .env 填入 ANTHROPIC_API_KEY
 npm run install:all
-```
-
-### 2) 配置环境变量
-
-```bash
-cp .env.example .env
-```
-
-最少需要：
-
-```env
-ANTHROPIC_API_KEY=your-api-key-here
-PORT=3620
-AGENT_PORT=3002
-```
-
-### 3) 启动开发环境
-
-```bash
 npm run dev
 ```
 
-默认会拉起：
+访问 `http://localhost:3000`。
 
-- `src-api`：`http://localhost:3620`
-- `agent-service`：`http://localhost:3002`
-- `frontend`：`http://localhost:3000`
+### 打包桌面应用
 
-访问：`http://localhost:3000`
+```bash
+# Windows
+npm run build:electron
 
----
+# macOS
+npm run build:electron:mac
 
-## 配置项说明
-
-常用配置在 `.env.example` 与设置页模板中维护：
-
-- `ANTHROPIC_API_KEY`：必填。
-- `ANTHROPIC_BASE_URL`：可选，自定义网关。
-- `ANTHROPIC_MODEL`：可选，默认 `claude-sonnet-4-20250514`。
-- `LABORANY_SECRET_KEY`：JWT 签名密钥。
-- `NOTIFICATION_EMAIL` / `SMTP_*`：定时任务邮件通知。
-
-> 打包后配置文件会写入系统用户目录（而不是仓库目录）。
-
----
-
-## 目录结构（v0.3.0）
-
-```text
-laborany/
-├── frontend/              # React 前端
-├── src-api/               # 统一 API（Hono）
-├── agent-service/         # Agent 执行与分发服务（Express）
-├── shared/                # Skill 加载器与命名规则等共享模块
-├── skills/                # 内置 Skills（只读）
-├── data/                  # 开发模式数据目录
-├── tasks/                 # 任务产出目录（开发模式）
-├── docs/
-│   └── ai_labor_platform_v1.md
-├── HOMEPAGE_DISPATCH_SPEC.md
-└── MEMORY_DESIGN.md
+# Linux
+npm run build:electron:linux
 ```
 
+构建产物输出到 `release/` 目录。
+
 ---
 
-## Skill 开发模型
+## Feature Overview
 
-### Skill 目录格式
+### 首页分发器
+
+在首页输入自然语言描述你的需求，系统自动完成：
+
+1. 意图识别 — 理解你想做什么
+2. 候选匹配 — 从技能库中找到最合适的技能
+3. 确认执行 — 确认后进入统一执行面板
+
+支持四种动作：推荐技能、通用执行、创建新技能、设置定时任务。
+
+### 技能创建
+
+访问 `/create` 页面，用对话方式描述你需要的能力，系统自动生成完整的技能目录。
+
+### 引入外部技能
+
+将技能目录复制到用户技能目录即可，系统会自动检测并注册。
+
+技能目录结构：
 
 ```text
 skills/my-skill/
-├── SKILL.md              # 主提示词（必须）
-├── steps.yaml            # 复合技能步骤（可选）
-├── scripts/              # 工具脚本（可选）
-├── references/           # 参考资料（可选）
-└── assets/               # 资源文件（可选）
+├── SKILL.md         # 主提示词（必须）
+├── steps.yaml       # 复合技能步骤（可选）
+├── scripts/         # 工具脚本（可选）
+├── references/      # 参考资料（可选）
+└── assets/          # 资源文件（可选）
 ```
 
-### 关键约束
-
-- 有 `steps.yaml` 时会被识别为 `composite`。
-- 创建出来的新 Skill 会写入用户技能目录，并在运行后自动检测与注册。
-- 新能力 ID 会做规范化（小写、连字符、冲突去重）。
+> 更多细节见 [docs/](docs/) 目录。
 
 ---
 
-## Runtime 与 SSE 协议（核心）
+## Acknowledgments
 
-前端 `useAgent` / `useConverse` 统一消费 SSE 事件流，关键事件包括：
-
-- `session`：会话 ID 建立。
-- `text`：模型文本输出增量。
-- `tool_use` / `tool_result`：工具调用过程。
-- `question`：结构化追问（AskUserQuestion）。
-- `pipeline_start` / `step_start` / `step_done` / `pipeline_done`：复合技能进度。
-- `created_capability`：创建能力成功（自动跳转执行）。
-- `done` / `error` / `aborted` / `stopped`：终态事件。
+- [Claude Code](https://github.com/anthropics/claude-code) — Anthropic 官方 CLI
+- [Codex](https://github.com/openai/codex) — OpenAI 编码引擎
+- [WorkAny](https://github.com/workany-ai/workany) — AI 工作流平台
+- [OpenClaw](https://github.com/openclaw/openclaw) — 开源智能体框架
+- [EverMemOS](https://github.com/EverMind-AI/EverMemOS) — 记忆操作系统
 
 ---
 
-## 预览与产物能力
+## License & Contributing
 
-`ExecutionPanel` 与历史详情页支持：
+本项目基于 [MIT License](LICENSE) 开源。
 
-- 文本/Markdown/代码预览。
-- 文档预览（PDF / DOCX / PPTX / XLSX 等）。
-- 媒体预览（图片 / 音频 / 视频 / 字体）。
-- Live Preview（Vite 预览服务）。
-- LibreOffice 按需下载与 Office→PDF 转换。
+欢迎贡献：
 
----
-
-## 定时任务与通知
-
-定时任务接口由 `agent-service` 提供，支持：
-
-- `at` / `every` / `cron` 三种调度。
-- 手动触发、执行历史、状态追踪。
-- 通知中心（未读统计、已读管理）。
-- 邮件通知测试接口。
-
----
-
-## 打包与发布
-
-### 桌面应用构建
-
-- Windows：`npm run build:electron`
-- macOS：`npm run build:electron:mac`
-- Linux：`npm run build:electron:linux`
-
-构建产物在 `release/`。
-
----
-
-## 已知说明
-
-- `官方市场` 当前在桌面版是占位能力：`/api/skill/official` 返回空列表，在线安装接口返回 `501`。
-- 仍保留少量 legacy 兼容（例如旧 `workflow` 动作映射），详见 `LEGACY_COMPAT_NOTES.md`。
-
----
-
-## 相关文档
-
-- 产品与系统设计：`docs/ai_labor_platform_v1.md`
-- 首页分发规范：`HOMEPAGE_DISPATCH_SPEC.md`
-- 记忆系统设计：`MEMORY_DESIGN.md`
-- 兼容说明：`LEGACY_COMPAT_NOTES.md`
-
----
-
-## License
-
-MIT
-
+- 提交 [Issue](https://github.com/laborany/laborany/issues) 报告问题或建议
+- 发起 [Pull Request](https://github.com/laborany/laborany/pulls) 贡献代码
+- 创建并分享你的自定义技能
