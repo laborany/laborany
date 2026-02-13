@@ -52,6 +52,19 @@ function ensureDir(dir: string): void {
 export class ProfileManager {
   private profile: Profile | null = null
 
+  private createDefaultProfile(): Profile {
+    return {
+      version: 0,
+      updatedAt: new Date(),
+      sections: [
+        { name: '工作偏好', fields: [] },
+        { name: '沟通风格', fields: [] },
+        { name: '技术栈', fields: [] },
+        { name: '个人信息', fields: [] },
+      ],
+    }
+  }
+
   constructor() {
     ensureDir(PROFILES_DIR)
     this.load()
@@ -151,16 +164,7 @@ export class ProfileManager {
       this.profile = this.fromMarkdown(content)
     } else {
       // 创建默认 Profile
-      this.profile = {
-        version: 1,
-        updatedAt: new Date(),
-        sections: [
-          { name: '工作偏好', fields: [] },
-          { name: '沟通风格', fields: [] },
-          { name: '技术栈', fields: [] },
-          { name: '个人信息', fields: [] },
-        ],
-      }
+      this.profile = this.createDefaultProfile()
       this.save()
     }
     return this.profile
@@ -183,6 +187,12 @@ export class ProfileManager {
   get(): Profile {
     if (!this.profile) this.load()
     return this.profile!
+  }
+
+  reset(): Profile {
+    this.profile = this.createDefaultProfile()
+    this.save()
+    return this.profile
   }
 
   /* ────────────────────────────────────────────────────────────────────────

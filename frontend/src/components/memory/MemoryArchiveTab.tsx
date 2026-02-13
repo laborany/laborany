@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect } from 'react'
-import { AGENT_API_BASE } from '../../config/api'
+import { AGENT_API_BASE, API_BASE } from '../../config/api'
 import { CollapsibleSection } from '../shared/CollapsibleSection'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -24,6 +24,15 @@ interface MemoryFile {
 interface Skill {
   id: string
   name: string
+}
+
+interface SkillListItem {
+  id?: string
+  name?: string
+  meta?: {
+    id?: string
+    name?: string
+  }
 }
 
 type MemoryScope = 'global' | 'skill'
@@ -165,11 +174,23 @@ function DailyMemoryBrowser() {
 
   async function loadSkills() {
     try {
-      const res = await fetch(`${AGENT_API_BASE}/skills`)
+      const token = localStorage.getItem('token')
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined
+      const res = await fetch(`${API_BASE}/skill/list`, { headers })
       const data = await res.json()
-      setSkills(data.skills || [])
+      const mapped = Array.isArray(data.skills)
+        ? data.skills
+            .map((item: SkillListItem): Skill | null => {
+              const id = item.meta?.id || item.id
+              if (!id) return null
+              const name = item.meta?.name || item.name || id
+              return { id, name }
+            })
+            .filter((item: Skill | null): item is Skill => item !== null)
+        : []
+      setSkills(mapped)
     } catch {
-      // 忽略
+      setSkills([])
     }
   }
 

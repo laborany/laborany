@@ -1,52 +1,46 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                         ProfileTab 组件                                  ║
- * ║                                                                          ║
- * ║  功能：展示和编辑用户画像（Profile）                                       ║
- * ║  设计：记忆统计 + 分组展示 + 字段编辑 + 高级选项                           ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { AGENT_API_BASE } from '../../config/api'
 import { CollapsibleSection } from '../shared/CollapsibleSection'
-import { MemCellListPanel } from './MemCellListPanel'
 import { EpisodeListPanel } from './EpisodeListPanel'
+import { MemCellListPanel } from './MemCellListPanel'
 import { ProfileFieldsPanel } from './ProfileFieldsPanel'
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           类型定义                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 interface MemoryStats {
   cellCount: number
   episodeCount: number
   profileFieldCount: number
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           主组件                                          │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+type Message = {
+  type: 'success' | 'error'
+  text: string
+}
+
+type ExpandedPanel = 'cells' | 'episodes' | 'profile' | null
+
 export function ProfileTab() {
   const [stats, setStats] = useState<MemoryStats | null>(null)
   const [loading, setLoading] = useState(true)
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [clustering, setClustering] = useState(false)
-  const [expandedPanel, setExpandedPanel] = useState<'cells' | 'episodes' | 'profile' | null>(null)
+  const [message, setMessage] = useState<Message | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [resettingProfile, setResettingProfile] = useState(false)
+  const [resettingAllMemory, setResettingAllMemory] = useState(false)
+  const [expandedPanel, setExpandedPanel] = useState<ExpandedPanel>(null)
 
   useEffect(() => {
-    loadData()
+    void loadData()
   }, [])
 
   async function loadData() {
     setLoading(true)
     try {
       const res = await fetch(`${AGENT_API_BASE}/memory/stats`)
-
       if (!res.ok) {
         setMessage({ type: 'error', text: '加载记忆统计失败' })
         return
       }
 
       const statsData = await res.json()
-
       setStats({
         cellCount: statsData.cells || 0,
         episodeCount: statsData.episodes || 0,
@@ -59,24 +53,85 @@ export function ProfileTab() {
     }
   }
 
-  async function triggerClustering() {
-    setClustering(true)
+  async function exportProfile() {
+    setExporting(true)
     setMessage(null)
     try {
-      const res = await fetch(`${AGENT_API_BASE}/memory/cluster-episodes`, {
+      const res = await fetch(`${AGENT_API_BASE}/memory/profile/export.md`)
+      if (!res.ok) {
+        setMessage({ type: 'error', text: '导出画像失败' })
+        return
+      }
+
+      const content = await res.text()
+      const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+      const url = window.URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      anchor.href = url
+      anchor.download = `PROFILE-${stamp}.md`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.URL.revokeObjectURL(url)
+
+      setMessage({ type: 'success', text: '画像导出成功' })
+    } catch {
+      setMessage({ type: 'error', text: '导出画像失败' })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  async function resetProfile() {
+    const confirmed = window.confirm('确定要重置画像吗？此操作会清空画像字段。')
+    if (!confirmed) return
+
+    setResettingProfile(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/memory/profile/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days: 7 }),
       })
-      const data = await res.json()
-      if (data.success) {
-        setMessage({ type: 'success', text: `已生成 ${data.count} 个情节记忆` })
-        loadData()
+      if (!res.ok) {
+        setMessage({ type: 'error', text: '重置画像失败' })
+        return
       }
+
+      await loadData()
+      setExpandedPanel(null)
+      setMessage({ type: 'success', text: '画像已重置' })
     } catch {
-      setMessage({ type: 'error', text: 'Episode 聚类失败' })
+      setMessage({ type: 'error', text: '重置画像失败' })
     } finally {
-      setClustering(false)
+      setResettingProfile(false)
+    }
+  }
+
+  async function resetAllMemory() {
+    const confirmed = window.confirm('确定要重置全部记忆吗？该操作不可恢复（BOSS 保留）。')
+    if (!confirmed) return
+
+    setResettingAllMemory(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/memory/reset-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (!res.ok) {
+        setMessage({ type: 'error', text: '重置全部记忆失败' })
+        return
+      }
+
+      await loadData()
+      setExpandedPanel(null)
+      setMessage({ type: 'success', text: '全部记忆已重置（BOSS 保留）' })
+    } catch {
+      setMessage({ type: 'error', text: '重置全部记忆失败' })
+    } finally {
+      setResettingAllMemory(false)
     }
   }
 
@@ -86,10 +141,8 @@ export function ProfileTab() {
 
   return (
     <div className="space-y-6">
-      {/* 记忆概览统计卡片（可点击展开） */}
       <StatsCards stats={stats} onCardClick={setExpandedPanel} activePanel={expandedPanel} />
 
-      {/* 展开的详情面板 */}
       {expandedPanel === 'cells' && (
         <MemCellListPanel onClose={() => setExpandedPanel(null)} />
       )}
@@ -100,27 +153,43 @@ export function ProfileTab() {
         <ProfileFieldsPanel onClose={() => setExpandedPanel(null)} />
       )}
 
-      {/* 消息提示 */}
       {message && <MessageBox type={message.type} text={message.text} />}
 
-      {/* 高级选项 */}
       <CollapsibleSection title="高级选项" defaultExpanded={false} icon={<SettingsIcon />}>
         <div className="flex flex-wrap gap-3 pt-2">
           <button
-            onClick={triggerClustering}
-            disabled={clustering}
+            disabled
+            className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground disabled:opacity-80"
+          >
+            <ClusterIcon />
+            Episode 自动维护中
+          </button>
+
+          <button
+            onClick={exportProfile}
+            disabled={exporting}
             className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm hover:bg-accent disabled:opacity-50"
           >
-            {clustering ? <LoadingIcon /> : <ClusterIcon />}
-            触发 Episode 聚类
-          </button>
-          <button className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm hover:bg-accent">
-            <ExportIcon />
+            {exporting ? <LoadingIcon /> : <ExportIcon />}
             导出画像
           </button>
-          <button className="flex items-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-sm text-red-500 hover:bg-red-500/10">
-            <TrashIcon />
+
+          <button
+            onClick={resetProfile}
+            disabled={resettingProfile}
+            className="flex items-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+          >
+            {resettingProfile ? <LoadingIcon /> : <TrashIcon />}
             重置画像
+          </button>
+
+          <button
+            onClick={resetAllMemory}
+            disabled={resettingAllMemory}
+            className="flex items-center gap-2 rounded-lg border border-red-600/40 px-4 py-2 text-sm text-red-600 hover:bg-red-600/10 disabled:opacity-50"
+          >
+            {resettingAllMemory ? <LoadingIcon /> : <TrashIcon />}
+            重置全部记忆
           </button>
         </div>
       </CollapsibleSection>
@@ -128,13 +197,10 @@ export function ProfileTab() {
   )
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           统计卡片组件                                    │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 function StatsCards({ stats, onCardClick, activePanel }: {
   stats: MemoryStats | null
-  onCardClick: (panel: 'cells' | 'episodes' | 'profile' | null) => void
-  activePanel: 'cells' | 'episodes' | 'profile' | null
+  onCardClick: (panel: ExpandedPanel) => void
+  activePanel: ExpandedPanel
 }) {
   const items = [
     { label: '原子记忆', value: stats?.cellCount ?? 0, color: 'text-blue-500', panel: 'cells' as const },
@@ -160,9 +226,6 @@ function StatsCards({ stats, onCardClick, activePanel }: {
   )
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           辅助组件                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 function LoadingSpinner() {
   return (
     <div className="flex items-center justify-center py-8">
@@ -175,16 +238,13 @@ function LoadingIcon() {
   return <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
 }
 
-function MessageBox({ type, text }: { type: 'success' | 'error'; text: string }) {
+function MessageBox({ type, text }: Message) {
   const styles = type === 'success'
     ? 'bg-green-500/10 text-green-600 border-green-500/20'
     : 'bg-red-500/10 text-red-600 border-red-500/20'
   return <div className={`rounded-lg border p-4 ${styles}`}>{text}</div>
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           图标组件                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 function SettingsIcon() {
   return (
     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

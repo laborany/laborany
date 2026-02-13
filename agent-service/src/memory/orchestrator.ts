@@ -114,6 +114,21 @@ const ASSISTANT_NOISE_PATTERNS = [
   /工具调用记录|LABORANY_ACTION/,
 ]
 
+const SYSTEM_PATH_PATTERNS = [
+  /[A-Za-z]:\\[^\s]+/,
+  /\/(Users|home|var|tmp|etc)\//,
+  /^(?:\$|>|PS>?)?\s*(?:cmd|powershell|bash|npm|pnpm|python|node|git)\b/i,
+  /\b(?:origin\/master|origin\/main|feature\/[\w-]+)\b/i,
+]
+
+const ASSISTANT_TONE_PATTERNS = [
+  /建议(你|先|可以)/,
+  /让我(先|来|继续|处理)/,
+  /我(可以|会|已|已经|正在)/,
+  /工具(调用|执行|结果)/,
+  /已(完成|处理|提交|修复)/,
+]
+
 const USER_CENTRIC_PATTERNS = [
   /用户|老板/,
   /我(喜欢|偏好|习惯|希望|需要|常用|正在|是)/,
@@ -165,6 +180,28 @@ function stripPipelineScaffold(text: string): string {
   return normalizeWhitespace(lines.join('\n'))
 }
 
+function stripNoiseLines(text: string): string {
+  const lines = normalizeWhitespace(text)
+    .split('\n')
+    .map(line => line.trimEnd())
+
+  const kept: string[] = []
+  for (const line of lines) {
+    const normalized = line.trim()
+    if (!normalized) {
+      kept.push('')
+      continue
+    }
+
+    if (includesAny(normalized, SYSTEM_PATH_PATTERNS)) continue
+    if (includesAny(normalized, PIPELINE_NOISE_PATTERNS)) continue
+    if (includesAny(normalized, STRUCTURED_NOISE_PATTERNS)) continue
+    kept.push(line)
+  }
+
+  return normalizeWhitespace(kept.join('\n'))
+}
+
 function clip(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text
   return `${text.slice(0, maxChars)}...`
@@ -190,18 +227,18 @@ export class MemoryOrchestrator {
   private readonly policyVersion = 'v4-auto-safe'
 
   private sanitizeUserQueryForMemory(userQuery: string): string {
-    const cleaned = stripPipelineScaffold(userQuery)
+    const cleaned = stripNoiseLines(stripPipelineScaffold(userQuery))
     return clip(cleaned, 1200)
   }
 
   private sanitizeAssistantResponseForMemory(assistantResponse: string): string {
-    const cleaned = normalizeWhitespace(assistantResponse)
+    const cleaned = stripNoiseLines(stripPipelineScaffold(assistantResponse))
     return clip(cleaned, 2400)
   }
 
   private sanitizeSummary(summary: string, fallback: string): string {
-    const base = normalizeWhitespace(summary || fallback)
-    return clip(stripPipelineScaffold(base), 320)
+    const base = stripNoiseLines(stripPipelineScaffold(summary || fallback))
+    return clip(base, 320)
   }
 
   private isUserCentricFact(content: string): boolean {
@@ -213,8 +250,15 @@ export class MemoryOrchestrator {
     if (includesAny(content, TRANSIENT_FACT_PATTERNS)) return false
     if (includesAny(content, ASSISTANT_NOISE_PATTERNS)) return false
     if (includesAny(content, STRUCTURED_NOISE_PATTERNS)) return false
+    if (includesAny(content, SYSTEM_PATH_PATTERNS)) return false
     if (content.length < 4) return false
     return true
+  }
+
+  private normalizeFactSource(fact: ExtractedFact): ExtractedFact['source'] {
+    if (includesAny(fact.content, ASSISTANT_TONE_PATTERNS)) return 'assistant'
+    if (this.isUserCentricFact(fact.content)) return 'user'
+    return fact.source || 'user'
   }
 
   private filterFacts(facts: ExtractedFact[]): ExtractedFact[] {
@@ -233,7 +277,7 @@ export class MemoryOrchestrator {
         ...fact,
         content: clip(content, 260),
         confidence: Math.max(0.5, Math.min(1, fact.confidence)),
-        source: fact.source || 'user',
+        source: this.normalizeFactSource(fact),
         intent: fact.intent || fact.type,
       })
     }
@@ -291,8 +335,8 @@ export class MemoryOrchestrator {
 
   private shouldAutoWriteSkillLongTerm(description: string, confidence: number, evidenceCount: number): boolean {
     if (!this.shouldPromoteToLongTerm(description)) return false
-    if (confidence < 0.9) return false
-    if (evidenceCount < 3) return false
+    if (confidence < 0.88) return false
+    if (evidenceCount < 2) return false
     if (description.length > 220) return false
     return true
   }
@@ -304,8 +348,8 @@ export class MemoryOrchestrator {
     evidenceCount: number,
   ): boolean {
     if (!this.shouldPromoteToGlobal(section, description)) return false
-    if (confidence < 0.92) return false
-    if (evidenceCount < 4) return false
+    if (confidence < 0.9) return false
+    if (evidenceCount < 3) return false
     if (description.length > 200) return false
     return true
   }

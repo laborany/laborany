@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Router, Request, Response } from 'express'
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { readdir, writeFile } from 'fs/promises'
 import { join, dirname, normalize, posix } from 'path'
 import { loadSkill } from 'laborany-shared'
@@ -25,6 +25,8 @@ import {
   profileManager,
   memCellStorage,
   episodeStorage,
+  PROFILES_DIR,
+  PROFILE_PATH,
 } from '../memory/index.js'
 
 const router = Router()
@@ -722,6 +724,83 @@ router.get('/memory/episodes', (_req: Request, res: Response) => {
  * │                       触发 Episode 聚类                                    │
  * │  将最近的 MemCell 聚合为 Episode（可手动触发或定时任务调用）                │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+router.get('/memory/profile/export.md', (_req: Request, res: Response) => {
+  try {
+    const profile = profileManager.get()
+    const lines: string[] = [
+      '# 用户画像导出',
+      '',
+      `- 导出时间: ${new Date().toISOString()}`,
+      `- 版本: ${profile.version}`,
+      '',
+      profileManager.getSummary(),
+    ]
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8')
+    res.send(lines.join('\n'))
+  } catch (error) {
+    res.status(500).json({ error: '导出画像失败' })
+  }
+})
+
+router.post('/memory/profile/reset', (_req: Request, res: Response) => {
+  try {
+    const profile = profileManager.reset()
+    res.json({ success: true, profile })
+  } catch (error) {
+    res.status(500).json({ error: '重置画像失败' })
+  }
+})
+
+router.post('/memory/reset-all', (_req: Request, res: Response) => {
+  try {
+    const memoryRoot = join(DATA_DIR, 'memory')
+    const targets = [
+      join(memoryRoot, 'cells'),
+      join(memoryRoot, 'episodes'),
+      join(memoryRoot, 'global'),
+      join(memoryRoot, 'skills'),
+      join(memoryRoot, 'traces'),
+      join(memoryRoot, 'index'),
+      join(memoryRoot, 'cleanup-backups'),
+      PROFILE_PATH,
+      PROFILES_DIR,
+      join(memoryRoot, 'consolidation-candidates.json'),
+      join(memoryRoot, 'last-cluster.txt'),
+      join(DATA_DIR, 'MEMORY.md'),
+    ]
+
+    let removed = 0
+    const failed: string[] = []
+
+    for (const target of targets) {
+      if (!existsSync(target)) continue
+      try {
+        rmSync(target, { recursive: true, force: true })
+        removed += 1
+      } catch {
+        failed.push(target)
+      }
+    }
+
+    if (!existsSync(memoryRoot)) {
+      mkdirSync(memoryRoot, { recursive: true })
+    }
+
+    if (!existsSync(PROFILES_DIR)) {
+      mkdirSync(PROFILES_DIR, { recursive: true })
+    }
+
+    profileManager.reset()
+    if (!existsSync(join(DATA_DIR, 'MEMORY.md'))) {
+      writeFileSync(join(DATA_DIR, 'MEMORY.md'), '# 全局长期记忆\n\n', 'utf-8')
+    }
+
+    res.json({ success: true, removed, failed })
+  } catch (error) {
+    res.status(500).json({ error: '重置全部记忆失败' })
+  }
+})
+
 router.post('/memory/cluster-episodes', async (req: Request, res: Response) => {
   try {
     const { days } = req.body

@@ -1,5 +1,9 @@
 import { memoryOrchestrator } from './orchestrator.js'
 import type { ExtractAndUpsertParams, UpsertResult } from './orchestrator.js'
+import { memoryProcessor } from './consolidator.js'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { DATA_DIR } from '../paths.js'
 
 export interface MemoryQueueStats {
   enabled: boolean
@@ -43,6 +47,39 @@ function toInt(value: string | undefined, fallback: number): number {
 
 const MEMORY_ASYNC_ENABLED = (process.env.MEMORY_ASYNC_ENABLED || 'true').toLowerCase() !== 'false'
 const MEMORY_QUEUE_MAX = toInt(process.env.MEMORY_QUEUE_MAX, 100)
+const MEMORY_AUTO_CLUSTER_ENABLED = (process.env.MEMORY_AUTO_CLUSTER_ENABLED || 'true').toLowerCase() !== 'false'
+const MEMORY_CLUSTER_COOLDOWN_MS = toInt(process.env.MEMORY_CLUSTER_COOLDOWN_MS, 10 * 60 * 1000)
+const MEMORY_CLUSTER_DAYS = toInt(process.env.MEMORY_CLUSTER_DAYS, 7)
+const MEMORY_CLUSTER_MIN_COMPLETED_JOBS = toInt(process.env.MEMORY_CLUSTER_MIN_COMPLETED_JOBS, 3)
+const MEMORY_CLUSTER_MAX_INTERVAL_MS = toInt(process.env.MEMORY_CLUSTER_MAX_INTERVAL_MS, 24 * 60 * 60 * 1000)
+
+const CLUSTER_MARKER_PATH = join(DATA_DIR, 'memory', 'last-cluster.txt')
+
+function readClusterMarker(): number {
+  try {
+    if (!existsSync(CLUSTER_MARKER_PATH)) return 0
+    const raw = readFileSync(CLUSTER_MARKER_PATH, 'utf-8').trim()
+    if (!raw) return 0
+
+    const parsed = Date.parse(raw)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+
+    const asNumber = Number.parseInt(raw, 10)
+    if (Number.isFinite(asNumber) && asNumber > 0) return asNumber
+    return 0
+  } catch {
+    return 0
+  }
+}
+
+function writeClusterMarker(atMs: number): void {
+  try {
+    mkdirSync(dirname(CLUSTER_MARKER_PATH), { recursive: true })
+    writeFileSync(CLUSTER_MARKER_PATH, new Date(atMs).toISOString(), 'utf-8')
+  } catch {
+    // ignore
+  }
+}
 
 class MemoryAsyncQueue {
   private readonly enabled = MEMORY_ASYNC_ENABLED
@@ -58,6 +95,9 @@ class MemoryAsyncQueue {
   private lastError: string | undefined
   private lastAcceptedAt: string | undefined
   private lastCompletedAt: string | undefined
+  private lastClusterAt = readClusterMarker()
+  private clusterInFlight = false
+  private completedSinceCluster = 0
 
   enqueue(params: ExtractAndUpsertParams): MemoryQueueResult {
     const job: MemoryQueueJob = {
@@ -147,6 +187,8 @@ class MemoryAsyncQueue {
           console.log(
             `[MemoryQueue] job completed: id=${job.id} method=${result.extractionMethod} cells=${result.written.cells}`,
           )
+          this.completedSinceCluster += 1
+          this.maybeAutoClusterEpisodes()
         } catch (error) {
           this.failed += 1
           this.lastError = error instanceof Error ? error.message : String(error)
@@ -156,6 +198,42 @@ class MemoryAsyncQueue {
     } finally {
       this.processing = false
     }
+  }
+
+  private maybeAutoClusterEpisodes(): void {
+    if (!MEMORY_AUTO_CLUSTER_ENABLED) return
+    if (this.clusterInFlight) return
+
+    const now = Date.now()
+    const sinceLast = now - this.lastClusterAt
+    const cooldownOk = sinceLast >= MEMORY_CLUSTER_COOLDOWN_MS
+    if (!cooldownOk) return
+
+    const thresholdReached = this.completedSinceCluster >= MEMORY_CLUSTER_MIN_COMPLETED_JOBS
+    const maxIntervalReached = this.lastClusterAt === 0 || sinceLast >= MEMORY_CLUSTER_MAX_INTERVAL_MS
+
+    if (!thresholdReached && !maxIntervalReached) return
+
+    const pendingJobs = this.completedSinceCluster
+    this.completedSinceCluster = 0
+    this.lastClusterAt = now
+    writeClusterMarker(now)
+    this.clusterInFlight = true
+
+    void memoryProcessor
+      .clusterRecentCellsAsync(MEMORY_CLUSTER_DAYS)
+      .then((episodeIds) => {
+        if (episodeIds.length > 0) {
+          console.log(`[MemoryQueue] auto-cluster completed: episodes=${episodeIds.length}`)
+        }
+      })
+      .catch((error) => {
+        this.completedSinceCluster = Math.max(this.completedSinceCluster, pendingJobs)
+        console.warn('[MemoryQueue] auto-cluster failed:', error)
+      })
+      .finally(() => {
+        this.clusterInFlight = false
+      })
   }
 }
 
