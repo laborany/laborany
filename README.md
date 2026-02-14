@@ -14,7 +14,8 @@
   <a href="#quick-start">快速开始</a> ·
   <a href="#feature-overview">功能速览</a> ·
   <a href="#acknowledgments">致谢</a> ·
-  <a href="#license--contributing">许可与贡献</a>
+  <a href="#license--contributing">许可与贡献</a> ·
+  <a href="https://mp.weixin.qq.com/s/wKO2Alkng_JwFcnstolEzw">免费获取API-Key</a>
 </p>
 
 ---
@@ -146,6 +147,11 @@ skills/my-skill/
 ```
 
 > 更多细节见 [docs/](docs/) 目录。
+
+---
+
+## 如何获取 API-Key？
+- **免费**！**最强模型**！请参考 👉[API Key 获取和配置教程](https://mp.weixin.qq.com/s/wKO2Alkng_JwFcnstolEzw).
 
 ---
 
