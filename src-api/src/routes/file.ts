@@ -9,11 +9,11 @@ import { readFile, readdir, stat, writeFile, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { existsSync, createWriteStream } from 'fs'
-import { homedir } from 'os'
 import { v4 as uuid } from 'uuid'
 import { Readable } from 'stream'
 import { exec } from 'child_process'
 import busboy from 'busboy'
+import { getAppHomeDir, isPackagedRuntime } from '../lib/app-home.js'
 import {
   isLibreOfficeAvailable,
   convertToPdf,
@@ -37,15 +37,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  * │  - 开发环境：项目根目录/tasks                                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getTasksDir(): string {
-  const isPkg = typeof (process as any).pkg !== 'undefined'
+  const isPkg = isPackagedRuntime()
 
   if (isPkg) {
-    const appDataDir = process.platform === 'win32'
-      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
-      : process.platform === 'darwin'
-        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
-        : join(homedir(), '.config', 'laborany')
-    return join(appDataDir, 'data', 'tasks')
+    return join(getAppHomeDir(), 'data', 'tasks')
   }
 
   // 开发模式：相对于项目根目录
@@ -252,15 +247,10 @@ file.get('/tasks/:sessionId/files/*', (c) => handleFileDownload(c, 'tasks'))
  * │                       文件上传（复合技能输入）                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export function getUploadsDir(): string {
-  const isProduction = process.env.NODE_ENV === 'production'
+  const isProduction = isPackagedRuntime()
 
   if (isProduction) {
-    const appDataDir = process.platform === 'win32'
-      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
-      : process.platform === 'darwin'
-        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
-        : join(homedir(), '.config', 'laborany')
-    return join(appDataDir, 'uploads')
+    return join(getAppHomeDir(), 'uploads')
   }
 
   return join(__dirname, '../../../uploads')

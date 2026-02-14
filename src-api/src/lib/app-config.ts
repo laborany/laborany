@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
+import { getAppHomeDir, isPackagedRuntime } from './app-home.js'
 
 export interface LocalProfile {
   name: string
@@ -9,16 +9,12 @@ export interface LocalProfile {
 }
 
 function isPackaged(): boolean {
-  return typeof (process as any).pkg !== 'undefined'
+  return isPackagedRuntime()
 }
 
 export function getConfigDir(): string {
   if (isPackaged()) {
-    const appDataDir = process.platform === 'win32'
-      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
-      : process.platform === 'darwin'
-        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
-        : join(homedir(), '.config', 'laborany')
+    const appDataDir = getAppHomeDir()
 
     if (!existsSync(appDataDir)) {
       mkdirSync(appDataDir, { recursive: true })
@@ -126,4 +122,3 @@ export function writeLocalProfile(name: string): LocalProfile {
   writeFileSync(profilePath, JSON.stringify(profile, null, 2), 'utf-8')
   return profile
 }
-

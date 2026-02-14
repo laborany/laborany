@@ -6,11 +6,12 @@
 
 import { createWriteStream, existsSync, mkdirSync, chmodSync, unlinkSync } from 'fs'
 import { join } from 'path'
-import { platform, arch, homedir, tmpdir } from 'os'
+import { platform, arch, tmpdir } from 'os'
 import { execSync, spawn } from 'child_process'
 import { createHash } from 'crypto'
 import { pipeline } from 'stream/promises'
 import { Readable } from 'stream'
+import { getAppHomeDir } from '../lib/app-home.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -98,18 +99,9 @@ function getPlatformConfig(): PlatformConfig | null {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 function getInstallDir(): string {
-  const os = platform()
-  let installDir: string
-
-  if (os === 'win32') {
-    /* Windows: 返回基础目录，安装器会追加 LibreOfficePortable */
-    installDir = join(homedir(), 'AppData', 'Local', 'LaborAny')
-  } else if (os === 'darwin') {
-    /* macOS: 返回 libreoffice 子目录 */
-    installDir = join(homedir(), 'Library', 'Application Support', 'LaborAny', 'libreoffice')
-  } else {
-    /* Linux: 返回 libreoffice 子目录 */
-    installDir = join(homedir(), '.local', 'share', 'laborany', 'libreoffice')
+  let installDir = join(getAppHomeDir(), 'libreoffice')
+  if (platform() === 'win32') {
+    installDir = getAppHomeDir()
   }
 
   if (!existsSync(installDir)) {

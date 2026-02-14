@@ -5,6 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 /// <reference types="vite/client" />
+import { logClientError, logClientInfo, logClientWarn } from '../lib/client-logger'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           API 基础路径                                    │
@@ -38,17 +39,24 @@ export function parseErrorMessage(data: unknown, fallback = '请求失败'): str
 const isDev = import.meta.env.DEV
 
 export function logRequest(method: string, url: string, body?: unknown): void {
+  logClientInfo('api_request', `${method} ${url}`, body ? { body } : undefined)
   if (!isDev) return
   console.log(`[API] ${method} ${url}`, body ? { body } : '')
 }
 
 export function logResponse(method: string, url: string, status: number, data?: unknown): void {
+  if (status >= 200 && status < 300) {
+    logClientInfo('api_response', `${method} ${url} -> ${status}`, data ? { data } : undefined)
+  } else {
+    logClientWarn('api_response_error', `${method} ${url} -> ${status}`, data ? { data } : undefined)
+  }
   if (!isDev) return
   const emoji = status >= 200 && status < 300 ? '✓' : '✗'
   console.log(`[API] ${emoji} ${method} ${url} → ${status}`, data ? { data } : '')
 }
 
 export function logError(method: string, url: string, error: unknown): void {
+  logClientError('api_request_error', `${method} ${url}`, error)
   if (!isDev) return
   console.error(`[API] ✗ ${method} ${url}`, error)
 }

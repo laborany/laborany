@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url'
 import type { Skill } from 'laborany-shared'
 import { wrapCmdForUtf8, withUtf8Env } from 'laborany-shared'
 import { isZhipuApi, buildZhipuMcpServers, injectMcpServers } from './mcp/index.js'
+import { getAppHomeDir, isPackagedRuntime } from '../../lib/app-home.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -110,23 +111,15 @@ interface ExecuteOptions {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务目录管理                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function isPackaged(): boolean {
-  return !process.execPath.includes('node')
-}
-
 function getAppDataDir(): string {
-  if (isPackaged()) {
-    return platform() === 'win32'
-      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
-      : platform() === 'darwin'
-        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
-        : join(homedir(), '.config', 'laborany')
+  if (isPackagedRuntime()) {
+    return getAppHomeDir()
   }
   return join(__dirname, '..', '..', '..', '..')
 }
 
 function getTasksBaseDir(): string {
-  if (isPackaged()) {
+  if (isPackagedRuntime()) {
     // 打包环境：与 agent-service 保持一致，使用 data/tasks
     return join(getAppDataDir(), 'data', 'tasks')
   }

@@ -25,6 +25,11 @@ export default function SettingsPage() {
   const [editValues, setEditValues] = useState<Record<string, string>>({})
   const [configPath, setConfigPath] = useState('')
   const [profilePath, setProfilePath] = useState('')
+  const [logsPath, setLogsPath] = useState('')
+  const [logsFallbackActive, setLogsFallbackActive] = useState(false)
+  const [logsFallbackReason, setLogsFallbackReason] = useState('')
+  const [migrationReportPath, setMigrationReportPath] = useState('')
+  const [exportingLogs, setExportingLogs] = useState(false)
   const [profileName, setProfileName] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -43,6 +48,10 @@ export default function SettingsPage() {
       setConfig(data.config || {})
       setConfigPath(data.envPath || '')
       setProfilePath(data.profilePath || '')
+      setLogsPath(data.logsDir || '')
+      setLogsFallbackActive(Boolean(data.logsFallbackActive))
+      setLogsFallbackReason(data.logsFallbackReason || '')
+      setMigrationReportPath(data.migrationReportPath || '')
       setProfileName(data.profile?.name || '')
 
       const values: Record<string, string> = {}
@@ -105,6 +114,38 @@ export default function SettingsPage() {
     setEditValues(prev => ({ ...prev, [key]: value }))
   }
 
+  async function exportLogs() {
+    setExportingLogs(true)
+    setMessage(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/logs/export`)
+      if (!response.ok) {
+        throw new Error('导出失败')
+      }
+
+      const blob = await response.blob()
+      const contentDisposition = response.headers.get('content-disposition') || ''
+      const matchedFileName = contentDisposition.match(/filename="([^"]+)"/)
+      const filename = matchedFileName?.[1] || `laborany-logs-${Date.now()}.zip`
+
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+
+      setMessage({ type: 'success', text: '诊断日志已导出' })
+    } catch {
+      setMessage({ type: 'error', text: '日志导出失败' })
+    } finally {
+      setExportingLogs(false)
+    }
+  }
+
   function toggleShowValue(key: string) {
     setShowValues(prev => ({ ...prev, [key]: !prev[key] }))
   }
@@ -139,6 +180,30 @@ export default function SettingsPage() {
                 Profile 位置：<code className="bg-background px-2 py-0.5 rounded text-xs">{profilePath}</code>
               </p>
             )}
+            {logsPath && (
+              <p className="text-sm text-muted-foreground mt-2">
+                日志目录：<code className="bg-background px-2 py-0.5 rounded text-xs">{logsPath}</code>
+              </p>
+            )}
+            {migrationReportPath && (
+              <p className="text-sm text-muted-foreground mt-2">
+                迁移报告：<code className="bg-background px-2 py-0.5 rounded text-xs">{migrationReportPath}</code>
+              </p>
+            )}
+            {logsFallbackActive && logsFallbackReason && (
+              <p className="text-xs text-amber-600 mt-2">
+                日志目录降级：{logsFallbackReason}
+              </p>
+            )}
+            <div className="mt-3">
+              <button
+                onClick={exportLogs}
+                disabled={exportingLogs}
+                className="px-3 py-1.5 bg-background border border-border rounded text-sm hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {exportingLogs ? '导出中...' : '导出诊断日志 (.zip)'}
+              </button>
+            </div>
           </div>
         )}
 

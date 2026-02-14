@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'fs'
-import { homedir } from 'os'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { parse as parseDotenv } from 'dotenv'
+import { APP_HOME_DIR } from './paths.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -19,18 +19,12 @@ function isPackaged(): boolean {
   return !process.execPath.includes('node')
 }
 
-function getUserConfigDir(): string {
-  if (process.platform === 'win32') {
-    return join(homedir(), 'AppData', 'Roaming', 'LaborAny')
-  }
-  if (process.platform === 'darwin') {
-    return join(homedir(), 'Library', 'Application Support', 'LaborAny')
-  }
-  return join(homedir(), '.config', 'laborany')
-}
-
 export function getRuntimeEnvPath(): string {
-  return join(getUserConfigDir(), '.env')
+  const fromEnv = (process.env.LABORANY_HOME || '').trim()
+  if (fromEnv) {
+    return join(fromEnv, '.env')
+  }
+  return join(APP_HOME_DIR, '.env')
 }
 
 function readEnvFile(filePath: string): Record<string, string> {

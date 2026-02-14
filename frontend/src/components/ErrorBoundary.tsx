@@ -5,6 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Component, ReactNode, ErrorInfo } from 'react'
+import { logClientError } from '../lib/client-logger'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -32,6 +33,12 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[ErrorBoundary] 捕获错误:', error)
     console.error('[ErrorBoundary] 组件栈:', info.componentStack)
+    logClientError(
+      'react_error_boundary',
+      error.message || 'React render error',
+      error,
+      { componentStack: info.componentStack },
+    )
   }
 
   handleReset = () => {

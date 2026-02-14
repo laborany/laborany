@@ -8,6 +8,11 @@ import { startCronTimer } from './cron/index.js'
 import { memoryAsyncQueue } from './memory/index.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
 import {
+  initAgentLogger,
+  patchAgentConsole,
+  installAgentGlobalErrorHandlers,
+} from './app-logger.js'
+import {
   memoryRouter,
   cronRouter,
   notificationsRouter,
@@ -18,6 +23,15 @@ import {
   converseRouter,
   smartRouter,
 } from './routes/index.js'
+
+initAgentLogger({
+  defaultSource: 'agent',
+  minLevel: 'info',
+  retentionDays: 7,
+  maxFileSizeMB: 10,
+})
+patchAgentConsole()
+installAgentGlobalErrorHandlers()
 
 const runtimeConfig = refreshRuntimeConfig()
 console.log(`[Agent Service] Loaded runtime env from: ${runtimeConfig.loadedFrom.join(', ') || 'none'}`)

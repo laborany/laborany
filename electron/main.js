@@ -9,6 +9,8 @@ const { spawn, execSync } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
+const { createLogger } = require('./app-logger')
+const { migrateLegacyAppHomes } = require('./app-home')
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           全局变量                                        │
@@ -16,9 +18,59 @@ const http = require('http')
 let mainWindow = null
 let apiProcess = null
 let agentProcess = null
+let appLogger = null
+let runtimePaths = {
+  appHome: '',
+  logsDir: '',
+  migrationReportPath: '',
+}
 const API_PORT = 3620
 const AGENT_PORT = 3002
 const isDev = !app.isPackaged
+
+function buildSidecarEnv(extra = {}) {
+  return {
+    ...process.env,
+    LABORANY_HOME: runtimePaths.appHome || process.env.LABORANY_HOME || '',
+    LABORANY_LOG_DIR: runtimePaths.logsDir || process.env.LABORANY_LOG_DIR || '',
+    ...extra,
+  }
+}
+
+function initRuntimePathsAndLogger() {
+  const appHome = app.getPath('userData')
+  const logsDir = path.join(appHome, 'logs')
+
+  runtimePaths = {
+    appHome,
+    logsDir,
+    migrationReportPath: path.join(appHome, 'migration-report.json'),
+  }
+
+  process.env.LABORANY_HOME = runtimePaths.appHome
+  process.env.LABORANY_LOG_DIR = runtimePaths.logsDir
+
+  const migration = migrateLegacyAppHomes({
+    userDataDir: runtimePaths.appHome,
+    appDataDir: app.getPath('appData'),
+    homeDir: app.getPath('home'),
+  })
+  runtimePaths.migrationReportPath = migration.reportPath
+
+  appLogger = createLogger({
+    source: 'electron',
+    minLevel: 'info',
+    retentionDays: 7,
+    maxFileSizeMB: 10,
+    logRootDir: runtimePaths.logsDir,
+  })
+  appLogger.patchConsole()
+  appLogger.installGlobalErrorHandlers()
+
+  console.log(`[Electron] LABORANY_HOME: ${runtimePaths.appHome}`)
+  console.log(`[Electron] LABORANY_LOG_DIR: ${runtimePaths.logsDir}`)
+  console.log(`[Electron] migration report: ${runtimePaths.migrationReportPath}`)
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           端口清理                                        │
@@ -130,13 +182,14 @@ function startApiServer() {
   console.log(`[Electron] Starting API server: ${apiPath}`)
 
   apiProcess = spawn(apiPath, [], {
-    env: {
-      ...process.env,
+    env: buildSidecarEnv({
       PORT: API_PORT.toString(),
-      NODE_ENV: 'production'
-    },
+      NODE_ENV: 'production',
+    }),
     stdio: ['ignore', 'pipe', 'pipe']
   })
+
+  appLogger?.attachChildProcessLogs(apiProcess, 'api', 'api-sidecar')
 
   apiProcess.stdout.on('data', (data) => {
     console.log(`[API] ${data.toString().trim()}`)
@@ -187,14 +240,15 @@ function startAgentServer() {
     : path.join(process.resourcesPath, 'agent', 'better_sqlite3.node')
 
   agentProcess = spawn(agentPath, [], {
-    env: {
-      ...process.env,
+    env: buildSidecarEnv({
       AGENT_PORT: AGENT_PORT.toString(),
       NODE_ENV: 'production',
-      BETTER_SQLITE3_BINDING: sqliteBindingPath
-    },
+      BETTER_SQLITE3_BINDING: sqliteBindingPath,
+    }),
     stdio: ['ignore', 'pipe', 'pipe']
   })
+
+  appLogger?.attachChildProcessLogs(agentProcess, 'agent', 'agent-sidecar')
 
   agentProcess.stdout.on('data', (data) => {
     console.log(`[Agent] ${data.toString().trim()}`)
@@ -307,6 +361,8 @@ function forceCleanup() {
   }, 500)
 }
 app.whenReady().then(async () => {
+  initRuntimePathsAndLogger()
+
   const apiStarted = startApiServer()
   const agentStarted = startAgentServer()
 

@@ -14,6 +14,8 @@ import {
   writeLocalProfile,
   readLocalProfile,
 } from '../lib/app-config.js'
+import { getMigrationReportPath } from '../lib/app-home.js'
+import { getAppLoggerStatus } from '../lib/app-logger.js'
 
 const config = new Hono()
 
@@ -24,6 +26,7 @@ config.get('/', (c) => {
   const configDir = getConfigDir()
   const envPath = getEnvPath()
   const profilePath = getProfilePath()
+  const loggerStatus = getAppLoggerStatus()
   const envConfig = readEnvConfig()
   const profile = readLocalProfile()
 
@@ -47,6 +50,10 @@ config.get('/', (c) => {
     configDir,
     envPath,
     profilePath,
+    logsDir: loggerStatus.logRoot,
+    logsFallbackActive: loggerStatus.fallbackActive,
+    logsFallbackReason: loggerStatus.fallbackReason,
+    migrationReportPath: getMigrationReportPath(),
     profile,
     config: safeConfig,
   })

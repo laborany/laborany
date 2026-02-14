@@ -48,6 +48,7 @@ import authRoutes from './routes/auth.js'
 import skillRoutes from './routes/skill.js'
 import fileRoutes from './routes/file.js'
 import configRoutes from './routes/config.js'
+import logsRoutes from './routes/logs.js'
 import sessionRoutes from './routes/session.js'
 import setupRoutes from './routes/setup.js'
 import sandboxRoutes from './routes/sandbox.js'
@@ -55,6 +56,16 @@ import previewRoutes from './routes/preview.js'
 import { initDb, closeDb } from './core/database.js'
 import { registerAllProviders } from './providers/index.js'
 import { stopAllProviders } from './core/sandbox/registry.js'
+import { initAppLogger, installGlobalErrorHandlers, patchConsole } from './lib/app-logger.js'
+
+initAppLogger({
+  defaultSource: 'api',
+  minLevel: 'info',
+  retentionDays: 7,
+  maxFileSizeMB: 10,
+})
+patchConsole()
+installGlobalErrorHandlers()
 
 const app = new Hono()
 const PORT = parseInt(process.env.PORT || '3620', 10)
@@ -79,6 +90,7 @@ app.get('/health', (c) => {
 app.route('/api/auth', authRoutes)
 app.route('/api/skill', skillRoutes)
 app.route('/api/config', configRoutes)
+app.route('/api/logs', logsRoutes)
 app.route('/api/sessions', sessionRoutes)
 app.route('/api/setup', setupRoutes)
 app.route('/api/sandbox', sandboxRoutes)

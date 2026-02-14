@@ -8,7 +8,7 @@
 import initSqlJs, { type Database, type BindParams } from 'sql.js'
 import { join } from 'path'
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
+import { getAppHomeDir, isPackagedRuntime } from '../lib/app-home.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           数据库路径                                      │
@@ -16,14 +16,10 @@ import { homedir } from 'os'
  * │  使用 process.pkg 检测打包环境，与其他模块保持一致                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getDbPath(): string {
-  const isPkg = typeof (process as any).pkg !== 'undefined'
+  const isPkg = isPackagedRuntime()
 
   if (isPkg) {
-    const appDataDir = process.platform === 'win32'
-      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
-      : process.platform === 'darwin'
-        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
-        : join(homedir(), '.config', 'laborany')
+    const appDataDir = getAppHomeDir()
 
     if (!existsSync(appDataDir)) {
       mkdirSync(appDataDir, { recursive: true })
