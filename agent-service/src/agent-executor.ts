@@ -13,6 +13,7 @@ import type { Skill } from 'laborany-shared'
 import { memoryFileManager, memoryOrchestrator, memoryAsyncQueue } from './memory/index.js'
 import { buildClaudeEnvConfig, resolveClaudeCliLaunch } from './claude-cli.js'
 import { DATA_DIR } from './paths.js'
+import { refreshRuntimeConfig } from './runtime-config.js'
 
 /* ════════════════════════════════════════════════════════════════════════════
  *  默认超时时间：30 分钟
@@ -172,6 +173,8 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): Ag
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const { skill, query: userQuery, sessionId, signal, onEvent } = options
 
+  refreshRuntimeConfig()
+
   let lastProgressAt = Date.now()
   let idleWarningSent = false
 
@@ -261,6 +264,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   let lineBuffer = ''
   let agentResponse = ''  // 收集 Agent 的文本输出
   let toolSummary = ''    // 收集工具调用摘要
+  let stderrBuffer = ''
 
   /* ────────────────────────────────────────────────────────────────────────
    *  包装 onEvent：统一收集文本和工具调用信息
@@ -294,7 +298,12 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   })
 
   proc.stderr.on('data', (data: Buffer) => {
-    console.error('[Agent] stderr:', data.toString('utf-8'))
+    const chunk = data.toString('utf-8')
+    stderrBuffer += chunk
+    if (stderrBuffer.length > 4000) {
+      stderrBuffer = stderrBuffer.slice(-4000)
+    }
+    console.error('[Agent] stderr:', chunk)
   })
 
   const abortHandler = () => {
@@ -369,7 +378,13 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
           }
         }
         if (code !== 0) {
-          onEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
+          const stderrSnippet = stderrBuffer.trim().slice(0, 600)
+          onEvent({
+            type: 'error',
+            content: stderrSnippet
+              ? `Claude Code 退出码: ${code}\n${stderrSnippet}`
+              : `Claude Code 退出码: ${code}`,
+          })
         } else {
           onEvent({ type: 'done' })
         }

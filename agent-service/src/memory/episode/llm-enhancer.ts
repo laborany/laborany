@@ -1,115 +1,119 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                     Episode LLM 增强器                                   ║
- * ║                                                                          ║
- * ║  职责：使用 LLM 生成更好的主题和摘要                                      ║
- * ║  设计：增强 TF-IDF 聚类结果，而非替代                                     ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
-import Anthropic from '@anthropic-ai/sdk'
 import type { Episode } from './cluster.js'
 import type { MemCell } from '../memcell/index.js'
+import { isClaudeCliAvailable, runClaudePrompt } from '../cli-runner.js'
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           类型定义                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 interface EnhanceResult {
   subject: string
   summary: string
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     提取 Prompt                                           │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-const ENHANCE_PROMPT = `你是一个记忆整理专家。根据以下多个对话片段，生成一个情节记忆的主题和摘要。
-
-## 任务
-1. **主题**：用 3-5 个词概括这些对话的共同主题
-2. **摘要**：用 1-2 句话描述这个情节的核心内容
-
-## 输出格式（严格 JSON）
-{
-  "subject": "简短主题",
-  "summary": "情节摘要描述"
+interface EnhancePayload {
+  subject?: string
+  summary?: string
 }
 
-## 注意
-- 主题简洁有力，便于检索
-- 摘要要抓住核心，不要罗列细节
-- 必须返回有效 JSON
+const ENHANCE_PROMPT = `You are refining memory episode metadata.
+Given an episode and related memory cells, output strict JSON only:
+{"subject":"...","summary":"..."}
 
-## 对话片段
-`
+Rules:
+- subject: 8-40 chars, concise topic name.
+- summary: 30-160 chars, objective, no greetings.
+- Keep language consistent with input.
+- Do not include markdown or extra keys.`
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     Episode LLM 增强器类                                  │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+function clip(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, maxChars)}...`
+}
+
+function parseJsonPayload(raw: string): EnhancePayload | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+
+  const withoutFence = trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim()
+
+  const start = withoutFence.indexOf('{')
+  const end = withoutFence.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) return null
+
+  try {
+    return JSON.parse(withoutFence.slice(start, end + 1)) as EnhancePayload
+  } catch {
+    return null
+  }
+}
+
+function normalizeEnhanceResult(input: EnhancePayload | null, fallback: EnhanceResult): EnhanceResult {
+  const subject = (input?.subject || '').trim()
+  const summary = (input?.summary || '').trim()
+
+  return {
+    subject: clip(subject || fallback.subject, 60),
+    summary: clip(summary || fallback.summary, 320),
+  }
+}
+
+function buildEnhanceInput(episode: Episode, cells: MemCell[]): string {
+  const uniqueFacts = new Set<string>()
+  for (const cell of cells) {
+    for (const fact of cell.facts) {
+      const content = fact.content.trim()
+      if (!content) continue
+      uniqueFacts.add(content)
+      if (uniqueFacts.size >= 20) break
+    }
+    if (uniqueFacts.size >= 20) break
+  }
+
+  const cellSamples = cells.slice(0, 8).map(cell => ({
+    summary: clip(cell.summary || '', 180),
+    facts: cell.facts.slice(0, 4).map(item => clip(item.content, 120)),
+  }))
+
+  return JSON.stringify({
+    episode: {
+      subject: episode.subject,
+      summary: episode.summary,
+      centroid: episode.centroid.slice(0, 8),
+      keyFacts: episode.keyFacts.slice(0, 10).map(item => clip(item.fact, 120)),
+    },
+    cells: cellSamples,
+    factPool: Array.from(uniqueFacts).slice(0, 20).map(item => clip(item, 120)),
+  })
+}
+
 export class EpisodeLLMEnhancer {
-  private client: Anthropic | null = null
-  private model: string
-
-  constructor() {
-    this.model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514'
-  }
-
-  /* ────────────────────────────────────────────────────────────────────────
-   *  初始化客户端
-   * ──────────────────────────────────────────────────────────────────────── */
-  private getClient(): Anthropic {
-    if (!this.client) {
-      this.client = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-        baseURL: process.env.ANTHROPIC_BASE_URL || undefined,
-      })
-    }
-    return this.client
-  }
-
-  /* ────────────────────────────────────────────────────────────────────────
-   *  格式化 MemCell 列表为文本
-   * ──────────────────────────────────────────────────────────────────────── */
-  private formatCells(cells: MemCell[]): string {
-    return cells.map((cell, i) => {
-      const facts = cell.facts.map(f => `  - ${f.content}`).join('\n')
-      return `### 片段 ${i + 1}\n摘要：${cell.summary}\n事实：\n${facts || '  （无）'}`
-    }).join('\n\n')
-  }
-
-  /* ────────────────────────────────────────────────────────────────────────
-   *  增强 Episode（生成更好的主题和摘要）
-   * ──────────────────────────────────────────────────────────────────────── */
   async enhance(episode: Episode, cells: MemCell[]): Promise<EnhanceResult> {
-    const cellsText = this.formatCells(cells)
-    const prompt = ENHANCE_PROMPT + cellsText
-
-    try {
-      const client = this.getClient()
-      const response = await client.messages.create({
-        model: this.model,
-        max_tokens: 500,
-        messages: [{ role: 'user', content: prompt }],
-      })
-
-      const textBlock = response.content.find(
-        (b): b is Anthropic.TextBlock => b.type === 'text'
-      )
-      if (!textBlock) throw new Error('No text response')
-
-      return JSON.parse(textBlock.text) as EnhanceResult
-    } catch (error) {
-      console.warn('[EpisodeLLMEnhancer] 增强失败，使用原始值:', error)
-      return { subject: episode.subject, summary: episode.summary }
+    const fallback: EnhanceResult = {
+      subject: episode.subject,
+      summary: episode.summary,
     }
+
+    const payload = buildEnhanceInput(episode, cells)
+    const model = (process.env.ANTHROPIC_CLASSIFY_MODEL || process.env.ANTHROPIC_MODEL || '').trim()
+    const result = await runClaudePrompt({
+      prompt: `${ENHANCE_PROMPT}\n\nInput JSON:\n${payload}`,
+      timeoutMs: 18_000,
+      model: model || undefined,
+    })
+
+    if (!result.ok) {
+      console.warn(
+        `[MemoryEpisodeEnhancer] CLI enhance fallback: source=${result.source || 'unknown'} reason=${result.reason || 'unknown'} stderr=${(result.stderr || '').slice(0, 180)}`,
+      )
+      return fallback
+    }
+
+    return normalizeEnhanceResult(parseJsonPayload(result.stdout), fallback)
   }
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  检查是否可用
-   * ──────────────────────────────────────────────────────────────────────── */
   isAvailable(): boolean {
-    return !!process.env.ANTHROPIC_API_KEY
+    return isClaudeCliAvailable()
   }
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           导出单例                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 export const episodeLLMEnhancer = new EpisodeLLMEnhancer()

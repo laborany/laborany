@@ -4,6 +4,7 @@ import { homedir, platform } from 'os'
 import { dirname, join } from 'path'
 import { wrapCmdForUtf8, withUtf8Env } from 'laborany-shared'
 import { RESOURCES_DIR } from './paths.js'
+import { refreshRuntimeConfig } from './runtime-config.js'
 
 export interface ClaudeCliLaunchConfig {
   command: string
@@ -111,6 +112,8 @@ export function findClaudeCodePath(): string | undefined {
 }
 
 export function resolveClaudeCliLaunch(): ClaudeCliLaunchConfig | undefined {
+  refreshRuntimeConfig()
+
   const bundled = findBundledClaudeLaunch()
   if (bundled) return bundled
 
@@ -129,10 +132,13 @@ export function resolveClaudeCliLaunch(): ClaudeCliLaunchConfig | undefined {
 }
 
 export function buildClaudeEnvConfig(): Record<string, string | undefined> {
+  refreshRuntimeConfig()
+
   const env: Record<string, string | undefined> = withUtf8Env({ ...process.env })
+  delete env.ANTHROPIC_AUTH_TOKEN
 
   if (process.env.ANTHROPIC_API_KEY) {
-    env.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_API_KEY
+    env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
   }
   if (process.env.ANTHROPIC_BASE_URL) {
     env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL

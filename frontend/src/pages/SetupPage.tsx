@@ -1,320 +1,404 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                         初始化设置页面                                    ║
+ * ║                         初始化向导页面                                    ║
  * ║                                                                          ║
- * ║  功能：检查并安装 Node.js 和 Claude Code CLI                              ║
+ * ║  流程：环境检测 → API 配置（强校验）→ 设置名称                             ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useState, useEffect, useRef } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { API_BASE } from '../config'
 import { LaborAnyLogo } from '../components/ui/LaborAnyLogo'
 
 interface SetupStatus {
+  ready: boolean
+  steps: {
+    environment: boolean
+    apiConfig: boolean
+    profile: boolean
+  }
   claudeCode: {
     installed: boolean
     path: string | null
+    bundled?: boolean
   }
-  npm: {
-    available: boolean
-    version?: string
-    error?: string
-  }
-  ready: boolean
+  envPath: string
+  profilePath: string
+  configDir: string
+  profile: { name: string } | null
+  errors: string[]
+}
+
+interface ConfigPayload {
+  ANTHROPIC_API_KEY: string
+  ANTHROPIC_BASE_URL: string
+  ANTHROPIC_MODEL: string
 }
 
 interface SetupPageProps {
   onReady: () => void
 }
 
-type SetupStep = 'checking' | 'need-nodejs' | 'installing-nodejs' | 'installing-claude' | 'done' | 'error'
+type WizardStep = 'loading' | 'environment' | 'api' | 'profile' | 'done'
 
 export default function SetupPage({ onReady }: SetupPageProps) {
-  const [step, setStep] = useState<SetupStep>('checking')
-  const [logs, setLogs] = useState<string[]>([])
+  const [status, setStatus] = useState<SetupStatus | null>(null)
+  const [step, setStep] = useState<WizardStep>('loading')
   const [error, setError] = useState<string | null>(null)
-  const [needRestart, setNeedRestart] = useState(false)
-  const logsEndRef = useRef<HTMLDivElement>(null)
+  const [validatingApi, setValidatingApi] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [validationMsg, setValidationMsg] = useState<string | null>(null)
 
-  // 自动滚动到日志底部
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
+  const [config, setConfig] = useState<ConfigPayload>({
+    ANTHROPIC_API_KEY: '',
+    ANTHROPIC_BASE_URL: '',
+    ANTHROPIC_MODEL: '',
+  })
+  const [displayName, setDisplayName] = useState('')
 
-  // 检查状态
   useEffect(() => {
-    checkStatus()
+    void bootstrap()
   }, [])
 
-  async function checkStatus() {
-    setStep('checking')
-    setLogs([])
+  const stepTitle = useMemo(() => {
+    if (step === 'loading') return '正在检查初始化状态...'
+    if (step === 'environment') return '步骤 1/3：运行环境检测'
+    if (step === 'api') return '步骤 2/3：配置模型 API'
+    if (step === 'profile') return '步骤 3/3：设置你的名字'
+    return '初始化完成'
+  }, [step])
+
+  async function bootstrap() {
     setError(null)
+    setStep('loading')
 
     try {
-      const res = await fetch(`${API_BASE}/setup/status`)
-      const data: SetupStatus = await res.json()
+      const [statusRes, configRes] = await Promise.all([
+        fetch(`${API_BASE}/setup/status`),
+        fetch(`${API_BASE}/config`),
+      ])
 
-      if (data.ready) {
-        // 已就绪，直接进入
+      if (!statusRes.ok) {
+        throw new Error('初始化状态检查失败')
+      }
+
+      const statusData = await statusRes.json() as SetupStatus
+      setStatus(statusData)
+
+      if (configRes.ok) {
+        const configData = await configRes.json() as {
+          config?: Record<string, { value: string }>
+          profile?: { name?: string } | null
+        }
+        const envConfig = configData.config || {}
+        setConfig({
+          ANTHROPIC_API_KEY: envConfig.ANTHROPIC_API_KEY?.value || '',
+          ANTHROPIC_BASE_URL: envConfig.ANTHROPIC_BASE_URL?.value || '',
+          ANTHROPIC_MODEL: envConfig.ANTHROPIC_MODEL?.value || '',
+        })
+        setDisplayName(configData.profile?.name || statusData.profile?.name || '')
+      } else {
+        setDisplayName(statusData.profile?.name || '')
+      }
+
+      if (statusData.ready) {
+        localStorage.setItem('token', 'local-session')
+        if (statusData.profile?.name) {
+          localStorage.setItem('laborany.profile.name', statusData.profile.name)
+        }
+        setStep('done')
         onReady()
         return
       }
 
-      if (!data.npm.available) {
-        // 需要安装 Node.js
-        setStep('need-nodejs')
-        // 自动开始安装 Node.js
-        setTimeout(() => installNodejs(), 500)
-      } else if (!data.claudeCode.installed) {
-        // 需要安装 Claude Code
-        setStep('installing-claude')
-        installClaudeCode()
+      if (!statusData.steps.environment) {
+        setStep('environment')
+        return
       }
-    } catch (err) {
-      setError('无法连接到服务，请稍后重试')
-      setStep('error')
-    }
-  }
-
-  async function installNodejs() {
-    setStep('installing-nodejs')
-    setLogs(['🔍 检测到系统未安装 Node.js'])
-    setLogs(prev => [...prev, '📥 正在下载 Node.js 安装程序...'])
-
-    try {
-      const res = await fetch(`${API_BASE}/setup/install-nodejs`, { method: 'POST' })
-
-      // 检查是否是 JSON 响应
-      const contentType = res.headers.get('content-type')
-      if (contentType?.includes('application/json')) {
-        const data = await res.json()
-        if (!data.success) {
-          setError(data.error)
-          setStep('error')
-        }
+      if (!statusData.steps.apiConfig) {
+        setStep('api')
+        return
+      }
+      if (!statusData.steps.profile) {
+        setStep('profile')
         return
       }
 
-      // SSE 流式响应
-      await handleSSEResponse(res, () => {
-        setNeedRestart(true)
-        setStep('done')
-      })
+      setStep('api')
     } catch (err) {
-      setError('Node.js 安装失败')
-      setStep('error')
+      setError(err instanceof Error ? err.message : '初始化失败')
+      setStep('environment')
     }
   }
 
-  async function installClaudeCode() {
-    setStep('installing-claude')
-    setLogs([])
+  async function handleValidateApi() {
+    setError(null)
+    setValidationMsg(null)
 
-    try {
-      const res = await fetch(`${API_BASE}/setup/install`, { method: 'POST' })
-
-      // 检查是否是 JSON 响应
-      const contentType = res.headers.get('content-type')
-      if (contentType?.includes('application/json')) {
-        const data = await res.json()
-        if (data.success) {
-          setLogs(prev => [...prev, '✅ Claude Code 已安装'])
-          setTimeout(onReady, 1000)
-        } else if (data.needsNodejs) {
-          // 需要先安装 Node.js
-          setStep('need-nodejs')
-          setTimeout(() => installNodejs(), 500)
-        } else {
-          setError(data.error)
-          setStep('error')
-        }
-        return
-      }
-
-      // SSE 流式响应
-      await handleSSEResponse(res, () => {
-        setLogs(prev => [...prev, '🎉 安装完成！正在进入应用...'])
-        setTimeout(onReady, 1500)
-      })
-    } catch (err) {
-      setError('Claude Code 安装失败')
-      setStep('error')
-    }
-  }
-
-  async function handleSSEResponse(res: Response, onSuccess: () => void) {
-    const reader = res.body?.getReader()
-    const decoder = new TextDecoder()
-
-    if (!reader) {
-      setError('无法读取安装进度')
-      setStep('error')
+    if (!config.ANTHROPIC_API_KEY.trim()) {
+      setError('请先填写 ANTHROPIC_API_KEY')
       return
     }
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    setValidatingApi(true)
+    try {
+      const res = await fetch(`${API_BASE}/setup/validate-api`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      })
+      const payload = await res.json() as { success?: boolean; message?: string; diagnostic?: string }
 
-      const chunk = decoder.decode(value)
-      const lines = chunk.split('\n')
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-
-        try {
-          const event = JSON.parse(line.slice(6))
-
-          if (event.type === 'log') {
-            setLogs(prev => [...prev, event.message])
-          } else if (event.type === 'done') {
-            if (event.success) {
-              onSuccess()
-            } else {
-              setError(event.error)
-              setStep('error')
-            }
-          }
-        } catch {
-          // 忽略解析错误
-        }
+      if (!res.ok || !payload.success) {
+        const reason = payload.diagnostic ? `${payload.message || '验证失败'}：${payload.diagnostic}` : (payload.message || '验证失败')
+        setError(reason)
+        return
       }
+
+      setValidationMsg(payload.message || 'API 验证通过')
+      setStep('profile')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'API 验证失败')
+    } finally {
+      setValidatingApi(false)
     }
   }
 
-  function getStepTitle(): string {
-    switch (step) {
-      case 'checking': return '正在检查环境...'
-      case 'need-nodejs': return '准备安装 Node.js...'
-      case 'installing-nodejs': return '正在安装 Node.js...'
-      case 'installing-claude': return '正在安装 Claude Code CLI...'
-      case 'done': return '安装完成'
-      case 'error': return '初始化失败'
-      default: return '初始化中...'
+  async function handleCompleteSetup() {
+    const name = displayName.trim()
+    if (!name) {
+      setError('请输入你的名字')
+      return
     }
+    if (!config.ANTHROPIC_API_KEY.trim()) {
+      setError('请先配置 API Key')
+      setStep('api')
+      return
+    }
+
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_BASE}/setup/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config,
+          profile: { name },
+        }),
+      })
+      const payload = await res.json() as { success?: boolean; error?: string; diagnostic?: string }
+
+      if (!res.ok || !payload.success) {
+        const reason = payload.diagnostic ? `${payload.error || '初始化失败'}：${payload.diagnostic}` : (payload.error || '初始化失败')
+        setError(reason)
+        return
+      }
+
+      localStorage.setItem('token', 'local-session')
+      localStorage.setItem('laborany.profile.name', name)
+      setStep('done')
+      onReady()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '初始化失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function renderEnvironmentStep() {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-lg border border-border bg-muted/30 p-4">
+          <p className="text-sm text-foreground">Claude Code CLI 状态：</p>
+          <p className={`text-sm mt-1 ${status?.claudeCode.installed ? 'text-green-600' : 'text-red-500'}`}>
+            {status?.claudeCode.installed ? '已就绪' : '未检测到可用环境'}
+          </p>
+          {status?.claudeCode.path && (
+            <p className="text-xs text-muted-foreground mt-2 break-all">路径：{status.claudeCode.path}</p>
+          )}
+        </div>
+
+        {!status?.steps.environment && (
+          <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-4">
+            <p className="text-sm text-yellow-700">当前环境未就绪，请确认打包产物完整或系统已安装 Claude Code CLI。</p>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => void bootstrap()}
+            className="px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            重新检测
+          </button>
+          {status?.steps.environment && (
+            <button
+              onClick={() => setStep('api')}
+              className="px-4 py-2 rounded-lg bg-foreground text-background hover:opacity-90"
+            >
+              下一步
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  function renderApiStep() {
+    return (
+      <div className="space-y-4">
+        <InputRow
+          label="ANTHROPIC_API_KEY"
+          required
+          value={config.ANTHROPIC_API_KEY}
+          onChange={(value) => setConfig(prev => ({ ...prev, ANTHROPIC_API_KEY: value }))}
+          placeholder="sk-ant-api03-..."
+          sensitive
+        />
+        <InputRow
+          label="ANTHROPIC_BASE_URL"
+          value={config.ANTHROPIC_BASE_URL}
+          onChange={(value) => setConfig(prev => ({ ...prev, ANTHROPIC_BASE_URL: value }))}
+          placeholder="https://api.anthropic.com（可选）"
+        />
+        <InputRow
+          label="ANTHROPIC_MODEL"
+          value={config.ANTHROPIC_MODEL}
+          onChange={(value) => setConfig(prev => ({ ...prev, ANTHROPIC_MODEL: value }))}
+          placeholder="claude-sonnet-4-20250514（可选）"
+        />
+
+        {validationMsg && (
+          <div className="rounded-lg border border-green-500/20 bg-green-500/10 p-3 text-sm text-green-700">
+            {validationMsg}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setStep('environment')}
+            className="px-4 py-2 rounded-lg bg-muted text-foreground hover:bg-muted/80"
+          >
+            上一步
+          </button>
+          <button
+            disabled={validatingApi}
+            onClick={() => void handleValidateApi()}
+            className="px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+          >
+            {validatingApi ? '校验中...' : '校验并继续'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  function renderProfileStep() {
+    return (
+      <div className="space-y-4">
+        <InputRow
+          label="你的名字"
+          required
+          value={displayName}
+          onChange={setDisplayName}
+          placeholder="例如：老板 / Nathan / 小陈"
+        />
+
+        <div className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground space-y-1">
+          <p>.env 路径：{status?.envPath || '-'}</p>
+          <p>Profile 路径：{status?.profilePath || '-'}</p>
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setStep('api')}
+            className="px-4 py-2 rounded-lg bg-muted text-foreground hover:bg-muted/80"
+          >
+            上一步
+          </button>
+          <button
+            disabled={saving}
+            onClick={() => void handleCompleteSetup()}
+            className="px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+          >
+            {saving ? '保存中...' : '完成并进入'}
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="max-w-lg w-full space-y-6">
-        {/* Logo 和标题 */}
+      <div className="max-w-xl w-full space-y-6">
         <div className="text-center space-y-2">
           <div className="flex justify-center mb-2">
             <LaborAnyLogo size={56} />
           </div>
           <h1 className="text-2xl font-bold text-foreground">LaborAny</h1>
-          <p className="text-muted-foreground">AI 驱动的自动化工作平台</p>
+          <p className="text-muted-foreground">首次初始化向导</p>
         </div>
 
-        {/* 状态卡片 */}
-        <div className="bg-card rounded-lg border border-border p-6 space-y-4">
-          {/* 步骤标题 */}
-          <div className="flex items-center gap-3">
-            {step !== 'error' && step !== 'done' && (
-              <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary border-t-transparent" />
-            )}
-            {step === 'done' && (
-              <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-            {step === 'error' && (
-              <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            )}
-            <span className={`font-medium ${step === 'error' ? 'text-red-500' : 'text-foreground'}`}>
-              {getStepTitle()}
-            </span>
-          </div>
+        <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+          <h2 className="text-base font-semibold text-foreground">{stepTitle}</h2>
 
-          {/* 错误信息 */}
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 space-y-2">
-              <p className="text-sm font-medium text-red-600">❌ 出现问题</p>
-              <p className="text-sm text-red-500">{error}</p>
-              <p className="text-xs text-muted-foreground mt-2">
-                如果问题持续出现，请联系技术支持或尝试手动安装 Node.js：
-                <a
-                  href="https://nodejs.org/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-500 hover:underline ml-1"
-                >
-                  https://nodejs.org/
-                </a>
-              </p>
+            <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-600">
+              {error}
             </div>
           )}
 
-          {/* 提示信息 - 首次安装说明 */}
-          {(step === 'installing-nodejs' || step === 'installing-claude') && (
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 space-y-2">
-              <p className="text-sm font-medium text-blue-600">📦 首次运行需要安装必要组件</p>
-              <p className="text-xs text-muted-foreground">
-                这是一次性的自动安装过程，完成后以后打开应用将直接进入。
-              </p>
-              {step === 'installing-nodejs' && (
-                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 mt-2">
-                  <p className="text-sm font-medium text-yellow-700">⚠️ 重要提示</p>
-                  <ul className="text-xs text-yellow-600 mt-1 space-y-1 list-disc list-inside">
-                    <li>安装过程中可能会弹出「用户账户控制」窗口</li>
-                    <li>请点击「是」允许安装（这是正常的系统安全提示）</li>
-                    <li>安装完成后需要重启应用才能生效</li>
-                  </ul>
-                </div>
-              )}
+          {step === 'loading' && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              正在读取本地配置...
             </div>
           )}
-
-          {/* 安装日志 */}
-          {logs.length > 0 && (
-            <div className="bg-black/90 rounded-lg p-3 h-56 overflow-y-auto font-mono text-xs">
-              {logs.map((log, i) => (
-                <div key={i} className="text-green-400 whitespace-pre-wrap break-all py-0.5">
-                  {log}
-                </div>
-              ))}
-              <div ref={logsEndRef} />
-            </div>
-          )}
-
-          {/* 需要重启提示 */}
-          {needRestart && (
-            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <p className="font-medium text-green-600">Node.js 安装成功！</p>
-              </div>
-              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
-                <p className="text-sm font-medium text-yellow-700">🔄 请重启应用</p>
-                <p className="text-xs text-yellow-600 mt-1">
-                  为了让新安装的组件生效，请关闭此窗口，然后重新打开 LaborAny。
-                </p>
-                <p className="text-xs text-muted-foreground mt-2">
-                  （就像安装新软件后有时需要重启电脑一样，这里只需要重启应用即可）
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* 重试按钮 */}
-          {step === 'error' && (
-            <button
-              onClick={checkStatus}
-              className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
-            >
-              重试
-            </button>
-          )}
+          {step === 'environment' && renderEnvironmentStep()}
+          {step === 'api' && renderApiStep()}
+          {step === 'profile' && renderProfileStep()}
         </div>
-
-        {/* 底部信息 */}
-        <p className="text-center text-xs text-muted-foreground">
-          Powered by Claude Code CLI
-        </p>
       </div>
     </div>
   )
 }
+
+function InputRow(props: {
+  label: string
+  required?: boolean
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+  sensitive?: boolean
+}) {
+  const { label, required, value, onChange, placeholder, sensitive } = props
+  const [show, setShow] = useState(false)
+  const type = sensitive && !show ? 'password' : 'text'
+
+  return (
+    <div className="space-y-1.5">
+      <label className="text-sm font-medium text-foreground">
+        {label}
+        {required && <span className="text-red-500 ml-1">*</span>}
+      </label>
+      <div className="relative">
+        <input
+          type={type}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 pr-10"
+        />
+        {sensitive && (
+          <button
+            type="button"
+            onClick={() => setShow(prev => !prev)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {show ? '隐藏' : '显示'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+

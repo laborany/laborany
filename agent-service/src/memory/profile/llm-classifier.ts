@@ -1,17 +1,6 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                     Profile LLM 分类器                                   ║
- * ║                                                                          ║
- * ║  职责：使用 LLM 智能归类字段、解决冲突                                    ║
- * ║  设计：增强规则更新，提供更智能的决策                                     ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
-import Anthropic from '@anthropic-ai/sdk'
 import type { ExtractedFact } from '../memcell/index.js'
-import { profileManager } from './manager.js'
+import { isClaudeCliAvailable, runClaudePrompt } from '../cli-runner.js'
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           类型定义                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 interface ClassifyResult {
   section: string
   key: string
@@ -26,222 +15,259 @@ interface ConflictResult {
   reason: string
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     健壮 JSON 解析                                       │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function parseJSON<T>(raw: string): T {
-  try { return JSON.parse(raw) as T } catch { /* 继续尝试 */ }
-  const m = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
-  if (m) return JSON.parse(m[1]) as T
-  throw new Error('无法解析 JSON 响应')
+const SECTION_WORK_PREFERENCE = '\u5de5\u4f5c\u504f\u597d'
+const SECTION_COMMUNICATION_STYLE = '\u6c9f\u901a\u98ce\u683c'
+const SECTION_TECH_STACK = '\u6280\u672f\u6808'
+const SECTION_PERSONAL_INFO = '\u4e2a\u4eba\u4fe1\u606f'
+
+const CLASSIFY_PROMPT = `Classify one memory fact into profile sections.
+Return strict JSON only:
+{"section":"...","key":"...","description":"...","shouldUpdate":true,"reason":"..."}
+
+Allowed section values:
+- 工作偏好
+- 沟通风格
+- 技术栈
+- 个人信息
+
+Rules:
+- Drop low-value addressing or politeness chatter (老板/您好/收到) by shouldUpdate=false.
+- description must be concise factual memory, <= 180 chars.
+- key should be short, <= 20 chars.
+- No markdown, no extra keys.`
+
+const CONFLICT_PROMPT = `Resolve memory profile conflict.
+Return strict JSON only:
+{"resolution":"keep_old|use_new|merge","mergedValue":"...","reason":"..."}
+
+Rules:
+- keep_old: old value still more reliable.
+- use_new: new value clearly better or corrected.
+- merge: both can be retained in one concise sentence.
+- No markdown, no extra keys.`
+
+interface ClassifyPayload {
+  section?: string
+  key?: string
+  description?: string
+  shouldUpdate?: boolean
+  reason?: string
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     分类 Prompt                                           │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-const CLASSIFY_PROMPT = `你是一个用户画像管理专家。根据提取的事实，决定如何更新用户画像。
-
-## 可用章节
-- 工作偏好：工作习惯、效率偏好、工具选择
-- 沟通风格：表达方式、回复偏好、语言习惯
-- 技术栈：编程语言、框架、工具链
-- 个人信息：身份、职业、项目背景
-
-## 任务
-分析这个事实，决定：
-1. 应该放到哪个章节
-2. 用什么作为字段名（简短关键词）
-3. 如何描述这个偏好
-4. 是否值得记录（过于琐碎的不记录）
-
-## 输出格式（严格 JSON）
-{
-  "section": "章节名",
-  "key": "字段名",
-  "description": "描述",
-  "shouldUpdate": true,
-  "reason": "决策理由"
+interface ConflictPayload {
+  resolution?: 'keep_old' | 'use_new' | 'merge'
+  mergedValue?: string
+  reason?: string
 }
 
-## 事实
-`
-
-const CONFLICT_PROMPT = `你是一个用户画像管理专家。用户画像中存在冲突信息，请决定如何处理。
-
-## 冲突情况
-- 旧值：{old_value}
-- 新值：{new_value}
-- 旧证据：{old_evidences}
-- 新证据：{new_evidence}
-
-## 决策选项
-1. keep_old：保留旧值（新信息不可靠或过于临时）
-2. use_new：使用新值（新信息更准确或更新）
-3. merge：合并两者（两者都有价值）
-
-## 输出格式（严格 JSON）
-{
-  "resolution": "keep_old|use_new|merge",
-  "mergedValue": "合并后的值（仅 merge 时需要）",
-  "reason": "决策理由"
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
 }
-`
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                     Profile LLM 分类器类                                  │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+function clip(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, maxChars)}...`
+}
+
+function parseJsonPayload<T>(raw: string): T | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+
+  const withoutFence = trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim()
+
+  const start = withoutFence.indexOf('{')
+  const end = withoutFence.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) return null
+
+  try {
+    return JSON.parse(withoutFence.slice(start, end + 1)) as T
+  } catch {
+    return null
+  }
+}
+
+function normalizeSection(section: string, fallback: string): string {
+  const normalized = normalizeWhitespace(section)
+  if (normalized === SECTION_WORK_PREFERENCE) return SECTION_WORK_PREFERENCE
+  if (normalized === SECTION_COMMUNICATION_STYLE) return SECTION_COMMUNICATION_STYLE
+  if (normalized === SECTION_TECH_STACK) return SECTION_TECH_STACK
+  if (normalized === SECTION_PERSONAL_INFO) return SECTION_PERSONAL_INFO
+  return fallback
+}
+
+function isAddressingNoise(content: string): boolean {
+  const value = normalizeWhitespace(content)
+  if (!value) return true
+
+  const patterns = [
+    /^\u8001\u677f(?:\u597d|\u60a8\u597d)?$/,
+    /^(?:\u597d\u7684|\u6536\u5230)\u8001\u677f$/,
+    /(?:\u79f0\u547c|\u53eb).{0,8}(?:\u8001\u677f|boss|sir|bro)/i,
+    /(?:\u7528\u6237|user).{0,8}(?:\u79f0\u547c|\u53eb).{0,8}(?:\u8001\u677f|boss|sir)/i,
+    /^(?:hi|hello)\s*(?:boss|sir|bro)$/i,
+  ]
+
+  return patterns.some(pattern => pattern.test(value))
+}
+
 export class ProfileLLMClassifier {
-  private client: Anthropic | null = null
-  private classifyModel: string
-
-  constructor() {
-    // 分类任务用更轻量的模型，降低延迟和成本
-    this.classifyModel = process.env.ANTHROPIC_CLASSIFY_MODEL
-      || process.env.ANTHROPIC_MODEL
-      || 'claude-haiku-4-20250414'
-  }
-
-  /* ────────────────────────────────────────────────────────────────────────
-   *  初始化客户端
-   * ──────────────────────────────────────────────────────────────────────── */
-  private getClient(): Anthropic {
-    if (!this.client) {
-      this.client = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-        baseURL: process.env.ANTHROPIC_BASE_URL || undefined,
-      })
-    }
-    return this.client
-  }
-
-  /* ────────────────────────────────────────────────────────────────────────
-   *  分类事实到 Profile 字段（带 timeout + Profile 上下文注入）
-   * ──────────────────────────────────────────────────────────────────────── */
   async classify(fact: ExtractedFact): Promise<ClassifyResult> {
-    // 注入当前 Profile 已有字段，辅助 LLM 去重和合并
-    const existingContext = this.buildProfileContext()
-    const prompt = CLASSIFY_PROMPT
-      + `\n## 当前已有画像字段\n${existingContext}\n\n`
-      + `类型：${fact.type}\n内容：${fact.content}\n置信度：${fact.confidence}`
+    if (isAddressingNoise(fact.content)) {
+      const fallback = this.defaultClassify(fact)
+      return {
+        ...fallback,
+        shouldUpdate: false,
+        reason: 'Addressing/politeness noise',
+      }
+    }
 
-    try {
-      const client = this.getClient()
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 10_000)
-
-      const response = await client.messages.create(
-        {
-          model: this.classifyModel,
-          max_tokens: 300,
-          messages: [{ role: 'user', content: prompt }],
-        },
-        { signal: controller.signal }
-      )
-      clearTimeout(timer)
-
-      const textBlock = response.content.find(
-        (b): b is Anthropic.TextBlock => b.type === 'text'
-      )
-      if (!textBlock) throw new Error('No text response')
-
-      return parseJSON<ClassifyResult>(textBlock.text)
-    } catch (error) {
-      console.warn('[ProfileLLMClassifier] 分类失败，使用默认:', error)
+    if (!this.isAvailable()) {
       return this.defaultClassify(fact)
     }
+
+    const fallback = this.defaultClassify(fact)
+    const model = (process.env.ANTHROPIC_CLASSIFY_MODEL || process.env.ANTHROPIC_MODEL || '').trim()
+    const result = await runClaudePrompt({
+      prompt: `${CLASSIFY_PROMPT}\n\nInput JSON:\n${JSON.stringify(fact)}`,
+      timeoutMs: 12_000,
+      model: model || undefined,
+    })
+
+    if (!result.ok) {
+      console.warn(
+        `[ProfileClassifier] classify fallback: source=${result.source || 'unknown'} reason=${result.reason || 'unknown'} stderr=${(result.stderr || '').slice(0, 160)}`,
+      )
+      return fallback
+    }
+
+    const payload = parseJsonPayload<ClassifyPayload>(result.stdout)
+    if (!payload) return fallback
+
+    const description = normalizeWhitespace(payload.description || fallback.description)
+    const key = normalizeWhitespace(payload.key || fallback.key) || fallback.key
+    const section = normalizeSection(payload.section || fallback.section, fallback.section)
+    const shouldUpdate = typeof payload.shouldUpdate === 'boolean'
+      ? payload.shouldUpdate
+      : fallback.shouldUpdate
+
+    return {
+      section,
+      key: clip(key, 20),
+      description: clip(description, 180),
+      shouldUpdate,
+      reason: clip(normalizeWhitespace(payload.reason || 'CLI classification'), 120),
+    }
   }
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  解决冲突（带 timeout）
-   * ──────────────────────────────────────────────────────────────────────── */
   async resolveConflict(
     oldValue: string,
     newValue: string,
     oldEvidences: string[],
     newEvidence: string
   ): Promise<ConflictResult> {
-    const prompt = CONFLICT_PROMPT
-      .replace('{old_value}', oldValue)
-      .replace('{new_value}', newValue)
-      .replace('{old_evidences}', oldEvidences.join(', '))
-      .replace('{new_evidence}', newEvidence)
-
-    try {
-      const client = this.getClient()
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 10_000)
-
-      const response = await client.messages.create(
-        {
-          model: this.classifyModel,
-          max_tokens: 300,
-          messages: [{ role: 'user', content: prompt }],
-        },
-        { signal: controller.signal }
-      )
-      clearTimeout(timer)
-
-      const textBlock = response.content.find(
-        (b): b is Anthropic.TextBlock => b.type === 'text'
-      )
-      if (!textBlock) throw new Error('No text response')
-
-      return parseJSON<ConflictResult>(textBlock.text)
-    } catch (error) {
-      console.warn('[ProfileLLMClassifier] 冲突解决失败，使用新值:', error)
-      return { resolution: 'use_new', reason: 'LLM 调用失败，默认使用新值' }
-    }
-  }
-
-  /* ────────────────────────────────────────────────────────────────────────
-   *  构建当前 Profile 上下文（注入到分类 prompt）
-   * ──────────────────────────────────────────────────────────────────────── */
-  private buildProfileContext(): string {
-    try {
-      const profile = profileManager.get()
-      const lines: string[] = []
-      for (const section of profile.sections) {
-        if (section.fields.length === 0) continue
-        lines.push(`### ${section.name}`)
-        for (const f of section.fields) {
-          lines.push(`- ${f.key}: ${f.description}`)
-        }
+    if (!this.isAvailable()) {
+      return {
+        resolution: 'use_new',
+        reason: 'CLI classifier unavailable; fallback to latest value',
       }
-      return lines.length > 0 ? lines.join('\n') : '（暂无已有字段）'
-    } catch {
-      return '（暂无已有字段）'
     }
-  }
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  默认分类（降级方案）
-   * ──────────────────────────────────────────────────────────────────────── */
-  private defaultClassify(fact: ExtractedFact): ClassifyResult {
-    const sectionMap: Record<string, string> = {
-      preference: '工作偏好',
-      fact: '个人信息',
-      correction: '沟通风格',
-      context: '工作偏好',
+    const model = (process.env.ANTHROPIC_CLASSIFY_MODEL || process.env.ANTHROPIC_MODEL || '').trim()
+    const result = await runClaudePrompt({
+      prompt: `${CONFLICT_PROMPT}\n\nInput JSON:\n${JSON.stringify({
+        oldValue,
+        newValue,
+        oldEvidences,
+        newEvidence,
+      })}`,
+      timeoutMs: 12_000,
+      model: model || undefined,
+    })
+
+    if (!result.ok) {
+      console.warn(
+        `[ProfileClassifier] conflict fallback: source=${result.source || 'unknown'} reason=${result.reason || 'unknown'} stderr=${(result.stderr || '').slice(0, 160)}`,
+      )
+      return {
+        resolution: 'use_new',
+        reason: 'CLI conflict resolution failed; fallback to latest value',
+      }
+    }
+
+    const payload = parseJsonPayload<ConflictPayload>(result.stdout)
+    if (!payload || !payload.resolution) {
+      return {
+        resolution: 'use_new',
+        reason: 'CLI conflict result invalid; fallback to latest value',
+      }
     }
 
     return {
-      section: sectionMap[fact.type] || '工作偏好',
-      key: fact.content.slice(0, 15),
-      description: fact.content,
-      shouldUpdate: fact.confidence >= 0.6,
-      reason: '使用默认规则分类',
+      resolution: payload.resolution,
+      mergedValue: clip(normalizeWhitespace(payload.mergedValue || ''), 180) || undefined,
+      reason: clip(normalizeWhitespace(payload.reason || 'CLI conflict decision'), 120),
     }
   }
 
-  /* ────────────────────────────────────────────────────────────────────────
-   *  检查是否可用
-   * ──────────────────────────────────────────────────────────────────────── */
+  private normalizeSectionByContent(content: string): string {
+    if (/(reply|tone|style|称呼|语气|沟通|中文|英文)/i.test(content)) {
+      return SECTION_COMMUNICATION_STYLE
+    }
+    if (/(python|typescript|javascript|java|go|rust|react|vue|node|docker|sql|postgres|mysql|技术|框架|工具)/i.test(content)) {
+      return SECTION_TECH_STACK
+    }
+    if (/(身份|职业|项目|仓库|目录|分支|姓名|公司|角色)/i.test(content)) {
+      return SECTION_PERSONAL_INFO
+    }
+    return SECTION_WORK_PREFERENCE
+  }
+
+  private buildKey(content: string): string {
+    return clip(content.replace(/[，。,.!?！？]/g, ' ').trim(), 15)
+  }
+
+  private shouldUpdateDefault(fact: ExtractedFact): boolean {
+    if (isAddressingNoise(fact.content)) return false
+    return fact.confidence >= 0.6
+  }
+
+  private defaultReason(fact: ExtractedFact): string {
+    if (isAddressingNoise(fact.content)) return 'Addressing/politeness noise'
+    return 'Rule-based fallback'
+  }
+
+  private defaultDescription(content: string): string {
+    return clip(normalizeWhitespace(content), 180)
+  }
+
+  private defaultSection(fact: ExtractedFact): string {
+    const sectionMap: Record<string, string> = {
+      preference: SECTION_WORK_PREFERENCE,
+      fact: SECTION_PERSONAL_INFO,
+      correction: SECTION_COMMUNICATION_STYLE,
+      context: SECTION_WORK_PREFERENCE,
+    }
+
+    return sectionMap[fact.type] || this.normalizeSectionByContent(fact.content)
+  }
+
+  private defaultClassify(fact: ExtractedFact): ClassifyResult {
+    const section = this.defaultSection(fact)
+    return {
+      section,
+      key: this.buildKey(fact.content),
+      description: this.defaultDescription(fact.content),
+      shouldUpdate: this.shouldUpdateDefault(fact),
+      reason: this.defaultReason(fact),
+    }
+  }
+
   isAvailable(): boolean {
-    return !!process.env.ANTHROPIC_API_KEY
+    return isClaudeCliAvailable()
   }
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           导出单例                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 export const profileLLMClassifier = new ProfileLLMClassifier()

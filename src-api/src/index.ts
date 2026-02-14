@@ -8,38 +8,14 @@
 import { config } from 'dotenv'
 import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'fs'
-import { homedir } from 'os'
+import { existsSync, readFileSync, copyFileSync } from 'fs'
+import { getConfigDir, getEnvPath } from './lib/app-config.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       配置文件路径                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function isPackaged(): boolean {
-  // pkg 打包后，process.execPath 指向 exe 文件
-  // 开发模式下，process.execPath 指向 node.exe
-  return !process.execPath.includes('node')
-}
-
-function getConfigDir(): string {
-  if (isPackaged()) {
-    const appDataDir = process.platform === 'win32'
-      ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
-      : process.platform === 'darwin'
-        ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
-        : join(homedir(), '.config', 'laborany')
-    if (!existsSync(appDataDir)) {
-      mkdirSync(appDataDir, { recursive: true })
-    }
-    return appDataDir
-  }
-  return resolve(__dirname, '../..')
-}
-
 function loadEnvConfig(): void {
   const configDir = getConfigDir()
-  const envPath = join(configDir, '.env')
+  const envPath = getEnvPath()
 
   // 如果用户配置不存在，从示例文件复制
   if (!existsSync(envPath)) {

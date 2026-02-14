@@ -24,6 +24,8 @@ export default function SettingsPage() {
   const [template, setTemplate] = useState<Record<string, ConfigTemplate>>({})
   const [editValues, setEditValues] = useState<Record<string, string>>({})
   const [configPath, setConfigPath] = useState('')
+  const [profilePath, setProfilePath] = useState('')
+  const [profileName, setProfileName] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
@@ -40,6 +42,8 @@ export default function SettingsPage() {
       const data = await res.json()
       setConfig(data.config || {})
       setConfigPath(data.envPath || '')
+      setProfilePath(data.profilePath || '')
+      setProfileName(data.profile?.name || '')
 
       const values: Record<string, string> = {}
       for (const [key, item] of Object.entries(data.config || {})) {
@@ -71,13 +75,21 @@ export default function SettingsPage() {
       const res = await fetch(`${API_BASE}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: editValues })
+        body: JSON.stringify({
+          config: editValues,
+          profileName: profileName.trim(),
+        })
       })
 
       const data = await res.json()
 
       if (res.ok) {
         setMessage({ type: 'success', text: data.message || '配置已保存' })
+        if (data.profile?.name) {
+          localStorage.setItem('laborany.profile.name', data.profile.name)
+        } else if (profileName.trim()) {
+          localStorage.setItem('laborany.profile.name', profileName.trim())
+        }
         loadConfig()
       } else {
         setMessage({ type: 'error', text: data.error || '保存失败' })
@@ -122,8 +134,29 @@ export default function SettingsPage() {
             <p className="text-sm text-muted-foreground">
               配置文件位置：<code className="bg-background px-2 py-0.5 rounded text-xs">{configPath}</code>
             </p>
+            {profilePath && (
+              <p className="text-sm text-muted-foreground mt-2">
+                Profile 位置：<code className="bg-background px-2 py-0.5 rounded text-xs">{profilePath}</code>
+              </p>
+            )}
           </div>
         )}
+
+        <div className="bg-card rounded-lg border border-border p-4 space-y-2">
+          <label className="block text-sm font-medium text-foreground">
+            本地名称
+          </label>
+          <input
+            type="text"
+            value={profileName}
+            onChange={(event) => setProfileName(event.target.value)}
+            placeholder="例如：Nathan"
+            className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
+          <p className="text-xs text-muted-foreground">
+            用于本地模式显示昵称，不再需要邮箱注册。
+          </p>
+        </div>
 
         {/* 消息提示 */}
         {message && (

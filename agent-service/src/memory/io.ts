@@ -10,6 +10,7 @@ import { memorySearch } from './search.js'
 import { profileManager } from './profile/index.js'
 import { buildClaudeEnvConfig, resolveClaudeCliLaunch } from '../claude-cli.js'
 import type { ExtractedFact } from './memcell/index.js'
+import { refreshRuntimeConfig } from '../runtime-config.js'
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  Memory Injector（注入记忆上下文到 prompt）
@@ -340,6 +341,8 @@ export class MemoryCliExtractor {
   }
 
   async extract(params: ExtractParams): Promise<CliExtractResult> {
+    refreshRuntimeConfig()
+
     const cliLaunch = resolveClaudeCliLaunch()
     if (!cliLaunch) {
       console.warn(this.buildCliErrorLog({ stage: 'resolve', reason: 'Claude CLI not found' }))

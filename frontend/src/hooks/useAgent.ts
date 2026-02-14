@@ -279,7 +279,7 @@ export function useAgent(skillId: string) {
               const token = localStorage.getItem('token')
               fetch(`${API_BASE}/skill/stop/${sessionIdRef.current}`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+                headers: createAuthHeaders(token),
               })
             }
             return
@@ -324,7 +324,7 @@ export function useAgent(skillId: string) {
             const token = localStorage.getItem('token')
             fetch(`${API_BASE}/skill/stop/${sessionIdRef.current}`, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${token}` },
+              headers: createAuthHeaders(token),
             })
           }
           break
@@ -581,13 +581,6 @@ export function useAgent(skillId: string) {
     async (query: string, files?: File[], options?: { originQuery?: string }) => {
       const requestSeq = ++requestSeqRef.current
       const token = localStorage.getItem('token')
-      if (!token) {
-        console.error('[useAgent] 未找到认证 token，请重新登录')
-        setState((s) => (requestSeq === requestSeqRef.current
-          ? { ...s, error: '未登录，请重新登录' }
-          : s))
-        return
-      }
 
       // 添加用户消息
       const userMessage: AgentMessage = {
@@ -622,8 +615,10 @@ export function useAgent(skillId: string) {
         console.log('[useAgent] 发送请求到 /api/skill/execute')
 
         let body: BodyInit
-        const headers: HeadersInit = {
-          Authorization: `Bearer ${token}`,
+        const headers: Record<string, string> = {}
+        const authHeaders = createAuthHeaders(token)
+        if (authHeaders?.Authorization) {
+          headers.Authorization = authHeaders.Authorization
         }
 
         const currentSessionId = sessionIdRef.current
@@ -631,7 +626,7 @@ export function useAgent(skillId: string) {
         let fileIds: string[] = []
         if (files && files.length > 0) {
           console.log('[useAgent] 上传文件:', files.map(f => f.name))
-          fileIds = await uploadFiles(files, token)
+          fileIds = await uploadFiles(files, token || undefined)
         }
 
         let finalQuery = query
@@ -647,12 +642,16 @@ export function useAgent(skillId: string) {
           sessionId: currentSessionId
         })
 
-        const res = await fetch(`${API_BASE}/skill/execute`, {
-          method: 'POST',
-          headers,
-          body,
-          signal: abortRef.current.signal,
-        })
+        const res = await fetchWithRetry(
+          `${API_BASE}/skill/execute`,
+          {
+            method: 'POST',
+            headers,
+            body,
+            signal: abortRef.current.signal,
+          },
+          3
+        )
 
         console.log('[useAgent] 响应状态:', res.status)
 
@@ -699,7 +698,7 @@ export function useAgent(skillId: string) {
       const token = localStorage.getItem('token')
       await fetch(`${API_BASE}/skill/stop/${sid}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: createAuthHeaders(token),
       })
       // 清理 localStorage
       localStorage.removeItem(`lastSession_${skillId}`)
@@ -741,7 +740,7 @@ export function useAgent(skillId: string) {
     const token = localStorage.getItem('token')
     try {
       const res = await fetch(`${API_BASE}/task/${state.sessionId}/files`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: createAuthHeaders(token),
       })
       if (res.ok) {
         const data = await res.json()
@@ -824,10 +823,6 @@ export function useAgent(skillId: string) {
   const attachToSession = useCallback(
     async (targetSessionId: string) => {
       const token = localStorage.getItem('token')
-      if (!token) {
-        setState((s) => ({ ...s, error: '未登录，请重新登录' }))
-        return
-      }
 
       setState((s) => ({
         ...s,
@@ -849,7 +844,7 @@ export function useAgent(skillId: string) {
           `${API_BASE}/skill/runtime/attach/${targetSessionId}`,
           {
             signal: abortRef.current.signal,
-            headers: { Authorization: `Bearer ${token}` },
+            headers: createAuthHeaders(token),
           },
           3
         )
@@ -893,7 +888,12 @@ export function useAgent(skillId: string) {
   }
 }
 
-async function uploadFiles(files: File[], token: string): Promise<string[]> {
+function createAuthHeaders(token: string | null | undefined): Record<string, string> | undefined {
+  if (!token) return undefined
+  return { Authorization: `Bearer ${token}` }
+}
+
+async function uploadFiles(files: File[], token?: string): Promise<string[]> {
   const fileIds: string[] = []
 
   for (const file of files) {
@@ -902,7 +902,7 @@ async function uploadFiles(files: File[], token: string): Promise<string[]> {
 
     const res = await fetch(`${API_BASE}/files/upload`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: createAuthHeaders(token),
       body: formData,
     })
 

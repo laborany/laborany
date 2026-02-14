@@ -5,87 +5,27 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Hono } from 'hono'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
-import { join } from 'path'
-import { homedir } from 'os'
+import {
+  getConfigDir,
+  getEnvPath,
+  getProfilePath,
+  readEnvConfig,
+  writeEnvConfig,
+  writeLocalProfile,
+  readLocalProfile,
+} from '../lib/app-config.js'
 
 const config = new Hono()
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取配置目录                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function getConfigDir(): string {
-  const appDataDir = process.platform === 'win32'
-    ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
-    : process.platform === 'darwin'
-      ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
-      : join(homedir(), '.config', 'laborany')
-
-  if (!existsSync(appDataDir)) {
-    mkdirSync(appDataDir, { recursive: true })
-  }
-  return appDataDir
-}
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       解析 .env 文件                                      │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function parseEnvFile(content: string): Record<string, string> {
-  const result: Record<string, string> = {}
-  const lines = content.split('\n')
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-
-    const eqIndex = trimmed.indexOf('=')
-    if (eqIndex === -1) continue
-
-    const key = trimmed.slice(0, eqIndex).trim()
-    let value = trimmed.slice(eqIndex + 1).trim()
-
-    // 移除引号
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1)
-    }
-
-    result[key] = value
-  }
-
-  return result
-}
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       生成 .env 文件内容                                  │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function generateEnvContent(config: Record<string, string>): string {
-  const lines: string[] = [
-    '# LaborAny 配置文件',
-    '# 此文件由应用自动管理，也可手动编辑',
-    ''
-  ]
-
-  for (const [key, value] of Object.entries(config)) {
-    lines.push(`${key}=${value}`)
-  }
-
-  return lines.join('\n')
-}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取配置                                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 config.get('/', (c) => {
   const configDir = getConfigDir()
-  const envPath = join(configDir, '.env')
-
-  let envConfig: Record<string, string> = {}
-
-  if (existsSync(envPath)) {
-    const content = readFileSync(envPath, 'utf-8')
-    envConfig = parseEnvFile(content)
-  }
+  const envPath = getEnvPath()
+  const profilePath = getProfilePath()
+  const envConfig = readEnvConfig()
+  const profile = readLocalProfile()
 
   // 返回配置（隐藏敏感信息的完整值）
   const safeConfig: Record<string, { value: string; masked: string }> = {}
@@ -106,7 +46,9 @@ config.get('/', (c) => {
   return c.json({
     configDir,
     envPath,
-    config: safeConfig
+    profilePath,
+    profile,
+    config: safeConfig,
   })
 })
 
@@ -114,21 +56,14 @@ config.get('/', (c) => {
  * │                       更新配置                                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 config.post('/', async (c) => {
-  const { config: newConfig } = await c.req.json<{ config: Record<string, string> }>()
+  const { config: newConfig, profileName } = await c.req.json<{ config: Record<string, string>; profileName?: string }>()
 
   if (!newConfig || typeof newConfig !== 'object') {
     return c.json({ error: '无效的配置数据' }, 400)
   }
 
-  const configDir = getConfigDir()
-  const envPath = join(configDir, '.env')
-
   // 读取现有配置
-  let existingConfig: Record<string, string> = {}
-  if (existsSync(envPath)) {
-    const content = readFileSync(envPath, 'utf-8')
-    existingConfig = parseEnvFile(content)
-  }
+  const existingConfig = readEnvConfig()
 
   // 合并配置（新值覆盖旧值）
   const mergedConfig = { ...existingConfig, ...newConfig }
@@ -141,18 +76,22 @@ config.post('/', async (c) => {
   }
 
   // 写入文件
-  const content = generateEnvContent(mergedConfig)
-  writeFileSync(envPath, content, 'utf-8')
+  writeEnvConfig(mergedConfig)
 
   // 更新环境变量（立即生效）
   for (const [key, value] of Object.entries(mergedConfig)) {
     process.env[key] = value
   }
+  if (typeof profileName === 'string' && profileName.trim()) {
+    writeLocalProfile(profileName)
+  }
 
   return c.json({
     success: true,
-    message: '配置已保存，部分设置可能需要重启应用生效',
-    envPath
+    message: '配置已保存，已即时生效',
+    envPath: getEnvPath(),
+    profilePath: getProfilePath(),
+    profile: readLocalProfile(),
   })
 })
 

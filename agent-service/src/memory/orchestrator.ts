@@ -1,7 +1,7 @@
 
 import { memoryFileManager } from './file-manager.js'
 import { memorySearch } from './search.js'
-import { profileManager } from './profile/index.js'
+import { profileLLMClassifier, profileManager } from './profile/index.js'
 import { memoryConsolidator } from './consolidator.js'
 import { memCellStorage, type MemCell, type ExtractedFact } from './memcell/index.js'
 import { episodeStorage } from './episode/index.js'
@@ -136,6 +136,13 @@ const META_ADDRESSING_NOISE_PATTERNS = [
   /^\s*(?:老板好|老板您好|好的老板|收到老板)\s*$/,
 ]
 
+const ADDRESSING_ONLY_PATTERNS = [
+  /^\s*(?:\u8001\u677f(?:\u597d|\u60a8\u597d)?|(?:\u597d\u7684|\u6536\u5230)\u8001\u677f)\s*$/,
+  /(?:\u79f0\u547c|\u53eb).{0,8}(?:\u8001\u677f|boss|sir|bro)/i,
+  /(?:\u7528\u6237|user).{0,10}(?:\u79f0\u547c|\u53eb).{0,10}(?:\u8001\u677f|boss|sir|bro)/i,
+  /^(?:hi|hello)\s*(?:boss|sir|bro)$/i,
+]
+
 const USER_CENTRIC_PATTERNS = [
   /用户(喜欢|偏好|习惯|希望|需要|常用|正在|是|要求|倾向)/,
   /我(喜欢|偏好|习惯|希望|需要|常用|正在|是|要求|倾向)/,
@@ -252,11 +259,15 @@ export class MemoryOrchestrator {
     return includesAny(content, USER_CENTRIC_PATTERNS)
   }
 
+  private isAddressingNoise(content: string): boolean {
+    return includesAny(content, META_ADDRESSING_NOISE_PATTERNS) || includesAny(content, ADDRESSING_ONLY_PATTERNS)
+  }
+
   private isStableFact(content: string): boolean {
     if (includesAny(content, PIPELINE_NOISE_PATTERNS)) return false
     if (includesAny(content, TRANSIENT_FACT_PATTERNS)) return false
     if (includesAny(content, ASSISTANT_NOISE_PATTERNS)) return false
-    if (includesAny(content, META_ADDRESSING_NOISE_PATTERNS)) return false
+    if (this.isAddressingNoise(content)) return false
     if (includesAny(content, STRUCTURED_NOISE_PATTERNS)) return false
     if (includesAny(content, SYSTEM_PATH_PATTERNS)) return false
     if (content.length < 4) return false
@@ -264,7 +275,7 @@ export class MemoryOrchestrator {
   }
 
   private normalizeFactSource(fact: ExtractedFact): ExtractedFact['source'] {
-    if (includesAny(fact.content, META_ADDRESSING_NOISE_PATTERNS)) return 'assistant'
+    if (this.isAddressingNoise(fact.content)) return 'assistant'
     if (includesAny(fact.content, ASSISTANT_TONE_PATTERNS)) return 'assistant'
     if (this.isUserCentricFact(fact.content)) return 'user'
     return fact.source || 'user'
@@ -588,17 +599,33 @@ export class MemoryOrchestrator {
     return result
   }
 
-  private classifyFactPatch(fact: ExtractedFact, evidence: string): MemoryPatch {
-    const key = normalizeFactKey(fact.content)
+  private async classifyFactPatch(fact: ExtractedFact, evidence: string): Promise<MemoryPatch> {
+    let section = this.classifyProfileSection(fact)
+    let key = normalizeFactKey(fact.content)
+    let value = fact.content
+    let confidence = fact.confidence
+
+    try {
+      const classified = await profileLLMClassifier.classify(fact)
+      section = classified.section || section
+      key = classified.key || key
+      value = classified.description || value
+      if (!classified.shouldUpdate) {
+        confidence = Math.min(confidence, 0.59)
+      }
+    } catch (error) {
+      console.warn('[Memory] Profile classify failed, using fallback', error)
+    }
+
     return {
       target: 'profile',
       op: 'upsert',
-      section: this.classifyProfileSection(fact),
+      section,
       key,
-      value: fact.content,
-      confidence: fact.confidence,
+      value,
+      confidence,
       evidence,
-      provisional: fact.confidence < 0.8,
+      provisional: confidence < 0.8,
       source: fact.source,
       intent: fact.intent,
     }
@@ -609,7 +636,7 @@ export class MemoryOrchestrator {
     return Math.min(1, 0.3 * Math.min(1, evidenceCount / 3) + 0.7 * confidence)
   }
 
-  private upsertProfilePatches(patches: MemoryPatch[]): UpsertResult['conflicts'] {
+  private async upsertProfilePatches(patches: MemoryPatch[]): Promise<UpsertResult['conflicts']> {
     const conflicts: UpsertResult['conflicts'] = []
 
     for (const patch of patches) {
@@ -625,6 +652,58 @@ export class MemoryOrchestrator {
       if (existing.description === patch.value) {
         profileManager.updateField(section, patch.key, patch.value, patch.evidence, patch.confidence)
         continue
+      }
+
+      if (profileLLMClassifier.isAvailable()) {
+        try {
+          const resolved = await profileLLMClassifier.resolveConflict(
+            existing.description,
+            patch.value,
+            existing.evidences,
+            patch.evidence,
+          )
+
+          if (resolved.resolution === 'keep_old') {
+            profileManager.updateField(section, patch.key, existing.description, patch.evidence, patch.confidence)
+            conflicts.push({
+              target: 'profile',
+              key: patch.key,
+              strategy: 'keep_old',
+              oldValue: existing.description,
+              newValue: patch.value,
+              reason: resolved.reason,
+            })
+            continue
+          }
+
+          if (resolved.resolution === 'merge') {
+            const mergedValue = (resolved.mergedValue || `${existing.description} / ${patch.value}`).trim()
+            profileManager.updateField(section, patch.key, mergedValue, patch.evidence, patch.confidence)
+            conflicts.push({
+              target: 'profile',
+              key: patch.key,
+              strategy: 'merge',
+              oldValue: existing.description,
+              newValue: patch.value,
+              mergedValue,
+              reason: resolved.reason,
+            })
+            continue
+          }
+
+          profileManager.updateField(section, patch.key, patch.value, patch.evidence, patch.confidence)
+          conflicts.push({
+            target: 'profile',
+            key: patch.key,
+            strategy: 'use_new',
+            oldValue: existing.description,
+            newValue: patch.value,
+            reason: resolved.reason,
+          })
+          continue
+        } catch (error) {
+          console.warn('[Memory] Profile conflict resolution fallback', error)
+        }
       }
 
       const oldScore = this.scoreProfileConflict(existing, 0.75)
@@ -772,11 +851,16 @@ export class MemoryOrchestrator {
     }
     memCellStorage.save(cell)
 
-    const profilePatches = filteredFacts
-      .filter(item => item.confidence >= 0.65 && item.source === 'user')
-      .map(item => this.classifyFactPatch(item, evidence))
+    const profilePatches: MemoryPatch[] = []
+    for (const item of filteredFacts) {
+      if (item.confidence < 0.65 || item.source !== 'user') continue
+      const patch = await this.classifyFactPatch(item, evidence)
+      if (patch.confidence < 0.6) continue
+      if (this.isAddressingNoise(patch.value)) continue
+      profilePatches.push(patch)
+    }
 
-    const conflicts = this.upsertProfilePatches(profilePatches)
+    const conflicts = await this.upsertProfilePatches(profilePatches)
 
     const userFacts = filteredFacts.filter(item => item.source === 'user')
     const assistantFacts = filteredFacts.filter(item => item.source === 'assistant')

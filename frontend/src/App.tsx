@@ -8,7 +8,6 @@
 
 import { useState, useEffect, Suspense, lazy } from 'react'
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
-import { AuthProvider, useAuth } from './hooks/useAuth'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { NotificationBell } from './components/notification/NotificationBell'
 import { RunningTasksIndicator } from './components/notification/RunningTasksIndicator'
@@ -20,7 +19,6 @@ import { LaborAnyLogo } from './components/ui/LaborAnyLogo'
  * │  好品味：按需加载，减少首屏加载时间                                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const SetupPage = lazy(() => import('./pages/SetupPage'))
-const LoginPage = lazy(() => import('./pages/LoginPage'))
 const HomePage = lazy(() => import('./pages/HomePage'))
 const ExecutePage = lazy(() => import('./pages/ExecutePage'))
 const HistoryPage = lazy(() => import('./pages/HistoryPage').then(m => ({ default: m.default })))
@@ -48,23 +46,6 @@ function PageLoader() {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                  统一执行入口：/execute/:id                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           受保护路由                                      │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth()
-
-  if (loading) {
-    return <PageLoader />
-  }
-
-  if (!user) {
-    return <Navigate to="/login" replace />
-  }
-
-  return <>{children}</>
-}
-
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           侧边栏导航项                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -101,25 +82,23 @@ function NavItem({
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           应用布局（借鉴 workany 三栏布局）                 │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function AppLayout({ children }: { children: React.ReactNode }) {
-  const { user, logout } = useAuth()
+function AppLayout({
+  children,
+  profileName,
+}: {
+  children: React.ReactNode
+  profileName: string
+}) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const location = useLocation()
-
-  // 登录页不显示侧边栏
-  if (location.pathname === '/login') {
-    return <>{children}</>
-  }
 
   return (
     <div className="min-h-screen bg-background flex">
       {/* 左侧边栏 */}
-      {user && (
-        <aside
-          className={`fixed left-0 top-0 h-full bg-card border-r border-border flex flex-col transition-all duration-300 z-40 ${
-            sidebarCollapsed ? 'w-16' : 'w-56'
-          }`}
-        >
+      <aside
+        className={`fixed left-0 top-0 h-full bg-card border-r border-border flex flex-col transition-all duration-300 z-40 ${
+          sidebarCollapsed ? 'w-16' : 'w-56'
+        }`}
+      >
           {/* Logo */}
           <div className="h-14 flex items-center justify-between px-4 border-b border-border">
             {!sidebarCollapsed && (
@@ -202,37 +181,27 @@ function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="p-3 border-t border-border">
             <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center' : ''}`}>
               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-sm font-medium">
-                {user?.name?.charAt(0).toUpperCase() || 'U'}
+                {(profileName || 'U').charAt(0).toUpperCase()}
               </div>
               {!sidebarCollapsed && (
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">{user?.name}</p>
-                  <button
-                    onClick={logout}
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    退出登录
-                  </button>
+                  <p className="text-sm font-medium text-foreground truncate">{profileName || '本地用户'}</p>
+                  <p className="text-xs text-muted-foreground">本地模式</p>
                 </div>
               )}
             </div>
           </div>
-        </aside>
-      )}
+      </aside>
 
       {/* 主内容区 */}
       <main
-        className={`flex-1 transition-all duration-300 ${
-          user ? (sidebarCollapsed ? 'ml-16' : 'ml-56') : ''
-        }`}
+        className={`flex-1 transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-56'}`}
       >
         {/* 顶部通知栏 */}
-        {user && (
-          <div className="fixed top-0 right-0 h-14 flex items-center gap-4 px-6 z-30">
-            <RunningTasksIndicator />
-            <NotificationBell />
-          </div>
-        )}
+        <div className="fixed top-0 right-0 h-14 flex items-center gap-4 px-6 z-30">
+          <RunningTasksIndicator />
+          <NotificationBell />
+        </div>
         {children}
       </main>
     </div>
@@ -244,10 +213,11 @@ function AppLayout({ children }: { children: React.ReactNode }) {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export default function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
+  const [profileName, setProfileName] = useState<string>('')
 
   // 检查是否需要初始化设置
   useEffect(() => {
-    checkSetupStatus()
+    void checkSetupStatus()
   }, [])
 
   async function checkSetupStatus() {
@@ -255,6 +225,16 @@ export default function App() {
       const res = await fetch(`${API_BASE}/setup/status`)
       const data = await res.json()
       setSetupComplete(data.ready)
+      if (data.profile?.name) {
+        setProfileName(data.profile.name)
+        localStorage.setItem('laborany.profile.name', data.profile.name)
+      } else {
+        const cachedName = localStorage.getItem('laborany.profile.name') || ''
+        setProfileName(cachedName)
+      }
+      if (data.ready) {
+        localStorage.setItem('token', 'local-session')
+      }
     } catch {
       // API 未就绪，显示设置页面
       setSetupComplete(false)
@@ -270,7 +250,7 @@ export default function App() {
   if (!setupComplete) {
     return (
       <Suspense fallback={<PageLoader />}>
-        <SetupPage onReady={() => setSetupComplete(true)} />
+        <SetupPage onReady={() => { void checkSetupStatus() }} />
       </Suspense>
     )
   }
@@ -278,87 +258,22 @@ export default function App() {
   // 正常应用
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <AppLayout>
-          <Suspense fallback={<PageLoader />}>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route
-                path="/"
-                element={
-                  <ProtectedRoute>
-                    <HomePage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/execute/:skillId"
-                element={
-                  <ProtectedRoute>
-                    <ExecutePage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/history"
-                element={
-                  <ProtectedRoute>
-                    <HistoryPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/history/:sessionId"
-                element={
-                  <ProtectedRoute>
-                    <SessionDetailPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/skills"
-                element={
-                  <ProtectedRoute>
-                    <SkillsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/create"
-                element={
-                  <ProtectedRoute>
-                    <CreatePage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/cron"
-                element={
-                  <ProtectedRoute>
-                    <CronPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/settings"
-                element={
-                  <ProtectedRoute>
-                    <SettingsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/memory"
-                element={
-                  <ProtectedRoute>
-                    <MemoryPage />
-                  </ProtectedRoute>
-                }
-              />
-            </Routes>
-          </Suspense>
-        </AppLayout>
-      </AuthProvider>
+      <AppLayout profileName={profileName}>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route path="/login" element={<Navigate to="/" replace />} />
+            <Route path="/" element={<HomePage />} />
+            <Route path="/execute/:skillId" element={<ExecutePage />} />
+            <Route path="/history" element={<HistoryPage />} />
+            <Route path="/history/:sessionId" element={<SessionDetailPage />} />
+            <Route path="/skills" element={<SkillsPage />} />
+            <Route path="/create" element={<CreatePage />} />
+            <Route path="/cron" element={<CronPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/memory" element={<MemoryPage />} />
+          </Routes>
+        </Suspense>
+      </AppLayout>
     </ErrorBoundary>
   )
 }

@@ -1,19 +1,3 @@
-import { config } from 'dotenv'
-import { resolve, dirname, join } from 'path'
-import { fileURLToPath } from 'url'
-import { homedir } from 'os'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
-
-config({ path: resolve(__dirname, '../../.env') })
-
-const userConfigDir = process.platform === 'win32'
-  ? join(homedir(), 'AppData', 'Roaming', 'LaborAny')
-  : process.platform === 'darwin'
-    ? join(homedir(), 'Library', 'Application Support', 'LaborAny')
-    : join(homedir(), '.config', 'laborany')
-config({ path: join(userConfigDir, '.env'), override: true })
-
 import express from 'express'
 import cors from 'cors'
 import { existsSync, mkdirSync } from 'fs'
@@ -22,6 +6,7 @@ import { taskManager } from './task-manager.js'
 import { DATA_DIR } from './paths.js'
 import { startCronTimer } from './cron/index.js'
 import { memoryAsyncQueue } from './memory/index.js'
+import { refreshRuntimeConfig } from './runtime-config.js'
 import {
   memoryRouter,
   cronRouter,
@@ -33,6 +18,9 @@ import {
   converseRouter,
   smartRouter,
 } from './routes/index.js'
+
+const runtimeConfig = refreshRuntimeConfig()
+console.log(`[Agent Service] Loaded runtime env from: ${runtimeConfig.loadedFrom.join(', ') || 'none'}`)
 
 const app = express()
 const PORT = process.env.AGENT_PORT || 3002
