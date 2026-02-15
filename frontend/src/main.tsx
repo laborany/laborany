@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { QuickStartProvider } from './contexts/QuickStartContext'
+import { AuthProvider } from './hooks/useAuth'
 import { initClientLogger, logClientError } from './lib/client-logger'
 import './index.css'
 
@@ -28,10 +29,12 @@ window.addEventListener('unhandledrejection', (event) => {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <QuickStartProvider>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </QuickStartProvider>
+    <AuthProvider>
+      <QuickStartProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </QuickStartProvider>
+    </AuthProvider>
   </React.StrictMode>,
 )

@@ -9,7 +9,8 @@ interface ClientLogEvent {
 const MAX_QUEUE_SIZE = 500
 const MAX_BATCH_SIZE = 80
 const FLUSH_INTERVAL_MS = 4000
-const ENDPOINT = '/api/logs/client'
+const API_BASE = import.meta.env.VITE_API_BASE || '/api'
+const ENDPOINT = `${API_BASE}/logs/client`
 
 let initialized = false
 let flushTimer: number | null = null
@@ -183,4 +184,3 @@ export function logClientError(
     error: sanitizeValue(error),
   })
 }
-
