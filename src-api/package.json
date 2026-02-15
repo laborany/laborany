@@ -31,6 +31,7 @@
     "laborany": "file:..",
     "laborany-shared": "file:../shared",
     "sql.js": "^1.11.0",
+    "tar-stream": "^3.1.7",
     "uuid": "^9.0.1",
     "yaml": "^2.3.4",
     "zod": "^3.23.8"

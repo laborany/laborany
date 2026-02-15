@@ -1,7 +1,3 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                      官方技能市场                                         ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
 import type { OfficialSkill } from '../../types'
 
 interface OfficialMarketProps {
@@ -25,21 +21,17 @@ export function OfficialMarket({
 }: OfficialMarketProps) {
   return (
     <div className="space-y-6">
-      {/* 自定义 GitHub URL 安装 */}
       <div className="card p-6">
-        <h3 className="font-semibold text-foreground mb-3">从 GitHub 安装</h3>
+        <h3 className="font-semibold text-foreground mb-3">从链接安装（GitHub / ZIP / TAR）</h3>
         <p className="text-sm text-muted-foreground mb-4">
-          输入 GitHub 仓库中 Skill 的路径，例如：
-          <code className="mx-1 px-2 py-1 bg-muted rounded text-xs">
-            anthropics/skills/skills/skill-creator
-          </code>
+          支持 GitHub 仓库/子目录链接、`owner/repo/...` 简写，以及可下载的 ZIP/TAR/TAR.GZ 链接。
         </p>
         <div className="flex gap-2">
           <input
             type="text"
             value={customUrl}
-            onChange={(e) => onCustomUrlChange(e.target.value)}
-            placeholder="owner/repo/path/to/skill 或 GitHub URL"
+            onChange={(event) => onCustomUrlChange(event.target.value)}
+            placeholder="例如：https://github.com/xxx/skills/tree/main/agent 或 https://example.com/agent.tar.gz"
             className="input flex-1"
           />
           <button
@@ -55,11 +47,8 @@ export function OfficialMarket({
         )}
       </div>
 
-      {/* 官方技能列表 */}
       <div>
-        <h3 className="font-semibold text-foreground mb-4">
-          Anthropic 官方技能
-        </h3>
+        <h3 className="font-semibold text-foreground mb-4">官方技能</h3>
         {skills.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <p>正在加载官方技能...</p>
@@ -73,7 +62,7 @@ export function OfficialMarket({
               return (
                 <div key={skill.id} className="card-hover p-6">
                   <div className="flex items-start gap-4">
-                    <span className="text-3xl">🔧</span>
+                    <span className="text-3xl">🧩</span>
                     <div className="flex-1">
                       <h3 className="font-semibold text-lg text-foreground">
                         {skill.name}

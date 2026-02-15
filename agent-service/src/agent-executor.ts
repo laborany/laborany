@@ -10,9 +10,10 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { platform } from 'os'
 import { join } from 'path'
 import type { Skill } from 'laborany-shared'
+import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR, getUserDir } from 'laborany-shared'
 import { memoryFileManager, memoryOrchestrator, memoryAsyncQueue } from './memory/index.js'
 import { buildClaudeEnvConfig, checkRuntimeDependencies, resolveClaudeCliLaunch } from './claude-cli.js'
-import { DATA_DIR } from './paths.js'
+import { APP_HOME_DIR, DATA_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -76,6 +77,44 @@ function ensureTaskDir(sessionId: string): string {
     mkdirSync(taskDir, { recursive: true })
   }
   return taskDir
+}
+
+function normalizePathForPrompt(path: string): string {
+  return path.replace(/\\/g, '/')
+}
+
+function getRuntimePlatformLabel(): string {
+  if (platform() === 'win32') return 'Windows'
+  if (platform() === 'darwin') return 'macOS'
+  return 'Linux'
+}
+
+function buildLaborAnyRuntimeContext(taskDir: string, skillId: string): string {
+  const tasksBase = join(DATA_DIR, 'tasks')
+  const uploadsBase = join(APP_HOME_DIR, 'uploads')
+  const envPath = join(APP_HOME_DIR, '.env')
+  const userHome = getUserDir()
+
+  return [
+    '# LaborAny Runtime Context (Desktop App)',
+    '',
+    `- Platform: ${getRuntimePlatformLabel()} (${process.platform})`,
+    `- Current skill ID: ${skillId}`,
+    `- Current task working directory (cwd): ${normalizePathForPrompt(taskDir)}`,
+    `- Task root directory: ${normalizePathForPrompt(tasksBase)}`,
+    `- Uploaded files cache: ${normalizePathForPrompt(uploadsBase)}`,
+    `- User skills directory (read/write): ${normalizePathForPrompt(USER_SKILLS_DIR)}`,
+    `- Builtin skills directory (read-only): ${normalizePathForPrompt(BUILTIN_SKILLS_DIR)}`,
+    `- LaborAny user home: ${normalizePathForPrompt(userHome)}`,
+    `- LaborAny app home: ${normalizePathForPrompt(APP_HOME_DIR)}`,
+    `- Primary env file path: ${normalizePathForPrompt(envPath)}`,
+    '',
+    'Execution constraints:',
+    '- You are running inside LaborAny desktop app.',
+    '- Prefer reading/writing files in current task cwd unless user explicitly requests another location.',
+    '- When creating or updating skills, write under user skills directory, never builtin skills directory.',
+    '- In task replies, use concrete absolute paths when asking users to inspect files.',
+  ].join('\n')
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -245,10 +284,11 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     tokenBudget: 4000,
   })
   memoryFileManager.ensureSkillMemoryDir(skill.meta.id)
+  const runtimeContext = buildLaborAnyRuntimeContext(taskDir, skill.meta.id)
 
   const systemPrompt = retrieved.context
-    ? `${retrieved.context}\n\n---\n\n${skill.systemPrompt}`
-    : skill.systemPrompt
+    ? `${runtimeContext}\n\n---\n\n${retrieved.context}\n\n---\n\n${skill.systemPrompt}`
+    : `${runtimeContext}\n\n---\n\n${skill.systemPrompt}`
 
   const claudeMdPath = join(taskDir, 'CLAUDE.md')
   writeFileSync(claudeMdPath, systemPrompt, 'utf-8')

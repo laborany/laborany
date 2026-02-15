@@ -45,6 +45,10 @@ export default function HomePage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const { getCapabilityName } = useSkillNameMap()
+  const cachedProfileName = typeof window !== 'undefined'
+    ? (localStorage.getItem('laborany.profile.name') || '').trim()
+    : ''
+  const displayUserName = user?.name?.trim() || cachedProfileName
 
   const [phase, setPhase] = useState<HomePhase>('idle')
   const [execCtx, setExecCtx] = useState<ExecutionContext | null>(null)
@@ -258,7 +262,7 @@ export default function HomePage() {
 
   if (phase === 'idle') {
     return <IdleView
-      userName={user?.name}
+      userName={displayUserName}
       onExecute={handleExecute}
       selectedCase={selectedCase}
       onSelectCase={setSelectedCase}

@@ -313,7 +313,8 @@ Write the YAML frontmatter with `name` and `description`:
   - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Claude.
   - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Claude needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
 
-Do not include any other fields in YAML frontmatter.
+For generic Claude skills, `name` and `description` are minimum required fields.
+For LaborAny skills, frontmatter should include `icon` and `category` as well.
 
 ##### 自动分类规则
 
@@ -384,3 +385,33 @@ After testing the skill, users may request improvements. Often this happens righ
 2. Notice struggles or inefficiencies
 3. Identify how SKILL.md or bundled resources should be updated
 4. Implement changes and test again
+
+## LaborAny Skill Install Rules (Mandatory)
+
+When the user asks to install a skill, do not run a free-form manual process.
+Always follow this deterministic flow:
+
+1. Extract install source from user input. Supported source forms:
+   - GitHub repo/tree URL (for example: `https://github.com/org/repo/tree/main/skills/agent-browser`)
+   - GitHub short form (for example: `org/repo/skills/agent-browser`)
+   - Direct downloadable ZIP/TAR URL (for example: `https://example.com/agent-browser.zip` or `https://example.com/agent-browser.tar.gz`)
+2. Use LaborAny's built-in installation API/flow to install into the user skill directory.
+3. Never copy files into builtin `skills/` manually.
+4. Ensure metadata is valid for LaborAny:
+   - `icon` and `category` must exist
+   - fill missing values according to skill purpose
+   - do not override valid existing values
+5. After install, clearly report:
+   - installed skill ID
+   - absolute installed path
+   - where to find it in UI (`能力管理 -> 我的能力`)
+
+If install fails, report concrete reason and next action, such as:
+- invalid source URL/path
+- archive has no `SKILL.md`
+- archive has multiple skill directories and cannot determine target
+
+If source structure is not fully compliant with LaborAny skill format, adapt it automatically:
+- create/repair `SKILL.md` template
+- ensure `name`, `description`, `icon`, `category` are available
+- keep original files as references/scripts/assets when possible

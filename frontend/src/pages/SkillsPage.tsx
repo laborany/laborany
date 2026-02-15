@@ -17,6 +17,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   开发: 'from-purple-500/20 to-purple-600/10 text-purple-700 dark:text-purple-300',
   设计: 'from-pink-500/20 to-pink-600/10 text-pink-700 dark:text-pink-300',
   效率: 'from-amber-500/20 to-amber-600/10 text-amber-700 dark:text-amber-300',
+  工具: 'from-gray-500/20 to-gray-600/10 text-gray-700 dark:text-gray-300',
   default: 'from-gray-500/20 to-gray-600/10 text-gray-700 dark:text-gray-300',
 }
 
@@ -76,7 +77,7 @@ function SkillCard({
         onClick={event => event.stopPropagation()}
         className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
       >
-        <button onClick={() => onOptimize(skill.id)} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-primary" title="AI 优化">
+        <button onClick={() => onOptimize(skill.id)} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-primary" title="AI优化">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
         </button>
         <button onClick={() => onConfigure(skill.id)} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground" title="配置">
@@ -108,7 +109,7 @@ function CreatePanel() {
       <Link to="/create" className="group block p-8 rounded-xl border border-border hover:border-primary/50 hover:shadow-lg transition-all text-center">
         <span className="text-4xl block mb-3"><LaborAnyLogo size={48} /></span>
         <h3 className="text-lg font-semibold text-foreground mb-2">创建新能力</h3>
-        <p className="text-sm text-muted-foreground">通过对话描述你的需求，AI 帮你创建专属能力</p>
+        <p className="text-sm text-muted-foreground">通过对话描述需求，AI 帮你创建专属能力</p>
       </Link>
     </div>
   )
@@ -128,10 +129,7 @@ function MineContent({
   onUninstall: (id: string) => void
 }) {
   if (loading) return <LoadingState />
-
-  if (skills.length === 0) {
-    return <EmptyState />
-  }
+  if (skills.length === 0) return <EmptyState />
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -162,6 +160,7 @@ export default function SkillsPage() {
   const [installing, setInstalling] = useState<string | null>(null)
   const [customUrl, setCustomUrl] = useState('')
   const [installError, setInstallError] = useState<string | null>(null)
+  const [installSuccess, setInstallSuccess] = useState<string | null>(null)
 
   useEffect(() => {
     fetchSkills()
@@ -204,6 +203,8 @@ export default function SkillsPage() {
   async function installSkill(source: string) {
     setInstalling(source)
     setInstallError(null)
+    setInstallSuccess(null)
+
     try {
       const token = localStorage.getItem('token')
       const response = await fetch(`${API_BASE}/skill/install`, {
@@ -215,12 +216,14 @@ export default function SkillsPage() {
         body: JSON.stringify({ source }),
       })
 
+      const data = await response.json().catch(() => ({}))
       if (!response.ok) {
-        const data = await response.json()
         throw new Error(parseErrorMessage(data, '安装失败'))
       }
 
       await fetchSkills()
+      setInstallSuccess(typeof data.summary === 'string' ? data.summary : '安装成功，可在「我的能力」查看')
+      setSearch(typeof data.skillId === 'string' ? data.skillId : '')
       setActiveTab('mine')
       setCustomUrl('')
     } catch (error) {
@@ -307,6 +310,12 @@ export default function SkillsPage() {
           </TabButton>
         </nav>
       </div>
+
+      {installSuccess && (
+        <div className="mb-4 rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-700 dark:text-green-300">
+          {installSuccess}
+        </div>
+      )}
 
       {activeTab === 'mine' && (
         <MineContent

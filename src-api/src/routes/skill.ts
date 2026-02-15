@@ -16,6 +16,12 @@ import {
 } from '../core/agent/index.js'
 import { dbHelper } from '../core/database.js'
 import { getUploadsDir } from './file.js'
+import {
+  installSkillFromSource,
+  SkillInstallError,
+  detectInstallSourceFromQuery,
+  isSkillInstallIntent,
+} from '../core/skills/installer.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │  将前端上传的文件 ID 解析为绝对路径                                        │
@@ -76,8 +82,41 @@ skill.get('/official', (c) => {
   return c.json({ skills: [] })
 })
 
-skill.post('/install', (c) => {
-  return c.json({ error: '桌面版暂不支持在线安装 Skill' }, 501)
+skill.post('/install', async (c) => {
+  let source = ''
+  try {
+    const body = await c.req.json()
+    source = typeof body?.source === 'string' ? body.source.trim() : ''
+  } catch {
+    source = ''
+  }
+
+  if (!source) {
+    return c.json({ error: '缺少 source 参数' }, 400)
+  }
+
+  try {
+    const result = await installSkillFromSource({ source })
+    return c.json({
+      success: true,
+      skillId: result.skillId,
+      installedPath: result.installedPath,
+      sourceType: result.sourceType,
+      metadataPatched: result.metadataPatched,
+      metadata: result.metadata,
+      summary: result.summary,
+    })
+  } catch (error) {
+    if (error instanceof SkillInstallError) {
+      return c.json({
+        error: error.message,
+        detail: error.detail,
+        code: error.code,
+      }, { status: error.status as any })
+    }
+
+    return c.json({ error: '安装失败，请稍后重试' }, 500)
+  }
 })
 
 skill.get('/:skillId/detail', async (c) => {
@@ -228,6 +267,152 @@ skill.post('/execute', async (c) => {
     return c.json({ error: '缺少 skillId 或 query 参数' }, 400)
   }
 
+  if (existingSessionId && runtimeTaskManager.isRunning(existingSessionId)) {
+    return c.json({ error: '当前会话任务仍在运行，请等待完成或先停止任务' }, 409)
+  }
+
+  const directInstallSource = skillId === 'skill-creator'
+    ? detectInstallSourceFromQuery(query)
+    : null
+  const installIntentWithoutSource = skillId === 'skill-creator'
+    && isSkillInstallIntent(query)
+    && !directInstallSource
+
+  if (installIntentWithoutSource) {
+    const sessionId = existingSessionId || uuid()
+    const workDir = ensureTaskDir(sessionId)
+
+    if (!existingSessionId) {
+      dbHelper.run(
+        `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir) VALUES (?, ?, ?, ?, ?, ?)`,
+        [sessionId, 'default', skillId, query, 'running', workDir]
+      )
+    } else {
+      dbHelper.run(
+        `UPDATE sessions SET status = ?, work_dir = ? WHERE id = ?`,
+        ['running', workDir, sessionId]
+      )
+    }
+
+    dbHelper.run(
+      `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+      [sessionId, 'user', query]
+    )
+
+    return streamSSE(c, async (stream) => {
+      const content = [
+        '已识别到你想安装 Skill，但我还缺安装来源。',
+        '',
+        '请补充其中一种来源格式（任选其一）：',
+        '- GitHub 仓库/子目录：`https://github.com/org/repo/tree/main/skills/your-skill`',
+        '- GitHub 简写：`org/repo/skills/your-skill`',
+        '- 可下载压缩包：`https://example.com/your-skill.zip`',
+        '- 可下载压缩包：`https://example.com/your-skill.tar.gz` 或 `.tar`',
+        '',
+        '我会自动完成：下载 -> 校验/改造为 LaborAny 格式 -> 安装到用户 skills 目录 -> 返回 skill ID 和路径。',
+      ].join('\n')
+
+      await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId }) })
+      await stream.writeSSE({ data: JSON.stringify({ type: 'text', content: `${content}\n` }) })
+
+      dbHelper.run(
+        `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+        [sessionId, 'assistant', content]
+      )
+      dbHelper.run(
+        `UPDATE sessions SET status = ? WHERE id = ?`,
+        ['completed', sessionId]
+      )
+
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
+    })
+  }
+
+  if (directInstallSource) {
+    const sessionId = existingSessionId || uuid()
+    const workDir = ensureTaskDir(sessionId)
+
+    if (!existingSessionId) {
+      dbHelper.run(
+        `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir) VALUES (?, ?, ?, ?, ?, ?)`,
+        [sessionId, 'default', skillId, query, 'running', workDir]
+      )
+    } else {
+      dbHelper.run(
+        `UPDATE sessions SET status = ?, work_dir = ? WHERE id = ?`,
+        ['running', workDir, sessionId]
+      )
+    }
+
+    dbHelper.run(
+      `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+      [sessionId, 'user', query]
+    )
+
+    return streamSSE(c, async (stream) => {
+      let assistantOutput = ''
+      const appendText = async (content: string) => {
+        assistantOutput += content
+        await stream.writeSSE({ data: JSON.stringify({ type: 'text', content }) })
+      }
+
+      await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId }) })
+
+      try {
+        await appendText('已识别到 Skill 安装请求，开始自动安装流程。\n')
+
+        const result = await installSkillFromSource({
+          source: directInstallSource,
+          onProgress: async (event) => {
+            await appendText(`${event.message}\n`)
+          },
+        })
+
+        await appendText(`安装完成：${result.summary}\n`)
+        await appendText('你可以在「能力管理 -> 我的能力」中找到它。\n')
+
+        await stream.writeSSE({
+          data: JSON.stringify({
+            type: 'created_capability',
+            capabilityType: 'skill',
+            capabilityId: result.skillId,
+            primary: { type: 'skill', id: result.skillId },
+            artifacts: [{ type: 'skill', id: result.skillId }],
+            originQuery: originQuery || query,
+          }),
+        })
+
+        dbHelper.run(
+          `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+          [sessionId, 'assistant', assistantOutput]
+        )
+        dbHelper.run(
+          `UPDATE sessions SET status = ? WHERE id = ?`,
+          ['completed', sessionId]
+        )
+
+        await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
+      } catch (error) {
+        const message = error instanceof SkillInstallError
+          ? `[${error.code}] ${error.message}${error.detail ? ` (${error.detail})` : ''}`
+          : (error instanceof Error ? error.message : 'Skill 安装失败')
+
+        await stream.writeSSE({ data: JSON.stringify({ type: 'error', content: message }) })
+
+        dbHelper.run(
+          `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+          [sessionId, 'assistant', assistantOutput ? `${assistantOutput}\n${message}` : message]
+        )
+        dbHelper.run(
+          `UPDATE sessions SET status = ? WHERE id = ?`,
+          ['failed', sessionId]
+        )
+
+        await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
+      }
+    })
+  }
+
   const skillData = await loadSkill.byId(skillId)
   if (!skillData) {
     return c.json({ error: 'Skill not found' }, 404)
@@ -300,10 +485,6 @@ skill.post('/execute', async (c) => {
   if (uploadedFileNames.length > 0) {
     const fileList = uploadedFileNames.map(name => `- ${name}`).join('\n')
     finalQuery = `${query}\n\n[Uploaded files in current task directory]\n${fileList}\n\n这些文件都在当前任务工作目录下，请先读取这些文件，再处理用户请求。`
-  }
-
-  if (existingSessionId && runtimeTaskManager.isRunning(existingSessionId)) {
-    return c.json({ error: '当前会话任务仍在运行，请等待完成或先停止任务' }, 409)
   }
 
   const beforeSkillIds = new Set<string>()

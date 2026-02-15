@@ -14,6 +14,31 @@ import { existsSync, mkdirSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
+function scoreAppHome(baseDir: string): number {
+  let score = 0
+  if (existsSync(join(baseDir, 'data', 'laborany.db'))) score += 20
+  if (existsSync(join(baseDir, 'laborany.db'))) score += 15
+  if (existsSync(join(baseDir, 'skills'))) score += 10
+  if (existsSync(join(baseDir, '.env'))) score += 8
+  if (existsSync(join(baseDir, 'data'))) score += 5
+  if (existsSync(join(baseDir, 'logs'))) score += 3
+  return score
+}
+
+function pickPreferredAppHome(lowerDir: string, legacyDir: string): string {
+  const lowerExists = existsSync(lowerDir)
+  const legacyExists = existsSync(legacyDir)
+
+  if (!lowerExists && !legacyExists) return lowerDir
+  if (lowerExists && !legacyExists) return lowerDir
+  if (!lowerExists && legacyExists) return legacyDir
+
+  const lowerScore = scoreAppHome(lowerDir)
+  const legacyScore = scoreAppHome(legacyDir)
+  if (legacyScore > lowerScore) return legacyDir
+  return lowerDir
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     检测打包环境                                          │
  * │                                                                          │
@@ -35,16 +60,26 @@ export function isPackaged(): boolean {
  * │  - Linux: ~/.config/laborany                                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getUserDir(): string {
+  const fromEnv = (process.env.LABORANY_HOME || '').trim()
+  if (fromEnv) return fromEnv
+
   const home = homedir()
   const os = platform()
 
   if (os === 'win32') {
-    return join(process.env.APPDATA || join(home, 'AppData', 'Roaming'), 'LaborAny')
+    const appDataRoot = process.env.APPDATA || join(home, 'AppData', 'Roaming')
+    const lower = join(appDataRoot, 'laborany')
+    const legacy = join(appDataRoot, 'LaborAny')
+    return pickPreferredAppHome(lower, legacy)
   }
   if (os === 'darwin') {
-    return join(home, 'Library', 'Application Support', 'LaborAny')
+    const lower = join(home, 'Library', 'Application Support', 'laborany')
+    const legacy = join(home, 'Library', 'Application Support', 'LaborAny')
+    return pickPreferredAppHome(lower, legacy)
   }
-  return join(home, '.config', 'laborany')
+  const lower = join(home, '.config', 'laborany')
+  const legacy = join(home, '.config', 'LaborAny')
+  return pickPreferredAppHome(lower, legacy)
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

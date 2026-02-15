@@ -11,7 +11,13 @@ import { platform, homedir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import type { Skill } from 'laborany-shared'
-import { wrapCmdForUtf8, withUtf8Env } from 'laborany-shared'
+import {
+  wrapCmdForUtf8,
+  withUtf8Env,
+  BUILTIN_SKILLS_DIR,
+  USER_SKILLS_DIR,
+  getUserDir,
+} from 'laborany-shared'
 import { isZhipuApi, buildZhipuMcpServers, injectMcpServers } from './mcp/index.js'
 import { getAppHomeDir, isPackagedRuntime } from '../../lib/app-home.js'
 
@@ -126,6 +132,54 @@ function getTasksBaseDir(): string {
   return join(getAppDataDir(), 'tasks')
 }
 
+function getUploadsBaseDir(): string {
+  if (isPackagedRuntime()) {
+    return join(getAppHomeDir(), 'uploads')
+  }
+  return join(__dirname, '..', '..', '..', 'uploads')
+}
+
+function normalizePathForPrompt(path: string): string {
+  return path.replace(/\\/g, '/')
+}
+
+function getRuntimePlatformLabel(): string {
+  if (platform() === 'win32') return 'Windows'
+  if (platform() === 'darwin') return 'macOS'
+  return 'Linux'
+}
+
+function buildLaborAnyRuntimeContext(taskDir: string, skillId: string): string {
+  const appHome = getAppHomeDir()
+  const userHome = getUserDir()
+  const tasksBase = getTasksBaseDir()
+  const uploadsBase = getUploadsBaseDir()
+  const envPath = isPackagedRuntime()
+    ? join(appHome, '.env')
+    : join(getAppDataDir(), '.env')
+
+  return [
+    '# LaborAny Runtime Context (Desktop App)',
+    '',
+    `- Platform: ${getRuntimePlatformLabel()} (${process.platform})`,
+    `- Current skill ID: ${skillId}`,
+    `- Current task working directory (cwd): ${normalizePathForPrompt(taskDir)}`,
+    `- Task root directory: ${normalizePathForPrompt(tasksBase)}`,
+    `- Uploaded files cache: ${normalizePathForPrompt(uploadsBase)}`,
+    `- User skills directory (read/write): ${normalizePathForPrompt(USER_SKILLS_DIR)}`,
+    `- Builtin skills directory (read-only): ${normalizePathForPrompt(BUILTIN_SKILLS_DIR)}`,
+    `- LaborAny user home: ${normalizePathForPrompt(userHome)}`,
+    `- LaborAny app home: ${normalizePathForPrompt(appHome)}`,
+    `- Primary env file path: ${normalizePathForPrompt(envPath)}`,
+    '',
+    'Execution constraints:',
+    '- You are running inside LaborAny desktop app.',
+    '- Prefer reading/writing files in current task cwd unless user explicitly requests another location.',
+    '- When creating or updating skills, write under user skills directory, never builtin skills directory.',
+    '- In task replies, use concrete absolute paths when asking users to inspect files.',
+  ].join('\n')
+}
+
 export function getTaskDir(sessionId: string): string {
   return join(getTasksBaseDir(), sessionId)
 }
@@ -142,6 +196,7 @@ async function writeClaudeMdWithMemory(
   userQuery?: string
 ): Promise<void> {
   const claudeMdPath = join(targetDir, 'CLAUDE.md')
+  const runtimeContext = buildLaborAnyRuntimeContext(targetDir, skillId)
 
   try {
     // 从 agent-service 获取 Memory 上下文（传入 userQuery 用于智能检索）
@@ -150,24 +205,24 @@ async function writeClaudeMdWithMemory(
     if (result.ok) {
       const memoryContext = result.data?.context || ''
 
-      // 组合完整的系统提示词
-      const fullPrompt = memoryContext
-        ? `${memoryContext}\n\n---\n\n${skillSystemPrompt}`
-        : skillSystemPrompt
+      // 组合完整系统提示词：运行上下文 + Memory + Skill Prompt
+      const fullPrompt = [runtimeContext, memoryContext, skillSystemPrompt]
+        .filter(Boolean)
+        .join('\n\n---\n\n')
 
       writeFileSync(claudeMdPath, fullPrompt, 'utf-8')
       console.log(`[Agent] 已写入 CLAUDE.md（含 Memory 上下文）: ${claudeMdPath}`)
     } else {
-      // 如果获取失败，只写入 skill 的系统提示词
-      writeFileSync(claudeMdPath, skillSystemPrompt, 'utf-8')
+      // 如果获取 Memory 失败，仍写入运行上下文 + skill 系统提示词
+      writeFileSync(claudeMdPath, `${runtimeContext}\n\n---\n\n${skillSystemPrompt}`, 'utf-8')
       console.warn(
         `[Agent] Memory context request failed: status=${result.status} body=${result.rawText.slice(0, 240)}`,
       )
       console.log(`[Agent] 已写入 CLAUDE.md（无 Memory）: ${claudeMdPath}`)
     }
   } catch (err) {
-    // 网络错误时，只写入 skill 的系统提示词
-    writeFileSync(claudeMdPath, skillSystemPrompt, 'utf-8')
+    // 网络错误时，仍写入运行上下文 + skill 系统提示词
+    writeFileSync(claudeMdPath, `${runtimeContext}\n\n---\n\n${skillSystemPrompt}`, 'utf-8')
     console.warn(`[Agent] 获取 Memory 上下文失败，已写入基础 CLAUDE.md: ${err}`)
   }
 }
