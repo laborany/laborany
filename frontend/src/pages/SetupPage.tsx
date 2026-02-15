@@ -20,6 +20,14 @@ interface SetupStatus {
     path: string | null
     bundled?: boolean
   }
+  dependencies: {
+    git?: {
+      installed: boolean
+      path: string | null
+      required: boolean
+      installHint: string
+    }
+  }
   envPath: string
   profilePath: string
   configDir: string
@@ -204,7 +212,9 @@ export default function SetupPage({ onReady }: SetupPageProps) {
     }
   }
 
-  function renderEnvironmentStep() {
+function renderEnvironmentStep() {
+    const gitStatus = status?.dependencies?.git
+
     return (
       <div className="space-y-4">
         <div className="rounded-lg border border-border bg-muted/30 p-4">
@@ -217,9 +227,26 @@ export default function SetupPage({ onReady }: SetupPageProps) {
           )}
         </div>
 
+        <div className="rounded-lg border border-border bg-muted/30 p-4">
+          <p className="text-sm text-foreground">Git 依赖状态：</p>
+          <p className={`text-sm mt-1 ${gitStatus?.installed ? 'text-green-600' : 'text-red-500'}`}>
+            {gitStatus?.installed ? '已就绪' : '未就绪'}
+          </p>
+          {gitStatus?.path && (
+            <p className="text-xs text-muted-foreground mt-2 break-all">路径：{gitStatus.path}</p>
+          )}
+          {!gitStatus?.installed && gitStatus?.installHint && (
+            <p className="text-xs text-yellow-700 mt-2 whitespace-pre-line">
+              安装提示：{gitStatus.installHint}
+            </p>
+          )}
+        </div>
+
         {!status?.steps.environment && (
           <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-4">
-            <p className="text-sm text-yellow-700">当前环境未就绪，请确认打包产物完整或系统已安装 Claude Code CLI。</p>
+            <p className="text-sm text-yellow-700">
+              当前环境未就绪，请先按提示安装缺失依赖后再继续。
+            </p>
           </div>
         )}
 
@@ -401,4 +428,3 @@ function InputRow(props: {
     </div>
   )
 }
-

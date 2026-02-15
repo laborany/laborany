@@ -23,6 +23,13 @@ import {
 
 const setup = new Hono()
 
+interface GitDependencyStatus {
+  installed: boolean
+  path: string | null
+  required: boolean
+  installHint: string
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       检查内置 CLI Bundle                                 │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -129,6 +136,121 @@ function resolveSetupClaudeCliLaunch(): SetupClaudeCliLaunch | null {
   }
 }
 
+function getBundledSearchBases(): string[] {
+  const exeDir = dirname(process.execPath)
+  const parentDir = dirname(exeDir)
+  const rawBases = [
+    exeDir,
+    parentDir,
+    join(exeDir, 'resources'),
+    join(parentDir, 'resources'),
+  ]
+  return Array.from(new Set(rawBases.map(base => base.replace(/[\\/]+$/, ''))))
+}
+
+function getBundledGitBashPath(): string | null {
+  if (platform() !== 'win32') return null
+
+  const executableCandidates = ['bin\\bash.exe', 'usr\\bin\\bash.exe']
+  for (const base of getBundledSearchBases()) {
+    const gitBashDir = join(base, 'git-bash')
+    for (const relativePath of executableCandidates) {
+      const fullPath = join(gitBashDir, relativePath)
+      if (existsSync(fullPath)) {
+        return fullPath
+      }
+    }
+  }
+  return null
+}
+
+function findGitPath(): string | null {
+  const os = platform()
+  const whichCmd = os === 'win32' ? 'where' : 'which'
+
+  try {
+    const output = execSync(wrapCmdForUtf8(`${whichCmd} git`), { encoding: 'utf-8' }).trim()
+    if (!output) return null
+    const candidates = output.split('\n').map(item => item.trim()).filter(Boolean)
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate
+    }
+  } catch {
+    // ignore detection errors
+  }
+  return null
+}
+
+function resolveWindowsGitBashPath(): string | null {
+  if (platform() !== 'win32') return null
+
+  const configured = (process.env.CLAUDE_CODE_GIT_BASH_PATH || '').trim()
+  if (configured && existsSync(configured)) {
+    return configured
+  }
+
+  const bundled = getBundledGitBashPath()
+  if (bundled) return bundled
+
+  const programFiles = process.env.ProgramFiles || 'C:\\Program Files'
+  const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'
+  const programW6432 = process.env.ProgramW6432 || programFiles
+  const systemCandidates = [
+    join(programFiles, 'Git', 'bin', 'bash.exe'),
+    join(programW6432, 'Git', 'bin', 'bash.exe'),
+    join(programFilesX86, 'Git', 'bin', 'bash.exe'),
+    'C:\\Git\\bin\\bash.exe',
+    'D:\\Git\\bin\\bash.exe',
+  ]
+  for (const candidate of systemCandidates) {
+    if (existsSync(candidate)) return candidate
+  }
+
+  const gitPath = findGitPath()
+  if (gitPath) {
+    const lower = gitPath.toLowerCase()
+    const bashCandidate = lower.endsWith('\\cmd\\git.exe')
+      ? join(dirname(dirname(gitPath)), 'bin', 'bash.exe')
+      : join(dirname(gitPath), 'bash.exe')
+    if (existsSync(bashCandidate)) {
+      return bashCandidate
+    }
+  }
+
+  return null
+}
+
+function getGitInstallHint(): string {
+  const os = platform()
+  if (os === 'darwin') {
+    return '请安装 Git：xcode-select --install（或 brew install git）'
+  }
+  if (os === 'linux') {
+    return '请安装 Git：Debian/Ubuntu 用 sudo apt-get update && sudo apt-get install -y git；Fedora 用 sudo dnf install -y git'
+  }
+  return '请安装 Git for Windows，或使用包含内置 git-bash 的 LaborAny 安装包'
+}
+
+function detectGitDependency(): GitDependencyStatus {
+  if (platform() === 'win32') {
+    const bashPath = resolveWindowsGitBashPath()
+    return {
+      installed: Boolean(bashPath),
+      path: bashPath,
+      required: true,
+      installHint: getGitInstallHint(),
+    }
+  }
+
+  const gitPath = findGitPath()
+  return {
+    installed: Boolean(gitPath),
+    path: gitPath,
+    required: true,
+    installHint: getGitInstallHint(),
+  }
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       使用 Claude Code CLI 校验 API Key                  │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -154,6 +276,17 @@ async function validateAnthropicConfig(params: {
     return { success: false, message: 'ANTHROPIC_API_KEY 不能为空' }
   }
 
+  const gitDependency = detectGitDependency()
+  if (!gitDependency.installed) {
+    return {
+      success: false,
+      message: platform() === 'win32'
+        ? '[DEPENDENCY_MISSING_GIT_BASH] 未检测到可用 Git Bash'
+        : '[DEPENDENCY_MISSING_GIT] 未检测到 Git',
+      diagnostic: gitDependency.installHint,
+    }
+  }
+
   const cliLaunch = resolveSetupClaudeCliLaunch()
   if (!cliLaunch) {
     return { success: false, message: '未检测到可用的 Claude Code CLI' }
@@ -167,6 +300,9 @@ async function validateAnthropicConfig(params: {
       env.ANTHROPIC_BASE_URL = baseUrl
     } else {
       delete env.ANTHROPIC_BASE_URL
+    }
+    if (platform() === 'win32' && gitDependency.path) {
+      env.CLAUDE_CODE_GIT_BASH_PATH = gitDependency.path
     }
     delete env.ANTHROPIC_AUTH_TOKEN
 
@@ -229,9 +365,11 @@ async function validateAnthropicConfig(params: {
 }
 
 function computeSetupStatus() {
+  const gitDependency = detectGitDependency()
   const bundled = getBundledClaudePath()
   const systemPath = bundled ? null : findClaudeCodePath()
-  const environmentReady = Boolean(bundled || systemPath)
+  const claudeReady = Boolean(bundled || systemPath)
+  const environmentReady = Boolean(claudeReady && gitDependency.installed)
 
   const envConfig = readEnvConfig()
   const apiConfigReady = Boolean((envConfig.ANTHROPIC_API_KEY || '').trim())
@@ -239,8 +377,11 @@ function computeSetupStatus() {
   const profileReady = Boolean(profile?.name?.trim())
 
   const errors: string[] = []
-  if (!environmentReady) {
+  if (!claudeReady) {
     errors.push('未检测到 Claude Code CLI（内置或系统安装）')
+  }
+  if (!gitDependency.installed) {
+    errors.push(platform() === 'win32' ? '未检测到可用 Git Bash' : '未检测到 Git')
   }
   if (!apiConfigReady) {
     errors.push('未配置 ANTHROPIC_API_KEY')
@@ -257,9 +398,12 @@ function computeSetupStatus() {
       profile: profileReady,
     },
     claudeCode: {
-      installed: environmentReady,
+      installed: claudeReady,
       path: bundled?.cli || systemPath || null,
       bundled: Boolean(bundled),
+    },
+    dependencies: {
+      git: gitDependency,
     },
     envPath: getEnvPath(),
     profilePath: getProfilePath(),

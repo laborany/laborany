@@ -11,7 +11,7 @@ import { platform } from 'os'
 import { join } from 'path'
 import type { Skill } from 'laborany-shared'
 import { memoryFileManager, memoryOrchestrator, memoryAsyncQueue } from './memory/index.js'
-import { buildClaudeEnvConfig, resolveClaudeCliLaunch } from './claude-cli.js'
+import { buildClaudeEnvConfig, checkRuntimeDependencies, resolveClaudeCliLaunch } from './claude-cli.js'
 import { DATA_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
 
@@ -202,6 +202,16 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     onEvent({
       type: 'error',
       content: 'Claude Code 未安装。请运行: npm install -g @anthropic-ai/claude-code',
+    })
+    onEvent({ type: 'done' })
+    return
+  }
+
+  const dependencyIssue = checkRuntimeDependencies()
+  if (dependencyIssue) {
+    onEvent({
+      type: 'error',
+      content: `[${dependencyIssue.code}] ${dependencyIssue.message}\n${dependencyIssue.installHint}`,
     })
     onEvent({ type: 'done' })
     return

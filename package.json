@@ -45,8 +45,9 @@
     "bundle:uv:mac-arm64": "node scripts/bundle-uv.js mac-arm64",
     "bundle:uv:mac-universal": "node scripts/bundle-uv.js mac-universal",
     "bundle:uv:linux": "node scripts/bundle-uv.js linux",
+    "bundle:gitbash:win": "node scripts/bundle-git-bash.js",
     "bundle:all": "npm run bundle:cli && npm run bundle:uv",
-    "bundle:all:win": "npm run bundle:cli:win && npm run bundle:uv:win",
+    "bundle:all:win": "npm run bundle:cli:win && npm run bundle:uv:win && npm run bundle:gitbash:win",
     "bundle:all:mac": "npm run bundle:cli:mac && npm run bundle:uv:mac",
     "bundle:all:mac-x64": "npm run bundle:cli:mac-x64 && npm run bundle:uv:mac-x64",
     "bundle:all:mac-arm64": "npm run bundle:cli:mac-arm64 && npm run bundle:uv:mac-arm64",
@@ -113,6 +114,13 @@
         {
           "from": "agent-service/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
           "to": "agent/better_sqlite3.node"
+        },
+        {
+          "from": "git-bash",
+          "to": "git-bash",
+          "filter": [
+            "**/*"
+          ]
         }
       ]
     },

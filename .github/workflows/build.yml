@@ -62,6 +62,17 @@ jobs:
           npm run bundle:all:win
           npm run build
 
+      - name: Verify bundled Git Bash
+        shell: pwsh
+        run: |
+          $bash1 = Test-Path "git-bash\bin\bash.exe"
+          $bash2 = Test-Path "git-bash\usr\bin\bash.exe"
+          if (-not ($bash1 -or $bash2)) {
+            Write-Error "Bundled git-bash is missing bash.exe"
+            exit 1
+          }
+          Write-Host "Bundled git-bash detected."
+
       - name: Build Electron
         shell: pwsh
         run: |

@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { buildClaudeEnvConfig, resolveClaudeCliLaunch } from '../claude-cli.js'
+import { buildClaudeEnvConfig, checkRuntimeDependencies, resolveClaudeCliLaunch } from '../claude-cli.js'
 
 interface ClaudePromptOptions {
   prompt: string
@@ -18,7 +18,7 @@ export interface ClaudePromptResult {
 
 export function isClaudeCliAvailable(): boolean {
   const cli = resolveClaudeCliLaunch()
-  return Boolean(cli && (process.env.ANTHROPIC_API_KEY || '').trim())
+  return Boolean(cli && !checkRuntimeDependencies() && (process.env.ANTHROPIC_API_KEY || '').trim())
 }
 
 export async function runClaudePrompt(options: ClaudePromptOptions): Promise<ClaudePromptResult> {
@@ -30,6 +30,18 @@ export async function runClaudePrompt(options: ClaudePromptOptions): Promise<Cla
       stderr: '',
       exitCode: null,
       reason: 'Claude CLI not found',
+    }
+  }
+
+  const dependencyIssue = checkRuntimeDependencies()
+  if (dependencyIssue) {
+    return {
+      ok: false,
+      stdout: '',
+      stderr: '',
+      exitCode: null,
+      source: cli.source,
+      reason: `[${dependencyIssue.code}] ${dependencyIssue.message} ${dependencyIssue.installHint}`,
     }
   }
 

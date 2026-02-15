@@ -1,4 +1,4 @@
-import { execSync } from 'child_process'
+import { execSync, spawnSync } from 'child_process'
 import { existsSync } from 'fs'
 import { homedir, platform } from 'os'
 import { dirname, join } from 'path'
@@ -11,6 +11,12 @@ export interface ClaudeCliLaunchConfig {
   argsPrefix: string[]
   shell: boolean
   source: 'bundled' | 'system' | 'env'
+}
+
+export interface DependencyIssue {
+  code: 'DEPENDENCY_MISSING_GIT' | 'DEPENDENCY_MISSING_GIT_BASH'
+  message: string
+  installHint: string
 }
 
 function getBundledDirNames(): string[] {
@@ -39,6 +45,134 @@ function getBundledSearchBases(): string[] {
   ]
 
   return Array.from(new Set(rawBases.map(base => base.replace(/[\\/]+$/, ''))))
+}
+
+function getBundledGitBashPath(): string | undefined {
+  if (platform() !== 'win32') return undefined
+
+  const executableCandidates = ['bin\\bash.exe', 'usr\\bin\\bash.exe']
+  for (const base of getBundledSearchBases()) {
+    const gitBashDir = join(base, 'git-bash')
+    for (const relativePath of executableCandidates) {
+      const fullPath = join(gitBashDir, relativePath)
+      if (existsSync(fullPath)) {
+        return fullPath
+      }
+    }
+  }
+
+  return undefined
+}
+
+function findGitBashFromGitBinary(): string | undefined {
+  if (platform() !== 'win32') return undefined
+
+  try {
+    const output = execSync(wrapCmdForUtf8('where git'), { encoding: 'utf-8' }).trim()
+    if (!output) return undefined
+
+    const candidates = output.split('\n').map(item => item.trim()).filter(Boolean)
+    for (const gitPath of candidates) {
+      const lower = gitPath.toLowerCase()
+      const bashCandidate = lower.endsWith('\\cmd\\git.exe')
+        ? join(dirname(dirname(gitPath)), 'bin', 'bash.exe')
+        : join(dirname(gitPath), 'bash.exe')
+
+      if (existsSync(bashCandidate)) {
+        return bashCandidate
+      }
+    }
+  } catch {
+    // ignore detection errors
+  }
+
+  return undefined
+}
+
+export function resolveWindowsGitBashPath(): string | undefined {
+  if (platform() !== 'win32') return undefined
+
+  const configured = (process.env.CLAUDE_CODE_GIT_BASH_PATH || '').trim()
+  if (configured && existsSync(configured)) {
+    return configured
+  }
+  if (configured && !existsSync(configured)) {
+    console.warn(`[ClaudeCLI] CLAUDE_CODE_GIT_BASH_PATH invalid: ${configured}`)
+  }
+
+  const bundled = getBundledGitBashPath()
+  if (bundled) {
+    console.log(`[ClaudeCLI] Using bundled Git Bash: ${bundled}`)
+    return bundled
+  }
+
+  const programFiles = process.env.ProgramFiles || 'C:\\Program Files'
+  const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'
+  const programW6432 = process.env.ProgramW6432 || programFiles
+
+  const systemCandidates = [
+    join(programFiles, 'Git', 'bin', 'bash.exe'),
+    join(programW6432, 'Git', 'bin', 'bash.exe'),
+    join(programFilesX86, 'Git', 'bin', 'bash.exe'),
+    'C:\\Git\\bin\\bash.exe',
+    'D:\\Git\\bin\\bash.exe',
+  ]
+  for (const candidate of systemCandidates) {
+    if (existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  return findGitBashFromGitBinary()
+}
+
+function isGitAvailableOnUnixLike(): boolean {
+  if (platform() === 'win32') return true
+  try {
+    const result = spawnSync('git', ['--version'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      windowsHide: true,
+    })
+    return (result.status ?? 1) === 0
+  } catch {
+    return false
+  }
+}
+
+export function getGitInstallHint(): string {
+  const os = platform()
+  if (os === 'darwin') {
+    return '请先安装 Git：xcode-select --install（或 brew install git）'
+  }
+  if (os === 'linux') {
+    return '请先安装 Git：Debian/Ubuntu 用 sudo apt-get install -y git；Fedora 用 sudo dnf install -y git'
+  }
+  return '请安装 Git for Windows，或使用内置 git-bash 资源'
+}
+
+export function checkRuntimeDependencies(): DependencyIssue | null {
+  if (platform() === 'win32') {
+    const gitBashPath = resolveWindowsGitBashPath()
+    if (!gitBashPath) {
+      return {
+        code: 'DEPENDENCY_MISSING_GIT_BASH',
+        message: '未检测到可用 Git Bash，Claude Code 无法在 Windows 上运行',
+        installHint: '请安装 Git for Windows，或使用包含内置 git-bash 的最新安装包',
+      }
+    }
+    return null
+  }
+
+  if (!isGitAvailableOnUnixLike()) {
+    return {
+      code: 'DEPENDENCY_MISSING_GIT',
+      message: '未检测到 Git，Claude Code 依赖 Git 才能执行',
+      installHint: getGitInstallHint(),
+    }
+  }
+
+  return null
 }
 
 function findBundledClaudeLaunch(): ClaudeCliLaunchConfig | undefined {
@@ -145,6 +279,16 @@ export function buildClaudeEnvConfig(): Record<string, string | undefined> {
   }
   if (process.env.ANTHROPIC_MODEL) {
     env.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL
+  }
+
+  if (platform() === 'win32') {
+    const gitBashPath = resolveWindowsGitBashPath()
+    if (gitBashPath) {
+      env.CLAUDE_CODE_GIT_BASH_PATH = gitBashPath
+    } else {
+      delete env.CLAUDE_CODE_GIT_BASH_PATH
+      console.warn('[ClaudeCLI] Git Bash not found. Claude Code may fail on Windows.')
+    }
   }
 
   return env
