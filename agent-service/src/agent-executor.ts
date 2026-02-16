@@ -404,7 +404,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
         onEvent({ type: 'stopped', content: '任务已停止' })
       } else {
         // 正常完成：记录记忆 + 发送 done
-        if (code === 0 && agentResponse.trim()) {
+        if (code === 0) {
           try {
             if (shouldPersistMemory(skill.meta.id, userQuery)) {
               const memoryParams = {

@@ -238,7 +238,7 @@ function pickScene(_query: string, scene?: MemoryScene): MemoryScene {
 }
 
 export class MemoryOrchestrator {
-  private readonly policyVersion = 'v4-auto-safe'
+  private readonly policyVersion = 'v5-longterm-index'
 
   private sanitizeUserQueryForMemory(userQuery: string): string {
     const cleaned = stripNoiseLines(stripPipelineScaffold(userQuery))
@@ -372,6 +372,30 @@ export class MemoryOrchestrator {
     if (evidenceCount < 3) return false
     if (description.length > 200) return false
     return true
+  }
+
+  private computeLongTermScore(params: {
+    section: string
+    description: string
+    confidence: number
+    evidenceCount: number
+    isGlobal: boolean
+  }): number {
+    const { section, description, confidence, evidenceCount, isGlobal } = params
+
+    let score = 0
+    score += Math.min(1, confidence) * 0.45
+    score += Math.min(1, evidenceCount / (isGlobal ? 4 : 3)) * 0.25
+    if (this.isStableFact(description)) score += 0.15
+    if (this.isUserCentricFact(description)) score += 0.10
+    if (this.shouldPromoteToLongTerm(description)) score += 0.05
+
+    if (this.isAddressingNoise(description)) score -= 0.5
+    if (includesAny(description, TRANSIENT_FACT_PATTERNS)) score -= 0.2
+    if (section === '工作偏好' || section === '沟通风格') score += 0.05
+    if (description.length < 10) score -= 0.08
+
+    return Math.max(0, Math.min(1, score))
   }
 
   private buildFixedSections(skillId: string): InjectedMemorySection[] {
@@ -761,46 +785,76 @@ export class MemoryOrchestrator {
       if (latestField.evidences.length < 2) continue
       if (!this.shouldPromoteToLongTerm(latestField.description)) continue
 
-      const skillCandidate = memoryConsolidator.enqueueCandidate({
-        scope: 'skill',
-        skillId,
-        category: patch.section,
-        content: latestField.description,
-        source: latestField.evidences,
+      const skillScore = this.computeLongTermScore({
+        section: patch.section,
+        description: latestField.description,
         confidence: patch.confidence,
+        evidenceCount: latestField.evidences.length,
+        isGlobal: false,
       })
-      if (skillCandidate.isNew) candidateQueued++
 
-      if (this.shouldAutoWriteSkillLongTerm(latestField.description, patch.confidence, latestField.evidences.length)) {
-        const writeResult = memoryConsolidator.consolidateCandidates({
-          candidateIds: [skillCandidate.candidate.id],
+      if (skillScore >= 0.82 && this.shouldAutoWriteSkillLongTerm(
+        latestField.description,
+        patch.confidence,
+        latestField.evidences.length,
+      )) {
+        const writeResult = memoryConsolidator.autoUpsertLongTerm({
           scope: 'skill',
           skillId,
+          category: patch.section,
+          statement: latestField.description,
+          confidence: Math.max(patch.confidence, skillScore),
+          evidenceCount: latestField.evidences.length,
+          sourceRefs: latestField.evidences,
+          policyVersion: this.policyVersion,
         })
-        autoWritten += writeResult.consolidated
-      }
-
-      if (this.shouldPromoteToGlobal(patch.section, latestField.description)) {
-        const globalCandidate = memoryConsolidator.enqueueCandidate({
-          scope: 'global',
+        if (writeResult.written) autoWritten += 1
+      } else if (skillScore >= 0.72) {
+        const skillCandidate = memoryConsolidator.enqueueCandidate({
+          scope: 'skill',
+          skillId,
           category: patch.section,
           content: latestField.description,
           source: latestField.evidences,
           confidence: patch.confidence,
         })
-        if (globalCandidate.isNew) candidateQueued++
+        if (skillCandidate.isNew) candidateQueued++
+      }
 
-        if (this.shouldAutoWriteGlobalLongTerm(
+      if (this.shouldPromoteToGlobal(patch.section, latestField.description)) {
+        const globalScore = this.computeLongTermScore({
+          section: patch.section,
+          description: latestField.description,
+          confidence: patch.confidence,
+          evidenceCount: latestField.evidences.length,
+          isGlobal: true,
+        })
+
+        if (globalScore >= 0.88 && this.shouldAutoWriteGlobalLongTerm(
           patch.section,
           latestField.description,
           patch.confidence,
           latestField.evidences.length,
         )) {
-          const writeResult = memoryConsolidator.consolidateCandidates({
-            candidateIds: [globalCandidate.candidate.id],
+          const writeResult = memoryConsolidator.autoUpsertLongTerm({
             scope: 'global',
+            category: patch.section,
+            statement: latestField.description,
+            confidence: Math.max(patch.confidence, globalScore),
+            evidenceCount: latestField.evidences.length,
+            sourceRefs: latestField.evidences,
+            policyVersion: this.policyVersion,
           })
-          autoWritten += writeResult.consolidated
+          if (writeResult.written) autoWritten += 1
+        } else if (globalScore >= 0.78) {
+          const globalCandidate = memoryConsolidator.enqueueCandidate({
+            scope: 'global',
+            category: patch.section,
+            content: latestField.description,
+            source: latestField.evidences,
+            confidence: patch.confidence,
+          })
+          if (globalCandidate.isNew) candidateQueued++
         }
       }
     }
@@ -817,18 +871,10 @@ export class MemoryOrchestrator {
       assistantResponse: memoryAssistantResponse,
     })
 
-    if (!extraction.summary) {
-      return {
-        written: { cells: 0, profile: 0, longTerm: 0, episodes: 0 },
-        conflicts: [],
-        extractionMethod: extraction.extractionMethod,
-      }
-    }
-
     const timestamp = new Date()
     const evidence = `${timestamp.toISOString().split('T')[0]}|${sessionId}`
     const filteredFacts = this.filterFacts(extraction.facts)
-    const summary = this.sanitizeSummary(extraction.summary, memoryUserQuery)
+    const summary = this.sanitizeSummary(extraction.summary, memoryUserQuery) || clip(memoryUserQuery, 260)
 
     if (!summary && filteredFacts.length === 0) {
       return {

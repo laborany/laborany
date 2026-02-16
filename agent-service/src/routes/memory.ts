@@ -6,7 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Router, Request, Response } from 'express'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { readdir, writeFile } from 'fs/promises'
 import { join, dirname, normalize, posix } from 'path'
 import { loadSkill } from 'laborany-shared'
@@ -61,6 +61,8 @@ const STRUCTURED_NOISE_PATTERNS = [
   /https?:\/\//i,
   /<\/?[a-z][^>]*>/i,
 ]
+
+const DAILY_MEMORY_FILE_REGEX = /^\d{4}-\d{2}-\d{2}\.md$/
 
 function includesAny(text: string, patterns: RegExp[]): boolean {
   return patterns.some(pattern => pattern.test(text))
@@ -175,11 +177,6 @@ router.post('/memory/record-task', async (req: Request, res: Response) => {
       return
     }
 
-    if (skillId === '__converse__') {
-      res.json({ success: true, skipped: true, reason: 'converse session memory disabled' })
-      return
-    }
-
     const memoryParams = {
       sessionId: sessionId || `api_${Date.now()}`,
       skillId,
@@ -224,24 +221,80 @@ router.get('/memory/queue/stats', (_req: Request, res: Response) => {
 router.get('/memory/global', async (_req: Request, res: Response) => {
   try {
     const globalDir = join(DATA_DIR, 'memory', 'global')
-    if (!existsSync(globalDir)) {
-      res.json({ files: [] })
-      return
-    }
-    const entries = await readdir(globalDir)
-    const files = entries
-      .filter(f => f.endsWith('.md'))
-      .sort()
-      .reverse()
-      .map(name => {
-        const date = name.replace('.md', '')
-        return {
-          name,
-          path: posix.join('memory', 'global', name),
-          scope: 'global' as const,
-          displayName: `全局 - ${date}`,
+    const files: Array<{
+      name: string
+      path: string
+      scope: 'global' | 'skill'
+      displayName: string
+      skillId?: string
+      skillName?: string
+      updatedAt: string
+    }> = []
+
+    if (existsSync(globalDir)) {
+      const entries = await readdir(globalDir)
+      for (const name of entries) {
+        if (!DAILY_MEMORY_FILE_REGEX.test(name)) continue
+        try {
+          const fullPath = join(globalDir, name)
+          const stats = statSync(fullPath)
+          const date = name.replace('.md', '')
+          files.push({
+            name,
+            path: posix.join('memory', 'global', name),
+            scope: 'global',
+            displayName: `全局 - ${date}`,
+            updatedAt: stats.mtime.toISOString(),
+          })
+        } catch {
+          continue
         }
-      })
+      }
+    }
+
+    const skillsRootDir = join(DATA_DIR, 'memory', 'skills')
+    if (existsSync(skillsRootDir)) {
+      const skillIds = await readdir(skillsRootDir)
+      for (const skillId of skillIds) {
+        const skillDir = join(skillsRootDir, skillId)
+        let skillName = skillId
+        try {
+          const skill = await loadSkill.byId(skillId)
+          if (skill?.meta?.name) skillName = skill.meta.name
+        } catch {
+          // ignore skill metadata load errors, fallback to skillId
+        }
+
+        let entries: string[] = []
+        try {
+          entries = await readdir(skillDir)
+        } catch {
+          continue
+        }
+
+        for (const name of entries) {
+          if (!DAILY_MEMORY_FILE_REGEX.test(name)) continue
+          try {
+            const fullPath = join(skillDir, name)
+            const stats = statSync(fullPath)
+            const date = name.replace('.md', '')
+            files.push({
+              name,
+              path: posix.join('memory', 'skills', skillId, name),
+              scope: 'skill',
+              skillId,
+              skillName,
+              displayName: `${skillName} - ${date}`,
+              updatedAt: stats.mtime.toISOString(),
+            })
+          } catch {
+            continue
+          }
+        }
+      }
+    }
+
+    files.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     res.json({ files })
   } catch (error) {
     res.status(500).json({ error: '获取全局记忆列表失败' })
@@ -266,10 +319,15 @@ router.get('/memory/skill/:skillId', async (req: Request, res: Response) => {
 
     const entries = await readdir(skillDir)
     const files = entries
-      .filter(f => f.endsWith('.md'))
-      .sort()
-      .reverse()
+      .filter(name => DAILY_MEMORY_FILE_REGEX.test(name))
       .map(name => {
+        let updatedAt = new Date(0).toISOString()
+        try {
+          const stats = statSync(join(skillDir, name))
+          updatedAt = stats.mtime.toISOString()
+        } catch {
+          // keep default epoch for missing/unreadable files
+        }
         const date = name.replace('.md', '')
         return {
           name,
@@ -278,8 +336,10 @@ router.get('/memory/skill/:skillId', async (req: Request, res: Response) => {
           skillId,
           skillName,
           displayName: `${skillName} - ${date}`,
+          updatedAt,
         }
       })
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     res.json({ files })
   } catch (error) {
     res.status(500).json({ error: '获取 Skill 记忆列表失败' })
@@ -400,17 +460,6 @@ router.post('/memory/upsert', async (req: Request, res: Response) => {
   const { sessionId, skillId, userQuery, assistantResponse } = req.body
   if (!sessionId || !skillId || !userQuery) {
     res.status(400).json({ error: '缺少 sessionId/skillId/userQuery 参数' })
-    return
-  }
-
-  if (skillId === '__converse__') {
-    res.json({
-      written: { cells: 0, profile: 0, longTerm: 0, episodes: 0 },
-      conflicts: [],
-      extractionMethod: 'regex',
-      skipped: true,
-      reason: 'converse session memory disabled',
-    })
     return
   }
 
@@ -594,6 +643,50 @@ router.get('/memory/stats', (_req: Request, res: Response) => {
   }
 })
 
+router.get('/memory/longterm/stats', (req: Request, res: Response) => {
+  try {
+    const days = req.query.days ? Math.max(1, parseInt(req.query.days as string, 10)) : 7
+    const stats = memoryConsolidator.getLongTermStats(days)
+    res.json(stats)
+  } catch (error) {
+    res.status(500).json({ error: '获取长期记忆统计失败' })
+  }
+})
+
+router.get('/memory/longterm/audit', (req: Request, res: Response) => {
+  try {
+    const scope = req.query.scope === 'global' || req.query.scope === 'skill'
+      ? req.query.scope
+      : undefined
+    const skillId = typeof req.query.skillId === 'string' ? req.query.skillId : undefined
+    const limit = req.query.limit ? Math.max(1, parseInt(req.query.limit as string, 10)) : 50
+    const logs = memoryConsolidator.getLongTermAudit({
+      scope,
+      skillId,
+      limit,
+    })
+    res.json({ logs, total: logs.length })
+  } catch (error) {
+    res.status(500).json({ error: '获取长期记忆审计失败' })
+  }
+})
+
+router.post('/memory/longterm/rebuild', (req: Request, res: Response) => {
+  try {
+    const scope = req.body?.scope === 'global' || req.body?.scope === 'skill'
+      ? req.body.scope
+      : undefined
+    const skillId = typeof req.body?.skillId === 'string' ? req.body.skillId : undefined
+    const result = memoryConsolidator.rebuildLongTermMarkdown({
+      scope,
+      skillId,
+    })
+    res.json({ success: true, ...result })
+  } catch (error) {
+    res.status(500).json({ error: '重建长期记忆失败' })
+  }
+})
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取 MemCell 列表                                   │
  * │  返回最近 N 天的原子记忆列表（轻量摘要）                                  │
@@ -761,6 +854,9 @@ router.post('/memory/reset-all', (_req: Request, res: Response) => {
       join(memoryRoot, 'skills'),
       join(memoryRoot, 'traces'),
       join(memoryRoot, 'index'),
+      join(memoryRoot, 'index', 'longterm-audit.jsonl'),
+      join(memoryRoot, 'index', 'longterm-global.json'),
+      join(memoryRoot, 'index', 'longterm-skills'),
       join(memoryRoot, 'cleanup-backups'),
       PROFILE_PATH,
       PROFILES_DIR,

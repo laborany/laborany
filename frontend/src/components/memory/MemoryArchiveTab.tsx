@@ -17,8 +17,29 @@ interface MemoryFile {
   path: string
   scope: 'global' | 'skill'
   displayName: string
+  updatedAt?: string
   skillId?: string
   skillName?: string
+}
+
+interface LongTermStats {
+  days: number
+  accepted: number
+  rejected: number
+  superseded: number
+  total: number
+  lastActionAt?: string
+}
+
+interface LongTermAuditLog {
+  id: string
+  at: string
+  scope: 'global' | 'skill'
+  skillId?: string
+  action: 'inserted' | 'updated' | 'superseded' | 'skipped'
+  reason: string
+  category: string
+  statement: string
 }
 
 interface Skill {
@@ -43,6 +64,8 @@ type MemoryScope = 'global' | 'skill'
 export function MemoryArchiveTab() {
   return (
     <div className="space-y-6">
+      <LongTermOverviewSection />
+
       {/* 长期记忆编辑器 */}
       <GlobalMemorySection />
 
@@ -55,6 +78,100 @@ export function MemoryArchiveTab() {
         <DailyMemoryBrowser />
       </CollapsibleSection>
     </div>
+  )
+}
+
+function LongTermOverviewSection() {
+  const [stats, setStats] = useState<LongTermStats | null>(null)
+  const [logs, setLogs] = useState<LongTermAuditLog[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    void loadData()
+  }, [])
+
+  async function loadData() {
+    setLoading(true)
+    setError('')
+    try {
+      const [statsRes, logsRes] = await Promise.all([
+        fetch(`${AGENT_API_BASE}/memory/longterm/stats?days=7`),
+        fetch(`${AGENT_API_BASE}/memory/longterm/audit?limit=8`),
+      ])
+
+      const statsData = await statsRes.json()
+      const logsData = await logsRes.json()
+
+      if (!statsRes.ok) {
+        throw new Error(statsData?.error || '加载长期记忆统计失败')
+      }
+      if (!logsRes.ok) {
+        throw new Error(logsData?.error || '加载长期记忆审计失败')
+      }
+
+      setStats(statsData as LongTermStats)
+      setLogs(Array.isArray(logsData?.logs) ? logsData.logs : [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '加载长期记忆信息失败')
+      setStats(null)
+      setLogs([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <CollapsibleSection
+      title="长期记忆状态"
+      defaultExpanded={false}
+      icon={<MemoryIcon />}
+    >
+      {loading ? (
+        <LoadingSpinner />
+      ) : (
+        <div className="space-y-4 pt-2">
+          {error && <MessageBox type="error" text={error} />}
+          {stats && (
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <MetricCard label="已写入" value={stats.accepted} />
+              <MetricCard label="已拒绝" value={stats.rejected} />
+              <MetricCard label="已替换" value={stats.superseded} />
+              <MetricCard label="总决策数" value={stats.total} />
+            </div>
+          )}
+
+          <div className="rounded-lg border border-border bg-card">
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <span className="text-sm font-medium text-foreground">最近决策日志</span>
+              <button
+                onClick={loadData}
+                className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
+              >
+                刷新
+              </button>
+            </div>
+            <div className="max-h-[220px] overflow-y-auto px-3 py-2">
+              {logs.length === 0 ? (
+                <div className="py-2 text-sm text-muted-foreground">暂无日志</div>
+              ) : (
+                logs.map(log => (
+                  <div key={log.id} className="mb-3 border-b border-border/40 pb-2 last:mb-0 last:border-b-0">
+                    <div className="mb-1 flex items-center gap-2">
+                      <ScopeTag scope={log.scope} />
+                      <span className="text-xs text-muted-foreground">{new Date(log.at).toLocaleString()}</span>
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{log.action}</span>
+                    </div>
+                    <div className="text-sm text-foreground">{log.statement}</div>
+                    <div className="text-xs text-muted-foreground">{log.category} · {log.reason}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </CollapsibleSection>
   )
 }
 
@@ -261,7 +378,7 @@ function DailyMemoryBrowser() {
           onChange={(e) => setScope(e.target.value as MemoryScope)}
           className="rounded-lg border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
-          <option value="global">全局记忆</option>
+          <option value="global">全局（全部来源）</option>
           <option value="skill">技能记忆</option>
         </select>
 
@@ -367,6 +484,15 @@ function MessageBox({ type, text }: { type: 'success' | 'error'; text: string })
     ? 'bg-green-500/10 text-green-600 border-green-500/20'
     : 'bg-red-500/10 text-red-600 border-red-500/20'
   return <div className={`rounded-lg border p-4 ${styles}`}>{text}</div>
+}
+
+function MetricCard({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-border bg-card px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="text-lg font-semibold text-foreground">{value}</div>
+    </div>
+  )
 }
 
 function ScopeTag({ scope }: { scope: 'global' | 'skill' }) {

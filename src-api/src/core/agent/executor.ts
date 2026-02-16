@@ -46,7 +46,6 @@ function isProgressEvent(event: AgentEvent): boolean {
 const PIPELINE_CONTEXT_PATTERN = /##\s*.*执行上下文/
 
 function shouldPersistMemory(skillId: string, userQuery: string): boolean {
-  if (skillId === '__converse__') return false
   if (PIPELINE_CONTEXT_PATTERN.test(userQuery)) return false
   return true
 }
@@ -839,7 +838,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       }
 
       // 任务完成后记录到三级记忆系统
-      if (code === 0 && !signal.aborted && agentResponse.trim()) {
+      if (code === 0 && !signal.aborted) {
         try {
           if (shouldPersistMemory(skill.meta.id, userQuery)) {
             const result = await fetchJsonWithTimeout<{
@@ -856,7 +855,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
                 body: JSON.stringify({
                   skillId: skill.meta.id,
                   userQuery: stripPipelineContext(userQuery),
-                  assistantResponse: agentResponse,
+                  assistantResponse: agentResponse || '',
                 }),
               },
               20_000,

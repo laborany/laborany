@@ -5,11 +5,67 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect } from 'react'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash'
+import c from 'react-syntax-highlighter/dist/esm/languages/prism/c'
+import cpp from 'react-syntax-highlighter/dist/esm/languages/prism/cpp'
+import css from 'react-syntax-highlighter/dist/esm/languages/prism/css'
+import go from 'react-syntax-highlighter/dist/esm/languages/prism/go'
+import java from 'react-syntax-highlighter/dist/esm/languages/prism/java'
+import javascript from 'react-syntax-highlighter/dist/esm/languages/prism/javascript'
+import json from 'react-syntax-highlighter/dist/esm/languages/prism/json'
+import jsx from 'react-syntax-highlighter/dist/esm/languages/prism/jsx'
+import markdown from 'react-syntax-highlighter/dist/esm/languages/prism/markdown'
+import markup from 'react-syntax-highlighter/dist/esm/languages/prism/markup'
+import python from 'react-syntax-highlighter/dist/esm/languages/prism/python'
+import rust from 'react-syntax-highlighter/dist/esm/languages/prism/rust'
+import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql'
+import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typescript'
+import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx'
+import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml'
 
 import type { RendererProps } from '../../types'
 import { getLang } from '../../utils'
+
+SyntaxHighlighter.registerLanguage('bash', bash)
+SyntaxHighlighter.registerLanguage('c', c)
+SyntaxHighlighter.registerLanguage('cpp', cpp)
+SyntaxHighlighter.registerLanguage('css', css)
+SyntaxHighlighter.registerLanguage('go', go)
+SyntaxHighlighter.registerLanguage('java', java)
+SyntaxHighlighter.registerLanguage('javascript', javascript)
+SyntaxHighlighter.registerLanguage('json', json)
+SyntaxHighlighter.registerLanguage('jsx', jsx)
+SyntaxHighlighter.registerLanguage('markdown', markdown)
+SyntaxHighlighter.registerLanguage('markup', markup)
+SyntaxHighlighter.registerLanguage('python', python)
+SyntaxHighlighter.registerLanguage('rust', rust)
+SyntaxHighlighter.registerLanguage('sql', sql)
+SyntaxHighlighter.registerLanguage('typescript', typescript)
+SyntaxHighlighter.registerLanguage('tsx', tsx)
+SyntaxHighlighter.registerLanguage('yaml', yaml)
+
+const LANGUAGE_ALIASES: Record<string, string | undefined> = {
+  html: 'markup',
+  htm: 'markup',
+  xml: 'markup',
+  scss: 'css',
+  less: 'css',
+  yml: 'yaml',
+  txt: undefined,
+  csv: undefined,
+  plaintext: undefined,
+  toml: undefined,
+}
+
+function resolveHighlightLanguage(lang: string): string | undefined {
+  if (!lang) return undefined
+  if (Object.prototype.hasOwnProperty.call(LANGUAGE_ALIASES, lang)) {
+    return LANGUAGE_ALIASES[lang]
+  }
+  return lang
+}
 
 export function CodeRenderer({ artifact }: RendererProps) {
   const [content, setContent] = useState<string>('')
@@ -63,11 +119,12 @@ export function CodeRenderer({ artifact }: RendererProps) {
   }
 
   const lang = getLang(artifact.ext)
+  const highlightLang = resolveHighlightLanguage(lang)
 
   return (
     <div className="h-full overflow-auto">
       <SyntaxHighlighter
-        language={lang}
+        language={highlightLang}
         style={oneDark}
         showLineNumbers
         customStyle={{
