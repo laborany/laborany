@@ -32,6 +32,9 @@ export interface ExecutionPanelProps {
   isRunning: boolean
   error: string | null
 
+  /* 连接状态（CLI stderr 重试/错误信息） */
+  connectionStatus?: string | null
+
   /* 文件系统 */
   taskFiles: TaskFile[]
   workDir: string | null
@@ -112,6 +115,7 @@ export function ExecutionPanel({
   messages,
   isRunning,
   error,
+  connectionStatus,
   taskFiles,
   workDir,
   filesVersion,
@@ -207,6 +211,7 @@ export function ExecutionPanel({
         showResizeHandle={showResizeHandle}
         headerSlot={headerSlot}
         error={error}
+        connectionStatus={connectionStatus}
         messages={messages}
         isRunning={isRunning}
         pendingQuestion={pendingQuestion}
@@ -275,6 +280,7 @@ interface ChatPanelProps {
   showResizeHandle: boolean
   headerSlot?: React.ReactNode
   error: string | null
+  connectionStatus?: string | null
   messages: AgentMessage[]
   isRunning: boolean
   pendingQuestion: PendingQuestion | null
@@ -291,6 +297,7 @@ function ChatPanel({
   showResizeHandle,
   headerSlot,
   error,
+  connectionStatus,
   messages,
   isRunning,
   pendingQuestion,
@@ -316,6 +323,9 @@ function ChatPanel({
       {/* 错误提示 */}
       {error && <ErrorBanner message={error} />}
 
+      {/* 连接状态提示 */}
+      {connectionStatus && <ConnectionStatusBanner message={connectionStatus} />}
+
       {/* 复合技能步骤进度 */}
       {compositeSteps && compositeSteps.length > 0 && (
         <div className="shrink-0 mb-2">
@@ -325,7 +335,7 @@ function ChatPanel({
 
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto mb-4 min-h-0">
-        {messages.length === 0 ? <EmptyState isRunning={isRunning} /> : (
+        {messages.length === 0 ? <EmptyState isRunning={isRunning} connectionStatus={connectionStatus} /> : (
           <MessageList messages={messages} isRunning={isRunning} />
         )}
       </div>
@@ -353,7 +363,7 @@ function ChatPanel({
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           空状态                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function EmptyState({ isRunning }: { isRunning: boolean }) {
+function EmptyState({ isRunning, connectionStatus }: { isRunning: boolean; connectionStatus?: string | null }) {
   if (isRunning) {
     return (
       <div className="h-full flex items-center justify-center text-muted-foreground">
@@ -361,8 +371,12 @@ function EmptyState({ isRunning }: { isRunning: boolean }) {
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
             <div className="w-7 h-7 rounded-full border-2 border-primary border-t-transparent animate-spin" />
           </div>
-          <p className="text-lg font-medium text-foreground mb-1">正在处理任务</p>
-          <p className="text-sm">已开始执行，请稍候，结果会实时显示在这里</p>
+          <p className="text-lg font-medium text-foreground mb-1">
+            {connectionStatus ? '正在连接服务' : '正在处理任务'}
+          </p>
+          <p className="text-sm">
+            {connectionStatus || '已开始执行，请稍候，结果会实时显示在这里'}
+          </p>
         </div>
       </div>
     )
@@ -392,6 +406,19 @@ function ErrorBanner({ message }: { message: string }) {
       <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
+      {message}
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                      连接状态横幅                                        │
+ * │  展示 CLI stderr 透传的重试/错误信息，黄色背景 + 旋转图标                 │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function ConnectionStatusBanner({ message }: { message: string }) {
+  return (
+    <div className="mb-4 p-3 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 rounded-lg text-sm flex items-center gap-2 shrink-0">
+      <div className="w-4 h-4 flex-shrink-0 rounded-full border-2 border-yellow-500 border-t-transparent animate-spin" />
       {message}
     </div>
   )

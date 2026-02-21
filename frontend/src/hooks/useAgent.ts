@@ -29,6 +29,7 @@ interface AgentState {
   runCompletedAt: string | null
   sessionId: string | null
   error: string | null
+  connectionStatus: string | null
   taskFiles: TaskFile[]
   workDir: string | null
   pendingQuestion: PendingQuestion | null
@@ -56,7 +57,8 @@ const EXECUTE_DEDUPE_WINDOW_MS = 1200
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
-  maxRetries = 3
+  maxRetries = 3,
+  onRetry?: (msg: string) => void,
 ): Promise<Response> {
   let lastError: Error | null = null
 
@@ -71,14 +73,18 @@ async function fetchWithRetry(
       const data = await res.clone().json().catch(() => ({}))
       const retryAfter = (data.retryAfter || Math.pow(2, attempt)) * 1000
 
-      console.log(`[useAgent] 服务暂不可用，${retryAfter / 1000}s 后重试 (${attempt + 1}/${maxRetries})`)
+      const msg = `服务暂不可用，${retryAfter / 1000}s 后重试 (${attempt + 1}/${maxRetries})`
+      console.log(`[useAgent] ${msg}`)
+      onRetry?.(msg)
       await new Promise(r => setTimeout(r, retryAfter))
     } catch (err) {
       lastError = err as Error
       if ((err as Error).name === 'AbortError') throw err
 
       const delay = Math.pow(2, attempt) * 1000
-      console.log(`[useAgent] 请求失败，${delay / 1000}s 后重试 (${attempt + 1}/${maxRetries})`)
+      const msg = `请求失败，${delay / 1000}s 后重试 (${attempt + 1}/${maxRetries})`
+      console.log(`[useAgent] ${msg}`)
+      onRetry?.(msg)
       await new Promise(r => setTimeout(r, delay))
     }
   }
@@ -165,6 +171,7 @@ export function useAgent(skillId: string) {
     runCompletedAt: null,
     sessionId: null,
     error: null,
+    connectionStatus: null,
     taskFiles: [],
     workDir: null,
     pendingQuestion: null,
@@ -210,6 +217,7 @@ export function useAgent(skillId: string) {
       runCompletedAt: null,
       sessionId: null,
       error: null,
+      connectionStatus: null,
       taskFiles: [],
       workDir: null,
       pendingQuestion: null,
@@ -233,14 +241,15 @@ export function useAgent(skillId: string) {
           break
 
         case 'text': {
-          // 使用 assistantIdRef 跟踪当前文本块归属的 assistant 消息
+          // 收到文本说明 CLI 已成功连接 API，清除连接状态
           const aid = assistantIdRef.current
           currentTextRef.current += event.content as string
           setState((s) => {
             const existing = s.messages.find((m) => m.id === aid)
+            const base = { ...s, connectionStatus: null }
             if (existing) {
               return {
-                ...s,
+                ...base,
                 messages: s.messages.map((m) =>
                   m.id === aid
                     ? { ...m, content: currentTextRef.current }
@@ -249,7 +258,7 @@ export function useAgent(skillId: string) {
               }
             }
             return {
-              ...s,
+              ...base,
               messages: [
                 ...s.messages,
                 {
@@ -359,8 +368,16 @@ export function useAgent(skillId: string) {
           break
         }
 
+        case 'status': {
+          const statusText = (event.content || event.message) as string | undefined
+          if (statusText) {
+            setState((s) => ({ ...s, connectionStatus: statusText }))
+          }
+          break
+        }
+
         case 'error':
-          setState((s) => ({ ...s, error: (event.message || event.content) as string }))
+          setState((s) => ({ ...s, error: (event.message || event.content) as string, connectionStatus: null }))
           localStorage.removeItem(`lastSession_${skillId}`)
           break
 
@@ -499,6 +516,7 @@ export function useAgent(skillId: string) {
           setState((s) => ({
             ...s,
             runCompletedAt: new Date().toISOString(),
+            connectionStatus: null,
           }))
           break
       }
@@ -631,6 +649,7 @@ export function useAgent(skillId: string) {
         isRunning: true,
         runCompletedAt: null,
         error: null,
+        connectionStatus: null,
         createdCapability: null,
         pendingQuestion: null,
       }))
@@ -685,7 +704,8 @@ export function useAgent(skillId: string) {
             body,
             signal: abortRef.current.signal,
           },
-          3
+          3,
+          (msg) => setState((s) => ({ ...s, connectionStatus: msg })),
         )
 
         console.log('[useAgent] 响应状态:', res.status)
@@ -754,6 +774,7 @@ export function useAgent(skillId: string) {
       runCompletedAt: null,
       sessionId: null,
       error: null,
+      connectionStatus: null,
       taskFiles: [],
       workDir: null,
       pendingQuestion: null,
@@ -866,6 +887,7 @@ export function useAgent(skillId: string) {
         runCompletedAt: null,
         sessionId: targetSessionId,
         error: null,
+        connectionStatus: null,
       }))
 
       sessionIdRef.current = targetSessionId
@@ -882,7 +904,8 @@ export function useAgent(skillId: string) {
             signal: abortRef.current.signal,
             headers: createAuthHeaders(token),
           },
-          3
+          3,
+          (msg) => setState((s) => ({ ...s, connectionStatus: msg })),
         )
 
         if (!res.ok) {

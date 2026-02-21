@@ -282,6 +282,7 @@ export default function ExecutePage() {
         messages={agent.messages}
         isRunning={effectiveRunning}
         error={agent.error}
+        connectionStatus={agent.connectionStatus}
         taskFiles={agent.taskFiles}
         workDir={agent.workDir}
         filesVersion={agent.filesVersion}

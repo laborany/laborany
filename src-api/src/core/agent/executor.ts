@@ -28,13 +28,18 @@ const __dirname = dirname(__filename)
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentEvent {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done'
+  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done' | 'status'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
   toolResult?: string
   taskDir?: string
 }
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                    stderr 分类：识别 CLI 重试/错误信息                     │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const STDERR_FORWARD_PATTERN = /retry|retrying|attempt|reconnect|error|failed|timeout|refused|ECONNREFUSED|ETIMEDOUT|rate.limit|overloaded|529|503/i
 
 const IDLE_WARNING_THRESHOLD_MS = 10 * 60 * 1000
 const IDLE_WARNING_CHECK_INTERVAL_MS = 60 * 1000
@@ -797,8 +802,23 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     }
   })
 
+  let stderrBuffer = ''
+
   proc.stderr.on('data', (data: Buffer) => {
-    console.error('[Agent] stderr:', data.toString('utf-8'))
+    const chunk = data.toString('utf-8')
+    stderrBuffer += chunk
+    if (stderrBuffer.length > 4000) {
+      stderrBuffer = stderrBuffer.slice(-4000)
+    }
+    console.error('[Agent] stderr:', chunk)
+
+    /* 逐行检查，匹配到重试/错误模式的行透传到前端 */
+    for (const line of chunk.split('\n')) {
+      const trimmed = line.trim()
+      if (trimmed && STDERR_FORWARD_PATTERN.test(trimmed)) {
+        emitEvent({ type: 'status', content: trimmed })
+      }
+    }
   })
 
   const abortHandler = () => proc.kill('SIGTERM')
@@ -834,7 +854,13 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       if (signal.aborted) {
         emitEvent({ type: 'error', content: '执行被中止' })
       } else if (code !== 0) {
-        emitEvent({ type: 'error', content: `Claude Code 退出码: ${code}` })
+        const stderrSnippet = stderrBuffer.trim().slice(0, 600)
+        emitEvent({
+          type: 'error',
+          content: stderrSnippet
+            ? `Claude Code 退出码: ${code}\n${stderrSnippet}`
+            : `Claude Code 退出码: ${code}`,
+        })
       }
 
       // 任务完成后记录到三级记忆系统

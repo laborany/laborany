@@ -779,6 +779,10 @@ router.post('/', async (req: Request, res: Response) => {
           sseWrite(res, 'text', { content: event.content })
         }
 
+        if (event.type === 'status' && event.content) {
+          sseWrite(res, 'status', { content: event.content })
+        }
+
         if (event.type === 'stopped') {
           if (hasPendingQuestion) {
             sseWrite(res, 'done', {})

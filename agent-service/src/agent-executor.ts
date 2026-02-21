@@ -41,7 +41,7 @@ function stripPipelineContext(userQuery: string): string {
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentEvent {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done' | 'stopped'
+  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done' | 'stopped' | 'status'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
@@ -50,6 +50,14 @@ export interface AgentEvent {
   taskDir?: string
   isError?: boolean  // 结构化错误标记，用于判断执行是否失败
 }
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                    stderr 分类：识别 CLI 重试/错误信息                     │
+ * │                                                                          │
+ * │  Claude Code CLI 在 stderr 输出重试进度和网络错误，                        │
+ * │  匹配到的行透传到前端，其余仅打印到控制台                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const STDERR_FORWARD_PATTERN = /retry|retrying|attempt|reconnect|error|failed|timeout|refused|ECONNREFUSED|ETIMEDOUT|rate.limit|overloaded|529|503/i
 
 const IDLE_WARNING_THRESHOLD_MS = 10 * 60 * 1000
 const IDLE_WARNING_CHECK_INTERVAL_MS = 60 * 1000
@@ -354,6 +362,14 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       stderrBuffer = stderrBuffer.slice(-4000)
     }
     console.error('[Agent] stderr:', chunk)
+
+    /* 逐行检查，匹配到重试/错误模式的行透传到前端 */
+    for (const line of chunk.split('\n')) {
+      const trimmed = line.trim()
+      if (trimmed && STDERR_FORWARD_PATTERN.test(trimmed)) {
+        onEvent({ type: 'status', content: trimmed })
+      }
+    }
   })
 
   const abortHandler = () => {
