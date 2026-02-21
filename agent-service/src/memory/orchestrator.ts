@@ -771,7 +771,34 @@ export class MemoryOrchestrator {
     return conflicts
   }
 
-  private upsertLongTermMemory(skillId: string, patches: MemoryPatch[]): LongTermUpsertStats {
+  private logLongTermCandidateError(params: {
+    sessionId: string
+    skillId: string
+    scope: 'global' | 'skill'
+    category: string
+    statement: string
+    error: unknown
+  }): void {
+    const message = params.error instanceof Error ? params.error.message : String(params.error)
+    console.error(
+      `[MemoryLongTerm] enqueue candidate failed: session=${params.sessionId} skill=${params.skillId} scope=${params.scope} category=${params.category}`,
+      params.error,
+    )
+    memoryTraceLogger.log({
+      at: nowIso(),
+      stage: 'longterm_error',
+      sessionId: params.sessionId,
+      payload: {
+        skillId: params.skillId,
+        scope: params.scope,
+        category: params.category,
+        statement: clip(params.statement, 240),
+        reason: message,
+      },
+    })
+  }
+
+  private upsertLongTermMemory(sessionId: string, skillId: string, patches: MemoryPatch[]): LongTermUpsertStats {
     const qualified = patches.filter(item => !item.provisional && item.source === 'user')
     if (qualified.length === 0) return { autoWritten: 0, candidateQueued: 0 }
 
@@ -810,15 +837,26 @@ export class MemoryOrchestrator {
         })
         if (writeResult.written) autoWritten += 1
       } else if (skillScore >= 0.72) {
-        const skillCandidate = memoryConsolidator.enqueueCandidate({
-          scope: 'skill',
-          skillId,
-          category: patch.section,
-          content: latestField.description,
-          source: latestField.evidences,
-          confidence: patch.confidence,
-        })
-        if (skillCandidate.isNew) candidateQueued++
+        try {
+          const skillCandidate = memoryConsolidator.enqueueCandidate({
+            scope: 'skill',
+            skillId,
+            category: patch.section,
+            content: latestField.description,
+            source: latestField.evidences,
+            confidence: patch.confidence,
+          })
+          if (skillCandidate.isNew) candidateQueued++
+        } catch (error) {
+          this.logLongTermCandidateError({
+            sessionId,
+            skillId,
+            scope: 'skill',
+            category: patch.section,
+            statement: latestField.description,
+            error,
+          })
+        }
       }
 
       if (this.shouldPromoteToGlobal(patch.section, latestField.description)) {
@@ -847,14 +885,25 @@ export class MemoryOrchestrator {
           })
           if (writeResult.written) autoWritten += 1
         } else if (globalScore >= 0.78) {
-          const globalCandidate = memoryConsolidator.enqueueCandidate({
-            scope: 'global',
-            category: patch.section,
-            content: latestField.description,
-            source: latestField.evidences,
-            confidence: patch.confidence,
-          })
-          if (globalCandidate.isNew) candidateQueued++
+          try {
+            const globalCandidate = memoryConsolidator.enqueueCandidate({
+              scope: 'global',
+              category: patch.section,
+              content: latestField.description,
+              source: latestField.evidences,
+              confidence: patch.confidence,
+            })
+            if (globalCandidate.isNew) candidateQueued++
+          } catch (error) {
+            this.logLongTermCandidateError({
+              sessionId,
+              skillId,
+              scope: 'global',
+              category: patch.section,
+              statement: latestField.description,
+              error,
+            })
+          }
         }
       }
     }
@@ -932,7 +981,7 @@ export class MemoryOrchestrator {
       memoryFileManager.appendToDaily({ scope: 'global', content: dailyContent, timestamp })
     }
 
-    const longTermStats = this.upsertLongTermMemory(skillId, profilePatches)
+    const longTermStats = this.upsertLongTermMemory(sessionId, skillId, profilePatches)
 
     const episodes = episodeStorage.findByCellId(cell.id)
 

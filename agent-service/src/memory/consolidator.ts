@@ -15,7 +15,9 @@ const INDEX_DIR = join(MEMORY_DIR, 'index')
 const LONGTERM_GLOBAL_INDEX_PATH = join(INDEX_DIR, 'longterm-global.json')
 const LONGTERM_SKILLS_INDEX_DIR = join(INDEX_DIR, 'longterm-skills')
 const LONGTERM_AUDIT_PATH = join(INDEX_DIR, 'longterm-audit.jsonl')
+const TRACE_DIR = join(MEMORY_DIR, 'traces')
 const AUTO_MEMORY_MARKER = '<!-- laborany-longterm-managed -->'
+const LEGACY_BACKFILL_POLICY_VERSION = 'legacy-backfill-v1'
 
 const STOPWORDS = new Set([
   '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很',
@@ -73,6 +75,22 @@ export interface ConsolidateParams {
   candidateIds: string[]
   scope: 'global' | 'skill'
   skillId?: string
+}
+
+export interface EnqueueCandidateParams {
+  scope: 'global' | 'skill'
+  skillId?: string
+  skillName?: string
+  category: string
+  content: string
+  source: string[]
+  confidence: number
+}
+
+export interface EnqueueCandidateResult {
+  candidate: ConsolidationCandidate
+  isNew: boolean
+  updatedFields?: Array<'source' | 'confidence' | 'content'>
 }
 
 interface DailyMemoryEntry {
@@ -149,6 +167,20 @@ export interface LongTermStats {
   superseded: number
   total: number
   lastActionAt?: string
+  allTime: {
+    accepted: number
+    rejected: number
+    superseded: number
+    total: number
+    lastActionAt?: string
+  }
+}
+
+export interface LongTermAuditBackfillResult {
+  scannedFiles: number
+  scannedEvents: number
+  insertedLogs: number
+  skippedDuplicates: number
 }
 
 export class MemoryConsolidator {
@@ -163,6 +195,7 @@ export class MemoryConsolidator {
     if (!existsSync(MEMORY_DIR)) mkdirSync(MEMORY_DIR, { recursive: true })
     if (!existsSync(INDEX_DIR)) mkdirSync(INDEX_DIR, { recursive: true })
     if (!existsSync(LONGTERM_SKILLS_INDEX_DIR)) mkdirSync(LONGTERM_SKILLS_INDEX_DIR, { recursive: true })
+    if (!existsSync(LONGTERM_AUDIT_PATH)) writeFileSync(LONGTERM_AUDIT_PATH, '', 'utf-8')
   }
 
   private normalizeText(content: string): string {
@@ -489,27 +522,96 @@ export class MemoryConsolidator {
     const scope = params?.scope
     const skillId = params?.skillId
     const limit = Math.max(1, params?.limit || 50)
-    const raw = safeReadText(LONGTERM_AUDIT_PATH).trim()
-    if (!raw) return []
-    const logs: LongTermDecisionLog[] = []
-    const lines = raw.split('\n').filter(Boolean)
-    for (let index = lines.length - 1; index >= 0; index--) {
-      try {
-        const item = JSON.parse(lines[index]) as LongTermDecisionLog
-        if (scope && item.scope !== scope) continue
-        if (scope === 'skill' && skillId && item.skillId !== skillId) continue
-        logs.push(item)
-        if (logs.length >= limit) break
-      } catch {
-        continue
-      }
+    const logs = this.readAllLongTermAudit().reverse()
+    const filtered: LongTermDecisionLog[] = []
+    for (const item of logs) {
+      if (scope && item.scope !== scope) continue
+      if (scope === 'skill' && skillId && item.skillId !== skillId) continue
+      filtered.push(item)
+      if (filtered.length >= limit) break
     }
-    return logs
+    return filtered
   }
 
   getLongTermStats(days = 7): LongTermStats {
-    const logs = this.getLongTermAudit({ limit: 5000 })
+    const logs = this.readAllLongTermAudit()
     const cutoff = Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000
+    const recent = this.summarizeLogs(logs, cutoff)
+    const allTime = this.summarizeLogs(logs)
+    return { days: Math.max(1, days), ...recent, allTime }
+  }
+
+  backfillLongTermAuditFromTraces(params?: { dryRun?: boolean }): LongTermAuditBackfillResult {
+    const dryRun = params?.dryRun === true
+    const existingKeys = this.readBackfillKeys()
+    const traceFiles = this.listTraceFiles(TRACE_DIR)
+    let scannedEvents = 0
+    let insertedLogs = 0
+    let skippedDuplicates = 0
+
+    for (const traceFile of traceFiles) {
+      const raw = safeReadText(traceFile).trim()
+      if (!raw) continue
+      const lines = raw.split('\n').filter(Boolean)
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line) as {
+            at?: string
+            stage?: string
+            sessionId?: string
+            payload?: { written?: { longTerm?: number }; candidateQueued?: number }
+          }
+          if (event.stage !== 'upsert') continue
+          scannedEvents += 1
+          const sessionId = typeof event.sessionId === 'string' && event.sessionId.trim()
+            ? event.sessionId.trim()
+            : 'unknown-session'
+          const at = typeof event.at === 'string' ? event.at : nowIso()
+          const longTermWrites = Math.max(0, Math.floor(Number(event.payload?.written?.longTerm || 0)))
+          const candidateQueued = Math.max(0, Math.floor(Number(event.payload?.candidateQueued || 0)))
+
+          for (let ordinal = 0; ordinal < longTermWrites; ordinal += 1) {
+            const key = `${sessionId}|inserted|${ordinal}`
+            if (existingKeys.has(key)) {
+              skippedDuplicates += 1
+              continue
+            }
+            existingKeys.add(key)
+            insertedLogs += 1
+            if (!dryRun) this.appendAudit(this.createBackfillLog({ at, sessionId, action: 'inserted', key }))
+          }
+
+          for (let ordinal = 0; ordinal < candidateQueued; ordinal += 1) {
+            const key = `${sessionId}|candidate_queued|${ordinal}`
+            if (existingKeys.has(key)) {
+              skippedDuplicates += 1
+              continue
+            }
+            existingKeys.add(key)
+            insertedLogs += 1
+            if (!dryRun) this.appendAudit(this.createBackfillLog({ at, sessionId, action: 'skipped', key }))
+          }
+        } catch {
+          continue
+        }
+      }
+    }
+
+    return {
+      scannedFiles: traceFiles.length,
+      scannedEvents,
+      insertedLogs,
+      skippedDuplicates,
+    }
+  }
+
+  private summarizeLogs(logs: LongTermDecisionLog[], cutoffMs?: number): {
+    accepted: number
+    rejected: number
+    superseded: number
+    total: number
+    lastActionAt?: string
+  } {
     let accepted = 0
     let rejected = 0
     let superseded = 0
@@ -517,14 +619,92 @@ export class MemoryConsolidator {
     let lastActionAt: string | undefined
     for (const item of logs) {
       const at = Date.parse(item.at)
-      if (!Number.isFinite(at) || at < cutoff) continue
+      if (!Number.isFinite(at)) continue
+      if (cutoffMs && at < cutoffMs) continue
       total += 1
       if (!lastActionAt || at > Date.parse(lastActionAt)) lastActionAt = item.at
       if (item.action === 'inserted' || item.action === 'updated') accepted += 1
       else if (item.action === 'superseded') superseded += 1
       else rejected += 1
     }
-    return { days: Math.max(1, days), accepted, rejected, superseded, total, lastActionAt }
+    return { accepted, rejected, superseded, total, lastActionAt }
+  }
+
+  private readAllLongTermAudit(): LongTermDecisionLog[] {
+    const raw = safeReadText(LONGTERM_AUDIT_PATH).trim()
+    if (!raw) return []
+    const logs: LongTermDecisionLog[] = []
+    const lines = raw.split('\n').filter(Boolean)
+    for (const line of lines) {
+      try {
+        const item = JSON.parse(line) as LongTermDecisionLog
+        if (!item || !item.action || !item.at) continue
+        logs.push(item)
+      } catch {
+        continue
+      }
+    }
+    return logs
+  }
+
+  private listTraceFiles(rootDir: string): string[] {
+    if (!existsSync(rootDir)) return []
+    const traceFiles: string[] = []
+    const stack = [rootDir]
+    while (stack.length > 0) {
+      const current = stack.pop()
+      if (!current) continue
+      const entries = readdirSync(current, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = join(current, entry.name)
+        if (entry.isDirectory()) {
+          stack.push(fullPath)
+          continue
+        }
+        if (entry.isFile() && entry.name.endsWith('.jsonl')) traceFiles.push(fullPath)
+      }
+    }
+    return traceFiles
+  }
+
+  private readBackfillKeys(): Set<string> {
+    const keys = new Set<string>()
+    for (const item of this.readAllLongTermAudit()) {
+      if (item.policyVersion !== LEGACY_BACKFILL_POLICY_VERSION) continue
+      const match = item.reason.match(/^legacy_backfill:(.+)$/)
+      if (!match) continue
+      keys.add(match[1])
+    }
+    return keys
+  }
+
+  private createBackfillLog(params: {
+    at: string
+    sessionId: string
+    action: LongTermDecisionLog['action']
+    key: string
+  }): LongTermDecisionLog {
+    return {
+      id: `ltlog_bf_${this.hashForBackfill(params.key)}`,
+      at: Number.isFinite(Date.parse(params.at)) ? params.at : nowIso(),
+      scope: 'global',
+      action: params.action,
+      reason: `legacy_backfill:${params.key}`,
+      category: 'legacy_backfill',
+      statement: `legacy from trace session ${params.sessionId}`,
+      confidence: 0.5,
+      evidenceCount: 1,
+      policyVersion: LEGACY_BACKFILL_POLICY_VERSION,
+    }
+  }
+
+  private hashForBackfill(input: string): string {
+    let hash = 2166136261
+    for (let index = 0; index < input.length; index += 1) {
+      hash ^= input.charCodeAt(index)
+      hash = Math.imul(hash, 16777619)
+    }
+    return (hash >>> 0).toString(36)
   }
 
   private loadCandidates(): void {
@@ -596,6 +776,74 @@ export class MemoryConsolidator {
     const base = Math.min(entries.length / Math.max(1, total), 1)
     const recentBoost = entries.some(entry => Date.now() - new Date(entry.date).getTime() < 2 * 24 * 60 * 60 * 1000) ? 0.1 : 0
     return Math.min(base + recentBoost, 1)
+  }
+
+  enqueueCandidate(params: EnqueueCandidateParams): EnqueueCandidateResult {
+    const scope = params.scope
+    const skillId = scope === 'skill' ? (params.skillId || 'unknown') : undefined
+    const category = (params.category || 'general').trim()
+    const content = this.normalizeStatement(params.content || '')
+    const source = [...new Set((params.source || []).filter(Boolean))]
+    const confidence = clamp(params.confidence)
+
+    if (!content) {
+      const fallback: ConsolidationCandidate = {
+        id: this.generateCandidateId(),
+        createdAt: nowIso(),
+        scope,
+        skillId,
+        skillName: params.skillName,
+        category,
+        content: '',
+        source,
+        confidence,
+      }
+      return { candidate: fallback, isNew: false }
+    }
+
+    const existing = this.findDuplicateCandidate({
+      scope,
+      skillId,
+      category,
+      content,
+    })
+    if (existing) {
+      const updatedFields: Array<'source' | 'confidence' | 'content'> = []
+      const mergedSources = [...new Set([...existing.source, ...source])]
+      if (mergedSources.length !== existing.source.length) {
+        existing.source = mergedSources
+        updatedFields.push('source')
+      }
+      if (confidence > existing.confidence) {
+        existing.confidence = confidence
+        updatedFields.push('confidence')
+      }
+      if (content.length > existing.content.length) {
+        existing.content = content
+        updatedFields.push('content')
+      }
+      if (updatedFields.length > 0) this.saveCandidates()
+      return {
+        candidate: existing,
+        isNew: false,
+        updatedFields: updatedFields.length > 0 ? updatedFields : undefined,
+      }
+    }
+
+    const candidate: ConsolidationCandidate = {
+      id: this.generateCandidateId(),
+      createdAt: nowIso(),
+      scope,
+      skillId,
+      skillName: params.skillName,
+      category,
+      content,
+      source,
+      confidence,
+    }
+    this.candidates.set(candidate.id, candidate)
+    this.saveCandidates()
+    return { candidate, isNew: true }
   }
 
   analyzeRecentMemories(params: { scope: 'global' | 'skill'; skillId?: string; skillName?: string; days?: number }): ConsolidationCandidate[] {

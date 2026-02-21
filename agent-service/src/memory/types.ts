@@ -17,7 +17,7 @@ export interface InjectedMemorySection {
 
 export interface MemoryTraceEvent {
   at: string
-  stage: 'retrieve' | 'extract' | 'upsert' | 'error'
+  stage: 'retrieve' | 'extract' | 'upsert' | 'error' | 'longterm_error'
   sessionId: string
   payload: Record<string, unknown>
 }

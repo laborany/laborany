@@ -671,6 +671,16 @@ router.get('/memory/longterm/audit', (req: Request, res: Response) => {
   }
 })
 
+router.post('/memory/longterm/audit/backfill', (req: Request, res: Response) => {
+  try {
+    const dryRun = req.body?.dryRun === true || req.body?.dryRun === 'true'
+    const result = memoryConsolidator.backfillLongTermAuditFromTraces({ dryRun })
+    res.json({ success: true, dryRun, ...result })
+  } catch (error) {
+    res.status(500).json({ error: 'longterm audit backfill failed' })
+  }
+})
+
 router.post('/memory/longterm/rebuild', (req: Request, res: Response) => {
   try {
     const scope = req.body?.scope === 'global' || req.body?.scope === 'skill'

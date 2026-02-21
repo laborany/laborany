@@ -191,7 +191,8 @@ class MemoryAsyncQueue {
           this.maybeAutoClusterEpisodes()
         } catch (error) {
           this.failed += 1
-          this.lastError = error instanceof Error ? error.message : String(error)
+          const message = error instanceof Error ? error.message : String(error)
+          this.lastError = `job=${job.id};${message}`
           console.error(`[MemoryQueue] job failed: id=${job.id}`, error)
         }
       }

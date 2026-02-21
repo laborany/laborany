@@ -29,6 +29,13 @@ interface LongTermStats {
   superseded: number
   total: number
   lastActionAt?: string
+  allTime?: {
+    accepted: number
+    rejected: number
+    superseded: number
+    total: number
+    lastActionAt?: string
+  }
 }
 
 interface LongTermAuditLog {
@@ -138,6 +145,20 @@ function LongTermOverviewSection() {
               <MetricCard label="已拒绝" value={stats.rejected} />
               <MetricCard label="已替换" value={stats.superseded} />
               <MetricCard label="总决策数" value={stats.total} />
+            </div>
+          )}
+
+          {stats?.allTime && (
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <MetricCard label="累计写入" value={stats.allTime.accepted} />
+              <MetricCard label="累计拒绝" value={stats.allTime.rejected} />
+              <MetricCard label="累计替换" value={stats.allTime.superseded} />
+              <MetricCard label="累计总数" value={stats.allTime.total} />
+            </div>
+          )}
+          {stats && (
+            <div className="text-xs text-muted-foreground">
+              最近决策时间: {stats.lastActionAt ? new Date(stats.lastActionAt).toLocaleString() : '暂无审计记录'}
             </div>
           )}
 

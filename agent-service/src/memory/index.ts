@@ -19,9 +19,12 @@ export {
   MemoryConsolidator,
   type ConsolidationCandidate,
   type ConsolidateParams,
+  type EnqueueCandidateParams,
+  type EnqueueCandidateResult,
   type LongTermEntry,
   type LongTermDecisionLog,
   type LongTermStats,
+  type LongTermAuditBackfillResult,
   type AutoUpsertLongTermParams,
   type AutoUpsertLongTermResult,
 } from './consolidator.js'
