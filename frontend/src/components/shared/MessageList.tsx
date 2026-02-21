@@ -18,6 +18,8 @@ type ThinkingBlock = { type: 'thinking' }
 type ToolEntry = { name: string; input?: Record<string, unknown> }
 type RenderBlock = TextBlock | ToolGroup | UserBlock | ErrorBlock | ThinkingBlock
 
+const AUTO_FOLLOW_THRESHOLD_PX = 96
+
 const TOOL_DISPLAY_MAP: Record<string, string> = {
   Read: '读取文件',
   Write: '写入文件',
@@ -44,11 +46,60 @@ function getToolDisplayName(name: string): string {
   return TOOL_DISPLAY_MAP[name] || name
 }
 
+function isNearBottom(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= AUTO_FOLLOW_THRESHOLD_PX
+}
+
+function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
+  let current = element?.parentElement || null
+
+  while (current) {
+    const style = window.getComputedStyle(current)
+    const overflowY = style.overflowY
+    const canScroll = (overflowY === 'auto' || overflowY === 'scroll') && current.scrollHeight > current.clientHeight
+    if (canScroll) {
+      return current
+    }
+    current = current.parentElement
+  }
+
+  return (document.scrollingElement as HTMLElement | null) || null
+}
+
 export default function MessageList({ messages, isRunning = false }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLElement | null>(null)
+  const shouldAutoFollowRef = useRef(true)
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const container = findScrollContainer(bottomRef.current)
+    if (!container) return
+
+    scrollContainerRef.current = container
+
+    const handleScroll = () => {
+      shouldAutoFollowRef.current = isNearBottom(container)
+    }
+
+    handleScroll()
+    container.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      container.removeEventListener('scroll', handleScroll)
+    }
+  }, [messages.length])
+
+  useEffect(() => {
+    const container = scrollContainerRef.current || findScrollContainer(bottomRef.current)
+    if (!container || !bottomRef.current) return
+
+    scrollContainerRef.current = container
+    if (!shouldAutoFollowRef.current) return
+
+    const raf = window.requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    })
+
+    return () => window.cancelAnimationFrame(raf)
   }, [messages])
 
   if (messages.length === 0) return null

@@ -50,6 +50,8 @@ interface AgentState {
   currentCompositeStep: number
 }
 
+const EXECUTE_DEDUPE_WINDOW_MS = 1200
+
 
 async function fetchWithRetry(
   url: string,
@@ -175,6 +177,11 @@ export function useAgent(skillId: string) {
   const abortRef = useRef<AbortController | null>(null)
   const abortByQuestionRef = useRef(false)
   const requestSeqRef = useRef(0)
+  const executeInFlightRef = useRef(false)
+  const lastExecuteFingerprintRef = useRef<{ fingerprint: string; at: number }>({
+    fingerprint: '',
+    at: 0,
+  })
   const currentTextRef = useRef('')
   const sessionIdRef = useRef<string | null>(null)
   const assistantIdRef = useRef<string>(crypto.randomUUID())
@@ -190,6 +197,8 @@ export function useAgent(skillId: string) {
     abortRef.current = null
     abortByQuestionRef.current = false
     requestSeqRef.current = 0
+    executeInFlightRef.current = false
+    lastExecuteFingerprintRef.current = { fingerprint: '', at: 0 }
     sessionIdRef.current = null
     assistantIdRef.current = crypto.randomUUID()
     currentTextRef.current = ''
@@ -273,6 +282,7 @@ export function useAgent(skillId: string) {
               },
             }))
             abortByQuestionRef.current = true
+            executeInFlightRef.current = false
             abortRef.current?.abort()
             // 通知后端停止
             if (sessionIdRef.current) {
@@ -319,6 +329,7 @@ export function useAgent(skillId: string) {
             },
           }))
           abortByQuestionRef.current = true
+          executeInFlightRef.current = false
           abortRef.current?.abort()
           if (sessionIdRef.current) {
             const token = localStorage.getItem('token')
@@ -579,6 +590,30 @@ export function useAgent(skillId: string) {
 
   const execute = useCallback(
     async (query: string, files?: File[], options?: { originQuery?: string }) => {
+      if (executeInFlightRef.current) {
+        console.warn('[useAgent] 忽略重复执行：已有请求在进行中')
+        return
+      }
+
+      const fingerprint = JSON.stringify({
+        query: query.trim(),
+        sessionId: sessionIdRef.current || '',
+        files: (files || []).map((file) => `${file.name}:${file.size}:${file.lastModified}`).join('|'),
+        originQuery: options?.originQuery || '',
+      })
+      const now = Date.now()
+      const lastExecute = lastExecuteFingerprintRef.current
+      if (
+        lastExecute.fingerprint === fingerprint
+        && now - lastExecute.at < EXECUTE_DEDUPE_WINDOW_MS
+      ) {
+        console.warn('[useAgent] 忽略短时间内重复执行请求')
+        return
+      }
+
+      lastExecuteFingerprintRef.current = { fingerprint, at: now }
+      executeInFlightRef.current = true
+
       const requestSeq = ++requestSeqRef.current
       const token = localStorage.getItem('token')
 
@@ -678,6 +713,7 @@ export function useAgent(skillId: string) {
       } finally {
         if (requestSeq === requestSeqRef.current) {
           abortByQuestionRef.current = false
+          executeInFlightRef.current = false
           setState((s) => ({
             ...s,
             isRunning: false,

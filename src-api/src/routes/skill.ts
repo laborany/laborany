@@ -58,6 +58,31 @@ function ensureUniqueTaskFileName(taskDir: string, preferredName: string): strin
 
 const skill = new Hono()
 
+function ensureRunningSession(
+  sessionId: string,
+  skillId: string,
+  query: string,
+  workDir: string,
+): void {
+  const existing = dbHelper.get<{ id: string }>(
+    `SELECT id FROM sessions WHERE id = ?`,
+    [sessionId],
+  )
+
+  if (!existing) {
+    dbHelper.run(
+      `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir) VALUES (?, ?, ?, ?, ?, ?)`,
+      [sessionId, 'default', skillId, query, 'running', workDir],
+    )
+    return
+  }
+
+  dbHelper.run(
+    `UPDATE sessions SET status = ?, work_dir = ? WHERE id = ?`,
+    ['running', workDir, sessionId],
+  )
+}
+
 function findSkillPath(skillId: string): string | null {
   const userPath = join(loadSkill.getUserSkillsDir(), skillId)
   if (existsSync(userPath)) return userPath
@@ -282,17 +307,7 @@ skill.post('/execute', async (c) => {
     const sessionId = existingSessionId || uuid()
     const workDir = ensureTaskDir(sessionId)
 
-    if (!existingSessionId) {
-      dbHelper.run(
-        `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir) VALUES (?, ?, ?, ?, ?, ?)`,
-        [sessionId, 'default', skillId, query, 'running', workDir]
-      )
-    } else {
-      dbHelper.run(
-        `UPDATE sessions SET status = ?, work_dir = ? WHERE id = ?`,
-        ['running', workDir, sessionId]
-      )
-    }
+    ensureRunningSession(sessionId, skillId, query, workDir)
 
     dbHelper.run(
       `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
@@ -332,17 +347,7 @@ skill.post('/execute', async (c) => {
     const sessionId = existingSessionId || uuid()
     const workDir = ensureTaskDir(sessionId)
 
-    if (!existingSessionId) {
-      dbHelper.run(
-        `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir) VALUES (?, ?, ?, ?, ?, ?)`,
-        [sessionId, 'default', skillId, query, 'running', workDir]
-      )
-    } else {
-      dbHelper.run(
-        `UPDATE sessions SET status = ?, work_dir = ? WHERE id = ?`,
-        ['running', workDir, sessionId]
-      )
-    }
+    ensureRunningSession(sessionId, skillId, query, workDir)
 
     dbHelper.run(
       `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
@@ -498,27 +503,12 @@ skill.post('/execute', async (c) => {
 
   const workDir = taskDir
 
-  if (!existingSessionId) {
-    dbHelper.run(
-      `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir) VALUES (?, ?, ?, ?, ?, ?)`,
-      [sessionId, 'default', skillId, query, 'running', workDir]
-    )
-    // 保存用户消息
-    dbHelper.run(
-      `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-      [sessionId, 'user', query]
-    )
-  } else {
-    dbHelper.run(
-      `UPDATE sessions SET status = ?, work_dir = ? WHERE id = ?`,
-      ['running', workDir, sessionId]
-    )
-
-    dbHelper.run(
-      `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-      [sessionId, 'user', query]
-    )
-  }
+  ensureRunningSession(sessionId, skillId, query, workDir)
+  // 保存用户消息
+  dbHelper.run(
+    `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+    [sessionId, 'user', query]
+  )
 
   runtimeTaskManager.startTask({
     sessionId,

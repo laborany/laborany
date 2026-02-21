@@ -13,7 +13,7 @@ import { cn } from '../../lib/utils'
  * └──────────────────────────────────────────────────────────────────────────┘ */
 interface QuestionInputProps {
   pendingQuestion: PendingQuestion
-  onSubmit: (questionId: string, answers: Record<string, string>) => void
+  onSubmit: (questionId: string, answers: Record<string, string>) => void | Promise<void>
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -22,6 +22,7 @@ interface QuestionInputProps {
 export function QuestionInput({ pendingQuestion, onSubmit }: QuestionInputProps) {
   const [answers, setAnswers] = useState<Record<number, string[]>>({})
   const [otherInputs, setOtherInputs] = useState<Record<number, string>>({})
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const handleOptionSelect = useCallback(
     (questionIndex: number, option: string, multiSelect: boolean) => {
@@ -43,7 +44,9 @@ export function QuestionInput({ pendingQuestion, onSubmit }: QuestionInputProps)
     setOtherInputs((prev) => ({ ...prev, [questionIndex]: value }))
   }, [])
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
+    if (isSubmitting) return
+
     const formattedAnswers: Record<string, string> = {}
 
     pendingQuestion.questions.forEach((q, index) => {
@@ -60,8 +63,13 @@ export function QuestionInput({ pendingQuestion, onSubmit }: QuestionInputProps)
       }
     })
 
-    onSubmit(pendingQuestion.id, formattedAnswers)
-  }, [pendingQuestion, answers, otherInputs, onSubmit])
+    setIsSubmitting(true)
+    try {
+      await Promise.resolve(onSubmit(pendingQuestion.id, formattedAnswers))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }, [pendingQuestion, answers, otherInputs, onSubmit, isSubmitting])
 
   const hasAnswers =
     Object.keys(answers).some((k) => answers[parseInt(k)]?.length > 0) ||
@@ -87,11 +95,13 @@ export function QuestionInput({ pendingQuestion, onSubmit }: QuestionInputProps)
 
       <div className="flex justify-end pt-2">
         <button
-          onClick={handleSubmit}
-          disabled={!hasAnswers}
+          onClick={() => {
+            void handleSubmit()
+          }}
+          disabled={!hasAnswers || isSubmitting}
           className={cn(
             'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors',
-            hasAnswers
+            hasAnswers && !isSubmitting
               ? 'bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer'
               : 'bg-muted text-muted-foreground cursor-not-allowed',
           )}

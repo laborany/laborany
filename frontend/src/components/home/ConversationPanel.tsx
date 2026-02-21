@@ -5,7 +5,6 @@
  * │  保留 DecisionCard（决策确认）和 QuestionInput（结构化问答）            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-import { useEffect, useRef } from 'react'
 import type { AgentMessage } from '../../types/message'
 import type { PendingQuestion } from '../../hooks/useAgent'
 import MessageList from '../shared/MessageList'
@@ -57,13 +56,6 @@ export function ConversationPanel({
   onDecision,
   stateSummary,
 }: ConversationPanelProps) {
-  const bottomRef = useRef<HTMLDivElement>(null)
-
-  /* 自动滚动到底部 */
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isThinking, pendingQuestion, decisionPrompt])
-
   return (
     <div className="min-h-screen flex flex-col">
       {/* ── Header ── */}
@@ -119,7 +111,6 @@ export function ConversationPanel({
             </div>
           )}
 
-          <div ref={bottomRef} />
         </div>
       </div>
 
