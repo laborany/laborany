@@ -556,6 +556,12 @@ skill.get('/runtime/status/:sessionId', (c) => {
 
 skill.get('/runtime/attach/:sessionId', (c) => {
   const sessionId = c.req.param('sessionId')
+  const replayParam = (c.req.query('replay') || '').toLowerCase()
+  const includeSessionParam = (c.req.query('includeSession') || '').toLowerCase()
+  const replay = replayParam ? replayParam !== '0' && replayParam !== 'false' : true
+  const includeSession = includeSessionParam
+    ? includeSessionParam !== '0' && includeSessionParam !== 'false'
+    : true
 
   if (!runtimeTaskManager.has(sessionId)) {
     return c.json({ error: '任务不存在' }, 404)
@@ -567,8 +573,8 @@ skill.get('/runtime/attach/:sessionId', (c) => {
     }
 
     const unsubscribe = runtimeTaskManager.subscribe(sessionId, writeRuntimeEvent, {
-      replay: true,
-      includeSession: true,
+      replay,
+      includeSession,
     })
 
     try {

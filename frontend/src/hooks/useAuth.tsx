@@ -37,7 +37,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 初始化：检查本地存储的 token
   useEffect(() => {
     const token = localStorage.getItem('token')
-    if (token) {
+    // local-session 是本地桌面模式的占位 token，不需要请求 /auth/me
+    if (token && token !== 'local-session') {
       fetchUser(token)
     } else {
       setLoading(false)

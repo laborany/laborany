@@ -52,7 +52,24 @@ interface AgentState {
 }
 
 const EXECUTE_DEDUPE_WINDOW_MS = 1200
+const SSE_READER_POLL_INTERVAL_MS = 1200
+const SSE_STALL_AFTER_RESUME_MS = 12000
+const RESUME_HINT_WINDOW_MS = 45000
 
+const TRANSIENT_NETWORK_ERROR_PATTERNS = [
+  'network error',
+  'failed to fetch',
+  'networkerror',
+  'err_network_io_suspended',
+  'network_io_suspended',
+  'the network connection was lost',
+  'load failed',
+  'network stream stalled after resume',
+]
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 async function fetchWithRetry(
   url: string,
@@ -97,6 +114,12 @@ function isAbortLikeError(err: unknown): boolean {
   if (err.name === 'AbortError') return true
   const text = `${err.message || ''}`.toLowerCase()
   return text.includes('aborted') || text.includes('bodystreambuffer')
+}
+
+function isTransientNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const text = `${err.message || ''}`.toLowerCase()
+  return TRANSIENT_NETWORK_ERROR_PATTERNS.some((pattern) => text.includes(pattern))
 }
 
 function normalizeAgentQuestions(payload: Record<string, unknown>): AgentQuestion[] {
@@ -193,6 +216,7 @@ export function useAgent(skillId: string) {
   const sessionIdRef = useRef<string | null>(null)
   const assistantIdRef = useRef<string>(crypto.randomUUID())
   const terminalEventRef = useRef(false)
+  const resumeHintAtRef = useRef(0)
   const prevSkillIdRef = useRef(skillId)
 
   useEffect(() => {
@@ -229,6 +253,34 @@ export function useAgent(skillId: string) {
 
     prevSkillIdRef.current = skillId
   }, [skillId])
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        resumeHintAtRef.current = Date.now()
+        if (sessionIdRef.current && !terminalEventRef.current) {
+          setState((s) => (s.isRunning
+            ? { ...s, connectionStatus: s.connectionStatus || 'Screen resumed, checking connection...' }
+            : s))
+        }
+      }
+    }
+    const onOnline = () => {
+      resumeHintAtRef.current = Date.now()
+      if (sessionIdRef.current && !terminalEventRef.current) {
+        setState((s) => (s.isRunning
+          ? { ...s, connectionStatus: s.connectionStatus || 'Network restored, checking connection...' }
+          : s))
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('online', onOnline)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [])
 
   const handleEvent = useCallback(
     (event: Record<string, unknown>) => {
@@ -567,10 +619,27 @@ export function useAgent(skillId: string) {
         }
       }
 
+      let lastChunkAt = Date.now()
       while (true) {
         let readResult: ReadableStreamReadResult<Uint8Array>
         try {
-          readResult = await reader.read()
+          const raceResult = await Promise.race([
+            reader.read().then((result) => ({ kind: 'read' as const, result })),
+            sleep(SSE_READER_POLL_INTERVAL_MS).then(() => ({ kind: 'tick' as const })),
+          ])
+
+          if (raceResult.kind === 'tick') {
+            const now = Date.now()
+            const resumedRecently = now - resumeHintAtRef.current < RESUME_HINT_WINDOW_MS
+            const streamStalled = now - lastChunkAt > SSE_STALL_AFTER_RESUME_MS
+            if (!shouldTerminate && resumedRecently && streamStalled) {
+              void reader.cancel()
+              throw new Error('Network stream stalled after resume')
+            }
+            continue
+          }
+
+          readResult = raceResult.result
         } catch (err) {
           if (shouldTerminate || isAbortLikeError(err)) {
             break
@@ -581,6 +650,7 @@ export function useAgent(skillId: string) {
         const { done, value } = readResult
         if (done) break
 
+        lastChunkAt = Date.now()
         buffer += decoder.decode(value, { stream: true })
         const blocks = buffer.split(/\r?\n\r?\n/)
         buffer = blocks.pop() || ''
@@ -604,6 +674,63 @@ export function useAgent(skillId: string) {
       }
     },
     [handleEvent],
+  )
+
+  const reconnectSessionStream = useCallback(
+    async (sessionId: string): Promise<boolean> => {
+      const token = localStorage.getItem('token')
+      const reconnectUrl = `${API_BASE}/skill/runtime/attach/${sessionId}?replay=0&includeSession=0`
+      let reconnectError: unknown = null
+      const maxReconnectAttempts = 3
+
+      for (let attempt = 1; attempt <= maxReconnectAttempts; attempt++) {
+        if (abortRef.current?.signal.aborted) {
+          return false
+        }
+
+        setState((s) => ({
+          ...s,
+          isRunning: true,
+          error: null,
+          connectionStatus: `Connection lost, reconnecting (${attempt}/${maxReconnectAttempts})...`,
+        }))
+
+        try {
+          const reconnectRes = await fetchWithRetry(
+            reconnectUrl,
+            {
+              signal: abortRef.current?.signal,
+              headers: createAuthHeaders(token),
+            },
+            1,
+          )
+
+          if (!reconnectRes.ok) {
+            throw new Error(`Unable to reconnect task (${reconnectRes.status})`)
+          }
+
+          await readSseStream(reconnectRes)
+          return true
+        } catch (err) {
+          reconnectError = err
+          if (isAbortLikeError(err)) {
+            return false
+          }
+          if (!isTransientNetworkError(err)) {
+            break
+          }
+          if (attempt < maxReconnectAttempts) {
+            await sleep(800 * attempt)
+          }
+        }
+      }
+
+      if (reconnectError instanceof Error) {
+        throw reconnectError
+      }
+      throw new Error('Unable to reconnect task stream')
+    },
+    [readSseStream],
   )
 
   const execute = useCallback(
@@ -714,15 +841,30 @@ export function useAgent(skillId: string) {
           const errorData = await res.json().catch(() => ({ error: '请求失败' }))
           throw new Error(errorData.error || `请求失败: ${res.status}`)
         }
-
         await readSseStream(res)
       } catch (err) {
+        let recoveredByReconnect = false
+
+        const activeSessionId = sessionIdRef.current
+        if (
+          !isAbortLikeError(err)
+          && !terminalEventRef.current
+          && activeSessionId
+          && isTransientNetworkError(err)
+        ) {
+          try {
+            recoveredByReconnect = await reconnectSessionStream(activeSessionId)
+          } catch (reErr) {
+            err = reErr
+          }
+        }
+
         if (isAbortLikeError(err) && abortByQuestionRef.current) {
           abortByQuestionRef.current = false
         } else if (!isAbortLikeError(err)) {
-          console.error('[useAgent] 执行错误:', err)
+          console.error('[useAgent] execution error:', err)
         }
-        if (!isAbortLikeError(err)) {
+        if (!isAbortLikeError(err) && !recoveredByReconnect) {
           setState((s) => (requestSeq === requestSeqRef.current
             ? {
               ...s,
@@ -731,6 +873,7 @@ export function useAgent(skillId: string) {
             : s))
         }
       } finally {
+
         if (requestSeq === requestSeqRef.current) {
           abortByQuestionRef.current = false
           executeInFlightRef.current = false
@@ -743,7 +886,7 @@ export function useAgent(skillId: string) {
         }
       }
     },
-    [skillId, handleEvent, readSseStream],
+    [skillId, reconnectSessionStream, readSseStream],
   )
 
   const stop = useCallback(async () => {
@@ -914,7 +1057,17 @@ export function useAgent(skillId: string) {
 
         await readSseStream(res)
       } catch (err) {
-        if (!isAbortLikeError(err)) {
+        let recoveredByReconnect = false
+
+        if (!isAbortLikeError(err) && !terminalEventRef.current && isTransientNetworkError(err)) {
+          try {
+            recoveredByReconnect = await reconnectSessionStream(targetSessionId)
+          } catch (reErr) {
+            err = reErr
+          }
+        }
+
+        if (!isAbortLikeError(err) && !recoveredByReconnect) {
           setState((s) => ({
             ...s,
             error: (err as Error).message,
@@ -929,7 +1082,7 @@ export function useAgent(skillId: string) {
         abortRef.current = null
       }
     },
-    [readSseStream],
+    [readSseStream, reconnectSessionStream],
   )
 
   return {
@@ -954,22 +1107,47 @@ function createAuthHeaders(token: string | null | undefined): Record<string, str
 
 async function uploadFiles(files: File[], token?: string): Promise<string[]> {
   const fileIds: string[] = []
+  const maxRetries = 3
 
   for (const file of files) {
-    const formData = new FormData()
-    formData.append('file', file)
+    let uploaded = false
 
-    const res = await fetch(`${API_BASE}/files/upload`, {
-      method: 'POST',
-      headers: createAuthHeaders(token),
-      body: formData,
-    })
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const formData = new FormData()
+        formData.append('file', file)
 
-    if (res.ok) {
-      const data = await res.json()
-      fileIds.push(data.id)
-    } else {
-      console.error('[useAgent] 文件上传失败:', file.name)
+        const res = await fetch(`${API_BASE}/files/upload`, {
+          method: 'POST',
+          headers: createAuthHeaders(token),
+          body: formData,
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          fileIds.push(data.id)
+          uploaded = true
+          break
+        }
+
+        if (res.status === 400 && attempt < maxRetries) {
+          await sleep(300 * attempt)
+          continue
+        }
+
+        console.error('[useAgent] file upload failed:', file.name, res.status)
+        break
+      } catch (err) {
+        if (attempt >= maxRetries) {
+          console.error('[useAgent] 文件上传异常:', file.name, err)
+          break
+        }
+        await sleep(300 * attempt)
+      }
+    }
+
+    if (!uploaded) {
+      console.warn('[useAgent] 文件未上传成功，继续执行（未附带该文件）:', file.name)
     }
   }
 
