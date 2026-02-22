@@ -15,6 +15,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0",
     "better-sqlite3": "^12.6.2",
     "cors": "^2.8.5",
     "croner": "^10.0.1",

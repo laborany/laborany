@@ -10,6 +10,8 @@ import { dbHelper } from '../core/database.js'
 import { getTaskDir, runtimeTaskManager } from '../core/agent/index.js'
 
 const session = new Hono()
+const ALLOWED_SESSION_STATUS = new Set(['running', 'completed', 'failed', 'stopped', 'aborted'])
+const ALLOWED_MESSAGE_TYPES = new Set(['user', 'assistant', 'tool_use', 'tool_result', 'error', 'system'])
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取会话列表                                        │
@@ -128,6 +130,132 @@ session.get('/:sessionId/live-status', (c) => {
     canAttach: runtimeTaskManager.has(sessionId),
     runtimeStatus: runtimeStatus?.status,
   })
+})
+
+session.post('/external/upsert', async (c) => {
+  let body: Record<string, unknown> = {}
+  try {
+    body = await c.req.json<Record<string, unknown>>()
+  } catch {
+    return c.json({ error: '请求体格式错误' }, 400)
+  }
+
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
+  const skillId = typeof body.skillId === 'string' && body.skillId.trim()
+    ? body.skillId.trim()
+    : '__generic__'
+  const query = typeof body.query === 'string' ? body.query.trim() : ''
+  const statusCandidate = typeof body.status === 'string' ? body.status.trim() : 'running'
+  const status = ALLOWED_SESSION_STATUS.has(statusCandidate) ? statusCandidate : 'running'
+  const userId = typeof body.userId === 'string' && body.userId.trim()
+    ? body.userId.trim()
+    : 'default'
+  const workDir = typeof body.workDir === 'string' && body.workDir.trim()
+    ? body.workDir.trim()
+    : null
+
+  if (!sessionId || !query) {
+    return c.json({ error: '缺少 sessionId 或 query 参数' }, 400)
+  }
+
+  const existing = dbHelper.get<{ id: string }>(
+    `SELECT id FROM sessions WHERE id = ?`,
+    [sessionId],
+  )
+
+  if (existing) {
+    dbHelper.run(
+      `UPDATE sessions
+       SET skill_id = ?, query = ?, status = ?, work_dir = COALESCE(?, work_dir)
+       WHERE id = ?`,
+      [skillId, query, status, workDir, sessionId],
+    )
+    return c.json({ success: true, created: false, sessionId })
+  }
+
+  dbHelper.run(
+    `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [sessionId, userId, skillId, query, status, workDir],
+  )
+
+  return c.json({ success: true, created: true, sessionId })
+})
+
+session.post('/external/message', async (c) => {
+  let body: Record<string, unknown> = {}
+  try {
+    body = await c.req.json<Record<string, unknown>>()
+  } catch {
+    return c.json({ error: '请求体格式错误' }, 400)
+  }
+
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
+  const typeCandidate = typeof body.type === 'string' ? body.type.trim() : ''
+  const type = ALLOWED_MESSAGE_TYPES.has(typeCandidate) ? typeCandidate : ''
+
+  const content = typeof body.content === 'string' ? body.content : null
+  const toolName = typeof body.toolName === 'string' ? body.toolName : null
+  const toolResult = typeof body.toolResult === 'string' ? body.toolResult : null
+  const toolInput = body.toolInput && typeof body.toolInput === 'object'
+    ? JSON.stringify(body.toolInput)
+    : null
+
+  if (!sessionId || !type) {
+    return c.json({ error: '缺少 sessionId 或 type 参数' }, 400)
+  }
+
+  const sessionExists = dbHelper.get<{ id: string }>(
+    `SELECT id FROM sessions WHERE id = ?`,
+    [sessionId],
+  )
+  if (!sessionExists) {
+    return c.json({ error: '会话不存在' }, 404)
+  }
+
+  if (!content && !toolName && !toolResult) {
+    return c.json({ error: '消息内容不能为空' }, 400)
+  }
+
+  dbHelper.run(
+    `INSERT INTO messages (session_id, type, content, tool_name, tool_input, tool_result)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [sessionId, type, content, toolName, toolInput, toolResult],
+  )
+
+  return c.json({ success: true })
+})
+
+session.post('/external/status', async (c) => {
+  let body: Record<string, unknown> = {}
+  try {
+    body = await c.req.json<Record<string, unknown>>()
+  } catch {
+    return c.json({ error: '请求体格式错误' }, 400)
+  }
+
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
+  const statusCandidate = typeof body.status === 'string' ? body.status.trim() : ''
+  const status = ALLOWED_SESSION_STATUS.has(statusCandidate) ? statusCandidate : ''
+
+  if (!sessionId || !status) {
+    return c.json({ error: '缺少 sessionId 或 status 参数' }, 400)
+  }
+
+  const sessionExists = dbHelper.get<{ id: string }>(
+    `SELECT id FROM sessions WHERE id = ?`,
+    [sessionId],
+  )
+  if (!sessionExists) {
+    return c.json({ error: '会话不存在' }, 404)
+  }
+
+  dbHelper.run(
+    `UPDATE sessions SET status = ? WHERE id = ?`,
+    [status, sessionId],
+  )
+
+  return c.json({ success: true })
 })
 
 export default session

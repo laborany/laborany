@@ -533,6 +533,8 @@ function buildEnvConfig(): Record<string, string | undefined> {
    * 第三方代理（如 xchai.xyz）可能只认 X-Api-Key，
    * 同时发送两个 header 会导致 401 "Invalid API key format"。
    * process.env 已经包含 ANTHROPIC_API_KEY，无需重复赋值。       */
+  delete env.ANTHROPIC_AUTH_TOKEN
+
   if (process.env.ANTHROPIC_BASE_URL) {
     env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL
   }

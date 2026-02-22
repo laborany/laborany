@@ -22,7 +22,10 @@ import {
   createCapabilitiesRouter,
   converseRouter,
   smartRouter,
+  feishuRouter,
+  runtimeRouter,
 } from './routes/index.js'
+import { isFeishuEnabled, startFeishuBot, stopFeishuBot } from './feishu/index.js'
 
 initAgentLogger({
   defaultSource: 'agent',
@@ -52,6 +55,8 @@ app.use(filesRouter)
 app.use(createSkillsRouter(sessionManager))
 app.use(createExecuteRouter(sessionManager, taskManager))
 app.use(createCapabilitiesRouter(sessionManager))
+app.use('/feishu', feishuRouter)
+app.use('/runtime', runtimeRouter)
 
 if (!existsSync(DATA_DIR)) {
   mkdirSync(DATA_DIR, { recursive: true })
@@ -61,6 +66,10 @@ app.listen(PORT, () => {
   console.log(`[Agent Service] 运行在 http://localhost:${PORT}`)
   console.log(`[Agent Service] 数据目录: ${DATA_DIR}`)
   startCronTimer()
+
+  if (isFeishuEnabled()) {
+    startFeishuBot().catch(err => console.error('[Feishu] 启动失败:', err))
+  }
 })
 
 let shuttingDown = false
@@ -70,6 +79,7 @@ async function gracefulShutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
   shuttingDown = true
 
   try {
+    stopFeishuBot()
     console.log(`[Agent Service] Received ${signal}, draining memory queue...`)
     const result = await memoryAsyncQueue.drain(5000)
     if (result.drained) {

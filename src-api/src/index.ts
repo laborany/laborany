@@ -31,8 +31,8 @@ function loadEnvConfig(): void {
     }
   }
 
-  // 加载配置
-  config({ path: envPath })
+  // 加载配置（覆盖父进程同名环境变量，避免系统全局变量污染）
+  config({ path: envPath, override: true })
   console.log(`[Config] 配置文件路径: ${envPath}`)
 }
 

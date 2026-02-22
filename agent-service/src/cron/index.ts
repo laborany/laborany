@@ -58,4 +58,4 @@ export {
 export { runJob, triggerJob } from './executor.js'
 
 // 通知发送
-export { notifyJobComplete, notifyTaskComplete, sendTestEmail } from './notifier.js'
+export { notifyJobComplete, notifyTaskComplete, sendTestEmail, resetNotifierTransport } from './notifier.js'

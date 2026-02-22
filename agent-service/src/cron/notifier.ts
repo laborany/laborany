@@ -45,6 +45,16 @@ function getNotifyConfig(): NotifyConfig {
 
 let transporter: Transporter | null = null
 
+export function resetNotifierTransport(): void {
+  if (!transporter) return
+  try {
+    transporter.close()
+  } catch {
+    // ignore close errors and rebuild on next send
+  }
+  transporter = null
+}
+
 function getTransporter(): Transporter | null {
   if (transporter) return transporter
 

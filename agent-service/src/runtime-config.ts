@@ -15,6 +15,15 @@ const RESETTABLE_KEYS = [
   'CLAUDE_CODE_PATH',
 ] as const
 
+const RUNTIME_OWNED_PREFIXES = [
+  'FEISHU_',
+  'SMTP_',
+  'NOTIFICATION_',
+  'NOTIFY_',
+] as const
+
+let lastLoadedEnvKeys = new Set<string>()
+
 function isPackaged(): boolean {
   return !process.execPath.includes('node')
 }
@@ -79,6 +88,15 @@ export function refreshRuntimeConfig(): RuntimeConfigSnapshot {
         delete merged[key]
       }
     }
+
+    // When runtime .env exists, it is the source of truth for notification/feishu keys.
+    for (const key of Object.keys(merged)) {
+      const runtimeOwned = RUNTIME_OWNED_PREFIXES.some(prefix => key.startsWith(prefix))
+      if (!runtimeOwned) continue
+      if (!Object.prototype.hasOwnProperty.call(runtimeRaw, key)) {
+        delete merged[key]
+      }
+    }
   }
 
   for (const key of RESETTABLE_KEYS) {
@@ -87,9 +105,18 @@ export function refreshRuntimeConfig(): RuntimeConfigSnapshot {
     }
   }
 
+  // Remove keys previously loaded from runtime files but not present anymore.
+  for (const key of lastLoadedEnvKeys) {
+    if (!(key in merged)) {
+      delete process.env[key]
+    }
+  }
+
   for (const [key, value] of Object.entries(merged)) {
     process.env[key] = value
   }
+
+  lastLoadedEnvKeys = new Set(Object.keys(merged))
 
   return { loadedFrom }
 }

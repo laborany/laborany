@@ -9,6 +9,8 @@ export { createSkillsRouter } from './skills.js'
 export { createExecuteRouter } from './execute.js'
 export { createCapabilitiesRouter } from './capabilities.js'
 export { converseRouter } from './converse.js'
+export { feishuRouter } from './feishu.js'
+export { runtimeRouter } from './runtime.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     能力建议路由 - Smart Router                          │
