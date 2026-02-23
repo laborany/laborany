@@ -93,6 +93,14 @@ function findSkillPath(skillId: string): string | null {
   return null
 }
 
+function normalizeExecutionSkillId(rawSkillId: string | undefined): string {
+  const normalized = (rawSkillId || '').trim()
+  if (normalized === '__converse__') {
+    return '__generic__'
+  }
+  return normalized
+}
+
 skill.get('/', async (c) => {
   const skills = await loadSkill.listAll()
   return c.json({ skills })
@@ -255,7 +263,7 @@ skill.put('/:skillId/file', async (c) => {
 })
 
 skill.post('/execute', async (c) => {
-  let skillId: string | undefined
+  let skillIdRaw: string | undefined
   let query: string | undefined
   let originQuery: string | undefined
   let existingSessionId: string | undefined
@@ -265,7 +273,7 @@ skill.post('/execute', async (c) => {
 
   if (contentType.includes('multipart/form-data')) {
     const body = await c.req.parseBody({ all: true })
-    skillId = (body['skillId'] as string) || (body['skill_id'] as string)
+    skillIdRaw = (body['skillId'] as string) || (body['skill_id'] as string)
     query = body['query'] as string
     originQuery = body['originQuery'] as string
     existingSessionId = (body['sessionId'] as string) || (body['session_id'] as string)
@@ -282,11 +290,13 @@ skill.post('/execute', async (c) => {
     }
   } else {
     const body = await c.req.json()
-    skillId = body.skillId || body.skill_id
+    skillIdRaw = body.skillId || body.skill_id
     query = body.query
     originQuery = body.originQuery
     existingSessionId = body.sessionId || body.session_id
   }
+
+  let skillId = normalizeExecutionSkillId(skillIdRaw)
 
   if (!skillId || !query) {
     return c.json({ error: '缺少 skillId 或 query 参数' }, 400)

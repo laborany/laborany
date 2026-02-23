@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { API_BASE, AGENT_API_BASE } from '../config/api'
 
 interface ConfigItem {
@@ -6,14 +7,28 @@ interface ConfigItem {
   masked: string
 }
 
+type ConfigGroupId = 'model' | 'feishu' | 'email' | 'system' | 'advanced'
+
 interface ConfigTemplate {
+  label?: string
   description: string
   required: boolean
   placeholder: string
   sensitive: boolean
+  group?: ConfigGroupId
+  order?: number
+  dependsOnKey?: string
+  dependsOnValue?: string
+}
+
+interface TemplateGroup {
+  id: ConfigGroupId
+  title: string
+  description: string
 }
 
 interface ConfigResponse {
+  appHome?: string
   config?: Record<string, ConfigItem>
   envPath?: string
   profilePath?: string
@@ -39,11 +54,92 @@ interface ApplyRuntimeResponse {
   error?: string
 }
 
+interface StorageHomeSwitchResponse {
+  success?: boolean
+  message?: string
+  error?: string
+}
+
 type BannerType = 'success' | 'error' | 'warning'
+
+const BOOLEAN_KEYS = new Set([
+  'FEISHU_ENABLED',
+  'FEISHU_REQUIRE_ALLOWLIST',
+  'NOTIFY_ON_SUCCESS',
+  'NOTIFY_ON_ERROR',
+])
+
+const DEFAULT_GROUPS: TemplateGroup[] = [
+  {
+    id: 'model',
+    title: '模型服务',
+    description: '配置 API Key、Base URL 和模型名称。',
+  },
+  {
+    id: 'feishu',
+    title: '飞书 Bot',
+    description: '开启飞书会话接入与文件回传能力。',
+  },
+  {
+    id: 'email',
+    title: '邮件通知',
+    description: '任务执行完成后通过邮件通知。',
+  },
+  {
+    id: 'system',
+    title: '系统参数',
+    description: '端口、密钥等系统级配置。',
+  },
+  {
+    id: 'advanced',
+    title: '高级配置',
+    description: '自定义或不常用环境变量。',
+  },
+]
+
+function normalizeBool(value: string | undefined): boolean {
+  const raw = (value || '').trim().toLowerCase()
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on'
+}
+
+function hasAnyValue(values: Record<string, string>, keys: string[]): boolean {
+  return keys.some(key => (values[key] || '').trim().length > 0)
+}
+
+function isNumeric(text: string): boolean {
+  return /^\d+$/.test(text.trim())
+}
+
+function normalizeStoragePath(input: string): string {
+  return input.trim().replace(/[\\/]+$/, '')
+}
+
+function isSameStoragePath(a: string, b: string): boolean {
+  const left = normalizeStoragePath(a)
+  const right = normalizeStoragePath(b)
+  if (!left || !right) return false
+
+  const leftIsWindows = /^[a-z]:/i.test(left)
+  const rightIsWindows = /^[a-z]:/i.test(right)
+  if (leftIsWindows || rightIsWindows) {
+    return left.toLowerCase() === right.toLowerCase()
+  }
+
+  return left === right
+}
+
+function isAbsoluteStoragePath(input: string): boolean {
+  const value = normalizeStoragePath(input)
+  if (!value) return false
+  if (/^[a-z]:[\\/]/i.test(value)) return true
+  if (/^\\\\[^\\]+\\[^\\]+/.test(value)) return true
+  return value.startsWith('/')
+}
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<Record<string, ConfigItem>>({})
   const [template, setTemplate] = useState<Record<string, ConfigTemplate>>({})
+  const [groups, setGroups] = useState<TemplateGroup[]>(DEFAULT_GROUPS)
   const [editValues, setEditValues] = useState<Record<string, string>>({})
   const [configPath, setConfigPath] = useState('')
   const [profilePath, setProfilePath] = useState('')
@@ -51,20 +147,33 @@ export default function SettingsPage() {
   const [logsFallbackActive, setLogsFallbackActive] = useState(false)
   const [logsFallbackReason, setLogsFallbackReason] = useState('')
   const [migrationReportPath, setMigrationReportPath] = useState('')
+  const [appHome, setAppHome] = useState('')
+  const [storageHomeInput, setStorageHomeInput] = useState('')
+  const [switchingStorageHome, setSwitchingStorageHome] = useState(false)
   const [profileName, setProfileName] = useState('')
   const [showValues, setShowValues] = useState<Record<string, boolean>>({})
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [exportingLogs, setExportingLogs] = useState(false)
   const [retryingApply, setRetryingApply] = useState(false)
   const [message, setMessage] = useState<{ type: BannerType; text: string } | null>(null)
 
+  const [testingModel, setTestingModel] = useState(false)
+  const [modelTestResult, setModelTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  const [testingEmail, setTestingEmail] = useState(false)
+  const [emailTestResult, setEmailTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  const [testingFeishu, setTestingFeishu] = useState(false)
+  const [feishuTestResult, setFeishuTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
   useEffect(() => {
     void loadConfig()
     void loadTemplate()
   }, [])
 
-  async function loadConfig() {
+  async function loadConfig(): Promise<ConfigResponse | null> {
     try {
       const res = await fetch(`${API_BASE}/config`)
       const data = await res.json() as ConfigResponse
@@ -75,6 +184,8 @@ export default function SettingsPage() {
       setLogsFallbackActive(Boolean(data.logsFallbackActive))
       setLogsFallbackReason(data.logsFallbackReason || '')
       setMigrationReportPath(data.migrationReportPath || '')
+      setAppHome(data.appHome || '')
+      setStorageHomeInput(data.appHome || '')
       setProfileName(data.profile?.name || '')
 
       const values: Record<string, string> = {}
@@ -82,8 +193,10 @@ export default function SettingsPage() {
         values[key] = item.value
       }
       setEditValues(values)
+      return data
     } catch {
       setMessage({ type: 'error', text: '加载配置失败' })
+      return null
     } finally {
       setLoading(false)
     }
@@ -92,14 +205,61 @@ export default function SettingsPage() {
   async function loadTemplate() {
     try {
       const res = await fetch(`${API_BASE}/config/template`)
-      const data = await res.json() as { template?: Record<string, ConfigTemplate> }
+      const data = await res.json() as {
+        template?: Record<string, ConfigTemplate>
+        groups?: TemplateGroup[]
+      }
       setTemplate(data.template || {})
+      if (Array.isArray(data.groups) && data.groups.length > 0) {
+        setGroups(data.groups)
+      }
     } catch {
       // ignore template failures
     }
   }
 
+  function validateBeforeSave(): string[] {
+    const errors: string[] = []
+
+    if (!(editValues.ANTHROPIC_API_KEY || '').trim()) {
+      errors.push('模型服务缺少 ANTHROPIC_API_KEY')
+    }
+
+    const feishuEnabled = normalizeBool(editValues.FEISHU_ENABLED)
+    if (feishuEnabled) {
+      if (!(editValues.FEISHU_APP_ID || '').trim()) errors.push('飞书已启用，但缺少 FEISHU_APP_ID')
+      if (!(editValues.FEISHU_APP_SECRET || '').trim()) errors.push('飞书已启用，但缺少 FEISHU_APP_SECRET')
+      if (normalizeBool(editValues.FEISHU_REQUIRE_ALLOWLIST) && !(editValues.FEISHU_ALLOW_USERS || '').trim()) {
+        errors.push('飞书开启强制白名单时，FEISHU_ALLOW_USERS 不能为空')
+      }
+    }
+
+    const emailKeys = ['NOTIFICATION_EMAIL', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS']
+    const emailTouched = hasAnyValue(editValues, emailKeys)
+    if (emailTouched) {
+      if (!(editValues.NOTIFICATION_EMAIL || '').trim()) errors.push('邮件通知缺少 NOTIFICATION_EMAIL')
+      if (!(editValues.SMTP_HOST || '').trim()) errors.push('邮件通知缺少 SMTP_HOST')
+      if (!(editValues.SMTP_PORT || '').trim()) errors.push('邮件通知缺少 SMTP_PORT')
+      if (!(editValues.SMTP_USER || '').trim()) errors.push('邮件通知缺少 SMTP_USER')
+      if (!(editValues.SMTP_PASS || '').trim()) errors.push('邮件通知缺少 SMTP_PASS')
+      if ((editValues.SMTP_PORT || '').trim() && !isNumeric(editValues.SMTP_PORT || '')) {
+        errors.push('SMTP_PORT 必须为数字')
+      }
+    }
+
+    return errors
+  }
+
   async function saveConfig() {
+    const validationErrors = validateBeforeSave()
+    if (validationErrors.length > 0) {
+      setMessage({
+        type: 'error',
+        text: `请先修正以下问题：${validationErrors.join('；')}`,
+      })
+      return
+    }
+
     setSaving(true)
     setMessage(null)
 
@@ -201,6 +361,153 @@ export default function SettingsPage() {
     }
   }
 
+  async function waitForApiRecovery(maxWaitMs = 60000, intervalMs = 1500): Promise<boolean> {
+    const started = Date.now()
+    while (Date.now() - started < maxWaitMs) {
+      try {
+        const res = await fetch(`${API_BASE}/config`, { cache: 'no-store' })
+        if (res.ok) return true
+      } catch {
+        // keep polling until timeout
+      }
+      await new Promise(resolve => setTimeout(resolve, intervalMs))
+    }
+    return false
+  }
+
+  async function switchStorageHome() {
+    const requestedHome = storageHomeInput.trim()
+    if (!requestedHome) {
+      setMessage({ type: 'error', text: '请先填写新的存储路径' })
+      return
+    }
+
+    if (!isAbsoluteStoragePath(requestedHome)) {
+      setMessage({ type: 'error', text: '存储路径必须是绝对路径（例如 D:\\LaborAnyData）' })
+      return
+    }
+
+    if (appHome && isSameStoragePath(requestedHome, appHome)) {
+      setMessage({ type: 'warning', text: '新路径与当前路径相同，无需切换' })
+      return
+    }
+
+    setSwitchingStorageHome(true)
+    setMessage({ type: 'warning', text: '正在提交存储路径切换，服务将自动重启并重连...' })
+
+    try {
+      let requestFailed = false
+      let res: Response | null = null
+      try {
+        res = await fetch(`${API_BASE}/config/storage/home`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ homePath: requestedHome }),
+        })
+      } catch {
+        requestFailed = true
+      }
+
+      if (!requestFailed && res) {
+        let data: StorageHomeSwitchResponse = {}
+        try {
+          data = await res.json() as StorageHomeSwitchResponse
+        } catch {
+          data = {}
+        }
+
+        if (!res.ok) {
+          setMessage({ type: 'error', text: data.error || '存储路径切换请求失败' })
+          return
+        }
+      }
+
+      const recovered = await waitForApiRecovery(70000, 1500)
+      if (!recovered) {
+        setMessage({
+          type: 'warning',
+          text: '服务正在重启，但暂未自动恢复连接。请稍后停留在设置页重试刷新。',
+        })
+        return
+      }
+
+      const latest = await loadConfig()
+      if (!latest?.appHome || !isSameStoragePath(latest.appHome, requestedHome)) {
+        setMessage({
+          type: 'warning',
+          text: '服务已恢复，但检测到存储路径未完成切换，请重试一次或查看日志。',
+        })
+        return
+      }
+
+      setMessage({ type: 'success', text: '存储路径已切换并自动恢复连接' })
+    } finally {
+      setSwitchingStorageHome(false)
+    }
+  }
+
+  async function testModelConfig() {
+    setTestingModel(true)
+    setModelTestResult(null)
+    try {
+      const res = await fetch(`${API_BASE}/setup/validate-api`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ANTHROPIC_API_KEY: editValues.ANTHROPIC_API_KEY || '',
+          ANTHROPIC_BASE_URL: editValues.ANTHROPIC_BASE_URL || '',
+          ANTHROPIC_MODEL: editValues.ANTHROPIC_MODEL || '',
+        }),
+      })
+      const data = await res.json() as { success?: boolean; message?: string; error?: string; diagnostic?: string }
+      if (res.ok && data.success) {
+        setModelTestResult({ success: true, message: data.message || '模型配置验证成功' })
+      } else {
+        setModelTestResult({ success: false, message: data.message || data.error || '模型配置验证失败' })
+      }
+    } catch {
+      setModelTestResult({ success: false, message: '无法连接 API 服务' })
+    } finally {
+      setTestingModel(false)
+    }
+  }
+
+  async function testEmailConfig() {
+    setTestingEmail(true)
+    setEmailTestResult(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/notifications/test-email`, { method: 'POST' })
+      const data = await res.json() as { success?: boolean; error?: string; message?: string }
+      if (data.success) {
+        setEmailTestResult({ success: true, message: data.message || '测试邮件已发送，请检查收件箱' })
+      } else {
+        setEmailTestResult({ success: false, message: data.error || '测试失败' })
+      }
+    } catch {
+      setEmailTestResult({ success: false, message: '无法连接 Agent Service' })
+    } finally {
+      setTestingEmail(false)
+    }
+  }
+
+  async function testFeishuConfig() {
+    setTestingFeishu(true)
+    setFeishuTestResult(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/feishu/test`, { method: 'POST' })
+      const data = await res.json() as { success?: boolean; error?: string; message?: string }
+      if (data.success) {
+        setFeishuTestResult({ success: true, message: data.message || '飞书连接成功' })
+      } else {
+        setFeishuTestResult({ success: false, message: data.error || '连接失败' })
+      }
+    } catch {
+      setFeishuTestResult({ success: false, message: '无法连接 Agent Service' })
+    } finally {
+      setTestingFeishu(false)
+    }
+  }
+
   function handleChange(key: string, value: string) {
     setEditValues(prev => ({ ...prev, [key]: value }))
   }
@@ -213,10 +520,117 @@ export default function SettingsPage() {
     return new Set([...Object.keys(template), ...Object.keys(config), ...Object.keys(editValues)])
   }, [template, config, editValues])
 
+  const groupedKeys = useMemo(() => {
+    const buckets: Record<ConfigGroupId, string[]> = {
+      model: [],
+      feishu: [],
+      email: [],
+      system: [],
+      advanced: [],
+    }
+
+    for (const key of allKeys) {
+      const group = template[key]?.group || 'advanced'
+      buckets[group].push(key)
+    }
+
+    for (const group of Object.keys(buckets) as ConfigGroupId[]) {
+      buckets[group].sort((a, b) => {
+        const oa = template[a]?.order ?? 9999
+        const ob = template[b]?.order ?? 9999
+        if (oa !== ob) return oa - ob
+        return a.localeCompare(b)
+      })
+    }
+
+    return buckets
+  }, [allKeys, template])
+
+  const knownKeys = useMemo(() => {
+    const set = new Set<string>()
+    for (const group of ['model', 'feishu', 'email', 'system'] as ConfigGroupId[]) {
+      for (const key of groupedKeys[group]) set.add(key)
+    }
+    return set
+  }, [groupedKeys])
+
+  const advancedKeys = useMemo(() => {
+    const keys = new Set<string>(groupedKeys.advanced)
+    for (const key of allKeys) {
+      if (!knownKeys.has(key)) keys.add(key)
+    }
+    return Array.from(keys).sort((a, b) => {
+      const oa = template[a]?.order ?? 9999
+      const ob = template[b]?.order ?? 9999
+      if (oa !== ob) return oa - ob
+      return a.localeCompare(b)
+    })
+  }, [groupedKeys.advanced, allKeys, knownKeys, template])
+
+  const storagePathUnchanged = isSameStoragePath(storageHomeInput, appHome)
+
+  function isFieldVisible(key: string): boolean {
+    const meta = template[key]
+    if (!meta?.dependsOnKey) return true
+
+    const expected = (meta.dependsOnValue || 'true').trim().toLowerCase()
+    const actualRaw = (editValues[meta.dependsOnKey] || '').trim()
+
+    if (expected === 'true' || expected === 'false') {
+      return normalizeBool(actualRaw) === (expected === 'true')
+    }
+
+    return actualRaw.toLowerCase() === expected
+  }
+
+  function renderFields(keys: string[]) {
+    const visible = keys.filter(isFieldVisible)
+    if (visible.length === 0) {
+      return <p className="text-sm text-muted-foreground">暂无可配置项</p>
+    }
+
+    return (
+      <div className="space-y-4">
+        {visible.map(key => {
+          const tmpl = template[key]
+          const meta = tmpl || {
+            label: key,
+            description: '',
+            required: false,
+            placeholder: '',
+            sensitive: false,
+          }
+          const isSensitive = Boolean(
+            meta.sensitive || key.toLowerCase().includes('key') || key.toLowerCase().includes('secret') || key.toLowerCase().includes('pass'),
+          )
+          const value = editValues[key] || ''
+          const isBoolean = BOOLEAN_KEYS.has(key)
+
+          return (
+            <FieldRow
+              key={key}
+              name={key}
+              label={meta.label || key}
+              description={meta.description || ''}
+              required={Boolean(meta.required)}
+              placeholder={meta.placeholder || ''}
+              sensitive={isSensitive}
+              isBoolean={isBoolean}
+              value={value}
+              showValue={Boolean(showValues[key])}
+              onToggleShow={() => toggleShowValue(key)}
+              onChange={(nextValue) => handleChange(key, nextValue)}
+            />
+          )
+        })}
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
       </div>
     )
   }
@@ -224,68 +638,18 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="h-14 border-b border-border bg-card flex items-center px-6">
-        <h1 className="text-lg font-semibold text-foreground">设置</h1>
+        <h1 className="text-lg font-semibold text-foreground">设置中心</h1>
       </header>
 
-      <div className="max-w-2xl mx-auto p-6 space-y-6">
-        {configPath && (
-          <div className="bg-muted/50 rounded-lg p-4">
-            <p className="text-sm text-muted-foreground">
-              配置文件位置: <code className="bg-background px-2 py-0.5 rounded text-xs">{configPath}</code>
-            </p>
-            {profilePath && (
-              <p className="text-sm text-muted-foreground mt-2">
-                Profile 位置: <code className="bg-background px-2 py-0.5 rounded text-xs">{profilePath}</code>
-              </p>
-            )}
-            {logsPath && (
-              <p className="text-sm text-muted-foreground mt-2">
-                日志目录: <code className="bg-background px-2 py-0.5 rounded text-xs">{logsPath}</code>
-              </p>
-            )}
-            {migrationReportPath && (
-              <p className="text-sm text-muted-foreground mt-2">
-                迁移报告: <code className="bg-background px-2 py-0.5 rounded text-xs">{migrationReportPath}</code>
-              </p>
-            )}
-            {logsFallbackActive && logsFallbackReason && (
-              <p className="text-xs text-amber-600 mt-2">日志目录降级: {logsFallbackReason}</p>
-            )}
-            <div className="mt-3">
-              <button
-                onClick={exportLogs}
-                disabled={exportingLogs}
-                className="px-3 py-1.5 bg-background border border-border rounded text-sm hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {exportingLogs ? '导出中...' : '导出诊断日志 (.zip)'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="bg-card rounded-lg border border-border p-4 space-y-2">
-          <label className="block text-sm font-medium text-foreground">本地名称</label>
-          <input
-            type="text"
-            value={profileName}
-            onChange={event => setProfileName(event.target.value)}
-            placeholder="例如: Nathan"
-            className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-          />
-          <p className="text-xs text-muted-foreground">
-            用于本地模式显示昵称，不需要邮箱注册。
-          </p>
-        </div>
-
+      <div className="mx-auto max-w-5xl p-6 space-y-6">
         {message && (
-          <div className={`p-4 rounded-lg ${
+          <div className={`rounded-lg border p-4 ${
             message.type === 'success'
-              ? 'bg-green-500/10 text-green-600 border border-green-500/20'
+              ? 'bg-green-500/10 text-green-700 border-green-500/20'
               : message.type === 'warning'
-                ? 'bg-amber-500/10 text-amber-700 border border-amber-500/20'
-                : 'bg-red-500/10 text-red-600 border border-red-500/20'
-          }`}
-          >
+                ? 'bg-amber-500/10 text-amber-700 border-amber-500/20'
+                : 'bg-red-500/10 text-red-700 border-red-500/20'
+          }`}>
             <div className="space-y-2">
               <p>{message.text}</p>
               {message.type === 'warning' && (
@@ -301,182 +665,359 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <EmailConfigHelp />
-        <FeishuConfigHelp />
-
-        <div className="bg-card rounded-lg border border-border divide-y divide-border">
-          {Array.from(allKeys).map(key => {
-            const tmpl = template[key]
-            const isSensitive = Boolean(
-              tmpl?.sensitive || key.toLowerCase().includes('key') || key.toLowerCase().includes('secret'),
-            )
-            return (
-              <div key={key} className="p-4">
-                <label className="block text-sm font-medium text-foreground mb-1">
-                  {key}
-                  {tmpl?.required && <span className="text-red-500 ml-1">*</span>}
-                </label>
-                {tmpl?.description && (
-                  <p className="text-xs text-muted-foreground mb-2">{tmpl.description}</p>
-                )}
-                <div className="relative">
-                  <input
-                    type={isSensitive && !showValues[key] ? 'password' : 'text'}
-                    value={editValues[key] || ''}
-                    onChange={e => handleChange(key, e.target.value)}
-                    placeholder={tmpl?.placeholder || ''}
-                    className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 pr-10"
-                  />
-                  {isSensitive && (
-                    <button
-                      type="button"
-                      onClick={() => toggleShowValue(key)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
-                    >
-                      {showValues[key] ? 'Hide' : 'Show'}
-                    </button>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-          <div className="p-4">
-            <AddConfigItem
-              onAdd={key => setEditValues(prev => ({ ...prev, [key]: '' }))}
-              existingKeys={allKeys}
+        <div className="space-y-6">
+          <SettingsCard title="个人信息" description="用于本地模式显示昵称，不需要邮箱注册。">
+            <label className="block text-sm font-medium text-foreground mb-1">本地名称</label>
+            <input
+              type="text"
+              value={profileName}
+              onChange={event => setProfileName(event.target.value)}
+              placeholder="例如: Nathan"
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
-          </div>
+          </SettingsCard>
+
+          <SettingsCard title="数据与存储" description="查看当前配置、日志和迁移报告路径。">
+            <div className="space-y-2 text-sm text-muted-foreground">
+              {appHome && <PathRow label="应用数据根目录" path={appHome} />}
+              {configPath && <PathRow label="配置文件" path={configPath} />}
+              {profilePath && <PathRow label="Profile" path={profilePath} />}
+              {logsPath && <PathRow label="日志目录" path={logsPath} />}
+              {migrationReportPath && <PathRow label="迁移报告" path={migrationReportPath} />}
+              {logsFallbackActive && logsFallbackReason && (
+                <p className="text-xs text-amber-700">日志目录降级: {logsFallbackReason}</p>
+              )}
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                onClick={exportLogs}
+                disabled={exportingLogs}
+                className="px-3 py-1.5 bg-background border border-border rounded text-sm hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {exportingLogs ? '导出中...' : '导出诊断日志 (.zip)'}
+              </button>
+              <span className="text-xs text-muted-foreground">包含 API/Agent/Electron 运行日志，便于排障。</span>
+            </div>
+            <div className="mt-4 space-y-2">
+              <label className="block text-sm font-medium text-foreground">存储路径切换</label>
+              <input
+                type="text"
+                value={storageHomeInput}
+                onChange={event => setStorageHomeInput(event.target.value)}
+                disabled={switchingStorageHome}
+                placeholder="例如: D:\\LaborAnyData"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-60"
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={switchStorageHome}
+                  disabled={switchingStorageHome || !storageHomeInput.trim() || storagePathUnchanged || !isAbsoluteStoragePath(storageHomeInput)}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium bg-amber-600 text-white border border-amber-700 shadow-sm hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-amber-600"
+                >
+                  {switchingStorageHome ? (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4 animate-spin"
+                      aria-hidden="true"
+                    >
+                      <path d="M21 12a9 9 0 1 1-6.2-8.56" />
+                    </svg>
+                  ) : (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4"
+                      aria-hidden="true"
+                    >
+                      <path d="M3 7h13" />
+                      <path d="m13 3 4 4-4 4" />
+                      <path d="M21 17H8" />
+                      <path d="m11 13-4 4 4 4" />
+                    </svg>
+                  )}
+                  <span>{switchingStorageHome ? '切换中并重连...' : '迁移并切换路径'}</span>
+                </button>
+                <span className="text-xs text-muted-foreground">
+                  保存后会自动重启 API/Agent 并自动恢复连接，无需手动重启应用。
+                </span>
+              </div>
+              {storagePathUnchanged && (
+                <p className="text-xs text-muted-foreground">当前输入路径与现有路径一致。</p>
+              )}
+              {!storagePathUnchanged && storageHomeInput.trim() && !isAbsoluteStoragePath(storageHomeInput) && (
+                <p className="text-xs text-amber-700">请输入绝对路径，例如 `D:\LaborAnyData`。</p>
+              )}
+            </div>
+            <div className="mt-3 rounded border border-blue-300/60 bg-blue-50 p-3 text-xs text-blue-900">
+              建议使用独立目录作为存储根路径。切换时会做增量迁移（目标目录已有同名文件会保留）。
+            </div>
+          </SettingsCard>
         </div>
 
-        <div className="flex justify-end">
+        <SettingsCard
+          title={groups.find(g => g.id === 'model')?.title || '模型服务'}
+          description={groups.find(g => g.id === 'model')?.description || '核心模型配置'}
+          action={
+            <button
+              onClick={testModelConfig}
+              disabled={testingModel}
+              className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {testingModel ? '验证中...' : '测试模型连接'}
+            </button>
+          }
+        >
+          {renderFields(groupedKeys.model)}
+          {modelTestResult && (
+            <p className={`mt-3 text-xs ${modelTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
+              {modelTestResult.message}
+            </p>
+          )}
+        </SettingsCard>
+
+        <SettingsCard
+          title={groups.find(g => g.id === 'feishu')?.title || '飞书 Bot'}
+          description={groups.find(g => g.id === 'feishu')?.description || '飞书会话配置'}
+          action={
+            <button
+              onClick={testFeishuConfig}
+              disabled={testingFeishu}
+              className="px-3 py-1.5 bg-purple-600 text-white rounded text-sm hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {testingFeishu ? '连接中...' : '测试飞书连接'}
+            </button>
+          }
+        >
+          {renderFields(groupedKeys.feishu)}
+          <GuideBlock title="飞书配置提示（可折叠）" tone="purple">
+            <p>基础配置：`FEISHU_ENABLED=true`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`。</p>
+            <p>Bot 名称建议使用中英文和数字，避免 emoji（部分飞书客户端可能显示为 `?`）。</p>
+            <p>事件订阅：启用 WebSocket 长连接，并添加 `im.message.receive_v1`。</p>
+            <p>最小权限：`im:message:send_as_bot`、`im:message:readonly`、`im:message.p2p_msg:readonly`、`im:message.group_at_msg:readonly`、`im:resource`。</p>
+            <p>文件回传：`im:resource` 用于下载用户附件；机器人回传文件还需要 IM 文件上传能力（控制台常见名为 `im:file` 或等价项）。</p>
+          </GuideBlock>
+          {feishuTestResult && (
+            <p className={`mt-3 text-xs ${feishuTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
+              {feishuTestResult.message}
+            </p>
+          )}
+        </SettingsCard>
+
+        <SettingsCard
+          title={groups.find(g => g.id === 'email')?.title || '邮件通知'}
+          description={groups.find(g => g.id === 'email')?.description || 'SMTP 邮件配置'}
+          action={
+            <button
+              onClick={testEmailConfig}
+              disabled={testingEmail}
+              className="px-3 py-1.5 bg-sky-600 text-white rounded text-sm hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {testingEmail ? '发送中...' : '发送测试邮件'}
+            </button>
+          }
+        >
+          {renderFields(groupedKeys.email)}
+          <GuideBlock title="邮件配置提示（可折叠）" tone="blue">
+            <p>常见邮箱服务需要先开启 SMTP，并使用授权码（而不是登录密码）。</p>
+            <p>常见端口：465（SSL）或 587（TLS）。</p>
+            <p>建议先配置 `NOTIFICATION_EMAIL` 与完整 SMTP 参数，再发送测试邮件。</p>
+          </GuideBlock>
+          {emailTestResult && (
+            <p className={`mt-3 text-xs ${emailTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
+              {emailTestResult.message}
+            </p>
+          )}
+        </SettingsCard>
+
+        <SettingsCard
+          title={groups.find(g => g.id === 'system')?.title || '系统参数'}
+          description={groups.find(g => g.id === 'system')?.description || '系统级配置'}
+        >
+          {renderFields(groupedKeys.system)}
+        </SettingsCard>
+
+        <SettingsCard
+          title={groups.find(g => g.id === 'advanced')?.title || '高级配置'}
+          description={groups.find(g => g.id === 'advanced')?.description || '自定义环境变量'}
+          action={
+            <button
+              onClick={() => setShowAdvanced(prev => !prev)}
+              className="px-3 py-1.5 bg-background border border-border rounded text-sm hover:bg-muted"
+            >
+              {showAdvanced ? '收起' : '展开'}
+            </button>
+          }
+        >
+          {showAdvanced ? (
+            <div className="space-y-4">
+              {renderFields(advancedKeys)}
+              <div className="pt-2 border-t border-border">
+                <AddConfigItem
+                  onAdd={key => setEditValues(prev => ({ ...prev, [key]: '' }))}
+                  existingKeys={allKeys}
+                />
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              高级配置默认折叠，避免干扰常用设置。展开后可编辑所有未分组变量并新增自定义项。
+            </p>
+          )}
+        </SettingsCard>
+
+        <div className="sticky bottom-4 z-10 flex items-center justify-end gap-3 rounded-lg border border-border bg-card/95 p-4 backdrop-blur">
+          <span className="text-xs text-muted-foreground">带 * 的字段为必填项，保存后会自动尝试应用。</span>
           <button
             onClick={saveConfig}
             disabled={saving}
             className="px-6 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {saving && (
-              <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent" />
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
             )}
             保存配置
           </button>
-        </div>
-
-        <div className="text-sm text-muted-foreground space-y-2">
-          <p>* 标记项为必填项</p>
-          <p>配置保存后会自动应用，出现异常时可点击“重试应用配置”。</p>
         </div>
       </div>
     </div>
   )
 }
 
-function EmailConfigHelp() {
-  const [expanded, setExpanded] = useState(false)
-  const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+function SettingsCard({
+  title,
+  description,
+  action,
+  children,
+}: {
+  title: string
+  description?: string
+  action?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <section className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-foreground">{title}</h2>
+          {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+        </div>
+        {action && <div className="shrink-0">{action}</div>}
+      </div>
+      {children}
+    </section>
+  )
+}
 
-  async function handleTestEmail() {
-    setTesting(true)
-    setTestResult(null)
-    try {
-      const res = await fetch(`${AGENT_API_BASE}/notifications/test-email`, { method: 'POST' })
-      const data = await res.json() as { success?: boolean; error?: string; message?: string }
-      if (data.success) {
-        setTestResult({ success: true, message: data.message || '测试邮件已发送，请检查收件箱' })
-      } else {
-        setTestResult({ success: false, message: data.error || '测试失败' })
-      }
-    } catch {
-      setTestResult({ success: false, message: '无法连接 Agent Service' })
-    } finally {
-      setTesting(false)
-    }
-  }
+function PathRow({ label, path }: { label: string; path: string }) {
+  return (
+    <p>
+      {label}: <code className="rounded bg-background px-2 py-0.5 text-xs">{path}</code>
+    </p>
+  )
+}
+
+function GuideBlock({
+  title,
+  tone,
+  children,
+}: {
+  title: string
+  tone: 'purple' | 'blue'
+  children: ReactNode
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const style = tone === 'purple'
+    ? 'border-purple-200/70 bg-purple-50/50 text-purple-900'
+    : 'border-blue-200/70 bg-blue-50/50 text-blue-900'
 
   return (
-    <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg overflow-hidden">
+    <div className={`rounded border ${style}`}>
       <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-blue-100/50 dark:hover:bg-blue-900/30 transition-colors"
+        onClick={() => setExpanded(prev => !prev)}
+        className="w-full px-3 py-2 text-left text-sm font-medium"
       >
-        <span className="font-medium text-blue-900 dark:text-blue-100">邮件通知配置指南</span>
-        <span className="text-blue-600 dark:text-blue-400">{expanded ? '收起' : '展开'}</span>
+        {title} {expanded ? '▲' : '▼'}
       </button>
       {expanded && (
-        <div className="px-4 pb-4 space-y-3 text-sm">
-          <p className="text-muted-foreground text-xs">
-            配置 `NOTIFICATION_EMAIL`、`SMTP_HOST`、`SMTP_PORT`、`SMTP_USER`、`SMTP_PASS` 后可发送通知邮件。
-          </p>
-          <button
-            onClick={handleTestEmail}
-            disabled={testing}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {testing ? '发送中...' : '发送测试邮件'}
-          </button>
-          {testResult && (
-            <p className={testResult.success ? 'text-green-700 text-xs' : 'text-red-700 text-xs'}>
-              {testResult.message}
-            </p>
-          )}
+        <div className="space-y-2 px-3 pb-3 text-xs text-muted-foreground">
+          {children}
         </div>
       )}
     </div>
   )
 }
 
-function FeishuConfigHelp() {
-  const [expanded, setExpanded] = useState(false)
-  const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
-
-  async function handleTestFeishu() {
-    setTesting(true)
-    setTestResult(null)
-    try {
-      const res = await fetch(`${AGENT_API_BASE}/feishu/test`, { method: 'POST' })
-      const data = await res.json() as { success?: boolean; error?: string; message?: string }
-      if (data.success) {
-        setTestResult({ success: true, message: data.message || '飞书连接成功' })
-      } else {
-        setTestResult({ success: false, message: data.error || '连接失败' })
-      }
-    } catch {
-      setTestResult({ success: false, message: '无法连接 Agent Service' })
-    } finally {
-      setTesting(false)
-    }
-  }
-
+function FieldRow({
+  name,
+  label,
+  description,
+  required,
+  placeholder,
+  sensitive,
+  isBoolean,
+  value,
+  showValue,
+  onToggleShow,
+  onChange,
+}: {
+  name: string
+  label: string
+  description: string
+  required: boolean
+  placeholder: string
+  sensitive: boolean
+  isBoolean: boolean
+  value: string
+  showValue: boolean
+  onToggleShow: () => void
+  onChange: (nextValue: string) => void
+}) {
   return (
-    <div className="bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-purple-100/50 dark:hover:bg-purple-900/30 transition-colors"
-      >
-        <span className="font-medium text-purple-900 dark:text-purple-100">飞书 Bot 配置指南</span>
-        <span className="text-purple-600 dark:text-purple-400">{expanded ? '收起' : '展开'}</span>
-      </button>
-      {expanded && (
-        <div className="px-4 pb-4 space-y-3 text-sm">
-          <div className="rounded border border-purple-200/70 bg-purple-50/50 p-3 text-xs text-muted-foreground space-y-2">
-            <p>基础配置：`FEISHU_ENABLED=true`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`。</p>
-            <p>Bot 名称建议使用中英文和数字，避免 emoji（部分飞书客户端会显示为 `?`；系统会自动剔除 emoji）。</p>
-            <p>事件订阅：启用 WebSocket 长连接，并添加 `im.message.receive_v1`。</p>
-            <p>最小权限：`im:message:send_as_bot`、`im:message:readonly`、`im:message.p2p_msg:readonly`、`im:message.group_at_msg:readonly`、`im:resource`。</p>
-            <p>文件回传说明：`im:resource` 只负责下载用户消息资源；机器人回传文件还需要 IM 文件上传能力（控制台可能显示为 `im:file` 或等价项）。</p>
-          </div>
-          <button
-            onClick={handleTestFeishu}
-            disabled={testing}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {testing ? '连接中...' : '测试飞书连接'}
-          </button>
-          {testResult && (
-            <p className={testResult.success ? 'text-green-700 text-xs' : 'text-red-700 text-xs'}>
-              {testResult.message}
-            </p>
+    <div className="space-y-1.5">
+      <label className="block text-sm font-medium text-foreground">
+        {label} <code className="text-xs text-muted-foreground">{name}</code>
+        {required && <span className="text-red-500 ml-1">*</span>}
+      </label>
+      {description && <p className="text-xs text-muted-foreground">{description}</p>}
+
+      {isBoolean ? (
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+        >
+          <option value="">未设置</option>
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </select>
+      ) : (
+        <div className="relative">
+          <input
+            type={sensitive && !showValue ? 'password' : 'text'}
+            value={value}
+            onChange={event => onChange(event.target.value)}
+            placeholder={placeholder}
+            className="w-full rounded-md border border-border bg-background px-3 py-2 pr-14 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
+          {sensitive && (
+            <button
+              type="button"
+              onClick={onToggleShow}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+            >
+              {showValue ? '隐藏' : '显示'}
+            </button>
           )}
         </div>
       )}
@@ -519,7 +1060,7 @@ function AddConfigItem({
     return (
       <button
         onClick={() => setIsAdding(true)}
-        className="text-sm text-primary hover:text-primary/80 flex items-center gap-1"
+        className="text-sm text-primary hover:text-primary/80"
       >
         + 添加自定义配置
       </button>
@@ -532,12 +1073,12 @@ function AddConfigItem({
         <input
           type="text"
           value={newKey}
-          onChange={e => {
-            setNewKey(e.target.value.toUpperCase())
+          onChange={event => {
+            setNewKey(event.target.value.toUpperCase())
             setError('')
           }}
           placeholder="MY_CONFIG"
-          className="flex-1 px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+          className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
           autoFocus
         />
         <button

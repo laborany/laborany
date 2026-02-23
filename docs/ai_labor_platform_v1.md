@@ -1,13 +1,13 @@
-# LaborAny 产品与系统设计（v0.3.0）
+# LaborAny 产品与系统设计（v0.3.5）
 
-> 更新时间：2026-02-11
-> 适用版本：LaborAny v0.3.0
+> 更新时间：2026-02-23
+> 适用版本：LaborAny v0.3.5
 
 ---
 
 ## 0. 文档目标
 
-本文档用于统一 `v0.3.0` 的产品语义、交互状态机与工程实现，保证：
+本文档用于统一 `v0.3.5` 的产品语义、交互状态机与工程实现，保证：
 
 - 研发、设计、运营使用同一套术语。
 - README、前端行为、后端路由一致。
@@ -23,12 +23,14 @@ LaborAny 是“AI 劳动力平台”的桌面实现：
 - 系统自动分发到最合适的能力（Skill / Composite Skill）。
 - 任务执行中可持续追问、预览产物、保存记忆、复用流程。
 
-### 1.1 v0.3.0 的产品主线
+### 1.1 v0.3.5 的产品主线
 
-1. 首页从聊天入口升级为“任务分发器”。
+1. 首页从聊天入口升级为"任务分发器"。
 2. 能力模型统一为 Skill / Composite Skill。
 3. 执行内核统一为 Claude Code CLI + SSE 协议。
 4. 补齐生产可用能力：断线重连、通知、计划审核、记忆管理。
+5. 飞书 Bot 远程触发：通过飞书消息远程执行任务，流式卡片回传结果。
+6. 丰富文件预览：PDF / DOCX / XLSX / PPTX / 图片 / 音视频 / 代码。
 
 ---
 
@@ -130,10 +132,14 @@ Converse 动作：
 │ - auth/config/session/skill  │     │ - converse / execute         │
 │ - runtime / file / preview   │     │ - capabilities / cron / memory│
 │ - sandbox providers          │     │ - task manager / notifications│
-└───────────────┬──────────────┘     └───────────────┬──────────────┘
-                │                                    │
+└───────────────┬──────────────┘     │ - feishu bot (WebSocket)     │
+                │                    └───────────────┬──────────────┘
                 └────────────── shared ──────────────┘
                            (skill-loader / naming)
+
+        ┌──────────────┐
+        │  飞书客户端    │──── WebSocket ────→ agent-service (Feishu Bot)
+        └──────────────┘
 ```
 
 ---
@@ -228,6 +234,22 @@ Converse 是“决策层”而非执行层：
 
 补充详设见：`MEMORY_DESIGN.md`
 
+### 7.7 飞书 Bot（Feishu）
+
+飞书 Bot 是 agent-service 的内部模块，通过 WebSocket 长连接接收飞书消息，复用 converse + execute 两阶段链路完成任务执行。
+
+核心能力：
+
+- 智能路由（converse 意图分发 → 自动匹配 skill）
+- 流式卡片（CardKit schema 2.0 实时展示执行过程）
+- 文件处理（接收图片/文档/音视频，产物自动回传）
+- 命令系统（`/skill`、`/skills`、`/new`、`/stop`、`/help`）
+- 多轮对话（converse 多轮 + execute session 复用）
+
+模块结构：5 文件（config / client / handler / streaming / index）
+
+补充详设见：`feishu-bot-spec.md`
+
 ---
 
 ## 8. API 分层（按职责）
@@ -252,10 +274,11 @@ Converse 是“决策层”而非执行层：
 - `/agent-api/cron/*`
 - `/agent-api/notifications/*`
 - `/agent-api/memory/*` 与 `/agent-api/boss`
+- `/agent-api/feishu/*`（状态查询、启动、停止、重启）
 
 ---
 
-## 9. SSE 事件契约（v0.3.0）
+## 9. SSE 事件契约（v0.3.5）
 
 前端已消费的关键事件：
 
@@ -353,7 +376,7 @@ Converse 是“决策层”而非执行层：
 
 ---
 
-## 13. v0.3.0 已知边界
+## 13. v0.3.5 已知边界
 
 1. 官方 Skill 市场仍为占位（桌面版未开放在线安装）。
 2. 仍保留历史 workflow 兼容映射，不作为产品主路径。
@@ -376,5 +399,6 @@ Converse 是“决策层”而非执行层：
 - `README.md`：外部使用与快速上手。
 - `HOMEPAGE_DISPATCH_SPEC.md`：首页分发交互规范。
 - `MEMORY_DESIGN.md`：记忆系统详细设计。
+- `feishu-bot-spec.md`：飞书 Bot 集成规范。
 - `LEGACY_COMPAT_NOTES.md`：兼容层说明。
 

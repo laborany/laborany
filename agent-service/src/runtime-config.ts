@@ -52,6 +52,8 @@ export interface RuntimeConfigSnapshot {
 }
 
 export function refreshRuntimeConfig(): RuntimeConfigSnapshot {
+  const runtimeHome = (process.env.LABORANY_HOME || '').trim()
+  const runtimeLogDir = (process.env.LABORANY_LOG_DIR || '').trim()
   const runtimeEnvPath = getRuntimeEnvPath()
   const candidates = isPackaged()
     ? [runtimeEnvPath]
@@ -99,6 +101,13 @@ export function refreshRuntimeConfig(): RuntimeConfigSnapshot {
     }
   }
 
+  if (runtimeHome) {
+    delete merged.LABORANY_HOME
+  }
+  if (runtimeLogDir) {
+    delete merged.LABORANY_LOG_DIR
+  }
+
   for (const key of RESETTABLE_KEYS) {
     if (!(key in merged)) {
       delete process.env[key]
@@ -114,6 +123,13 @@ export function refreshRuntimeConfig(): RuntimeConfigSnapshot {
 
   for (const [key, value] of Object.entries(merged)) {
     process.env[key] = value
+  }
+
+  if (runtimeHome) {
+    process.env.LABORANY_HOME = runtimeHome
+  }
+  if (runtimeLogDir) {
+    process.env.LABORANY_LOG_DIR = runtimeLogDir
   }
 
   lastLoadedEnvKeys = new Set(Object.keys(merged))

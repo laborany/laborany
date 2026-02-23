@@ -794,6 +794,7 @@ export function useAgent(skillId: string) {
 
       try {
         console.log('[useAgent] 发送请求到 /api/skill/execute')
+        const executionSkillId = skillId === '__converse__' ? '__generic__' : skillId
 
         let body: BodyInit
         const headers: Record<string, string> = {}
@@ -817,7 +818,7 @@ export function useAgent(skillId: string) {
 
         headers['Content-Type'] = 'application/json'
         body = JSON.stringify({
-          skill_id: skillId,
+          skill_id: executionSkillId,
           query: finalQuery,
           originQuery: options?.originQuery,
           sessionId: currentSessionId

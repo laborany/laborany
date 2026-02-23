@@ -1,4 +1,6 @@
 import { Hono } from 'hono'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import {
   getConfigDir,
   getEnvPath,
@@ -8,7 +10,7 @@ import {
   writeLocalProfile,
   readLocalProfile,
 } from '../lib/app-config.js'
-import { getMigrationReportPath } from '../lib/app-home.js'
+import { getAppHomeDir, getMigrationReportPath } from '../lib/app-home.js'
 import { getAppLoggerStatus } from '../lib/app-logger.js'
 
 const config = new Hono()
@@ -22,10 +24,51 @@ interface RuntimeApplyResponse {
 }
 
 interface TemplateField {
+  label: string
   description: string
   required: boolean
   placeholder: string
   sensitive: boolean
+  group: 'model' | 'feishu' | 'email' | 'system' | 'advanced'
+  order: number
+  dependsOnKey?: string
+  dependsOnValue?: string
+}
+
+interface TemplateGroup {
+  id: 'model' | 'feishu' | 'email' | 'system' | 'advanced'
+  title: string
+  description: string
+}
+
+function buildTemplateGroups(): TemplateGroup[] {
+  return [
+    {
+      id: 'model',
+      title: '模型服务',
+      description: 'LaborAny 调用大模型所需的核心配置（建议优先完成）',
+    },
+    {
+      id: 'feishu',
+      title: '飞书 Bot',
+      description: '用于将任务从飞书会话接入 LaborAny，并回传文本与文件结果',
+    },
+    {
+      id: 'email',
+      title: '邮件通知',
+      description: '用于任务完成或失败时发送邮件通知',
+    },
+    {
+      id: 'system',
+      title: '系统参数',
+      description: '应用端口和密钥等运行参数',
+    },
+    {
+      id: 'advanced',
+      title: '高级配置',
+      description: '不常用或定制化环境变量',
+    },
+  ]
 }
 
 function isSensitiveKey(key: string): boolean {
@@ -48,6 +91,22 @@ function diffChangedKeys(prev: Record<string, string>, next: Record<string, stri
     }
   }
   return changed
+}
+
+function normalizeComparablePath(input: string): string {
+  const resolved = resolve(input)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
+function isSamePath(a: string, b: string): boolean {
+  return normalizeComparablePath(a) === normalizeComparablePath(b)
+}
+
+function isSubPath(parentPath: string, candidatePath: string): boolean {
+  const parent = normalizeComparablePath(parentPath)
+  const candidate = normalizeComparablePath(candidatePath)
+  if (parent === candidate) return false
+  return candidate.startsWith(`${parent}/`) || candidate.startsWith(`${parent}\\`)
 }
 
 async function applyAgentRuntimeConfig(changedKeys: string[]): Promise<{
@@ -91,124 +150,198 @@ async function applyAgentRuntimeConfig(changedKeys: string[]): Promise<{
 function buildTemplate(): Record<string, TemplateField> {
   return {
     ANTHROPIC_API_KEY: {
-      description: 'Anthropic API key',
+      label: 'Anthropic API Key',
+      description: '用于访问模型服务的密钥',
       required: true,
       placeholder: 'sk-ant-api03-...',
       sensitive: true,
+      group: 'model',
+      order: 10,
     },
     ANTHROPIC_BASE_URL: {
-      description: 'Anthropic API base URL (optional)',
+      label: 'Anthropic Base URL',
+      description: '模型服务地址（可选，默认官方地址）',
       required: false,
       placeholder: 'https://api.anthropic.com',
       sensitive: false,
+      group: 'model',
+      order: 20,
     },
     ANTHROPIC_MODEL: {
-      description: 'Anthropic model name',
+      label: '模型名称',
+      description: '使用的模型标识（例如 claude-sonnet-4-20250514）',
       required: false,
       placeholder: 'claude-sonnet-4-20250514',
       sensitive: false,
+      group: 'model',
+      order: 30,
     },
     PORT: {
-      description: 'API service port',
+      label: 'API 服务端口',
+      description: '本地 API 服务监听端口',
       required: false,
       placeholder: '3620',
       sensitive: false,
+      group: 'system',
+      order: 10,
     },
     LABORANY_SECRET_KEY: {
-      description: 'JWT signing key',
+      label: 'LABORANY_SECRET_KEY',
+      description: '本地鉴权签名密钥',
       required: false,
       placeholder: 'your-secret-key',
       sensitive: true,
+      group: 'system',
+      order: 20,
     },
     NOTIFICATION_EMAIL: {
-      description: 'Email address for cron notifications',
+      label: '通知收件邮箱',
+      description: '接收任务通知的邮箱地址',
       required: false,
       placeholder: 'your@email.com',
       sensitive: false,
+      group: 'email',
+      order: 10,
     },
     NOTIFY_ON_SUCCESS: {
-      description: 'Send notification when task succeeds (true/false)',
+      label: '任务成功时通知',
+      description: '任务成功后是否发送邮件（true/false）',
       required: false,
       placeholder: 'true',
       sensitive: false,
+      group: 'email',
+      order: 20,
     },
     NOTIFY_ON_ERROR: {
-      description: 'Send notification when task fails (true/false)',
+      label: '任务失败时通知',
+      description: '任务失败后是否发送邮件（true/false）',
       required: false,
       placeholder: 'true',
       sensitive: false,
+      group: 'email',
+      order: 30,
     },
     SMTP_HOST: {
-      description: 'SMTP host, e.g. smtp.qq.com / smtp.163.com / smtp.gmail.com',
+      label: 'SMTP 主机',
+      description: '例如 smtp.qq.com / smtp.163.com / smtp.gmail.com',
       required: false,
       placeholder: 'smtp.qq.com',
       sensitive: false,
+      group: 'email',
+      order: 40,
     },
     SMTP_PORT: {
-      description: 'SMTP port, commonly 465 or 587',
+      label: 'SMTP 端口',
+      description: '常见端口 465（SSL）或 587（TLS）',
       required: false,
       placeholder: '465',
       sensitive: false,
+      group: 'email',
+      order: 50,
     },
     SMTP_USER: {
-      description: 'SMTP username, usually the full email address',
+      label: 'SMTP 用户名',
+      description: '通常为完整邮箱地址',
       required: false,
       placeholder: 'your@qq.com',
       sensitive: false,
+      group: 'email',
+      order: 60,
     },
     SMTP_PASS: {
-      description: 'SMTP auth password / app password',
+      label: 'SMTP 授权码',
+      description: '邮箱授权码或应用专用密码（不是邮箱登录密码）',
       required: false,
       placeholder: 'app-password',
       sensitive: true,
+      group: 'email',
+      order: 70,
     },
     FEISHU_ENABLED: {
-      description: 'Enable Feishu bot (true/false)',
+      label: '启用飞书 Bot',
+      description: '开启后，允许飞书消息触发任务（true/false）',
       required: false,
       placeholder: 'false',
       sensitive: false,
+      group: 'feishu',
+      order: 10,
     },
     FEISHU_APP_ID: {
-      description: 'Feishu app id',
+      label: '飞书 App ID',
+      description: '飞书开放平台应用的 App ID',
       required: false,
       placeholder: 'cli_xxxxxxxxxx',
       sensitive: false,
+      group: 'feishu',
+      order: 20,
+      dependsOnKey: 'FEISHU_ENABLED',
+      dependsOnValue: 'true',
     },
     FEISHU_APP_SECRET: {
-      description: 'Feishu app secret',
+      label: '飞书 App Secret',
+      description: '飞书开放平台应用的 App Secret',
       required: false,
       placeholder: '',
       sensitive: true,
+      group: 'feishu',
+      order: 30,
+      dependsOnKey: 'FEISHU_ENABLED',
+      dependsOnValue: 'true',
     },
     FEISHU_DOMAIN: {
-      description: 'feishu for CN, lark for global',
+      label: '飞书域名',
+      description: '中国区填 feishu，国际版填 lark',
       required: false,
       placeholder: 'feishu',
       sensitive: false,
+      group: 'feishu',
+      order: 40,
+      dependsOnKey: 'FEISHU_ENABLED',
+      dependsOnValue: 'true',
     },
     FEISHU_ALLOW_USERS: {
-      description: 'Allowed open_id list separated by comma',
+      label: '允许用户列表',
+      description: '允许访问的 open_id，多个用逗号分隔',
       required: false,
       placeholder: 'ou_xxx,ou_yyy',
       sensitive: false,
+      group: 'feishu',
+      order: 50,
+      dependsOnKey: 'FEISHU_ENABLED',
+      dependsOnValue: 'true',
     },
     FEISHU_REQUIRE_ALLOWLIST: {
-      description: 'Require allowlist to be non-empty (true/false)',
+      label: '强制白名单',
+      description: '是否要求允许用户列表不能为空（true/false）',
       required: false,
       placeholder: 'false',
       sensitive: false,
+      group: 'feishu',
+      order: 60,
+      dependsOnKey: 'FEISHU_ENABLED',
+      dependsOnValue: 'true',
     },
     FEISHU_BOT_NAME: {
-      description: 'Bot display name in Feishu cards',
+      label: 'Bot 显示名称',
+      description: '飞书消息与卡片中显示的名称（建议不用 emoji）',
       required: false,
       placeholder: 'LaborAny',
       sensitive: false,
+      group: 'feishu',
+      order: 70,
+      dependsOnKey: 'FEISHU_ENABLED',
+      dependsOnValue: 'true',
     },
     FEISHU_DEFAULT_SKILL: {
-      description: 'Fallback skill id for general execution',
+      label: '默认执行技能',
+      description: '未匹配到具体技能时使用的默认技能 ID',
       required: false,
       placeholder: '__generic__',
       sensitive: false,
+      group: 'feishu',
+      order: 80,
+      dependsOnKey: 'FEISHU_ENABLED',
+      dependsOnValue: 'true',
     },
   }
 }
@@ -228,6 +361,7 @@ config.get('/', (c) => {
   }
 
   return c.json({
+    appHome: getAppHomeDir(),
     configDir: getConfigDir(),
     envPath: getEnvPath(),
     profilePath: getProfilePath(),
@@ -258,6 +392,10 @@ config.post('/', async (c) => {
       delete mergedConfig[key]
     }
   }
+
+  // Storage home is managed by desktop runtime command flow.
+  delete mergedConfig.LABORANY_HOME
+  delete mergedConfig.LABORANY_LOG_DIR
 
   writeEnvConfig(mergedConfig)
 
@@ -292,8 +430,83 @@ config.post('/', async (c) => {
   })
 })
 
+config.post('/storage/home', async (c) => {
+  let payload: { homePath?: string } = {}
+  try {
+    payload = await c.req.json<{ homePath?: string }>()
+  } catch {
+    payload = {}
+  }
+
+  const requestedHome = (payload.homePath || '').trim()
+  if (!requestedHome) {
+    return c.json({ error: 'homePath is required' }, 400)
+  }
+
+  if (!isAbsolute(requestedHome)) {
+    return c.json({ error: 'homePath must be an absolute path' }, 400)
+  }
+
+  const targetHome = resolve(requestedHome)
+  const currentHome = getAppHomeDir()
+  if (isSamePath(currentHome, targetHome)) {
+    return c.json({ error: 'homePath is already active' }, 400)
+  }
+
+  if (isSubPath(currentHome, targetHome) || isSubPath(targetHome, currentHome)) {
+    return c.json({ error: 'homePath cannot overlap current app home path' }, 400)
+  }
+
+  const commandPath = (process.env.LABORANY_RUNTIME_COMMAND_PATH || '').trim()
+  if (!commandPath) {
+    return c.json({
+      error: 'runtime command channel unavailable (launch from desktop app)',
+    }, 400)
+  }
+
+  try {
+    mkdirSync(dirname(commandPath), { recursive: true })
+    writeFileSync(commandPath, JSON.stringify({
+      type: 'switch-home',
+      targetHome,
+      requestedAt: new Date().toISOString(),
+      source: 'settings-ui',
+    }, null, 2), 'utf-8')
+  } catch (error) {
+    return c.json({
+      error: `failed to write runtime command: ${error instanceof Error ? error.message : String(error)}`,
+    }, 500)
+  }
+
+  // Runtime home is managed by Electron main process (runtime-meta + command processing).
+  // Avoid writing LABORANY_HOME into current .env here, otherwise API may report switched
+  // path before Electron runtime actually switches.
+  try {
+    const existingConfig = readEnvConfig()
+    const nextConfig = { ...existingConfig }
+    delete nextConfig.LABORANY_HOME
+    delete nextConfig.LABORANY_LOG_DIR
+    writeEnvConfig(nextConfig)
+  } catch {
+    // non-fatal: continue restart flow
+  }
+
+  setTimeout(() => {
+    process.exit(75)
+  }, 800)
+
+  return c.json({
+    success: true,
+    message: 'Storage path switch requested, sidecar services are restarting.',
+    targetHome,
+  }, 202)
+})
+
 config.get('/template', (c) => {
-  return c.json({ template: buildTemplate() })
+  return c.json({
+    template: buildTemplate(),
+    groups: buildTemplateGroups(),
+  })
 })
 
 export default config

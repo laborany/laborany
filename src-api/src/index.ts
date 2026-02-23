@@ -16,6 +16,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 function loadEnvConfig(): void {
   const configDir = getConfigDir()
   const envPath = getEnvPath()
+  const runtimeHome = (process.env.LABORANY_HOME || '').trim()
+  const runtimeLogDir = (process.env.LABORANY_LOG_DIR || '').trim()
 
   // 如果用户配置不存在，从示例文件复制
   if (!existsSync(envPath)) {
@@ -33,6 +35,12 @@ function loadEnvConfig(): void {
 
   // 加载配置（覆盖父进程同名环境变量，避免系统全局变量污染）
   config({ path: envPath, override: true })
+  if (runtimeHome) {
+    process.env.LABORANY_HOME = runtimeHome
+  }
+  if (runtimeLogDir) {
+    process.env.LABORANY_LOG_DIR = runtimeLogDir
+  }
   console.log(`[Config] 配置文件路径: ${envPath}`)
 }
 

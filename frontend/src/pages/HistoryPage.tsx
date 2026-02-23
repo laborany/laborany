@@ -286,7 +286,10 @@ export function SessionDetailPage() {
     storageKey: 'laborany-history-chat-panel-width',
   })
 
-  const agent = useAgent(session?.skill_id || '')
+  const executionSkillId = session?.skill_id === '__converse__'
+    ? '__generic__'
+    : (session?.skill_id || '')
+  const agent = useAgent(executionSkillId)
   const historyPendingQuestion = useMemo(
     () => buildPendingQuestionFromHistory(session),
     [session],
