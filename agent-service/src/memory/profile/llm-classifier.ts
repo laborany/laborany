@@ -20,31 +20,33 @@ const SECTION_COMMUNICATION_STYLE = '\u6c9f\u901a\u98ce\u683c'
 const SECTION_TECH_STACK = '\u6280\u672f\u6808'
 const SECTION_PERSONAL_INFO = '\u4e2a\u4eba\u4fe1\u606f'
 
-const CLASSIFY_PROMPT = `Classify one memory fact into profile sections.
-Return strict JSON only:
+const CLASSIFY_PROMPT = `请把一条记忆事实归类到画像分区中。
+仅返回严格 JSON：
 {"section":"...","key":"...","description":"...","shouldUpdate":true,"reason":"..."}
 
-Allowed section values:
+可选 section 值：
 - 工作偏好
 - 沟通风格
 - 技术栈
 - 个人信息
 
-Rules:
-- Drop low-value addressing or politeness chatter (老板/您好/收到) by shouldUpdate=false.
-- description must be concise factual memory, <= 180 chars.
-- key should be short, <= 20 chars.
-- No markdown, no extra keys.`
+规则：
+- 对“老板/您好/收到”等低价值称呼礼貌语，返回 shouldUpdate=false。
+- description 必须是简洁、可复用的事实记忆，长度 <= 180 字。
+- key 要简短，长度 <= 20 字。
+- 输出内容优先使用中文（保留必要专有名词/术语）。
+- 不要 markdown，不要额外字段。`
 
-const CONFLICT_PROMPT = `Resolve memory profile conflict.
-Return strict JSON only:
+const CONFLICT_PROMPT = `请解决画像记忆冲突。
+仅返回严格 JSON：
 {"resolution":"keep_old|use_new|merge","mergedValue":"...","reason":"..."}
 
-Rules:
-- keep_old: old value still more reliable.
-- use_new: new value clearly better or corrected.
-- merge: both can be retained in one concise sentence.
-- No markdown, no extra keys.`
+规则：
+- keep_old：旧值仍更可靠。
+- use_new：新值明显更准确或属于纠正。
+- merge：两者都可保留，用一句简洁中文合并。
+- reason 使用中文说明。
+- 不要 markdown，不要额外字段。`
 
 interface ClassifyPayload {
   section?: string
@@ -120,7 +122,7 @@ export class ProfileLLMClassifier {
       return {
         ...fallback,
         shouldUpdate: false,
-        reason: 'Addressing/politeness noise',
+        reason: '称呼/礼貌语噪声',
       }
     }
 
@@ -158,7 +160,7 @@ export class ProfileLLMClassifier {
       key: clip(key, 20),
       description: clip(description, 180),
       shouldUpdate,
-      reason: clip(normalizeWhitespace(payload.reason || 'CLI classification'), 120),
+      reason: clip(normalizeWhitespace(payload.reason || 'CLI 分类结果'), 120),
     }
   }
 
@@ -171,7 +173,7 @@ export class ProfileLLMClassifier {
     if (!this.isAvailable()) {
       return {
         resolution: 'use_new',
-        reason: 'CLI classifier unavailable; fallback to latest value',
+        reason: 'CLI 分类器不可用，回退到最新值',
       }
     }
 
@@ -193,7 +195,7 @@ export class ProfileLLMClassifier {
       )
       return {
         resolution: 'use_new',
-        reason: 'CLI conflict resolution failed; fallback to latest value',
+        reason: 'CLI 冲突判定失败，回退到最新值',
       }
     }
 
@@ -201,14 +203,14 @@ export class ProfileLLMClassifier {
     if (!payload || !payload.resolution) {
       return {
         resolution: 'use_new',
-        reason: 'CLI conflict result invalid; fallback to latest value',
+        reason: 'CLI 冲突结果无效，回退到最新值',
       }
     }
 
     return {
       resolution: payload.resolution,
       mergedValue: clip(normalizeWhitespace(payload.mergedValue || ''), 180) || undefined,
-      reason: clip(normalizeWhitespace(payload.reason || 'CLI conflict decision'), 120),
+      reason: clip(normalizeWhitespace(payload.reason || 'CLI 冲突决策'), 120),
     }
   }
 
@@ -235,8 +237,8 @@ export class ProfileLLMClassifier {
   }
 
   private defaultReason(fact: ExtractedFact): string {
-    if (isAddressingNoise(fact.content)) return 'Addressing/politeness noise'
-    return 'Rule-based fallback'
+    if (isAddressingNoise(fact.content)) return '称呼/礼貌语噪声'
+    return '规则回退'
   }
 
   private defaultDescription(content: string): string {

@@ -1,8 +1,8 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                     Memory I/O                                         ║
- * ║                                                                        ║
- * ║  包含：MemoryInjector（注入上下文）+ MemoryCliExtractor（提取记忆）     ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
+/* 鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+ * 鈺?                    Memory I/O                                         鈺?
+ * 鈺?                                                                       鈺?
+ * 鈺? 鍖呭惈锛歁emoryInjector锛堟敞鍏ヤ笂涓嬫枃锛? MemoryCliExtractor锛堟彁鍙栬蹇嗭級     鈺?
+ * 鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆 */
 
 import { spawn } from 'child_process'
 import { memoryFileManager } from './file-manager.js'
@@ -12,9 +12,9 @@ import { buildClaudeEnvConfig, resolveClaudeCliLaunch } from '../claude-cli.js'
 import type { ExtractedFact } from './memcell/index.js'
 import { refreshRuntimeConfig } from '../runtime-config.js'
 
-/* ══════════════════════════════════════════════════════════════════════════
- *  Memory Injector（注入记忆上下文到 prompt）
- * ══════════════════════════════════════════════════════════════════════════ */
+/* 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+ *  Memory Injector锛堟敞鍏ヨ蹇嗕笂涓嬫枃鍒?prompt锛?
+ * 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲 */
 
 interface BuildContextParams {
   skillId: string
@@ -39,7 +39,7 @@ export class MemoryInjector {
 
     const bossMd = memoryFileManager.readBossMd()
     if (bossMd) {
-      sections.push({ title: '老板工作手册', content: bossMd, priority: 1, tokens: estimateTokens(bossMd) })
+      sections.push({ title: '老板偏好手册', content: bossMd, priority: 1, tokens: estimateTokens(bossMd) })
     }
 
     const profileSummary = profileManager.getSummary()
@@ -59,7 +59,7 @@ export class MemoryInjector {
 
     const recentGlobal = memoryFileManager.readRecentDaily({ scope: 'global', days: 2 })
     if (recentGlobal) {
-      sections.push({ title: '最近全局记忆', content: recentGlobal, priority: 3, tokens: estimateTokens(recentGlobal) })
+      sections.push({ title: '近期全局记忆', content: recentGlobal, priority: 3, tokens: estimateTokens(recentGlobal) })
     }
 
     const recentSkill = memoryFileManager.readRecentDaily({ scope: 'skill', skillId, days: 2 })
@@ -123,9 +123,9 @@ export class MemoryInjector {
 
 export const memoryInjector = new MemoryInjector()
 
-/* ══════════════════════════════════════════════════════════════════════════
- *  Memory CLI Extractor（通过 Claude CLI 提取结构化记忆）
- * ══════════════════════════════════════════════════════════════════════════ */
+/* 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+ *  Memory CLI Extractor锛堥€氳繃 Claude CLI 鎻愬彇缁撴瀯鍖栬蹇嗭級
+ * 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲 */
 
 export interface CliExtractResult {
   summary: string
@@ -141,135 +141,142 @@ interface ExtractParams {
   timeoutMs?: number
 }
 
-const EXTRACTION_PROMPT = `你是一个记忆提取专家。请从对话中提取结构化记忆。
-输出必须是严格 JSON，不要输出任何额外文本。
+const EXTRACTION_PROMPT = `你是一个记忆抽取助手。
+请从给定对话中抽取结构化记忆，并且只输出严格 JSON（不要 markdown 代码块，不要额外解释）。
 
-Schema:
+输出 Schema：
 {
-  "summary": "100-200字摘要",
+  "summary": "简短摘要，使用中文",
   "facts": [
     {
       "type": "preference|fact|correction|context",
-      "content": "事实内容",
+      "content": "事实内容，使用中文",
       "confidence": 0.5,
       "source": "user|assistant|event",
       "intent": "preference|fact|correction|context|response_style"
     }
   ],
-  "keywords": ["关键词", "关键词"],
+  "keywords": ["关键词1", "关键词2"],
   "sentiment": "positive|neutral|negative"
 }
 
 规则：
-1) 只提取明确表达，不要猜测；
-2) confidence 范围 0.5-1.0；
-3) 如果无事实，facts 返回空数组；
-4) source 必须标注来源：用户陈述= user，助手自述/建议= assistant，对任务过程的客观概括= event；
-5) 风格偏好类尽量标注 intent=response_style 或 preference；
-6) 输出必须可直接 JSON.parse。
-7) 不要把“用户称呼助手为老板/老大”等互动礼貌话术写成用户长期事实。
+1) 只抽取对话中明确表达的信息，禁止臆测。
+2) confidence 必须在 [0.5, 1.0] 之间。
+3) 若没有可用事实，facts 返回空数组。
+4) 用户提出的偏好/要求应标记 source="user"。
+5) 助手建议不应直接转成用户偏好。
+6) 一次性事件通常标记为 context/event，不应写成长期偏好。
+7) 不要把“老板/boss/sir”等称呼礼貌语当作用户记忆。
+8) 输出语言默认使用中文（保留必要英文术语或专有名词）。`
 
-Few-shot 示例：
-
-示例1（用户偏好）
-User: 以后回答先给结论，再给步骤，尽量简洁。
-Assistant: 好的，我后续会先结论再步骤。
-Output:
-{
-  "summary": "用户明确了后续回答风格，要求先结论后步骤并保持简洁。",
-  "facts": [
-    {"type":"preference","content":"以后回答先给结论再给步骤","confidence":0.94,"source":"user","intent":"response_style"},
-    {"type":"preference","content":"回答尽量简洁","confidence":0.92,"source":"user","intent":"response_style"}
-  ],
-  "keywords": ["回答风格","先结论","简洁"],
-  "sentiment": "neutral"
-}
-
-示例2（模型回答，不应当作用户偏好）
-User: 你帮我看这个报错。
-Assistant: 建议你先清理缓存，再重启服务。
-Output:
-{
-  "summary": "助手给出了排查建议。",
-  "facts": [
-    {"type":"context","content":"建议先清理缓存再重启服务","confidence":0.76,"source":"assistant","intent":"context"}
-  ],
-  "keywords": ["排查","缓存","重启"],
-  "sentiment": "neutral"
-}
-
-示例3（事件概括）
-User: 昨天我们把支付模块从 v1 升到了 v2。
-Assistant: 升级完成后回归通过。
-Output:
-{
-  "summary": "对话记录了支付模块版本升级及回归结果。",
-  "facts": [
-    {"type":"fact","content":"支付模块从 v1 升级到 v2","confidence":0.9,"source":"event","intent":"fact"},
-    {"type":"context","content":"升级后回归通过","confidence":0.86,"source":"event","intent":"context"}
-  ],
-  "keywords": ["支付模块","升级","回归"],
-  "sentiment": "positive"
-}
-
-示例4（无可提取长期事实）
-User: 好的，收到。
-Assistant: 明白。
-Output:
-{
-  "summary": "本轮主要是确认回复。",
-  "facts": [],
-  "keywords": ["确认"],
-  "sentiment": "neutral"
-}
-
-对话：`
 const HARD_NEGATIVE_FEW_SHOTS = `
-Hard negative examples (must follow):
+困难负例（必须遵循）：
 
-Example A (do NOT treat assistant suggestion as user preference)
-User: 帮我看看这个报错。
-Assistant: 你可以先清理缓存，再重启服务。
-Bad fact: {"type":"preference","content":"用户偏好先清缓存再重启","source":"user"}
-Good fact: {"type":"context","content":"建议先清理缓存再重启服务","source":"assistant","intent":"context"}
+示例 A
+用户：帮我看一下这个报错。
+助手：可以先清理缓存再重启服务。
+错误：{"type":"preference","content":"用户偏好先清理缓存","source":"user"}
+正确：{"type":"context","content":"助手建议先清理缓存并重启服务","source":"assistant","intent":"context"}
 
-Example B (do NOT treat one-time event as stable preference)
-User: 今天临时改成英文输出。
-Assistant: 好的，今天我用英文回复。
-Bad fact: {"type":"preference","content":"用户长期偏好英文回复","source":"user"}
-Good fact: {"type":"context","content":"今天临时改成英文输出","source":"event","intent":"context"}
+示例 B
+用户：今天临时改成英文回复。
+助手：好的。
+错误：{"type":"preference","content":"用户长期偏好英文","source":"user"}
+正确：{"type":"context","content":"用户今天临时要求英文回复","source":"event","intent":"context"}
 
-Example C (style requirement from user should be user + response_style)
-User: 以后都先给结论，再给步骤。
-Assistant: 收到。
-Bad fact: {"type":"context","content":"助手将先给结论再给步骤","source":"assistant"}
-Good fact: {"type":"preference","content":"以后先给结论再给步骤","source":"user","intent":"response_style"}
+示例 C
+用户：以后先给结论再给步骤。
+助手：收到。
+错误：{"type":"context","content":"助手会先给结论再给步骤","source":"assistant"}
+正确：{"type":"preference","content":"偏好先结论后步骤","source":"user","intent":"response_style"}
 
-Example D (do NOT persist addressing-assistant etiquette as user memory)
-User: 帮我分析这个图片。
-Assistant: 老板好，我先看下你上传的内容。
-Bad fact: {"type":"fact","content":"用户称呼助手为老板","source":"user"}
-Good fact: {"type":"context","content":"助手使用了礼貌称呼","source":"assistant","intent":"context"}
+示例 D
+用户：帮我分析这张图片。
+助手：好的老板，我看一下。
+错误：{"type":"fact","content":"用户称呼助手为老板","source":"user"}
+正确：{"type":"context","content":"助手使用了礼貌称呼","source":"assistant","intent":"context"}
 `
 
 const FACT_NOISE_PATTERNS = [
-  /(?:用户|我).{0,8}(?:称呼|叫|喊|称作|叫做).{0,8}(?:助手|你|AI|机器人).{0,6}(?:为|成|叫)?(?:老板|老大|哥|姐)/,
-  /(?:助手|你).{0,8}(?:被|让).{0,8}(?:称呼|叫|喊|称作|叫做).{0,6}(?:老板|老大|哥|姐)/,
-  /(?:call|address).{0,12}(?:assistant|ai).{0,8}(?:boss|sir|bro)/i,
-  /^\s*(?:老板好|老板您好|好的老板|收到老板)\s*$/,
+  /(?:称呼|叫|call|address).{0,12}(?:assistant|ai|老板|老大|boss|sir|bro)/i,
+  /^\s*(?:好的老板|收到老板|老板好|ok boss|yes sir)\s*$/i,
 ]
 
+function extractJsonObjectCandidates(raw: string): string[] {
+  const candidates: string[] = []
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escaped = false
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const ch = raw[index]
+
+    if (inString) {
+      if (escaped) {
+        escaped = false
+        continue
+      }
+      if (ch === '\\') {
+        escaped = true
+        continue
+      }
+      if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+    if (ch === '{') {
+      if (depth === 0) start = index
+      depth += 1
+      continue
+    }
+    if (ch === '}') {
+      if (depth === 0) continue
+      depth -= 1
+      if (depth === 0 && start >= 0) {
+        candidates.push(raw.slice(start, index + 1))
+        start = -1
+      }
+    }
+  }
+
+  return candidates
+}
+
 function parseJSON<T>(raw: string): T {
-  try {
-    return JSON.parse(raw) as T
-  } catch {
-    // continue
+  const trimmed = raw.trim()
+  const candidates: string[] = []
+  if (trimmed) candidates.push(trimmed)
+
+  const markdownMatches = trimmed.matchAll(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/gi)
+  for (const match of markdownMatches) {
+    const body = (match[1] || '').trim()
+    if (body) candidates.push(body)
   }
-  const markdownMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
-  if (markdownMatch) {
-    return JSON.parse(markdownMatch[1]) as T
+
+  const objectCandidates = extractJsonObjectCandidates(trimmed)
+  if (objectCandidates.length > 0) {
+    candidates.push(objectCandidates[objectCandidates.length - 1])
+    candidates.push(...objectCandidates)
   }
-  throw new Error('无法解析 CLI 提取结果 JSON')
+
+  const uniqueCandidates = [...new Set(candidates.map(item => item.trim()).filter(Boolean))]
+  for (const candidate of uniqueCandidates) {
+    try {
+      return JSON.parse(candidate) as T
+    } catch {
+      // continue
+    }
+  }
+
+  throw new Error(`Unable to parse CLI extraction JSON (candidates=${uniqueCandidates.length})`)
 }
 
 function sanitizeFacts(rawFacts: unknown): ExtractedFact[] {
@@ -318,6 +325,7 @@ export class MemoryCliExtractor {
     args?: string[]
     exitCode?: number
     stderr?: string
+    stdout?: string
     reason?: unknown
   }): string {
     const details: string[] = [
@@ -334,6 +342,9 @@ export class MemoryCliExtractor {
     if (params.stderr) {
       details.push(`stderr=${params.stderr.slice(0, 240)}`)
     }
+    if (params.stdout) {
+      details.push(`stdout=${params.stdout.slice(0, 240)}`)
+    }
     if (params.reason) {
       details.push(`reason=${String(params.reason).slice(0, 240)}`)
     }
@@ -349,7 +360,8 @@ export class MemoryCliExtractor {
       return this.fallback(params)
     }
 
-    const prompt = `${EXTRACTION_PROMPT}\n${HARD_NEGATIVE_FEW_SHOTS}\n${this.buildConversation(params.userQuery, params.assistantResponse)}`
+    const basePrompt = `${EXTRACTION_PROMPT}\n${HARD_NEGATIVE_FEW_SHOTS}\n${this.buildConversation(params.userQuery, params.assistantResponse)}`
+    const strictJsonSuffix = '\n\n重要：只返回一个合法 JSON 对象，不要包含 markdown 代码块或任何额外文本。'
     const args = ['--print', '--dangerously-skip-permissions']
     if (process.env.ANTHROPIC_MODEL) {
       args.push('--model', process.env.ANTHROPIC_MODEL)
@@ -358,7 +370,7 @@ export class MemoryCliExtractor {
 
     const timeout = params.timeoutMs ?? this.timeoutMs
 
-    const runOnce = async (): Promise<CliExtractResult> => {
+    const runOnce = async (strictJsonOnly = false): Promise<CliExtractResult> => {
       const proc = spawn(cliLaunch.command, spawnArgs, {
         env: buildClaudeEnvConfig(),
         shell: cliLaunch.shell,
@@ -370,6 +382,7 @@ export class MemoryCliExtractor {
       proc.stdout.on('data', chunk => { stdout += chunk.toString('utf-8') })
       proc.stderr.on('data', chunk => { stderr += chunk.toString('utf-8') })
 
+      const prompt = strictJsonOnly ? `${basePrompt}${strictJsonSuffix}` : basePrompt
       proc.stdin.write(prompt, 'utf-8')
       proc.stdin.end()
 
@@ -389,13 +402,37 @@ export class MemoryCliExtractor {
           args: spawnArgs,
           exitCode,
           stderr,
+          stdout,
         }))
-        throw new Error(`CLI 提取失败: code=${exitCode} stderr=${stderr.slice(0, 240)}`)
+        throw new Error(`CLI extraction failed: code=${exitCode} stderr=${stderr.slice(0, 240)}`)
       }
 
-      const parsed = parseJSON<{
-        summary?: string; facts?: unknown; keywords?: unknown; sentiment?: unknown
-      }>(stdout.trim())
+      const outputText = stdout.trim()
+      let parsed: {
+        summary?: string
+        facts?: unknown
+        keywords?: unknown
+        sentiment?: unknown
+      }
+      try {
+        parsed = parseJSON<{
+          summary?: string
+          facts?: unknown
+          keywords?: unknown
+          sentiment?: unknown
+        }>(outputText)
+      } catch (error) {
+        console.warn(this.buildCliErrorLog({
+          stage: 'parse',
+          source: cliLaunch.source,
+          command: cliLaunch.command,
+          args: spawnArgs,
+          stderr,
+          stdout: outputText,
+          reason: error,
+        }))
+        throw error
+      }
 
       const summary = (parsed.summary || '').trim()
       const facts = sanitizeFacts(parsed.facts)
@@ -405,13 +442,13 @@ export class MemoryCliExtractor {
       const sentiment = parsed.sentiment === 'positive' || parsed.sentiment === 'negative'
         ? parsed.sentiment : 'neutral'
 
-      if (!summary) throw new Error('CLI 提取结果缺少 summary')
+      if (!summary) throw new Error('CLI extraction result is missing summary')
 
       return { summary, facts, keywords, sentiment, extractionMethod: 'cli' }
     }
 
     try {
-      return await runOnce()
+      return await runOnce(false)
     } catch (firstError) {
       console.warn(this.buildCliErrorLog({
         stage: 'retry-1',
@@ -422,7 +459,7 @@ export class MemoryCliExtractor {
       }))
       try {
         await new Promise(resolve => setTimeout(resolve, 1000))
-        return await runOnce()
+        return await runOnce(true)
       } catch (secondError) {
         console.warn(this.buildCliErrorLog({
           stage: 'fallback',

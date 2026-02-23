@@ -240,6 +240,51 @@ function pickScene(_query: string, scene?: MemoryScene): MemoryScene {
 export class MemoryOrchestrator {
   private readonly policyVersion = 'v5-longterm-index'
 
+  private bumpReasonCount(reasonCounts: Record<string, number>, key: string): void {
+    reasonCounts[key] = (reasonCounts[key] || 0) + 1
+  }
+
+  private buildNoDecisionReasonCounts(params: {
+    extractionMethod: 'cli' | 'regex'
+    rawFactCount: number
+    filteredFactCount: number
+    profilePatches: MemoryPatch[]
+    longTermStats: LongTermUpsertStats
+    summary: string
+  }): Record<string, number> {
+    const reasonCounts: Record<string, number> = {}
+
+    if (params.extractionMethod === 'regex') {
+      this.bumpReasonCount(reasonCounts, 'cli_fallback_regex')
+    }
+    if (params.rawFactCount === 0) {
+      this.bumpReasonCount(reasonCounts, 'facts_empty_raw')
+    }
+    if (params.filteredFactCount === 0) {
+      this.bumpReasonCount(reasonCounts, 'facts_empty_filtered')
+    }
+    if (!params.summary.trim()) {
+      this.bumpReasonCount(reasonCounts, 'summary_empty')
+    }
+    if (params.filteredFactCount > 0 && params.profilePatches.length === 0) {
+      this.bumpReasonCount(reasonCounts, 'profile_patch_empty')
+    }
+
+    const qualified = params.profilePatches.filter(item => !item.provisional && item.source === 'user')
+    if (params.profilePatches.length > 0 && qualified.length === 0) {
+      this.bumpReasonCount(reasonCounts, 'no_user_qualified_patch')
+    }
+    if (qualified.length > 0 && params.longTermStats.autoWritten === 0 && params.longTermStats.candidateQueued === 0) {
+      this.bumpReasonCount(reasonCounts, 'longterm_score_or_evidence_insufficient')
+    }
+
+    if (Object.keys(reasonCounts).length === 0) {
+      this.bumpReasonCount(reasonCounts, 'no_longterm_decision')
+    }
+
+    return reasonCounts
+  }
+
   private sanitizeUserQueryForMemory(userQuery: string): string {
     const cleaned = stripNoiseLines(stripPipelineScaffold(userQuery))
     return clip(cleaned, 1200)
@@ -926,6 +971,23 @@ export class MemoryOrchestrator {
     const summary = this.sanitizeSummary(extraction.summary, memoryUserQuery) || clip(memoryUserQuery, 260)
 
     if (!summary && filteredFacts.length === 0) {
+      memoryConsolidator.recordNoDecisionSummary({
+        scope: 'skill',
+        skillId,
+        sessionId,
+        category: 'no_decision',
+        statement: `本轮对话未抽取到可写入长期记忆的信息（session=${sessionId}）`,
+        reasonSummary: '摘要与事实均为空，未触发长期记忆决策',
+        extractionMethod: extraction.extractionMethod,
+        factCount: 0,
+        profilePatchCount: 0,
+        candidateQueued: 0,
+        reasonCounts: {
+          summary_and_facts_empty: 1,
+          ...(extraction.extractionMethod === 'regex' ? { cli_fallback_regex: 1 } : {}),
+        },
+        policyVersion: this.policyVersion,
+      })
       return {
         written: { cells: 0, profile: 0, longTerm: 0, episodes: 0 },
         conflicts: [],
@@ -967,13 +1029,13 @@ export class MemoryOrchestrator {
       `- 摘要：${summary}`,
     ]
     if (userFacts.length > 0) {
-      dailyLines.push(`- user_facts: ${userFacts.map(item => item.content).join('；')}`)
+      dailyLines.push(`- 用户事实：${userFacts.map(item => item.content).join('；')}`)
     }
     if (assistantFacts.length > 0) {
-      dailyLines.push(`- assistant_notes: ${assistantFacts.map(item => item.content).join('；')}`)
+      dailyLines.push(`- 助手补充：${assistantFacts.map(item => item.content).join('；')}`)
     }
     if (eventFacts.length > 0) {
-      dailyLines.push(`- event_summary: ${eventFacts.map(item => item.content).join('；')}`)
+      dailyLines.push(`- 事件摘要：${eventFacts.map(item => item.content).join('；')}`)
     }
     const dailyContent = dailyLines.join('\n')
     memoryFileManager.appendToDaily({ scope: 'skill', skillId, content: dailyContent, timestamp })
@@ -994,6 +1056,30 @@ export class MemoryOrchestrator {
       },
       conflicts,
       extractionMethod: extraction.extractionMethod,
+    }
+
+    if (longTermStats.autoWritten === 0 && longTermStats.candidateQueued === 0) {
+      memoryConsolidator.recordNoDecisionSummary({
+        scope: 'skill',
+        skillId,
+        sessionId,
+        category: 'no_decision',
+        statement: clip(summary || memoryUserQuery, 220),
+        reasonSummary: '本轮已抽取记忆，但未达到长期记忆写入或候选入队条件',
+        extractionMethod: extraction.extractionMethod,
+        factCount: filteredFacts.length,
+        profilePatchCount: profilePatches.length,
+        candidateQueued: longTermStats.candidateQueued,
+        reasonCounts: this.buildNoDecisionReasonCounts({
+          extractionMethod: extraction.extractionMethod,
+          rawFactCount: extraction.facts.length,
+          filteredFactCount: filteredFacts.length,
+          profilePatches,
+          longTermStats,
+          summary,
+        }),
+        policyVersion: this.policyVersion,
+      })
     }
 
     memoryTraceLogger.log({

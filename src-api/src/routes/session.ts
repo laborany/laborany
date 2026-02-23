@@ -34,6 +34,41 @@ session.get('/', (c) => {
   return c.json(sessions)
 })
 
+session.get('/running-tasks', (c) => {
+  const runtimeTasks = runtimeTaskManager.getRunningTasks().map((task) => ({
+    ...task,
+    source: 'runtime' as const,
+    query: '',
+  }))
+
+  const runtimeSessionIds = new Set(runtimeTasks.map((task) => task.sessionId))
+  const converseTasks = dbHelper.query<{
+    id: string
+    query: string
+    created_at: string
+  }>(`
+    SELECT id, query, created_at
+    FROM sessions
+    WHERE status = 'running' AND skill_id = '__converse__'
+    ORDER BY created_at DESC
+    LIMIT 50
+  `)
+    .filter((item) => !runtimeSessionIds.has(item.id))
+    .map((item) => ({
+      sessionId: item.id,
+      skillId: '__converse__',
+      skillName: '首页对话分派',
+      startedAt: item.created_at,
+      source: 'converse' as const,
+      query: item.query || '',
+    }))
+
+  const tasks = [...runtimeTasks, ...converseTasks]
+  tasks.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+
+  return c.json({ tasks, count: tasks.length })
+})
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取会话详情                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */

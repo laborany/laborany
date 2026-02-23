@@ -25,10 +25,100 @@ const router = Router()
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 function sseWrite(res: Response, event: string, data: unknown): void {
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  if (res.writableEnded || res.destroyed) return
+  try {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  } catch {
+    // 客户端断开后继续执行后台任务，SSE 写入失败时忽略
+  }
 }
 
 const FILE_ID_PATTERN = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
+const ACTION_MARKER_CLEAN_RE = /LABORANY_ACTION:\s*\{[\s\S]*?\}\s*$/gm
+const SRC_API_BASE_URL = (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
+
+type ExternalSessionStatus = 'running' | 'completed' | 'failed' | 'stopped' | 'aborted'
+
+function stripActionMarkers(text: string): string {
+  return text.replace(ACTION_MARKER_CLEAN_RE, '').trim()
+}
+
+function buildQuestionSummary(payload: ConverseQuestionPayload): string {
+  const lines: string[] = []
+  for (const q of payload.questions) {
+    const header = q.header?.trim() || '需要补充信息'
+    const question = q.question?.trim() || ''
+    lines.push(`${header}: ${question}`.trim())
+  }
+  return lines.filter(Boolean).join('\n')
+}
+
+function summarizeAction(action: ConverseActionPayload): string {
+  if (action.action === 'recommend_capability') {
+    return `已匹配到技能 ${action.targetId}，可进入执行。`
+  }
+  if (action.action === 'execute_generic') {
+    return '已切换到通用执行模式。'
+  }
+  if (action.action === 'create_capability') {
+    return '将进入创建新技能流程。'
+  }
+  return '已识别为定时任务，进入创建流程。'
+}
+
+async function upsertExternalSession(
+  sessionId: string,
+  query: string,
+  status: ExternalSessionStatus = 'running',
+): Promise<void> {
+  try {
+    await fetch(`${SRC_API_BASE_URL}/sessions/external/upsert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        query,
+        status,
+        skillId: '__converse__',
+      }),
+    })
+  } catch (err) {
+    console.warn('[Converse] failed to upsert external session:', err)
+  }
+}
+
+async function appendExternalMessage(
+  sessionId: string,
+  type: 'user' | 'assistant' | 'error' | 'system',
+  content: string,
+): Promise<void> {
+  const text = content.trim()
+  if (!text) return
+  try {
+    await fetch(`${SRC_API_BASE_URL}/sessions/external/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, type, content: text }),
+    })
+  } catch (err) {
+    console.warn('[Converse] failed to append external message:', err)
+  }
+}
+
+async function updateExternalSessionStatus(
+  sessionId: string,
+  status: ExternalSessionStatus,
+): Promise<void> {
+  try {
+    await fetch(`${SRC_API_BASE_URL}/sessions/external/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, status }),
+    })
+  } catch (err) {
+    console.warn('[Converse] failed to update external session status:', err)
+  }
+}
 
 function getUploadsDir(): string {
   return join(dirname(DATA_DIR), 'uploads')
@@ -669,6 +759,10 @@ router.post('/', async (req: Request, res: Response) => {
   const rawQuery = typeof latestMsg?.content === 'string' ? latestMsg.content : ''
   const extracted = extractFileIdsFromQuery(rawQuery)
   const baseQuery = extracted.query || rawQuery.trim()
+  const persistUserQuery = baseQuery || rawQuery.trim() || '用户发起了对话分派请求'
+
+  await upsertExternalSession(sessionId, persistUserQuery, 'running')
+  await appendExternalMessage(sessionId, 'user', persistUserQuery)
 
   const directAction = detectDirectIntentAction(baseQuery)
   if (directAction) {
@@ -683,8 +777,16 @@ router.post('/', async (req: Request, res: Response) => {
     })
     if (guard.ok && guard.action) {
       sseWrite(res, 'action', guard.action)
+      await appendExternalMessage(sessionId, 'assistant', summarizeAction(guard.action))
+      await updateExternalSessionStatus(sessionId, 'completed')
     } else if (guard.question) {
       sseWrite(res, 'question', guard.question)
+      await appendExternalMessage(sessionId, 'assistant', buildQuestionSummary(guard.question))
+    } else if (guard.validationErrors?.length) {
+      const errorText = guard.validationErrors.join('; ')
+      sseWrite(res, 'error', { message: errorText })
+      await appendExternalMessage(sessionId, 'error', errorText)
+      await updateExternalSessionStatus(sessionId, 'failed')
     }
     sseWrite(res, 'done', {})
     res.end()
@@ -693,10 +795,11 @@ router.post('/', async (req: Request, res: Response) => {
 
   /* ── 中止控制器（需在 try 外声明，finally 中清理） ── */
   const abortController = new AbortController()
+  let streamError = ''
+  let questionSummary = ''
+  let terminalStatus: ExternalSessionStatus = 'running'
   const onClientClose = () => {
-    if (!abortController.signal.aborted) {
-      abortController.abort()
-    }
+    // 允许 converse 在客户端断开后继续执行，完成后可在首页恢复查看结果。
   }
   res.on('close', onClientClose)
 
@@ -739,6 +842,7 @@ router.post('/', async (req: Request, res: Response) => {
             )
             if (questionPayload) {
               hasPendingQuestion = true
+              questionSummary = buildQuestionSummary(questionPayload)
               sseWrite(res, 'question', questionPayload)
               abortController.abort()
               return
@@ -753,6 +857,7 @@ router.post('/', async (req: Request, res: Response) => {
               },
             ], { questionContext: 'clarify' })
             hasPendingQuestion = true
+            questionSummary = buildQuestionSummary(fallbackQuestion)
             sseWrite(res, 'question', fallbackQuestion)
             abortController.abort()
             return
@@ -799,6 +904,7 @@ router.post('/', async (req: Request, res: Response) => {
           const textQuestionPayload = parseQuestionCallFromText(fullText)
           if (textQuestionPayload) {
             hasPendingQuestion = true
+            questionSummary = buildQuestionSummary(textQuestionPayload)
             const state = setSessionState(sessionId, {
               phase: textQuestionPayload.questionContext === 'schedule' ? 'schedule_wizard' : 'clarify',
               approvalRequired: false,
@@ -827,16 +933,23 @@ router.post('/', async (req: Request, res: Response) => {
               sseWrite(res, 'action', guard.action)
             } else if (guard.question) {
               hasPendingQuestion = true
+              questionSummary = buildQuestionSummary(guard.question)
               sseWrite(res, 'question', guard.question)
             } else if (guard.validationErrors?.length) {
-              sseWrite(res, 'error', { message: guard.validationErrors.join('; ') })
+              streamError = guard.validationErrors.join('; ')
+              sseWrite(res, 'error', { message: streamError })
             }
           }
           if (!action && !fullText.trim() && !hasPendingQuestion) {
+            const fallbackText = '我还缺少一些关键信息，请再描述一次目标，或告诉我你希望先澄清哪一步。'
+            fullText += fallbackText
             sseWrite(res, 'text', {
-              content: '我还缺少一些关键信息，请再描述一次目标，或告诉我你希望先澄清哪一步。',
+              content: fallbackText,
             })
           }
+          terminalStatus = hasPendingQuestion
+            ? 'running'
+            : (streamError ? 'failed' : 'completed')
           sseWrite(res, 'done', {})
         }
         if (event.type === 'error') {
@@ -846,13 +959,34 @@ router.post('/', async (req: Request, res: Response) => {
               return
             }
           }
-          sseWrite(res, 'error', { message: event.content })
+          streamError = asString(event.content) || '对话服务异常'
+          terminalStatus = 'failed'
+          sseWrite(res, 'error', { message: streamError })
         }
       },
     })
+
+    const cleanedAssistantText = stripActionMarkers(fullText)
+    if (cleanedAssistantText) {
+      await appendExternalMessage(sessionId, 'assistant', cleanedAssistantText)
+    }
+    if (questionSummary) {
+      await appendExternalMessage(sessionId, 'assistant', questionSummary)
+    }
+    if (streamError) {
+      await appendExternalMessage(sessionId, 'error', streamError)
+      terminalStatus = 'failed'
+    }
+    if (terminalStatus !== 'running') {
+      await updateExternalSessionStatus(sessionId, terminalStatus)
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : '对话服务异常'
     console.error('[Converse] 错误:', err)
+    streamError = msg
+    terminalStatus = 'failed'
+    await appendExternalMessage(sessionId, 'error', msg)
+    await updateExternalSessionStatus(sessionId, 'failed')
     sseWrite(res, 'error', { message: msg })
   } finally {
     res.off('close', onClientClose)

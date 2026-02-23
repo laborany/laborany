@@ -26,6 +26,7 @@ export interface UseConverseReturn {
   messages: AgentMessage[]
   sendMessage: (text: string, files?: File[]) => Promise<void>
   stop: () => void
+  resumeSession: (sessionId: string) => Promise<boolean>
   respondToQuestion: (questionId: string, answers: Record<string, string>) => Promise<void>
   action: ConverseAction | null
   pendingQuestion: PendingQuestion | null
@@ -45,6 +46,16 @@ type ConversePhase = NonNullable<UseConverseReturn['state']>['phase']
 
 const ACTION_MARKER_RE = /\n?LABORANY_ACTION:\s*\{[\s\S]*?\}\s*$/
 const FILE_IDS_MARKER_RE = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
+
+interface SessionDetailMessage {
+  id?: number
+  type?: string
+  content?: string | null
+  toolName?: string | null
+  toolInput?: Record<string, unknown> | null
+  toolResult?: string | null
+  createdAt?: string
+}
 
 function isAbortLikeError(err: unknown): boolean {
   if (!(err instanceof Error)) return false
@@ -414,6 +425,106 @@ export function useConverse(): UseConverseReturn {
     await sendMessage(answerText)
   }, [pendingQuestion, sendMessage])
 
+  const resumeSession = useCallback(async (targetSessionId: string): Promise<boolean> => {
+    const sid = targetSessionId.trim()
+    if (!sid) return false
+
+    abortRef.current?.abort()
+    abortRef.current = null
+
+    try {
+      const token = localStorage.getItem('token')
+      const headers: HeadersInit = {}
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
+      const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sid)}`, { headers })
+      if (!res.ok) return false
+
+      const payload = await res.json() as {
+        skill_id?: string
+        messages?: SessionDetailMessage[]
+      }
+      if (payload.skill_id !== '__converse__') return false
+
+      const restored = (Array.isArray(payload.messages) ? payload.messages : [])
+        .reduce<AgentMessage[]>((acc, item, idx) => {
+          const type = (item.type || '').trim()
+          const createdAt = item.createdAt ? new Date(item.createdAt) : new Date()
+          const id = `resume_${sid}_${item.id ?? idx}`
+
+          if (type === 'user') {
+            acc.push({
+              id,
+              type: 'user' as const,
+              content: item.content || '',
+              timestamp: createdAt,
+            })
+            return acc
+          }
+
+          if (type === 'assistant') {
+            acc.push({
+              id,
+              type: 'assistant' as const,
+              content: stripActionMarker(item.content || ''),
+              timestamp: createdAt,
+            })
+            return acc
+          }
+
+          if (type === 'tool_use') {
+            acc.push({
+              id,
+              type: 'tool' as const,
+              content: '',
+              toolName: item.toolName || 'Tool',
+              toolInput: item.toolInput || {},
+              timestamp: createdAt,
+            })
+            return acc
+          }
+
+          if (type === 'tool_result') {
+            acc.push({
+              id,
+              type: 'tool' as const,
+              content: item.toolResult || item.content || '',
+              timestamp: createdAt,
+            })
+            return acc
+          }
+
+          if (type === 'error' || type === 'system') {
+            acc.push({
+              id,
+              type: 'assistant' as const,
+              content: item.content || '',
+              timestamp: createdAt,
+            })
+            return acc
+          }
+
+          return acc
+        }, [])
+
+      setMessages(restored)
+      messagesRef.current = restored
+      setAction(null)
+      setPendingQuestion(null)
+      setState(null)
+      setError(null)
+      setIsThinking(false)
+      setSessionFileIds([])
+      sessionFileIdsRef.current = []
+      sessionIdRef.current = sid
+      setSessionId(sid)
+      return true
+    } catch {
+      return false
+    }
+  }, [])
+
   const reset = useCallback(() => {
     stop()
     setMessages([])
@@ -431,6 +542,7 @@ export function useConverse(): UseConverseReturn {
     messages,
     sendMessage,
     stop,
+    resumeSession,
     respondToQuestion,
     action,
     pendingQuestion,

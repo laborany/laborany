@@ -18,6 +18,8 @@ interface RunningTask {
   skillId: string
   skillName: string
   startedAt: string
+  source?: 'runtime' | 'converse'
+  query?: string
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -33,10 +35,15 @@ export function RunningTasksIndicator() {
   useEffect(() => {
     const fetchRunningTasks = async () => {
       try {
-        const res = await fetch(`${API_BASE}/skill/runtime/running`)
+        const token = localStorage.getItem('token')
+        const res = await fetch(`${API_BASE}/sessions/running-tasks`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
         if (res.ok) {
           const data = await res.json()
-          setTasks(data.tasks || [])
+          const taskList = Array.isArray(data.tasks) ? data.tasks as RunningTask[] : []
+          taskList.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+          setTasks(taskList)
         }
       } catch {
         // 静默失败
@@ -119,7 +126,9 @@ export function RunningTasksIndicator() {
             {tasks.map((task) => (
               <Link
                 key={task.sessionId}
-                to={`/history/${task.sessionId}`}
+                to={task.source === 'converse' || task.skillId === '__converse__'
+                  ? `/?converseSid=${encodeURIComponent(task.sessionId)}`
+                  : `/execute/${task.skillId}?sid=${encodeURIComponent(task.sessionId)}`}
                 onClick={() => setShowPanel(false)}
                 className="block px-4 py-3 border-b border-border last:border-b-0 hover:bg-accent/50 transition-colors"
               >
@@ -128,7 +137,7 @@ export function RunningTasksIndicator() {
                   <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">
-                      {task.skillName}
+                      {task.skillName || task.query || task.skillId}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       已运行 {formatDuration(task.startedAt)}

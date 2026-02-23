@@ -1,17 +1,17 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                       MemoryArchiveTab 组件                              ║
- * ║                                                                          ║
- * ║  功能：整合长期记忆编辑 + 情节记忆浏览 + 每日记忆文件                       ║
- * ║  设计：使用 CollapsibleSection 实现渐进式披露                             ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
+/* 鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽
+ * 鈺?                      MemoryArchiveTab 缁勪欢                              鈺?
+ * 鈺?                                                                         鈺?
+ * 鈺? 鍔熻兘锛氭暣鍚堥暱鏈熻蹇嗙紪杈?+ 鎯呰妭璁板繂娴忚 + 姣忔棩璁板繂鏂囦欢                       鈺?
+ * 鈺? 璁捐锛氫娇鐢?CollapsibleSection 瀹炵幇娓愯繘寮忔姭闇?                            鈺?
+ * 鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆 */
 
 import { useState, useEffect } from 'react'
 import { AGENT_API_BASE, API_BASE } from '../../config/api'
 import { CollapsibleSection } from '../shared/CollapsibleSection'
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           类型定义                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+/* 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+ * 鈹?                          绫诲瀷瀹氫箟                                        鈹?
+ * 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?*/
 interface MemoryFile {
   name: string
   path: string
@@ -27,14 +27,18 @@ interface LongTermStats {
   accepted: number
   rejected: number
   superseded: number
+  noDecision: number
   total: number
   lastActionAt?: string
+  lastNoDecisionAt?: string
   allTime?: {
     accepted: number
     rejected: number
     superseded: number
+    noDecision: number
     total: number
     lastActionAt?: string
+    lastNoDecisionAt?: string
   }
 }
 
@@ -43,10 +47,16 @@ interface LongTermAuditLog {
   at: string
   scope: 'global' | 'skill'
   skillId?: string
-  action: 'inserted' | 'updated' | 'superseded' | 'skipped'
+  action: 'inserted' | 'updated' | 'superseded' | 'skipped' | 'no_decision_summary'
   reason: string
   category: string
   statement: string
+  reasonSummary?: string
+  reasonCounts?: Record<string, number>
+  extractionMethod?: 'cli' | 'regex'
+  factCount?: number
+  profilePatchCount?: number
+  candidateQueued?: number
 }
 
 interface Skill {
@@ -65,18 +75,18 @@ interface SkillListItem {
 
 type MemoryScope = 'global' | 'skill'
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           主组件                                          │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+/* 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+ * 鈹?                          涓荤粍浠?                                         鈹?
+ * 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?*/
 export function MemoryArchiveTab() {
   return (
     <div className="space-y-6">
       <LongTermOverviewSection />
 
-      {/* 长期记忆编辑器 */}
+      {/* 闀挎湡璁板繂缂栬緫鍣?*/}
       <GlobalMemorySection />
 
-      {/* 每日记忆文件浏览 */}
+      {/* 姣忔棩璁板繂鏂囦欢娴忚 */}
       <CollapsibleSection
         title="每日记忆文件"
         defaultExpanded={false}
@@ -140,25 +150,32 @@ function LongTermOverviewSection() {
         <div className="space-y-4 pt-2">
           {error && <MessageBox type="error" text={error} />}
           {stats && (
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
               <MetricCard label="已写入" value={stats.accepted} />
               <MetricCard label="已拒绝" value={stats.rejected} />
               <MetricCard label="已替换" value={stats.superseded} />
+              <MetricCard label="无决策" value={stats.noDecision} />
               <MetricCard label="总决策数" value={stats.total} />
             </div>
           )}
 
           {stats?.allTime && (
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
               <MetricCard label="累计写入" value={stats.allTime.accepted} />
               <MetricCard label="累计拒绝" value={stats.allTime.rejected} />
               <MetricCard label="累计替换" value={stats.allTime.superseded} />
+              <MetricCard label="累计无决策" value={stats.allTime.noDecision} />
               <MetricCard label="累计总数" value={stats.allTime.total} />
             </div>
           )}
           {stats && (
-            <div className="text-xs text-muted-foreground">
-              最近决策时间: {stats.lastActionAt ? new Date(stats.lastActionAt).toLocaleString() : '暂无审计记录'}
+            <div className="space-y-1 text-xs text-muted-foreground">
+              <div>
+                最近决策时间: {stats.lastActionAt ? new Date(stats.lastActionAt).toLocaleString() : '暂无审计记录'}
+              </div>
+              <div>
+                最近无决策时间: {stats.lastNoDecisionAt ? new Date(stats.lastNoDecisionAt).toLocaleString() : '暂无'}
+              </div>
             </div>
           )}
 
@@ -174,17 +191,26 @@ function LongTermOverviewSection() {
             </div>
             <div className="max-h-[220px] overflow-y-auto px-3 py-2">
               {logs.length === 0 ? (
-                <div className="py-2 text-sm text-muted-foreground">暂无日志</div>
+                <div className="py-2 text-sm text-muted-foreground">
+                  {(stats && (stats.total > 0 || stats.noDecision > 0))
+                    ? '暂无审计明细，可稍后重试刷新'
+                    : '暂无日志'}
+                </div>
               ) : (
                 logs.map(log => (
                   <div key={log.id} className="mb-3 border-b border-border/40 pb-2 last:mb-0 last:border-b-0">
                     <div className="mb-1 flex items-center gap-2">
                       <ScopeTag scope={log.scope} />
                       <span className="text-xs text-muted-foreground">{new Date(log.at).toLocaleString()}</span>
-                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{log.action}</span>
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{formatAuditAction(log.action)}</span>
                     </div>
                     <div className="text-sm text-foreground">{log.statement}</div>
-                    <div className="text-xs text-muted-foreground">{log.category} · {log.reason}</div>
+                    <div className="text-xs text-muted-foreground">{log.category} · {formatAuditReason(log)}</div>
+                    {log.action === 'no_decision_summary' && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        method={log.extractionMethod || 'unknown'}, facts={log.factCount ?? 0}, patches={log.profilePatchCount ?? 0}, queued={log.candidateQueued ?? 0}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -196,9 +222,80 @@ function LongTermOverviewSection() {
   )
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       长期记忆编辑器 (MEMORY.md)                          │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+function formatAuditAction(action: LongTermAuditLog['action']): string {
+  switch (action) {
+    case 'inserted':
+      return '写入'
+    case 'updated':
+      return '更新'
+    case 'superseded':
+      return '替换'
+    case 'skipped':
+      return '跳过'
+    case 'no_decision_summary':
+      return '未触发(聚合)'
+    default:
+      return action
+  }
+}
+
+const REASON_LABELS: Record<string, string> = {
+  summary_and_facts_empty: '摘要与事实均为空',
+  cli_fallback_regex: 'CLI 抽取失败，已回退正则抽取',
+  facts_empty_raw: '原始抽取结果无事实',
+  facts_empty_filtered: '事实在过滤后为空',
+  summary_empty: '摘要为空',
+  profile_patch_empty: '未形成可用画像补丁',
+  no_user_qualified_patch: '没有满足条件的用户侧补丁',
+  longterm_score_or_evidence_insufficient: '证据强度或评分不足，未触发长期写入',
+  no_longterm_decision: '未触发长期记忆决策',
+  no_decision_summary: '未触发长期记忆决策（聚合）',
+  no_reason: '未提供原因',
+}
+
+function mapReasonKey(key: string): string {
+  return REASON_LABELS[key] || key
+}
+
+function formatReasonSummary(summary: string): string {
+  const normalized = summary.trim()
+  if (!normalized) return ''
+  const parts = normalized
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+  if (parts.length === 0) return normalized
+
+  const parsed = parts.map(item => item.match(/^([a-z0-9_]+):(\d+)$/i))
+  const allPairs = parsed.every(Boolean)
+  if (!allPairs) return normalized
+
+  return parsed
+    .map(match => `${mapReasonKey(match![1])}:${match![2]}`)
+    .join('；')
+}
+
+function formatReasonCounts(reasonCounts?: Record<string, number>): string {
+  if (!reasonCounts) return ''
+  const entries = Object.entries(reasonCounts)
+    .filter(([, value]) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+
+  if (entries.length === 0) return ''
+  return entries.map(([key, value]) => `${mapReasonKey(key)}:${value}`).join('；')
+}
+
+function formatAuditReason(log: LongTermAuditLog): string {
+  if (log.reasonSummary && log.reasonSummary.trim()) return formatReasonSummary(log.reasonSummary)
+  const counted = formatReasonCounts(log.reasonCounts)
+  if (counted) return counted
+  if (log.reason) return mapReasonKey(log.reason)
+  return '未知原因'
+}
+/* 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+ * 鈹?                      闀挎湡璁板繂缂栬緫鍣?(MEMORY.md)                          鈹?
+ * 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?*/
 function GlobalMemorySection() {
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(true)
@@ -213,7 +310,7 @@ function GlobalMemorySection() {
     try {
       const res = await fetch(`${AGENT_API_BASE}/global-memory`)
       if (res.status === 404) {
-        // 文件不存在是正常的初始状态
+        // 鏂囦欢涓嶅瓨鍦ㄦ槸姝ｅ父鐨勫垵濮嬬姸鎬?
         setContent('')
       } else if (res.ok) {
         const data = await res.json()
@@ -288,9 +385,9 @@ function GlobalMemorySection() {
   )
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       每日记忆文件浏览器                                   │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+/* 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+ * 鈹?                      姣忔棩璁板繂鏂囦欢娴忚鍣?                                  鈹?
+ * 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?*/
 function DailyMemoryBrowser() {
   const [scope, setScope] = useState<MemoryScope>('global')
   const [skills, setSkills] = useState<Skill[]>([])
@@ -392,7 +489,7 @@ function DailyMemoryBrowser() {
 
   return (
     <div className="space-y-4 pt-2">
-      {/* 作用域选择 */}
+      {/* 浣滅敤鍩熼€夋嫨 */}
       <div className="flex items-center gap-4">
         <select
           value={scope}
@@ -420,7 +517,7 @@ function DailyMemoryBrowser() {
       {message && <MessageBox type={message.type} text={message.text} />}
 
       <div className="grid grid-cols-3 gap-4">
-        {/* 文件列表 */}
+        {/* 鏂囦欢鍒楄〃 */}
         <div className="col-span-1 overflow-hidden rounded-lg border border-border bg-card">
           <div className="border-b border-border bg-muted/50 px-3 py-2">
             <span className="text-sm font-medium text-foreground">文件列表</span>
@@ -449,7 +546,7 @@ function DailyMemoryBrowser() {
           </div>
         </div>
 
-        {/* 文件内容 */}
+        {/* 鏂囦欢鍐呭 */}
         <div className="col-span-2 space-y-3">
           {selectedFile ? (
             <>
@@ -485,9 +582,9 @@ function DailyMemoryBrowser() {
   )
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           辅助组件                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+/* 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+ * 鈹?                          杈呭姪缁勪欢                                        鈹?
+ * 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?*/
 function LoadingSpinner() {
   return (
     <div className="flex items-center justify-center py-4">
@@ -527,9 +624,9 @@ function ScopeTag({ scope }: { scope: 'global' | 'skill' }) {
   )
 }
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           图标组件                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+/* 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+ * 鈹?                          鍥炬爣缁勪欢                                        鈹?
+ * 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?*/
 function FileIcon() {
   return (
     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -41,6 +41,15 @@ export interface FeishuConfig {
   defaultSkillId: string
 }
 
+function sanitizeBotName(name: string): string {
+  const normalized = name
+    // Card plain_text occasionally renders emoji as "?" in some clients; strip pictographs for consistency.
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/\uFFFD/g, '')
+    .trim()
+  return normalized || 'LaborAny'
+}
+
 /**
  * 从环境变量加载飞书配置
  * 返回 null 表示未启用或缺少必要凭证
@@ -66,7 +75,7 @@ export function loadFeishuConfig(): FeishuConfig | null {
     allowUsers,
     requireAllowlist: process.env.FEISHU_REQUIRE_ALLOWLIST === 'true',
     domain,
-    botName: process.env.FEISHU_BOT_NAME?.trim() || 'LaborAny',
+    botName: sanitizeBotName(process.env.FEISHU_BOT_NAME?.trim() || 'LaborAny'),
     defaultSkillId: process.env.FEISHU_DEFAULT_SKILL?.trim() || '__generic__',
   }
 }

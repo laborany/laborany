@@ -459,9 +459,13 @@ function FeishuConfigHelp() {
       </button>
       {expanded && (
         <div className="px-4 pb-4 space-y-3 text-sm">
-          <p className="text-muted-foreground text-xs">
-            需配置 `FEISHU_ENABLED=true`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`，并在飞书开放平台启用 WebSocket 事件订阅。
-          </p>
+          <div className="rounded border border-purple-200/70 bg-purple-50/50 p-3 text-xs text-muted-foreground space-y-2">
+            <p>基础配置：`FEISHU_ENABLED=true`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`。</p>
+            <p>Bot 名称建议使用中英文和数字，避免 emoji（部分飞书客户端会显示为 `?`；系统会自动剔除 emoji）。</p>
+            <p>事件订阅：启用 WebSocket 长连接，并添加 `im.message.receive_v1`。</p>
+            <p>最小权限：`im:message:send_as_bot`、`im:message:readonly`、`im:message.p2p_msg:readonly`、`im:message.group_at_msg:readonly`、`im:resource`。</p>
+            <p>文件回传说明：`im:resource` 只负责下载用户消息资源；机器人回传文件还需要 IM 文件上传能力（控制台可能显示为 `im:file` 或等价项）。</p>
+          </div>
           <button
             onClick={handleTestFeishu}
             disabled={testing}

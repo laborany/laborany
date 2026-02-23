@@ -1,6 +1,6 @@
 ﻿import { randomUUID } from 'crypto'
 import { createWriteStream, existsSync, mkdirSync } from 'fs'
-import { dirname, extname, join } from 'path'
+import { basename, dirname, extname, join } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import type { Client } from '@larksuiteoapi/node-sdk'
@@ -66,8 +66,29 @@ interface SkillListItem {
   description?: string
 }
 
+interface TaskFileNode {
+  name: string
+  path: string
+  type: 'file' | 'folder'
+  ext?: string
+  size?: number
+  mtimeMs?: number
+  updatedAt?: string
+  children?: TaskFileNode[]
+}
+
+interface TaskFileSnapshot {
+  path: string
+  size: number
+  mtimeMs: number
+}
+
 const PROCESSED_MESSAGE_TTL_MS = 10 * 60 * 1000
 const MAX_PROCESSED_MESSAGES = 2000
+const MAX_ARTIFACTS_PER_RUN = 5
+const MAX_ARTIFACT_BYTES = 20 * 1024 * 1024
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg'])
+const IGNORE_ARTIFACT_NAMES = new Set(['history.txt', 'CLAUDE.md'])
 const processedMessageIds = new Map<string, number>()
 
 function isDuplicateMessage(messageId: string): boolean {
@@ -176,6 +197,206 @@ async function* streamSse(response: Response): AsyncGenerator<SseEvent> {
 
 function getUploadsDir(): string {
   return join(dirname(DATA_DIR), 'uploads')
+}
+
+function normalizeApiFilePath(path: string): string {
+  return path
+    .split('/')
+    .map(segment => encodeURIComponent(segment))
+    .join('/')
+}
+
+function flattenTaskFiles(nodes: TaskFileNode[]): TaskFileSnapshot[] {
+  const flattened: TaskFileSnapshot[] = []
+  const visit = (node: TaskFileNode): void => {
+    if (node.type === 'file') {
+      flattened.push({
+        path: node.path,
+        size: Number(node.size || 0),
+        mtimeMs: Number(node.mtimeMs || 0),
+      })
+      return
+    }
+    if (!Array.isArray(node.children)) return
+    node.children.forEach(visit)
+  }
+  nodes.forEach(visit)
+  return flattened
+}
+
+function buildSnapshotMap(nodes: TaskFileNode[]): Map<string, TaskFileSnapshot> {
+  const map = new Map<string, TaskFileSnapshot>()
+  for (const file of flattenTaskFiles(nodes)) {
+    map.set(file.path, file)
+  }
+  return map
+}
+
+function shouldIgnoreArtifact(path: string): boolean {
+  const name = basename(path)
+  if (!name) return true
+  if (IGNORE_ARTIFACT_NAMES.has(name)) return true
+  if (name.startsWith('.')) return true
+  return false
+}
+
+function resolveFeishuFileType(fileName: string): 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream' {
+  const ext = extname(fileName).toLowerCase()
+  if (ext === '.pdf') return 'pdf'
+  if (ext === '.doc' || ext === '.docx') return 'doc'
+  if (ext === '.xls' || ext === '.xlsx') return 'xls'
+  if (ext === '.ppt' || ext === '.pptx') return 'ppt'
+  return 'stream'
+}
+
+async function fetchTaskFiles(sessionId: string): Promise<TaskFileNode[]> {
+  try {
+    const response = await fetch(`${SRC_API_BASE_URL}/task/${encodeURIComponent(sessionId)}/files`)
+    if (!response.ok) return []
+    const payload = await response.json() as { files?: unknown }
+    return Array.isArray(payload.files) ? payload.files as TaskFileNode[] : []
+  } catch {
+    return []
+  }
+}
+
+async function downloadTaskFile(sessionId: string, filePath: string): Promise<Buffer | null> {
+  const normalizedPath = normalizeApiFilePath(filePath)
+  try {
+    const response = await fetch(`${SRC_API_BASE_URL}/task/${encodeURIComponent(sessionId)}/files/${normalizedPath}`)
+    if (!response.ok) return null
+    const data = Buffer.from(await response.arrayBuffer())
+    if (data.length > MAX_ARTIFACT_BYTES) {
+      console.warn(`[Feishu] skip oversized artifact ${filePath}: ${data.length} bytes`)
+      return null
+    }
+    return data
+  } catch (error) {
+    console.warn(`[Feishu] failed to download task artifact ${filePath}:`, error)
+    return null
+  }
+}
+
+async function sendFileAttachment(
+  client: Client,
+  chatId: string,
+  fileName: string,
+  buffer: Buffer,
+): Promise<boolean> {
+  try {
+    const fileRes = await client.im.file.create({
+      data: {
+        file_type: resolveFeishuFileType(fileName),
+        file_name: fileName,
+        file: buffer,
+      },
+    })
+    const fileKey = (fileRes as any)?.file_key
+    if (!fileKey) return false
+    await client.im.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: chatId,
+        msg_type: 'file',
+        content: JSON.stringify({ file_key: fileKey }),
+      },
+    })
+    return true
+  } catch (error) {
+    console.warn(`[Feishu] failed to send file attachment ${fileName}:`, error)
+    return false
+  }
+}
+
+async function sendImageAttachment(
+  client: Client,
+  chatId: string,
+  fileName: string,
+  buffer: Buffer,
+): Promise<boolean> {
+  try {
+    const imageRes = await client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: buffer,
+      },
+    })
+    const imageKey = (imageRes as any)?.image_key
+    if (!imageKey) return false
+    await client.im.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: chatId,
+        msg_type: 'image',
+        content: JSON.stringify({ image_key: imageKey }),
+      },
+    })
+    return true
+  } catch (error) {
+    console.warn(`[Feishu] failed to send image attachment ${fileName}:`, error)
+    return false
+  }
+}
+
+async function sendArtifactsFromSession(
+  client: Client,
+  chatId: string,
+  sessionId: string,
+  baselineMap: Map<string, TaskFileSnapshot>,
+): Promise<void> {
+  const latestNodes = await fetchTaskFiles(sessionId)
+  const latestMap = buildSnapshotMap(latestNodes)
+  if (latestMap.size === 0) return
+
+  const candidates: TaskFileSnapshot[] = []
+  for (const [path, nextSnapshot] of latestMap.entries()) {
+    if (shouldIgnoreArtifact(path)) continue
+    const previous = baselineMap.get(path)
+    const isChanged = !previous
+      || previous.size !== nextSnapshot.size
+      || previous.mtimeMs !== nextSnapshot.mtimeMs
+    if (isChanged) candidates.push(nextSnapshot)
+  }
+
+  if (candidates.length === 0) return
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)
+
+  let sent = 0
+  let failed = 0
+  let skipped = 0
+  const capped = candidates.slice(0, MAX_ARTIFACTS_PER_RUN)
+  skipped += Math.max(0, candidates.length - capped.length)
+
+  for (const item of capped) {
+    const fileName = basename(item.path) || item.path
+    const payload = await downloadTaskFile(sessionId, item.path)
+    if (!payload) {
+      skipped += 1
+      continue
+    }
+
+    const extension = extname(fileName).toLowerCase()
+    let ok = false
+    if (IMAGE_EXTENSIONS.has(extension)) {
+      ok = await sendImageAttachment(client, chatId, fileName, payload)
+      if (!ok && extension === '.svg') {
+        ok = await sendFileAttachment(client, chatId, fileName, payload)
+      }
+    } else {
+      ok = await sendFileAttachment(client, chatId, fileName, payload)
+    }
+
+    if (ok) sent += 1
+    else failed += 1
+  }
+
+  if (sent > 0 || failed > 0 || skipped > 0) {
+    await sendText(
+      client,
+      chatId,
+      `本轮文件回传：成功 ${sent}，失败 ${failed}，跳过 ${skipped}。`,
+    )
+  }
 }
 
 async function downloadFeishuFile(
@@ -419,6 +640,9 @@ async function executeSkill(
 ): Promise<void> {
   const executeSessionId = `feishu-${randomUUID().slice(0, 12)}`
   setExecuteSessionId(openId, executeSessionId)
+  let runtimeSessionId = executeSessionId
+  let baselineSessionId = executeSessionId
+  let baselineMap = buildSnapshotMap(await fetchTaskFiles(executeSessionId))
 
   try {
     const response = await fetch(`${SRC_API_BASE_URL}/skill/execute`, {
@@ -439,7 +663,12 @@ async function executeSkill(
     let accumulated = ''
     for await (const event of streamSse(response)) {
       if (event.type === 'session' && event.sessionId) {
+        runtimeSessionId = event.sessionId
         setExecuteSessionId(openId, event.sessionId)
+        if (event.sessionId !== baselineSessionId) {
+          baselineSessionId = event.sessionId
+          baselineMap = buildSnapshotMap(await fetchTaskFiles(event.sessionId))
+        }
       }
 
       if (event.type === 'text' && event.content) {
@@ -468,6 +697,7 @@ async function executeSkill(
     } else {
       await sendText(client, chatId, accumulated || '✅ Execution completed')
     }
+    await sendArtifactsFromSession(client, chatId, runtimeSessionId, baselineMap)
   } finally {
     clearExecuteSessionId(openId)
   }
@@ -657,7 +887,7 @@ async function handleCommand(
 
   if (trimmed === '/help') {
     await sendText(client, chatId, [
-      `🤻 ${config.botName}`,
+      `机器人：${config.botName}`,
       '',
       '直接发送消息 -> 智能匹配技能并执行',
       '/skill <id> [query] -> 指定技能执行',
@@ -709,7 +939,7 @@ async function handleCommand(
     const query = skillMatch[2]?.trim() || '请执行该技能'
 
     const card = new FeishuStreamingSession(client, config)
-    const started = await card.start(chatId, `🎯 ${config.botName}`)
+    const started = await card.start(chatId, `技能执行：${config.botName}`)
     if (started) {
       await card.update(`执行技能「${skillId}」...`)
     }
@@ -774,12 +1004,14 @@ export async function handleFeishuMessage(
 
   if (await handleCommand(larkClient, config, chatId, openId, text)) return
 
-  const historySessionId = `feishu-msg-${randomUUID().slice(0, 12)}`
+  const userState = getUserState(openId)
+  const historySessionId = userState.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
+  setConverseSessionId(openId, historySessionId)
   await upsertExternalSession(historySessionId, text, 'running')
   await appendExternalMessage(historySessionId, 'user', text)
 
   const card = new FeishuStreamingSession(larkClient, config)
-  const started = await card.start(chatId, `🤻 ${config.botName}`)
+  const started = await card.start(chatId, config.botName)
   if (!started) {
     await appendExternalMessage(historySessionId, 'assistant', '已开始执行任务，请查看执行结果。')
     try {

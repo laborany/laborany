@@ -7,7 +7,7 @@
  * ║  3. 页面级关注点 —— URL 参数、对话框、导航栏                                ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom'
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAgent } from '../hooks/useAgent'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
@@ -46,7 +46,7 @@ export default function ExecutePage() {
    * │                      断线重连：检查正在执行的任务                          │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   useEffect(() => {
-    if (searchParams.get('q')) return
+    if (searchParams.get('q') || searchParams.get('sid')) return
 
     async function checkTask() {
       const runningId = await agent.checkRunningTask()
@@ -61,22 +61,24 @@ export default function ExecutePage() {
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      URL 参数自动执行（?q=xxx&sid=xxx）                 │
    * └──────────────────────────────────────────────────────────────────────────┘ */
-  const hasAutoExecutedRef = useRef(false)
+  const lastBootstrapKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
-    hasAutoExecutedRef.current = false
+    lastBootstrapKeyRef.current = null
     handledCreatedRef.current = null
   }, [skillId])
 
   useEffect(() => {
-    if (hasAutoExecutedRef.current) return
+    const sid = searchParams.get('sid')
     const query = searchParams.get('q')
-    if (!query) return
+    if (!sid && !query) return
 
-    hasAutoExecutedRef.current = true
+    const normalizedQuery = query?.trim() || ''
+    const bootstrapKey = `${skillId || ''}|${sid || ''}|${normalizedQuery}`
+    if (lastBootstrapKeyRef.current === bootstrapKey) return
+    lastBootstrapKeyRef.current = bootstrapKey
 
     const token = localStorage.getItem('token')
-    const sid = searchParams.get('sid')
 
     const canContinueSession = async (targetSessionId: string): Promise<boolean> => {
       if (!targetSessionId || !token || !skillId) return false
@@ -136,7 +138,6 @@ export default function ExecutePage() {
           created_at?: string
         }>
 
-        const normalizedQuery = query.trim()
         const matched = list.find(item => (
           item.skill_id === skillId
           && (item.query || '').trim() === normalizedQuery
@@ -155,35 +156,49 @@ export default function ExecutePage() {
     const bootstrap = async () => {
       let attached = false
       let continuedBySid = false
+      let startedNewExecution = false
       const pendingFiles = takePendingFiles()
+      const filesArg = pendingFiles.length > 0 ? pendingFiles : undefined
 
       if (sid) {
         attached = await tryAttachRunningSession(sid)
-        if (!attached && await canContinueSession(sid)) {
+        if (!attached && normalizedQuery && await canContinueSession(sid)) {
           agent.resumeSession(sid)
-          await agent.execute(query, pendingFiles.length > 0 ? pendingFiles : undefined)
+          await agent.execute(normalizedQuery, filesArg)
           continuedBySid = true
+          startedNewExecution = true
         }
       }
 
-      if (!attached && !continuedBySid) {
+      if (!sid && normalizedQuery && !attached && !continuedBySid) {
         const matchedSession = await findSameSession()
         if (matchedSession?.id) {
           if (matchedSession.isRunning) {
             attached = await tryAttachRunningSession(matchedSession.id)
           } else {
             agent.resumeSession(matchedSession.id)
-            await agent.execute(query, pendingFiles.length > 0 ? pendingFiles : undefined)
+            await agent.execute(normalizedQuery, filesArg)
             continuedBySid = true
+            startedNewExecution = true
           }
         }
       }
 
-      if (!attached && !continuedBySid) {
-        await agent.execute(query, pendingFiles.length > 0 ? pendingFiles : undefined)
+      if (normalizedQuery && !attached && !continuedBySid) {
+        await agent.execute(normalizedQuery, filesArg)
+        startedNewExecution = true
       }
 
-      setSearchParams({}, { replace: true })
+      if (query && (startedNewExecution || attached || continuedBySid)) {
+        const nextParams = new URLSearchParams(searchParams)
+        nextParams.delete('q')
+        // sid 存在但并未成功续接时，说明已启动了新的 runtime 会话，清理旧 sid 避免后续误判。
+        if (sid && startedNewExecution && !attached && !continuedBySid) {
+          nextParams.delete('sid')
+        }
+        lastBootstrapKeyRef.current = `${skillId || ''}|${sid || ''}|`
+        setSearchParams(nextParams, { replace: true })
+      }
     }
 
     void bootstrap()
@@ -212,10 +227,13 @@ export default function ExecutePage() {
    * │                      页面级回调                                          │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   const handleResumeTask = useCallback(() => {
-    if (runningSessionId) agent.attachToSession(runningSessionId)
+    if (runningSessionId) {
+      agent.resumeSession(runningSessionId)
+      agent.attachToSession(runningSessionId)
+    }
     setShowResumeDialog(false)
     setRunningSessionId(null)
-  }, [runningSessionId, agent.attachToSession])
+  }, [runningSessionId, agent.attachToSession, agent.resumeSession])
 
   const handleDismissResume = useCallback(() => {
     setShowResumeDialog(false)
@@ -227,6 +245,14 @@ export default function ExecutePage() {
     setShowClearDialog(false)
   }, [agent.clear])
 
+  const handleBackToHome = useCallback(() => {
+    // 启动期（尚无 sessionId）返回首页时不主动 detach，避免请求被提前中断。
+    if (effectiveRunning && agent.sessionId) {
+      agent.detach()
+    }
+    navigate('/')
+  }, [agent.detach, agent.sessionId, effectiveRunning, navigate])
+
   const placeholder = skillId === 'financial-report'
     ? '例如：分析腾讯 2023 年财报的营收增长情况'
     : '输入你的问题...'
@@ -237,11 +263,15 @@ export default function ExecutePage() {
   const header = (
     <div className="flex items-center justify-between mb-4 shrink-0">
       <div className="flex items-center gap-4">
-        <Link to="/" className="text-muted-foreground hover:text-foreground transition-colors">
+        <button
+          type="button"
+          onClick={handleBackToHome}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-        </Link>
+        </button>
         <h2 className="text-lg font-semibold text-foreground">
           {displaySkillName}
         </h2>

@@ -272,6 +272,8 @@ export function SessionDetailPage() {
 
   // 自动展开标记
   const hasAutoExpandedRef = useRef(false)
+  const attachInFlightRef = useRef<Promise<void> | null>(null)
+  const attachedSessionRef = useRef<string | null>(null)
 
   const {
     width: chatPanelWidth,
@@ -300,6 +302,9 @@ export function SessionDetailPage() {
   } = useVitePreview(sessionId || null)
 
   useEffect(() => {
+    setContinuing(false)
+    attachInFlightRef.current = null
+    attachedSessionRef.current = null
     if (sessionId) {
       fetchSessionDetail()
     }
@@ -320,10 +325,23 @@ export function SessionDetailPage() {
         if (cancelled) return
         setLiveStatus(data)
 
-        if (data.isRunning && data.canAttach && !agent.isRunning) {
+        if (
+          data.isRunning
+          && data.canAttach
+          && !agent.isRunning
+          && attachedSessionRef.current !== sessionId
+          && !attachInFlightRef.current
+        ) {
           setContinuing(true)
+          attachedSessionRef.current = sessionId || null
           agent.resumeSession(sessionId!)
-          agent.attachToSession(sessionId!)
+          attachInFlightRef.current = agent.attachToSession(sessionId!)
+            .catch(() => {
+              attachedSessionRef.current = null
+            })
+            .finally(() => {
+              attachInFlightRef.current = null
+            })
         }
       } catch {
         // 韫囩晫鏆愰柨娆掝嚖

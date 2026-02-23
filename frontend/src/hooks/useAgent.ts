@@ -906,6 +906,20 @@ export function useAgent(skillId: string) {
     setState((s) => ({ ...s, isRunning: false }))
   }, [skillId])
 
+  // 仅断开当前前端流连接，任务继续在后端运行
+  const detach = useCallback(() => {
+    abortByQuestionRef.current = false
+    executeInFlightRef.current = false
+    abortRef.current?.abort()
+    abortRef.current = null
+    setState((s) => ({
+      ...s,
+      isRunning: false,
+      connectionStatus: null,
+      error: null,
+    }))
+  }, [])
+
   // 清空消息
   const clear = useCallback(() => {
     sessionIdRef.current = null
@@ -990,7 +1004,10 @@ export function useAgent(skillId: string) {
     if (!lastSessionId) return null
 
     try {
-      const res = await fetch(`${API_BASE}/skill/runtime/running`)
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/skill/runtime/running`, {
+        headers: createAuthHeaders(token),
+      })
       if (!res.ok) {
         localStorage.removeItem(`lastSession_${skillId}`)
         return null
@@ -1023,6 +1040,11 @@ export function useAgent(skillId: string) {
   const attachToSession = useCallback(
     async (targetSessionId: string) => {
       const token = localStorage.getItem('token')
+      if (abortRef.current) {
+        abortRef.current.abort()
+        abortRef.current = null
+      }
+      const controller = new AbortController()
 
       setState((s) => ({
         ...s,
@@ -1035,7 +1057,7 @@ export function useAgent(skillId: string) {
 
       sessionIdRef.current = targetSessionId
       terminalEventRef.current = false
-      abortRef.current = new AbortController()
+      abortRef.current = controller
 
       assistantIdRef.current = crypto.randomUUID()
       currentTextRef.current = ''
@@ -1044,7 +1066,7 @@ export function useAgent(skillId: string) {
         const res = await fetchWithRetry(
           `${API_BASE}/skill/runtime/attach/${targetSessionId}`,
           {
-            signal: abortRef.current.signal,
+            signal: controller.signal,
             headers: createAuthHeaders(token),
           },
           3,
@@ -1079,7 +1101,9 @@ export function useAgent(skillId: string) {
           isRunning: false,
           runCompletedAt: s.runCompletedAt || (terminalEventRef.current ? new Date().toISOString() : s.runCompletedAt),
         }))
-        abortRef.current = null
+        if (abortRef.current === controller) {
+          abortRef.current = null
+        }
       }
     },
     [readSseStream, reconnectSessionStream],
@@ -1089,6 +1113,7 @@ export function useAgent(skillId: string) {
     ...state,
     execute,
     stop,
+    detach,
     clear,
     resumeSession,
     fetchTaskFiles,

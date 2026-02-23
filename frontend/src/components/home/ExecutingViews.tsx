@@ -36,18 +36,19 @@ export interface ExecutionContext {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │              ExecutionHeader - 执行态顶部导航栏                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export function ExecutionHeader({ title, isRunning, isDone, onStop, onNewTask }: {
+export function ExecutionHeader({ title, isRunning, isDone, onStop, onBack, onNewTask }: {
   title: string
   isRunning: boolean
   isDone: boolean
   onStop: () => void
+  onBack: () => void
   onNewTask: () => void
 }) {
   return (
     <div className="flex items-center justify-between mb-4 shrink-0">
       <div className="flex items-center gap-4">
         <button
-          onClick={onNewTask}
+          onClick={onBack}
           className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -81,12 +82,13 @@ export function ExecutionHeader({ title, isRunning, isDone, onStop, onNewTask }:
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │        SkillExecutingView - 统一 Capability 执行态（三面板布局）        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhaseChange, onNewTask, onCapabilityCreated, onError }: {
+export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhaseChange, onBack, onNewTask, onCapabilityCreated, onError }: {
   agent: ReturnType<typeof useAgent>
   execCtx: ExecutionContext
   displayTitle: string
   phase: HomePhase
   onPhaseChange: (p: HomePhase) => void
+  onBack: () => void
   onNewTask: () => void
   onCapabilityCreated: (created: { type: 'skill'; id: string; originQuery?: string }) => void
   onError: (msg: string) => void
@@ -200,6 +202,7 @@ export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhas
             isRunning={effectiveRunning}
             isDone={phase === 'done'}
             onStop={agent.stop}
+            onBack={onBack}
             onNewTask={onNewTask}
           />
         }

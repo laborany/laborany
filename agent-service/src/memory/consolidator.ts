@@ -129,7 +129,7 @@ export interface LongTermDecisionLog {
   at: string
   scope: 'global' | 'skill'
   skillId?: string
-  action: 'inserted' | 'updated' | 'superseded' | 'skipped'
+  action: 'inserted' | 'updated' | 'superseded' | 'skipped' | 'no_decision_summary'
   reason: string
   category: string
   statement: string
@@ -138,6 +138,12 @@ export interface LongTermDecisionLog {
   entryId?: string
   replacedEntryId?: string
   policyVersion?: string
+  reasonSummary?: string
+  reasonCounts?: Record<string, number>
+  extractionMethod?: 'cli' | 'regex'
+  factCount?: number
+  profilePatchCount?: number
+  candidateQueued?: number
 }
 
 export interface AutoUpsertLongTermParams {
@@ -154,7 +160,7 @@ export interface AutoUpsertLongTermParams {
 
 export interface AutoUpsertLongTermResult {
   written: boolean
-  action: LongTermDecisionLog['action']
+  action: 'inserted' | 'updated' | 'superseded' | 'skipped'
   reason: string
   entryId?: string
   replacedEntryId?: string
@@ -165,15 +171,34 @@ export interface LongTermStats {
   accepted: number
   rejected: number
   superseded: number
+  noDecision: number
   total: number
   lastActionAt?: string
+  lastNoDecisionAt?: string
   allTime: {
     accepted: number
     rejected: number
     superseded: number
+    noDecision: number
     total: number
     lastActionAt?: string
+    lastNoDecisionAt?: string
   }
+}
+
+export interface RecordNoDecisionSummaryParams {
+  scope?: 'global' | 'skill'
+  skillId?: string
+  sessionId?: string
+  category?: string
+  statement?: string
+  reasonSummary?: string
+  extractionMethod: 'cli' | 'regex'
+  factCount: number
+  profilePatchCount: number
+  candidateQueued: number
+  reasonCounts: Record<string, number>
+  policyVersion?: string
 }
 
 export interface LongTermAuditBackfillResult {
@@ -339,6 +364,48 @@ export class MemoryConsolidator {
       id: `ltlog_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       at: nowIso(),
       ...params,
+    })
+  }
+
+  recordNoDecisionSummary(params: RecordNoDecisionSummaryParams): void {
+    const normalizedReasonCounts = Object.entries(params.reasonCounts || {})
+      .map(([key, value]) => [key.trim(), Math.max(0, Math.floor(Number(value) || 0))] as const)
+      .filter(([key, value]) => key.length > 0 && value > 0)
+      .sort((a, b) => b[1] - a[1])
+
+    const reasonCounts = Object.fromEntries(normalizedReasonCounts)
+    const generatedReasonSummary = normalizedReasonCounts.length > 0
+      ? normalizedReasonCounts
+        .slice(0, 4)
+        .map(([key, value]) => `${key}:${value}`)
+        .join(', ')
+      : '未提供原因'
+    const reasonSummary = (params.reasonSummary || '').trim() || generatedReasonSummary
+
+    const scope = params.scope || 'skill'
+    const skillId = scope === 'skill' ? params.skillId : undefined
+    const sessionId = (params.sessionId || 'unknown-session').trim() || 'unknown-session'
+    const category = (params.category || 'no_decision').trim() || 'no_decision'
+    const statement = this.normalizeStatement(
+      params.statement || `本轮未触发长期记忆决策（session=${sessionId}）`,
+    )
+
+    this.writeDecision({
+      scope,
+      skillId,
+      action: 'no_decision_summary',
+      reason: 'no_decision_summary',
+      reasonSummary,
+      reasonCounts,
+      category,
+      statement,
+      confidence: 0,
+      evidenceCount: Math.max(1, Math.floor(Number(params.profilePatchCount) || 0)),
+      extractionMethod: params.extractionMethod,
+      factCount: Math.max(0, Math.floor(Number(params.factCount) || 0)),
+      profilePatchCount: Math.max(0, Math.floor(Number(params.profilePatchCount) || 0)),
+      candidateQueued: Math.max(0, Math.floor(Number(params.candidateQueued) || 0)),
+      policyVersion: params.policyVersion,
     })
   }
 
@@ -609,25 +676,38 @@ export class MemoryConsolidator {
     accepted: number
     rejected: number
     superseded: number
+    noDecision: number
     total: number
     lastActionAt?: string
+    lastNoDecisionAt?: string
   } {
     let accepted = 0
     let rejected = 0
     let superseded = 0
+    let noDecision = 0
     let total = 0
     let lastActionAt: string | undefined
+    let lastNoDecisionAt: string | undefined
     for (const item of logs) {
       const at = Date.parse(item.at)
       if (!Number.isFinite(at)) continue
       if (cutoffMs && at < cutoffMs) continue
+
+      if (item.action === 'no_decision_summary') {
+        noDecision += 1
+        if (!lastNoDecisionAt || at > Date.parse(lastNoDecisionAt)) {
+          lastNoDecisionAt = item.at
+        }
+        continue
+      }
+
       total += 1
       if (!lastActionAt || at > Date.parse(lastActionAt)) lastActionAt = item.at
       if (item.action === 'inserted' || item.action === 'updated') accepted += 1
       else if (item.action === 'superseded') superseded += 1
       else rejected += 1
     }
-    return { accepted, rejected, superseded, total, lastActionAt }
+    return { accepted, rejected, superseded, noDecision, total, lastActionAt, lastNoDecisionAt }
   }
 
   private readAllLongTermAudit(): LongTermDecisionLog[] {

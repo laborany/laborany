@@ -1,11 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useAgent } from '../hooks/useAgent'
 import { useConverse, type ConverseAction } from '../hooks/useConverse'
 import { useCronJobs } from '../hooks/useCron'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { type QuickStartItem } from '../contexts/QuickStartContext'
+import { API_BASE } from '../config'
 import { GuideBanner } from '../components/home/GuideBanner'
 import { ScenarioCards } from '../components/home/ScenarioCards'
 import ChatInput from '../components/shared/ChatInput'
@@ -41,9 +42,19 @@ interface CronPending {
   targetId: string
 }
 
+interface RunningTaskBrief {
+  sessionId: string
+  skillId: string
+  skillName: string
+  startedAt: string
+  source?: 'runtime' | 'converse'
+  query?: string
+}
+
 export default function HomePage() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { getCapabilityName } = useSkillNameMap()
   const cachedProfileName = typeof window !== 'undefined'
     ? (localStorage.getItem('laborany.profile.name') || '').trim()
@@ -59,6 +70,7 @@ export default function HomePage() {
   const [errorMsg, setErrorMsg] = useState('')
   const [scheduleDecision, setScheduleDecision] = useState<DecisionPrompt | null>(null)
   const [scheduleAction, setScheduleAction] = useState<ConverseAction | null>(null)
+  const [backgroundTasks, setBackgroundTasks] = useState<RunningTaskBrief[]>([])
 
   const handledActionRef = useRef<string | null>(null)
   const latestUserQueryRef = useRef('')
@@ -67,6 +79,25 @@ export default function HomePage() {
   const agent = useAgent(skillId)
   const converse = useConverse()
   const { createJob } = useCronJobs()
+
+  const refreshBackgroundTasks = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/sessions/running-tasks`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!res.ok) {
+        setBackgroundTasks([])
+        return
+      }
+      const data = await res.json() as { tasks?: RunningTaskBrief[] }
+      const tasks = Array.isArray(data.tasks) ? data.tasks : []
+      tasks.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+      setBackgroundTasks(tasks)
+    } catch {
+      setBackgroundTasks([])
+    }
+  }, [])
 
   useEffect(() => {
     if (!converse.action) handledActionRef.current = null
@@ -153,6 +184,45 @@ export default function HomePage() {
   }, [appendSessionFilesMarker, converse.action, converse.pendingQuestion])
 
   useEffect(() => {
+    if (phase !== 'idle') return
+    void refreshBackgroundTasks()
+    const timer = setInterval(() => { void refreshBackgroundTasks() }, 5000)
+    return () => clearInterval(timer)
+  }, [phase, refreshBackgroundTasks])
+
+  const resumeConverseSession = useCallback(async (sessionId: string): Promise<boolean> => {
+    const ok = await converse.resumeSession(sessionId)
+    if (!ok) return false
+    setPhase('analyzing')
+    setSelectedCase(null)
+    setExecCtx(null)
+    setCronPending(null)
+    setCandidate(null)
+    setGenericPlan(null)
+    setErrorMsg('')
+    setScheduleDecision(null)
+    setScheduleAction(null)
+    handledActionRef.current = null
+    return true
+  }, [converse.resumeSession])
+
+  useEffect(() => {
+    const converseSid = (searchParams.get('converseSid') || '').trim()
+    if (!converseSid) return
+    let cancelled = false
+    void (async () => {
+      await resumeConverseSession(converseSid)
+      if (cancelled) return
+      const nextParams = new URLSearchParams(searchParams)
+      nextParams.delete('converseSid')
+      setSearchParams(nextParams, { replace: true })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [searchParams, setSearchParams, resumeConverseSession])
+
+  useEffect(() => {
     if (converse.error && phase === 'analyzing') {
       setErrorMsg(converse.error)
       setPhase('error')
@@ -170,8 +240,8 @@ export default function HomePage() {
     if (!candidate) return
 
     if (candidate.variant === 'recommend' && candidate.targetId) {
-      const sid = converse.sessionId || ''
-      navigate(`/execute/${candidate.targetId}?q=${encodeURIComponent(candidate.query)}&sid=${sid}`)
+      // converse 的 sessionId 不是 runtime 任务会话，不应作为执行页 sid 传入。
+      navigate(`/execute/${candidate.targetId}?q=${encodeURIComponent(candidate.query)}`)
       return
     }
 
@@ -184,7 +254,7 @@ export default function HomePage() {
       })
       setPhase('creating_proposal')
     }
-  }, [appendSessionFilesMarker, candidate, converse.sessionId, navigate])
+  }, [appendSessionFilesMarker, candidate, navigate])
 
   const handleCandidateReject = useCallback(() => {
     const query = appendSessionFilesMarker(candidate?.query || '')
@@ -241,6 +311,47 @@ export default function HomePage() {
     handledActionRef.current = null
   }, [agent.clear, converse.reset])
 
+  const handleBackFromExecution = useCallback(() => {
+    // 任务启动期也要允许返回首页并继续后台运行；尚未拿到 sessionId 时避免提前中断。
+    const hasSession = Boolean(agent.sessionId)
+    const isExecutionPhase =
+      phase === 'executing'
+      || phase === 'fallback_general'
+      || phase === 'creating_proposal'
+      || phase === 'creating_confirm'
+      || phase === 'installing'
+      || phase === 'routing'
+    const launchingWithoutSession = !hasSession && (agent.isRunning || isExecutionPhase)
+
+    if (agent.isRunning && hasSession) {
+      agent.detach()
+    }
+
+    if (!launchingWithoutSession) {
+      agent.clear()
+      setExecCtx(null)
+    }
+
+    setPhase('idle')
+    setSelectedCase(null)
+    setCronPending(null)
+    setCandidate(null)
+    setGenericPlan(null)
+    setErrorMsg('')
+    setScheduleDecision(null)
+    setScheduleAction(null)
+    handledActionRef.current = null
+    void refreshBackgroundTasks()
+  }, [agent.clear, agent.detach, agent.isRunning, agent.sessionId, phase, refreshBackgroundTasks])
+
+  const handleResumeBackgroundTask = useCallback((task: RunningTaskBrief) => {
+    if (task.source === 'converse' || task.skillId === '__converse__') {
+      void resumeConverseSession(task.sessionId)
+      return
+    }
+    navigate(`/execute/${task.skillId}?sid=${encodeURIComponent(task.sessionId)}`)
+  }, [navigate, resumeConverseSession])
+
   const handleCapabilityCreated = useCallback((created: {
     type: 'skill'
     id: string
@@ -269,6 +380,8 @@ export default function HomePage() {
       cronPending={cronPending}
       onCronConfirm={handleCronConfirm}
       onCronCancel={() => setCronPending(null)}
+      backgroundTasks={backgroundTasks}
+      onResumeTask={handleResumeBackgroundTask}
     />
   }
 
@@ -350,7 +463,7 @@ export default function HomePage() {
       <div className="h-[calc(100vh-64px)] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
-          <span className="text-sm text-muted-foreground">正在安装新能力…</span>
+          <span className="text-sm text-muted-foreground">正在安装新能力...</span>
         </div>
       </div>
     )
@@ -370,6 +483,7 @@ export default function HomePage() {
           displayTitle={getCapabilityName(execCtx?.id || '')}
           phase={phase}
           onPhaseChange={setPhase}
+          onBack={handleBackFromExecution}
           onNewTask={handleNewTask}
           onCapabilityCreated={handleCapabilityCreated}
           onError={(msg) => { setErrorMsg(msg); setPhase('error') }}
@@ -379,7 +493,7 @@ export default function HomePage() {
   )
 }
 
-function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending, onCronConfirm, onCronCancel }: {
+function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending, onCronConfirm, onCronCancel, backgroundTasks, onResumeTask }: {
   userName?: string
   onExecute: (targetId: string, query: string, files?: File[]) => void
   selectedCase: QuickStartItem | null
@@ -387,6 +501,8 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
   cronPending: CronPending | null
   onCronConfirm: (next: CronPending) => Promise<void>
   onCronCancel: () => void
+  backgroundTasks: RunningTaskBrief[]
+  onResumeTask: (task: RunningTaskBrief) => void
 }) {
   return (
     <div className="min-h-screen p-6">
@@ -396,9 +512,36 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
             {userName || '用户'}，有什么可以帮你？
           </h1>
           <p className="text-muted-foreground text-sm">
-            直接描述你的任务，我来帮你完成
+            直接描述你的任务，我来帮你完成。
           </p>
         </div>
+        {backgroundTasks.length > 0 && (
+          <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-sm font-medium text-foreground">后台仍有运行中的任务</p>
+              <span className="text-xs text-muted-foreground">{backgroundTasks.length} 个</span>
+            </div>
+            <div className="space-y-2">
+              {backgroundTasks.slice(0, 3).map((task) => (
+                <button
+                  key={task.sessionId}
+                  type="button"
+                  onClick={() => onResumeTask(task)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors hover:bg-accent/40"
+                >
+                  <p className="text-sm font-medium text-foreground">
+                    {task.skillName || task.query || task.skillId}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {task.skillId === '__converse__'
+                      ? `分派会话: ${task.sessionId.slice(0, 12)}... · 点击继续对话`
+                      : `会话: ${task.sessionId.slice(0, 12)}... · 点击继续查看`}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <ScenarioCards
           selectedId={selectedCase?.id}
           onSelect={onSelectCase}
@@ -429,4 +572,3 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
     </div>
   )
 }
-

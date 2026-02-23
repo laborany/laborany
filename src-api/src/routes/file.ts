@@ -60,6 +60,8 @@ interface TaskFile {
   type: 'file' | 'folder'
   ext?: string
   size?: number
+  mtimeMs?: number
+  updatedAt?: string
   children?: TaskFile[]
   stepIndex?: number    // 复合技能步骤索引
   stepName?: string     // 复合技能步骤名称
@@ -104,6 +106,8 @@ async function listTaskFiles(baseDir: string, relativePath: string): Promise<Tas
         type: 'file',
         ext,
         size: fileStat.size,
+        mtimeMs: fileStat.mtimeMs,
+        updatedAt: fileStat.mtime.toISOString(),
       })
     } else if (entry.isDirectory()) {
       const stepInfo = parseStepDir(entry.name)

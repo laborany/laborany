@@ -25,6 +25,7 @@ export {
   type LongTermDecisionLog,
   type LongTermStats,
   type LongTermAuditBackfillResult,
+  type RecordNoDecisionSummaryParams,
   type AutoUpsertLongTermParams,
   type AutoUpsertLongTermResult,
 } from './consolidator.js'
