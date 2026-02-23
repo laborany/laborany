@@ -1,17 +1,46 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                     Converse System Prompt 构建器                      ║
  * ║                                                                        ║
- * ║  职责：为首页对话端点构建 system prompt                                 ║
- * ║  包含：行为定义、决策协议、few-shot 示例、能力目录注入                   ║
+ * ║  职责：为首页/渠道对话端点构建 system prompt                             ║
+ * ║  包含：行为定义、决策协议、few-shot 示例、能力目录与运行时能力注入       ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { loadCatalog, type CatalogItem } from './catalog.js'
+
+export interface ConverseRuntimeContext {
+  channel?: string
+  locale?: string
+  capabilities?: {
+    canSendFile?: boolean
+    canSendImage?: boolean
+  }
+}
 
 function formatCatalog(items: CatalogItem[]): string {
   if (!items.length) return '- (暂无可用 skill)'
   return items
     .map((item) => `- [skill] id="${item.id}" | ${item.name} - ${item.description}`)
     .join('\n')
+}
+
+function buildRuntimeContextSection(context?: ConverseRuntimeContext): string {
+  const channel = context?.channel?.trim() || 'default'
+  const locale = context?.locale?.trim() || 'zh-CN'
+  const canSendFile = Boolean(context?.capabilities?.canSendFile)
+  const canSendImage = Boolean(context?.capabilities?.canSendImage)
+
+  return [
+    '## 运行时能力上下文',
+    '',
+    `- channel: ${channel}`,
+    `- locale: ${locale}`,
+    `- canSendFile: ${canSendFile}`,
+    `- canSendImage: ${canSendImage}`,
+    '',
+    '你必须严格遵守上述能力边界：',
+    '- 若 canSendFile=true 且用户要求“发送文件”，应优先通过 action 输出结构化发送动作，不要口头声明“无法发送文件”。',
+    '- 若 canSendFile=false，不要伪造可发送能力，应提供替代方案（如返回文件路径、摘要或重新生成）。',
+  ].join('\n')
 }
 
 const BEHAVIOR_SECTION = `# laborany 首页总控助手
@@ -55,6 +84,7 @@ LABORANY_ACTION: {"action":"<type>", ...}
 | execute_generic | 通用执行 | query, planSteps |
 | create_capability | 进入 creator 创建能力 | mode, seedQuery |
 | setup_schedule | 创建定时任务 | cronExpr, targetQuery, tz, name |
+| send_file | 向当前渠道发送文件（仅 canSendFile=true 时） | filePaths |
 
 ### 约束
 - recommend_capability 的 targetType 必须是 skill。
@@ -63,6 +93,7 @@ LABORANY_ACTION: {"action":"<type>", ...}
 - recommend_capability 的 confidence 为 0~1 浮点数。
 - recommend_capability 的 matchType 为 exact 或 candidate。
 - recommend_capability 的 reason 为简短匹配说明。
+- send_file 的 filePaths 必须为绝对路径数组；当 canSendFile=false 时禁止输出该 action。
 - 未确认前，禁止输出 LABORANY_ACTION。`
 
 const FEW_SHOT_SECTION = `## 示例
@@ -77,10 +108,14 @@ LABORANY_ACTION: {"action":"recommend_capability","targetType":"skill","targetId
 用户：直接执行
 LABORANY_ACTION: {"action":"execute_generic","query":"整理项目 README","planSteps":["阅读现有 README","重组目录结构","补全安装与使用说明"]}`
 
-export function buildConverseSystemPrompt(memoryContext: string): string {
+export function buildConverseSystemPrompt(
+  memoryContext: string,
+  runtimeContext?: ConverseRuntimeContext,
+): string {
   const catalogText = formatCatalog(loadCatalog())
   const sections = [
     BEHAVIOR_SECTION,
+    buildRuntimeContextSection(runtimeContext),
     `## 可用能力目录\n\n${catalogText}`,
     QUESTION_PROTOCOL_SECTION,
     ACTION_PROTOCOL_SECTION,

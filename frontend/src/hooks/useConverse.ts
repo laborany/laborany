@@ -368,6 +368,14 @@ export function useConverse(): UseConverseReturn {
         body: JSON.stringify({
           sessionId: sessionIdRef.current,
           messages: payloadMessages,
+          context: {
+            channel: 'desktop',
+            locale: 'zh-CN',
+            capabilities: {
+              canSendFile: false,
+              canSendImage: false,
+            },
+          },
         }),
       })
 

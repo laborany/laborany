@@ -12,7 +12,7 @@ import { copyFile, mkdir } from 'fs/promises'
 import { existsSync, readdirSync } from 'fs'
 import { basename, dirname, extname, join } from 'path'
 import { executeAgent } from '../agent-executor.js'
-import { buildConverseSystemPrompt } from '../converse-prompt.js'
+import { buildConverseSystemPrompt, type ConverseRuntimeContext } from '../converse-prompt.js'
 import { memoryInjector } from '../memory/io.js'
 import { loadCatalog } from '../catalog.js'
 import { DATA_DIR } from '../paths.js'
@@ -63,7 +63,10 @@ function summarizeAction(action: ConverseActionPayload): string {
   if (action.action === 'create_capability') {
     return '将进入创建新技能流程。'
   }
-  return '已识别为定时任务，进入创建流程。'
+  if (action.action === 'setup_schedule') {
+    return '已识别为定时任务，进入创建流程。'
+  }
+  return `准备发送文件：${action.filePaths.join(', ')}`
 }
 
 async function upsertExternalSession(
@@ -240,6 +243,11 @@ type ConverseActionPayload =
       targetQuery: string
       name?: string
     }
+  | {
+      action: 'send_file'
+      filePaths: string[]
+      note?: string
+    }
 
 interface ConverseQuestionOption {
   label: string
@@ -318,6 +326,26 @@ function asTargetType(value: unknown): ActionTargetType | null {
 
 function asBoolean(value: unknown, fallback = false): boolean {
   return typeof value === 'boolean' ? value : fallback
+}
+
+function normalizeRuntimeContext(raw: unknown): ConverseRuntimeContext {
+  if (!raw || typeof raw !== 'object') {
+    return {}
+  }
+
+  const obj = raw as Record<string, unknown>
+  const capabilitiesRaw = obj.capabilities && typeof obj.capabilities === 'object'
+    ? obj.capabilities as Record<string, unknown>
+    : {}
+
+  return {
+    channel: asString(obj.channel) || undefined,
+    locale: asString(obj.locale) || undefined,
+    capabilities: {
+      canSendFile: asBoolean(capabilitiesRaw.canSendFile),
+      canSendImage: asBoolean(capabilitiesRaw.canSendImage),
+    },
+  }
 }
 
 function normalizeQuestionPayload(
@@ -480,7 +508,7 @@ interface GuardResult {
   approvalRequired: boolean
 }
 
-function guardAction(action: ConverseActionPayload): GuardResult {
+function guardAction(action: ConverseActionPayload, runtimeContext?: ConverseRuntimeContext): GuardResult {
   const catalog = loadCatalog()
   const findCapability = (type: ActionTargetType, id: string) =>
     catalog.some(item => item.type === type && item.id === id)
@@ -550,6 +578,59 @@ function guardAction(action: ConverseActionPayload): GuardResult {
     return { ok: true, action, phase: 'choose_strategy', approvalRequired: false }
   }
 
+  if (action.action === 'send_file') {
+    if (!runtimeContext?.capabilities?.canSendFile) {
+      return {
+        ok: false,
+        question: toQuestionPayload([
+          {
+            header: '发送能力不可用',
+            question: '当前渠道不支持直接发送文件。你希望我改为返回文件路径，还是输出文件摘要？',
+            multiSelect: false,
+            options: [
+              { label: '返回文件路径', description: '我给你可直接访问的绝对路径' },
+              { label: '输出文件摘要', description: '我提取并总结文件核心内容' },
+            ],
+          },
+        ], { questionContext: 'clarify' }),
+        validationErrors: ['当前渠道 canSendFile=false，无法执行 send_file'],
+        phase: 'clarify',
+        approvalRequired: false,
+      }
+    }
+
+    const normalizedPaths = action.filePaths
+      .map(item => asString(item))
+      .filter(Boolean)
+      .slice(0, 5)
+    if (!normalizedPaths.length) {
+      return {
+        ok: false,
+        question: toQuestionPayload([
+          {
+            header: '文件路径确认',
+            question: '请提供要发送的文件绝对路径（可多个）。',
+            multiSelect: false,
+            options: [],
+          },
+        ], { questionContext: 'clarify' }),
+        validationErrors: ['send_file 缺少 filePaths'],
+        phase: 'clarify',
+        approvalRequired: false,
+      }
+    }
+
+    return {
+      ok: true,
+      action: {
+        ...action,
+        filePaths: normalizedPaths,
+      },
+      phase: 'ready',
+      approvalRequired: false,
+    }
+  }
+
   return { ok: true, action, phase: 'clarify', approvalRequired: false }
 }
 
@@ -602,6 +683,20 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
       targetId: asString(raw.targetId) || undefined,
       targetQuery,
       name: asString(raw.name) || undefined,
+    }
+  }
+
+  if (action === 'send_file') {
+    const fromArray = Array.isArray(raw.filePaths)
+      ? raw.filePaths.map(item => asString(item)).filter(Boolean)
+      : []
+    const single = asString(raw.filePath)
+    const filePaths = fromArray.length ? fromArray : (single ? [single] : [])
+    if (!filePaths.length) return null
+    return {
+      action: 'send_file',
+      filePaths,
+      note: asString(raw.note) || undefined,
     }
   }
 
@@ -733,7 +828,8 @@ function detectDirectIntentAction(query: string): ConverseActionPayload | null {
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 router.post('/', async (req: Request, res: Response) => {
-  const { sessionId: incomingId, messages: rawMessages } = req.body
+  const { sessionId: incomingId, messages: rawMessages, context: rawContext } = req.body
+  const runtimeContext = normalizeRuntimeContext(rawContext)
 
   if (!rawMessages || !Array.isArray(rawMessages) || !rawMessages.length) {
     res.status(400).json({ error: '缺少 messages 参数' })
@@ -766,7 +862,7 @@ router.post('/', async (req: Request, res: Response) => {
 
   const directAction = detectDirectIntentAction(baseQuery)
   if (directAction) {
-    const guard = guardAction(directAction)
+    const guard = guardAction(directAction, runtimeContext)
     const state = setSessionState(sessionId, {
       phase: guard.phase,
       approvalRequired: guard.approvalRequired,
@@ -815,7 +911,7 @@ router.post('/', async (req: Request, res: Response) => {
       skillId: '__converse__',
       userQuery: query,
     })
-    const systemPrompt = buildConverseSystemPrompt(memoryCtx)
+    const systemPrompt = buildConverseSystemPrompt(memoryCtx, runtimeContext)
 
     const skill = {
       meta: { id: '__converse__', name: '对话助手', description: '多轮对话', kind: 'skill' as const },
@@ -918,7 +1014,7 @@ router.post('/', async (req: Request, res: Response) => {
           /* ── 从累积文本中提取决策标记 ── */
           const action = extractAction(fullText) || inferFallbackAction(query, fullText)
           if (action) {
-            const guard = guardAction(action)
+            const guard = guardAction(action, runtimeContext)
 
             const state = setSessionState(sessionId, {
               phase: guard.phase,

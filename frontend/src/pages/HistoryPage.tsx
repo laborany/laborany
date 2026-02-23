@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAgent, type PendingQuestion } from '../hooks/useAgent'
+import { useConverse } from '../hooks/useConverse'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { useVitePreview } from '../hooks/useVitePreview'
 import type { TaskFile, Session, SessionDetail, SessionLiveStatus } from '../types'
@@ -289,7 +290,9 @@ export function SessionDetailPage() {
   const executionSkillId = session?.skill_id === '__converse__'
     ? '__generic__'
     : (session?.skill_id || '')
+  const isConverseSession = session?.skill_id === '__converse__'
   const agent = useAgent(executionSkillId)
+  const converse = useConverse()
   const historyPendingQuestion = useMemo(
     () => buildPendingQuestionFromHistory(session),
     [session],
@@ -308,13 +311,31 @@ export function SessionDetailPage() {
     setContinuing(false)
     attachInFlightRef.current = null
     attachedSessionRef.current = null
+    converse.reset()
     if (sessionId) {
       fetchSessionDetail()
     }
   }, [sessionId])
 
   useEffect(() => {
-    if (!sessionId) return
+    if (!sessionId || !isConverseSession) return
+    let cancelled = false
+
+    void (async () => {
+      const resumed = await converse.resumeSession(sessionId)
+      if (cancelled) return
+      if (resumed) {
+        setContinuing(true)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId, isConverseSession, converse.resumeSession])
+
+  useEffect(() => {
+    if (!sessionId || isConverseSession) return
     let cancelled = false
 
     async function refreshLiveStatus() {
@@ -347,7 +368,7 @@ export function SessionDetailPage() {
             })
         }
       } catch {
-        // 韫囩晫鏆愰柨娆掝嚖
+        // 忽略错误
       }
     }
 
@@ -358,7 +379,7 @@ export function SessionDetailPage() {
       cancelled = true
       clearInterval(timer)
     }
-  }, [sessionId, agent.isRunning, agent.resumeSession, agent.attachToSession])
+  }, [sessionId, isConverseSession, agent.isRunning, agent.resumeSession, agent.attachToSession])
 
   useEffect(() => {
     if (session?.work_dir) {
@@ -520,11 +541,20 @@ export function SessionDetailPage() {
   }
 
   async function handleContinue(query: string) {
-    if (!session) return
-    agent.resumeSession(sessionId!)
+    const normalizedQuery = query.trim()
+    if (!session || !sessionId || !normalizedQuery) return
+
+    if (isConverseSession) {
+      setContinuing(true)
+      hasAutoExpandedRef.current = false
+      await converse.sendMessage(normalizedQuery)
+      return
+    }
+
+    agent.resumeSession(sessionId)
     setContinuing(true)
-    hasAutoExpandedRef.current = false  // 重置，让新产物可触发自动展开
-    agent.execute(query)
+    hasAutoExpandedRef.current = false  // reset so new artifacts can auto-expand
+    await agent.execute(normalizedQuery)
   }
 
   const handleQuestionSubmit = useCallback(
@@ -541,10 +571,47 @@ export function SessionDetailPage() {
   )
 
   useEffect(() => {
-    if (continuing && !agent.isRunning && agent.messages.length > 0) {
+    if (!continuing) return
+
+    if (isConverseSession) {
+      if (!converse.isThinking && converse.messages.length > 0) {
+        fetchTaskFiles()
+      }
+      return
+    }
+
+    if (!agent.isRunning && agent.messages.length > 0) {
       fetchTaskFiles()
     }
-  }, [continuing, agent.isRunning, agent.messages.length])
+  }, [
+    continuing,
+    isConverseSession,
+    converse.isThinking,
+    converse.messages.length,
+    agent.isRunning,
+    agent.messages.length,
+  ])
+
+  useEffect(() => {
+    if (!continuing || !sessionId || !session?.work_dir) return
+    const running = isConverseSession ? converse.isThinking : agent.isRunning
+    if (!running) return
+
+    const timer = setInterval(() => {
+      void fetchTaskFiles()
+    }, 2500)
+
+    return () => {
+      clearInterval(timer)
+    }
+  }, [
+    continuing,
+    sessionId,
+    session?.work_dir,
+    isConverseSession,
+    converse.isThinking,
+    agent.isRunning,
+  ])
 
   if (loading) {
     return (
@@ -568,8 +635,17 @@ export function SessionDetailPage() {
   }
 
   const historyMessages = convertMessages()
-  const allMessages = continuing ? [...historyMessages, ...agent.messages] : historyMessages
-  const activePendingQuestion = agent.pendingQuestion || (!continuing ? historyPendingQuestion : null)
+  const allMessages = isConverseSession
+    ? (converse.messages.length > 0 ? converse.messages : historyMessages)
+    : (continuing ? [...historyMessages, ...agent.messages] : historyMessages)
+  const chatIsRunning = isConverseSession ? converse.isThinking : agent.isRunning
+  const activePendingQuestion = isConverseSession
+    ? converse.pendingQuestion
+    : (agent.pendingQuestion || (!continuing ? historyPendingQuestion : null))
+  const questionSubmitHandler = isConverseSession
+    ? converse.respondToQuestion
+    : (agent.pendingQuestion ? agent.respondToQuestion : handleQuestionSubmit)
+  const stopHandler = isConverseSession ? converse.stop : agent.stop
 
   // 计算是否显示分隔条
   const showResizeHandle = isPreviewVisible || isRightSidebarVisible
@@ -638,7 +714,12 @@ export function SessionDetailPage() {
 
         {/* 消息列表 */}
         <div className="flex-1 overflow-y-auto mb-4 min-h-0">
-          <MessageList messages={allMessages} isRunning={agent.isRunning} />
+          <MessageList
+            messages={allMessages}
+            isRunning={chatIsRunning}
+            sessionKey={sessionId}
+            initialScrollOnMount="bottom"
+          />
         </div>
 
         {/* 继续对话输入框 */}
@@ -648,7 +729,7 @@ export function SessionDetailPage() {
               <p className="text-sm text-muted-foreground mb-2">请先回答当前问题：</p>
               <QuestionInput
                 pendingQuestion={activePendingQuestion}
-                onSubmit={agent.pendingQuestion ? agent.respondToQuestion : handleQuestionSubmit}
+                onSubmit={questionSubmitHandler}
               />
             </>
           ) : (
@@ -656,8 +737,8 @@ export function SessionDetailPage() {
               <p className="text-sm text-muted-foreground mb-2">继续对话：</p>
               <ChatInput
                 onSubmit={handleContinue}
-                onStop={agent.stop}
-                isRunning={agent.isRunning}
+                onStop={stopHandler}
+                isRunning={chatIsRunning}
                 placeholder="输入新的问题继续对话..."
               />
             </>
@@ -718,7 +799,7 @@ export function SessionDetailPage() {
         <div style={{ width: SIDEBAR_WIDTH }} className="shrink-0">
           <RightSidebar
             messages={allMessages}
-            isRunning={agent.isRunning}
+            isRunning={chatIsRunning}
             artifacts={taskFiles}
             selectedArtifact={selectedArtifact}
             onSelectArtifact={handleSelectArtifact}

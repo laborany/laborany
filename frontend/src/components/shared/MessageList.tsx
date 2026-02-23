@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type AnchorHTMLAttributes } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type AnchorHTMLAttributes,
+  type MouseEvent,
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentMessage } from '../../types'
@@ -7,18 +14,32 @@ import { ThinkingIndicator } from './ThinkingIndicator'
 interface MessageListProps {
   messages: AgentMessage[]
   isRunning?: boolean
+  sessionKey?: string
+  initialScrollOnMount?: 'bottom' | 'preserve'
 }
 
 type TextBlock = { type: 'text'; content: string; isStreaming: boolean }
 type ToolGroup = { type: 'tools'; tools: ToolEntry[]; isCompleted: boolean }
 type UserBlock = { type: 'user'; content: string }
 type ErrorBlock = { type: 'error'; content: string }
-type ThinkingBlock = { type: 'thinking' }
+type ThinkingStatusBlock = { type: 'thinking' }
+type ThinkingContentBlock = { type: 'thinking_content'; content: string }
 
 type ToolEntry = { name: string; input?: Record<string, unknown> }
-type RenderBlock = TextBlock | ToolGroup | UserBlock | ErrorBlock | ThinkingBlock
+type RenderBlock =
+  | TextBlock
+  | ToolGroup
+  | UserBlock
+  | ErrorBlock
+  | ThinkingStatusBlock
+  | ThinkingContentBlock
+
+type AssistantSegment =
+  | { type: 'text'; content: string }
+  | { type: 'thinking'; content: string }
 
 const AUTO_FOLLOW_THRESHOLD_PX = 96
+const THINKING_BLOCK_RE = /<(think|thinking)\b[^>]*>([\s\S]*?)<\/\1>/gi
 
 const TOOL_DISPLAY_MAP: Record<string, string> = {
   Read: '读取文件',
@@ -35,11 +56,10 @@ const TOOL_DISPLAY_MAP: Record<string, string> = {
 }
 
 function normalizeToolName(name: string): string {
-  const legacyMap: Record<string, string> = {
-    '\u93B5\u0446\uE511\u7F01\u64B4\u7049': '执行结果',
-    '\u95B9\u7B1B\u55E9\u653D\u7F02\u4F79\u633B\u940F\u003F': '执行结果',
-  }
-  return legacyMap[name] || name
+  if (name === 'execution_result') return '执行结果'
+  if (name === '执行结果') return '执行结果'
+  if (name.includes('鎵ц') || name.includes('缁撴灉')) return '执行结果'
+  return name
 }
 
 function getToolDisplayName(name: string): string {
@@ -66,10 +86,75 @@ function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
   return (document.scrollingElement as HTMLElement | null) || null
 }
 
-export default function MessageList({ messages, isRunning = false }: MessageListProps) {
+function sanitizeOutsideThinkingText(value: string): string {
+  if (!value) return ''
+  let cleaned = value
+  cleaned = cleaned.replace(/<(?:think|thinking)\b[^>]*>[\s\S]*$/gi, '')
+  cleaned = cleaned.replace(/<\/?(?:think|thinking)\b[^>]*>/gi, '')
+  return cleaned.trim()
+}
+
+function splitAssistantContent(content: string): AssistantSegment[] {
+  const segments: AssistantSegment[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null = null
+  THINKING_BLOCK_RE.lastIndex = 0
+
+  while ((match = THINKING_BLOCK_RE.exec(content)) !== null) {
+    const start = match.index
+    const end = THINKING_BLOCK_RE.lastIndex
+
+    const textBefore = sanitizeOutsideThinkingText(content.slice(lastIndex, start))
+    if (textBefore) {
+      segments.push({ type: 'text', content: textBefore })
+    }
+
+    const thinkingContent = (match[2] || '').trim()
+    if (thinkingContent) {
+      segments.push({ type: 'thinking', content: thinkingContent })
+    }
+
+    lastIndex = end
+  }
+
+  const trailingText = sanitizeOutsideThinkingText(content.slice(lastIndex))
+  if (trailingText) {
+    segments.push({ type: 'text', content: trailingText })
+  }
+
+  return segments
+}
+
+export default function MessageList({
+  messages,
+  isRunning = false,
+  sessionKey,
+  initialScrollOnMount = 'bottom',
+}: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLElement | null>(null)
   const shouldAutoFollowRef = useRef(true)
+  const forceInitialScrollRef = useRef(initialScrollOnMount === 'bottom')
+  const skipNextSmoothRef = useRef(false)
+  const lastSessionKeyRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    const key = sessionKey || '__default__'
+    if (lastSessionKeyRef.current === key) return
+
+    lastSessionKeyRef.current = key
+    shouldAutoFollowRef.current = initialScrollOnMount === 'bottom'
+    forceInitialScrollRef.current = initialScrollOnMount === 'bottom'
+    skipNextSmoothRef.current = false
+    scrollContainerRef.current = null
+  }, [sessionKey, initialScrollOnMount])
+
+  useEffect(() => {
+    if (messages.length > 0) return
+    shouldAutoFollowRef.current = initialScrollOnMount === 'bottom'
+    forceInitialScrollRef.current = initialScrollOnMount === 'bottom'
+    skipNextSmoothRef.current = false
+  }, [messages.length, initialScrollOnMount])
 
   useEffect(() => {
     const container = findScrollContainer(bottomRef.current)
@@ -86,14 +171,41 @@ export default function MessageList({ messages, isRunning = false }: MessageList
     return () => {
       container.removeEventListener('scroll', handleScroll)
     }
-  }, [messages.length])
+  }, [sessionKey])
 
   useEffect(() => {
+    if (!messages.length) return
+
+    const container = scrollContainerRef.current || findScrollContainer(bottomRef.current)
+    if (!container || !bottomRef.current) return
+
+    scrollContainerRef.current = container
+    if (!forceInitialScrollRef.current) return
+
+    forceInitialScrollRef.current = false
+    shouldAutoFollowRef.current = true
+    skipNextSmoothRef.current = true
+
+    const raf = window.requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+    })
+
+    return () => window.cancelAnimationFrame(raf)
+  }, [messages.length, sessionKey])
+
+  useEffect(() => {
+    if (!messages.length) return
+
     const container = scrollContainerRef.current || findScrollContainer(bottomRef.current)
     if (!container || !bottomRef.current) return
 
     scrollContainerRef.current = container
     if (!shouldAutoFollowRef.current) return
+
+    if (skipNextSmoothRef.current) {
+      skipNextSmoothRef.current = false
+      return
+    }
 
     const raf = window.requestAnimationFrame(() => {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -135,7 +247,14 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
 
     if (message.type === 'assistant' && message.content) {
       flushTools(true)
-      blocks.push({ type: 'text', content: message.content, isStreaming: false })
+      const segments = splitAssistantContent(message.content)
+      for (const segment of segments) {
+        if (segment.type === 'text') {
+          blocks.push({ type: 'text', content: segment.content, isStreaming: false })
+          continue
+        }
+        blocks.push({ type: 'thinking_content', content: segment.content })
+      }
       continue
     }
 
@@ -166,7 +285,11 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
 
   if (isRunning) {
     const lastBlock = blocks[blocks.length - 1]
-    const showThinking = !lastBlock || lastBlock.type === 'user' || lastBlock.type === 'tools'
+    const showThinking =
+      !lastBlock
+      || lastBlock.type === 'user'
+      || lastBlock.type === 'tools'
+      || lastBlock.type === 'thinking_content'
     if (showThinking) {
       blocks.push({ type: 'thinking' })
     }
@@ -187,6 +310,8 @@ function BlockRenderer({ block }: { block: RenderBlock }) {
       return <ErrorBanner content={block.content} />
     case 'thinking':
       return <ThinkingIndicator variant="accent" />
+    case 'thinking_content':
+      return <ThinkingContentView content={block.content} />
   }
 }
 
@@ -200,41 +325,72 @@ function UserBubble({ content }: { content: string }) {
   )
 }
 
+function MarkdownView({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        code({ className, children, ...props }) {
+          const isInline = !className
+          return isInline ? (
+            <code className="rounded bg-muted px-1 py-0.5 text-sm" {...props}>
+              {children}
+            </code>
+          ) : (
+            <code className="block overflow-x-auto rounded-lg bg-gray-900 p-3 text-sm text-gray-100" {...props}>
+              {children}
+            </code>
+          )
+        },
+        pre({ children }) {
+          return <pre className="m-0 bg-transparent p-0">{children}</pre>
+        },
+        a: LinkRenderer,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
+}
+
 function TextBlockView({ content, isStreaming }: { content: string; isStreaming: boolean }) {
   return (
     <div className="animate-in slide-in-from-bottom-1 duration-200 fade-in">
       <div className="prose prose-sm max-w-none dark:prose-invert">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            code({ className, children, ...props }) {
-              const isInline = !className
-              return isInline ? (
-                <code className="rounded bg-muted px-1 py-0.5 text-sm" {...props}>
-                  {children}
-                </code>
-              ) : (
-                <code
-                  className="block overflow-x-auto rounded-lg bg-gray-900 p-3 text-sm text-gray-100"
-                  {...props}
-                >
-                  {children}
-                </code>
-              )
-            },
-            pre({ children }) {
-              return <pre className="m-0 bg-transparent p-0">{children}</pre>
-            },
-            a: LinkRenderer,
-          }}
-        >
-          {content}
-        </ReactMarkdown>
-
-        {isStreaming && (
-          <span className="ml-0.5 inline-block h-4 w-2 animate-pulse rounded-sm bg-primary/70" />
-        )}
+        <MarkdownView content={content} />
+        {isStreaming && <span className="ml-0.5 inline-block h-4 w-2 animate-pulse rounded-sm bg-primary/70" />}
       </div>
+    </div>
+  )
+}
+
+function ThinkingContentView({ content }: { content: string }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+
+  return (
+    <div className="animate-in slide-in-from-bottom-1 min-w-0 overflow-hidden rounded-xl border border-border/40 bg-muted/25 duration-200 fade-in">
+      <button
+        onClick={() => setIsExpanded((v) => !v)}
+        className="flex w-full cursor-pointer items-center gap-2 px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent/30 hover:text-foreground"
+      >
+        <svg
+          className={`h-4 w-4 shrink-0 transition-transform ${!isExpanded ? '-rotate-90' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+        <span className="flex-1 text-left">
+          {isExpanded ? '隐藏思考过程' : '显示思考过程'}
+        </span>
+      </button>
+
+      {isExpanded && (
+        <div className="prose prose-sm max-w-none border-t border-border/40 px-4 py-3 dark:prose-invert">
+          <MarkdownView content={content} />
+        </div>
+      )}
     </div>
   )
 }
@@ -249,18 +405,8 @@ function ToolGroupView({ tools, isCompleted }: { tools: ToolEntry[]; isCompleted
         className="flex w-full cursor-pointer items-center gap-2 px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent/30 hover:text-foreground"
       >
         {isCompleted ? (
-          <svg
-            className="h-4 w-4 shrink-0 text-emerald-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
+          <svg className="h-4 w-4 shrink-0 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         ) : (
           <div className="flex h-4 w-4 shrink-0 items-center justify-center">
@@ -277,7 +423,9 @@ function ToolGroupView({ tools, isCompleted }: { tools: ToolEntry[]; isCompleted
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
 
-        <span className="flex-1 text-left">{isExpanded ? '隐藏步骤' : `${tools.length} 个步骤`}</span>
+        <span className="flex-1 text-left">
+          {isExpanded ? '隐藏步骤' : `${tools.length} 个步骤`}
+        </span>
       </button>
 
       {isExpanded && (
@@ -295,12 +443,7 @@ function ErrorBanner({ content }: { content: string }) {
   return (
     <div className="animate-in slide-in-from-bottom-1 flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive duration-200 fade-in">
       <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-        />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
       <span>{content}</span>
     </div>
@@ -322,7 +465,7 @@ function ToolItem({ tool }: { tool: ToolEntry }) {
 
 function LinkRenderer({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
   const handleClick = useCallback(
-    (event: React.MouseEvent<HTMLAnchorElement>) => {
+    (event: MouseEvent<HTMLAnchorElement>) => {
       if (!href) return
       if (href.startsWith('http://') || href.startsWith('https://')) {
         event.preventDefault()
@@ -365,12 +508,7 @@ function ToolIcon({ name }: { name: string }) {
   if (['Glob', 'Grep', 'WebSearch'].includes(name)) {
     return (
       <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-        />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
       </svg>
     )
   }
@@ -409,12 +547,7 @@ function ToolIcon({ name }: { name: string }) {
         strokeWidth={2}
         d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
       />
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-      />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
     </svg>
   )
 }

@@ -1,5 +1,5 @@
 ﻿import { randomUUID } from 'crypto'
-import { createWriteStream, existsSync, mkdirSync } from 'fs'
+import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'fs'
 import { basename, dirname, extname, join } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
@@ -81,6 +81,15 @@ interface TaskFileSnapshot {
   path: string
   size: number
   mtimeMs: number
+}
+
+interface FileSendResult {
+  attempted: number
+  sent: number
+  failed: number
+  missing: number
+  missingPaths: string[]
+  failedPaths: string[]
 }
 
 const PROCESSED_MESSAGE_TTL_MS = 10 * 60 * 1000
@@ -549,6 +558,101 @@ async function sendText(client: Client, chatId: string, text: string): Promise<v
   }
 }
 
+function normalizePathToken(pathToken: string): string {
+  let normalized = pathToken.trim().replace(/^["'`]+|["'`]+$/g, '')
+  while (/[，。！？；：,.;!?）)】]$/.test(normalized)) {
+    normalized = normalized.slice(0, -1)
+  }
+  return normalized
+}
+
+async function sendFilesByAbsolutePaths(
+  client: Client,
+  chatId: string,
+  paths: string[],
+): Promise<FileSendResult> {
+  const normalizedPaths = paths
+    .map(item => normalizePathToken(item))
+    .filter(Boolean)
+  if (!normalizedPaths.length) {
+    return {
+      attempted: 0,
+      sent: 0,
+      failed: 0,
+      missing: 0,
+      missingPaths: [],
+      failedPaths: [],
+    }
+  }
+
+  let sent = 0
+  let failed = 0
+  let missing = 0
+  const missingPaths: string[] = []
+  const failedPaths: string[] = []
+
+  for (const candidatePath of normalizedPaths) {
+    const tryPaths = [candidatePath]
+    if (candidatePath.includes('/')) {
+      tryPaths.push(candidatePath.replace(/\//g, '\\'))
+    } else if (candidatePath.includes('\\')) {
+      tryPaths.push(candidatePath.replace(/\\/g, '/'))
+    }
+
+    const absolutePath = tryPaths.find((item) => existsSync(item))
+    if (!absolutePath) {
+      missing += 1
+      missingPaths.push(candidatePath)
+      continue
+    }
+
+    try {
+      const stat = statSync(absolutePath)
+      if (!stat.isFile()) {
+        missing += 1
+        missingPaths.push(candidatePath)
+        continue
+      }
+      if (stat.size > MAX_ARTIFACT_BYTES) {
+        failed += 1
+        failedPaths.push(absolutePath)
+        continue
+      }
+
+      const fileName = basename(absolutePath) || absolutePath
+      const payload = readFileSync(absolutePath)
+      const extension = extname(fileName).toLowerCase()
+      let ok = false
+      if (IMAGE_EXTENSIONS.has(extension)) {
+        ok = await sendImageAttachment(client, chatId, fileName, payload)
+        if (!ok && extension === '.svg') {
+          ok = await sendFileAttachment(client, chatId, fileName, payload)
+        }
+      } else {
+        ok = await sendFileAttachment(client, chatId, fileName, payload)
+      }
+
+      if (ok) sent += 1
+      else {
+        failed += 1
+        failedPaths.push(absolutePath)
+      }
+    } catch {
+      failed += 1
+      failedPaths.push(absolutePath)
+    }
+  }
+
+  return {
+    attempted: normalizedPaths.length,
+    sent,
+    failed,
+    missing,
+    missingPaths,
+    failedPaths,
+  }
+}
+
 async function fetchSkillList(): Promise<SkillListItem[]> {
   const res = await fetch(`${SRC_API_BASE_URL}/skill/list`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -749,6 +853,43 @@ async function dispatchAction(
   const targetId = (actionEvent as any)?.targetId || ''
   const query = (actionEvent as any)?.query || converseText || ''
 
+  if (actionType === 'send_file') {
+    const rawPaths = Array.isArray((actionEvent as any)?.filePaths)
+      ? (actionEvent as any).filePaths
+      : []
+    const filePaths = rawPaths
+      .map((item: unknown) => String(item || '').trim())
+      .filter(Boolean)
+      .slice(0, 5)
+
+    if (!filePaths.length) {
+      const msg = '缺少可发送的文件路径，请提供完整绝对路径。'
+      await appendExternalMessage(historySessionId, 'assistant', msg)
+      await updateExternalSessionStatus(historySessionId, 'completed')
+      await card.close(msg)
+      return
+    }
+
+    await appendExternalMessage(
+      historySessionId,
+      'assistant',
+      `已收到文件发送请求，共 ${filePaths.length} 个路径。`,
+    )
+    const result = await sendFilesByAbsolutePaths(client, chatId, filePaths)
+    const summary = `文件发送结果：成功 ${result.sent}，失败 ${result.failed}，未找到 ${result.missing}。`
+    const missingDetail = result.missingPaths.length > 0
+      ? `未找到路径：${result.missingPaths.slice(0, 3).join('；')}${result.missingPaths.length > 3 ? '；...' : ''}`
+      : ''
+    const failedDetail = result.failedPaths.length > 0
+      ? `发送失败：${result.failedPaths.slice(0, 3).join('；')}${result.failedPaths.length > 3 ? '；...' : ''}`
+      : ''
+    const detailParts = [summary, missingDetail, failedDetail].filter(Boolean)
+    await appendExternalMessage(historySessionId, 'assistant', detailParts.join('\n'))
+    await updateExternalSessionStatus(historySessionId, 'completed')
+    await card.close(summary)
+    return
+  }
+
   if (actionType === 'recommend_capability' && targetId) {
     await card.update(`Matched capability ${targetId}, executing...`)
     await appendExternalMessage(historySessionId, 'assistant', `已匹配技能 ${targetId}，任务已开始执行。`)
@@ -808,6 +949,14 @@ async function runConverse(
     body: JSON.stringify({
       sessionId: converseSessionId,
       messages: state.converseMessages,
+      context: {
+        channel: 'feishu',
+        locale: 'zh-CN',
+        capabilities: {
+          canSendFile: true,
+          canSendImage: true,
+        },
+      },
     }),
   })
 
@@ -833,15 +982,11 @@ async function runConverse(
       const questionText = extractQuestionText(event)
       await card.close(questionText)
       appendConverseMessage(openId, 'assistant', questionText)
-      await appendExternalMessage(historySessionId, 'assistant', questionText)
-      await updateExternalSessionStatus(historySessionId, 'completed')
       return
     }
 
     if (event.type === 'error') {
       const msg = event.message || event.content || 'Converse error'
-      await appendExternalMessage(historySessionId, 'error', `Converse error: ${msg}`)
-      await updateExternalSessionStatus(historySessionId, 'failed')
       await card.close(`❌ ${msg}`)
       return
     }
@@ -859,15 +1004,11 @@ async function runConverse(
   if (converseText.trim()) {
     appendConverseMessage(openId, 'assistant', converseText)
     await card.close(converseText)
-    await appendExternalMessage(historySessionId, 'assistant', converseText)
-    await updateExternalSessionStatus(historySessionId, 'completed')
     return
   }
 
   const fallback = '我还需要更多信息，请补充你的需求。'
   await card.close(fallback)
-  await appendExternalMessage(historySessionId, 'assistant', fallback)
-  await updateExternalSessionStatus(historySessionId, 'completed')
 }
 
 async function handleCommand(
@@ -1007,12 +1148,12 @@ export async function handleFeishuMessage(
   const userState = getUserState(openId)
   const historySessionId = userState.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
   setConverseSessionId(openId, historySessionId)
-  await upsertExternalSession(historySessionId, text, 'running')
-  await appendExternalMessage(historySessionId, 'user', text)
 
   const card = new FeishuStreamingSession(larkClient, config)
   const started = await card.start(chatId, config.botName)
   if (!started) {
+    await upsertExternalSession(historySessionId, text, 'running')
+    await appendExternalMessage(historySessionId, 'user', text)
     await appendExternalMessage(historySessionId, 'assistant', '已开始执行任务，请查看执行结果。')
     try {
       await executeSkill(larkClient, chatId, openId, config.defaultSkillId, text, null)
