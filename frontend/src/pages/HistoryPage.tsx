@@ -39,7 +39,7 @@ export default function HistoryPage() {
       const data = await res.json()
       setSessions(data)
     } catch {
-      // 蹇界暐閿欒
+      // 忽略错误
     } finally {
       setLoading(false)
     }
@@ -60,7 +60,7 @@ export default function HistoryPage() {
     const labels: Record<string, string> = {
       running: '运行中',
       completed: '已完成',
-      failed: '澶辫触',
+      failed: '失败',
       stopped: '已中止',
       aborted: '已中止',
     }
@@ -80,10 +80,10 @@ export default function HistoryPage() {
           : (skillId === '__converse__' ? 'converse' : 'desktop')))
 
     const sourceText: Record<'desktop' | 'converse' | 'cron' | 'feishu', string> = {
-      desktop: '妗岄潰',
-      converse: '棣栭〉瀵硅瘽',
-      cron: '瀹氭椂浠诲姟',
-      feishu: '椋炰功',
+      desktop: '桌面',
+      converse: '首页对话',
+      cron: '定时任务',
+      feishu: '飞书',
     }
 
     return (
@@ -114,7 +114,7 @@ export default function HistoryPage() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </Link>
-        <h2 className="text-2xl font-bold text-foreground">鍘嗗彶浼氳瘽</h2>
+        <h2 className="text-2xl font-bold text-foreground">历史会话</h2>
       </div>
 
       {sessions.length === 0 ? (
@@ -124,7 +124,7 @@ export default function HistoryPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <p className="text-muted-foreground">鏆傛棤鍘嗗彶浼氳瘽</p>
+          <p className="text-muted-foreground">暂无历史会话</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -307,7 +307,7 @@ function buildPendingQuestionFromHistory(session: SessionDetail | null): Pending
         header:
           typeof toolInput.header === 'string' && toolInput.header.trim()
             ? toolInput.header.trim()
-            : '闂',
+            : '问题',
         options: Array.isArray(toolInput.options) ? toolInput.options : [],
         multiSelect: Boolean(toolInput.multiSelect),
       }]
@@ -323,7 +323,7 @@ function buildPendingQuestionFromHistory(session: SessionDetail | null): Pending
       const header =
         typeof candidate.header === 'string' && candidate.header.trim()
           ? candidate.header.trim()
-          : '闂'
+          : '问题'
 
       const options = Array.isArray(candidate.options)
         ? candidate.options
@@ -369,11 +369,10 @@ const CHAT_PANEL_DEFAULT = 450
 const SIDEBAR_WIDTH = 280
 const CONVERSE_SYNC_RETRY_DELAY_MS = 900
 
-/* 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
  * convertMessages
- * 灏嗗悗绔?SessionDetail 鐨勫師濮嬫秷鎭浆鎹负鍓嶇 AgentMessage 鏍煎紡
- * 绾嚱鏁帮紝鎻愬彇鍒扮粍浠跺閮ㄤ互渚?useMemo 绋冲畾寮曠敤
- * 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
+ * 将后端 SessionDetail 的原始消息转换为前端 AgentMessage 格式
+ * 纯函数，提取到组件外部以便 useMemo 稳定引用
+
 function convertMessages(session: SessionDetail | null): AgentMessage[] {
   if (!session) return []
 
@@ -413,7 +412,7 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
         id: `${msg.id}-result`,
         type: 'tool',
         content: msg.toolResult.substring(0, 500) + (msg.toolResult.length > 500 ? '...' : ''),
-        toolName: '鎵ц缁撴灉',
+        toolName: '执行结果',
         timestamp: new Date(msg.createdAt),
       })
     }
@@ -445,7 +444,7 @@ export function SessionDetailPage() {
   const [selectedArtifact, setSelectedArtifact] = useState<FileArtifact | null>(null)
   const [showLivePreview, setShowLivePreview] = useState(false)
 
-  // 鑷姩灞曞紑鏍囪
+  // 自动展开标记
   const hasAutoExpandedRef = useRef(false)
   const attachInFlightRef = useRef<Promise<void> | null>(null)
   const attachedSessionRef = useRef<string | null>(null)
@@ -546,7 +545,7 @@ export function SessionDetailPage() {
             })
         }
       } catch {
-        // 蹇界暐閿欒
+        // 忽略错误
       }
     }
 
@@ -571,11 +570,11 @@ export function SessionDetailPage() {
       const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) throw new Error('鑾峰彇浼氳瘽璇︽儏澶辫触')
+      if (!res.ok) throw new Error('获取会话详情失败')
       const data = await res.json()
       setSession(data)
     } catch {
-      // 蹇界暐閿欒
+      // 忽略错误
     } finally {
       setLoading(false)
     }
@@ -603,7 +602,7 @@ export function SessionDetailPage() {
     if (!status) return '--'
     if (status === 'running') return '运行中'
     if (status === 'completed') return '已完成'
-    if (status === 'failed') return '澶辫触'
+    if (status === 'failed') return '失败'
     if (status === 'stopped' || status === 'aborted') return '已中止'
     return status
   }
@@ -620,7 +619,7 @@ export function SessionDetailPage() {
         setTaskFiles(data.files || [])
       }
     } catch {
-      // 蹇界暐閿欒
+      // 忽略错误
     }
   }
 
@@ -744,7 +743,7 @@ export function SessionDetailPage() {
     const wasThinking = prevConverseThinkingRef.current
     prevConverseThinkingRef.current = converse.isThinking
 
-    // 浠呭湪涓€杞?converse 浠?running -> idle 鏃跺仛涓€娆℃湇鍔＄鍚屾
+    // 仅在一轮 converse 从 running -> idle 时做一次服务端同步
     if (converse.isThinking || !wasThinking) return
 
     let cancelled = false
@@ -752,7 +751,7 @@ export function SessionDetailPage() {
       await syncConverseSnapshot()
       if (cancelled) return
 
-      // 浜屾鍏滃簳锛氶伩鍏嶅伓鍙戠綉缁?鍐欏簱鏃跺簭瀵艰嚧棣栬疆鍚屾鎷垮埌鏃у揩鐓?
+      // 二次兜底：避免偶发网络/写库时序导致首轮同步拿到旧快照
       await new Promise((resolve) => window.setTimeout(resolve, CONVERSE_SYNC_RETRY_DELAY_MS))
       if (cancelled) return
       if (converseThinkingRef.current) return
@@ -807,7 +806,7 @@ export function SessionDetailPage() {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="text-center py-12 text-muted-foreground">
-          浼氳瘽涓嶅瓨鍦?
+          会话不存在
         </div>
       </div>
     )
@@ -815,7 +814,7 @@ export function SessionDetailPage() {
 
   return (
     <div className="flex h-[calc(100vh-64px)]">
-      {/* 宸︿晶锛氳亰澶╅潰鏉?*/}
+      {/* 左侧：聊天面板 */}
       <div
         className="flex flex-col px-4 py-6 overflow-hidden"
         style={{
@@ -824,7 +823,7 @@ export function SessionDetailPage() {
           margin: showResizeHandle ? undefined : '0 auto',
         }}
       >
-        {/* 椤堕儴瀵艰埅 */}
+        {/* 顶部导航 */}
         <div className="flex items-center justify-between mb-4 shrink-0">
           <div className="flex items-center gap-4">
             <Link to="/history" className="text-muted-foreground hover:text-foreground transition-colors">
@@ -840,7 +839,7 @@ export function SessionDetailPage() {
             </span>
           </div>
           <div className="flex items-center gap-3">
-            {/* Live Preview 鎸夐挳 */}
+            {/* Live Preview 按钮 */}
             {session.work_dir && (
               <Tooltip content="在浏览器中实时预览" side="bottom">
                 <button
@@ -849,11 +848,11 @@ export function SessionDetailPage() {
                     showLivePreview ? 'text-green-500' : 'text-primary hover:text-primary/80'
                   }`}
                 >
-                  馃攳 Live
+                  🔍 Live
                 </button>
               </Tooltip>
             )}
-            {/* 渚ц竟鏍忓垏鎹?*/}
+            {/* 侧边栏切换 */}
             {taskFiles.length > 0 && (
               <Tooltip content="切换侧边栏" side="bottom">
                 <button
@@ -868,14 +867,14 @@ export function SessionDetailPage() {
                 </button>
               </Tooltip>
             )}
-            {/* 鏃堕棿 */}
+            {/* 时间 */}
             <div className="text-sm text-muted-foreground">
               {new Date(session.created_at).toLocaleString('zh-CN')}
             </div>
           </div>
         </div>
 
-        {/* 娑堟伅鍒楄〃 */}
+        {/* 消息列表 */}
         <div className="flex-1 overflow-y-auto mb-4 min-h-0">
           <MessageList
             messages={allMessages}
@@ -885,7 +884,7 @@ export function SessionDetailPage() {
           />
         </div>
 
-        {/* 缁х画瀵硅瘽杈撳叆妗?*/}
+        {/* 继续对话输入框 */}
         <div className="border-t border-border pt-4 shrink-0">
           {activePendingQuestion ? (
             <>
@@ -902,14 +901,14 @@ export function SessionDetailPage() {
                 onSubmit={handleContinue}
                 onStop={stopHandler}
                 isRunning={chatIsRunning}
-                placeholder="杈撳叆鏂扮殑闂缁х画瀵硅瘽..."
+                placeholder="输入新的问题继续对话..."
               />
             </>
           )}
         </div>
       </div>
 
-      {/* 鍒嗛殧鏉★紙鑱婂ぉ闈㈡澘涓庨瑙?渚ф爮涔嬮棿锛?*/}
+      {/* 分隔杆（聊天面板与预览/侧栏之间） */}
       {showResizeHandle && (
         <ResizeHandle
           onResize={handleChatResize}
@@ -918,7 +917,7 @@ export function SessionDetailPage() {
         />
       )}
 
-      {/* 涓棿锛氶瑙堥潰鏉?*/}
+      {/* 中间：预览面板 */}
       {isPreviewVisible && (
         <div className="flex-1 min-w-[300px] border-l border-border">
           {showLivePreview ? (
@@ -951,13 +950,13 @@ export function SessionDetailPage() {
               </div>
             </div>
           ) : selectedArtifact ? (
-            /* 闈欐€侀瑙?*/
+            /* 静态预览 */
             <ArtifactPreview artifact={selectedArtifact} onClose={handleClosePreview} />
           ) : null}
         </div>
       )}
 
-      {/* 鍙充晶锛氬伐鍏蜂晶鏍?*/}
+      {/* 右侧：工具侧栏 */}
       {isRightSidebarVisible && (
         <div style={{ width: SIDEBAR_WIDTH }} className="shrink-0">
           <RightSidebar
