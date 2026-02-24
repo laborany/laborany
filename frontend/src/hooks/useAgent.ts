@@ -332,6 +332,62 @@ export function useAgent(skillId: string) {
   const terminalEventRef = useRef(false)
   const resumeHintAtRef = useRef(0)
   const prevSkillIdRef = useRef(skillId)
+  const textFlushRafRef = useRef<number | null>(null)
+  const pendingTextFlushRef = useRef(false)
+  const isReplayingRef = useRef(false)
+
+  const flushAssistantText = useCallback((force = false) => {
+    if (!force && !pendingTextFlushRef.current) {
+      return
+    }
+
+    pendingTextFlushRef.current = false
+
+    const assistantId = assistantIdRef.current
+    const nextContent = currentTextRef.current
+    if (!nextContent) {
+      setState((s) => (s.connectionStatus ? { ...s, connectionStatus: null } : s))
+      return
+    }
+
+    setState((s) => {
+      const existing = s.messages.find((m) => m.id === assistantId)
+      const base = s.connectionStatus ? { ...s, connectionStatus: null } : s
+      if (existing) {
+        return {
+          ...base,
+          messages: s.messages.map((m) => (m.id === assistantId ? { ...m, content: nextContent } : m)),
+        }
+      }
+
+      return {
+        ...base,
+        messages: [
+          ...s.messages,
+          {
+            id: assistantId,
+            type: 'assistant',
+            content: nextContent,
+            timestamp: new Date(),
+          },
+        ],
+      }
+    })
+  }, [])
+
+  const scheduleAssistantTextFlush = useCallback(() => {
+    if (textFlushRafRef.current !== null) return
+
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      flushAssistantText()
+      return
+    }
+
+    textFlushRafRef.current = window.requestAnimationFrame(() => {
+      textFlushRafRef.current = null
+      flushAssistantText()
+    })
+  }, [flushAssistantText])
 
   const rememberActiveSessionId = useCallback((sessionId: string) => {
     rememberTrackedSessionId(skillId, sessionId)
@@ -360,6 +416,12 @@ export function useAgent(skillId: string) {
     sessionIdRef.current = null
     assistantIdRef.current = crypto.randomUUID()
     currentTextRef.current = ''
+    isReplayingRef.current = false
+    pendingTextFlushRef.current = false
+    if (textFlushRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(textFlushRafRef.current)
+      textFlushRafRef.current = null
+    }
     terminalEventRef.current = false
 
     setState({
@@ -380,6 +442,17 @@ export function useAgent(skillId: string) {
 
     prevSkillIdRef.current = skillId
   }, [skillId])
+
+  useEffect(() => {
+    return () => {
+      if (textFlushRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(textFlushRafRef.current)
+      }
+      textFlushRafRef.current = null
+      pendingTextFlushRef.current = false
+      isReplayingRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
     const onVisibilityChange = () => {
@@ -411,7 +484,11 @@ export function useAgent(skillId: string) {
 
   const handleEvent = useCallback(
     (event: Record<string, unknown>) => {
-      switch (event.type) {
+      const eventType = typeof event.type === 'string' ? event.type : ''
+      if (eventType && eventType !== 'text') {
+        flushAssistantText(true)
+      }
+      switch (eventType) {
         case 'session':
           const sid = event.sessionId as string
           sessionIdRef.current = sid
@@ -421,34 +498,9 @@ export function useAgent(skillId: string) {
 
         case 'text': {
           // 收到文本说明 CLI 已成功连接 API，清除连接状态
-          const aid = assistantIdRef.current
           currentTextRef.current += event.content as string
-          setState((s) => {
-            const existing = s.messages.find((m) => m.id === aid)
-            const base = { ...s, connectionStatus: null }
-            if (existing) {
-              return {
-                ...base,
-                messages: s.messages.map((m) =>
-                  m.id === aid
-                    ? { ...m, content: currentTextRef.current }
-                    : m,
-                ),
-              }
-            }
-            return {
-              ...base,
-              messages: [
-                ...s.messages,
-                {
-                  id: aid,
-                  type: 'assistant',
-                  content: currentTextRef.current,
-                  timestamp: new Date(),
-                },
-              ],
-            }
-          })
+          pendingTextFlushRef.current = true
+          scheduleAssistantTextFlush()
           break
         }
 
@@ -498,9 +550,12 @@ export function useAgent(skillId: string) {
             ],
           }))
 
-          // tool_use 后重置文本累计状态
-          currentTextRef.current = ''
-          assistantIdRef.current = crypto.randomUUID()
+          // tool_use 后重置文本累计状态（重放期间跳过，避免丢弃已积累的 assistant 文本）
+          if (!isReplayingRef.current) {
+            currentTextRef.current = ''
+            pendingTextFlushRef.current = false
+            assistantIdRef.current = crypto.randomUUID()
+          }
           break
         }
 
@@ -690,6 +745,7 @@ export function useAgent(skillId: string) {
         case 'stopped':
         case 'done':
         case 'aborted':
+          isReplayingRef.current = false
           terminalEventRef.current = true
           forgetActiveSessionId((event.sessionId as string | undefined) || sessionIdRef.current)
           setState((s) => ({
@@ -700,7 +756,7 @@ export function useAgent(skillId: string) {
           break
       }
     },
-    [forgetActiveSessionId, rememberActiveSessionId],
+    [flushAssistantText, forgetActiveSessionId, rememberActiveSessionId, scheduleAssistantTextFlush],
   )
 
   const readSseStream = useCallback(
@@ -797,6 +853,8 @@ export function useAgent(skillId: string) {
         for (const block of blocks) {
           parseEventBlock(block)
           if (shouldTerminate) {
+            flushAssistantText(true)
+            isReplayingRef.current = false
             void reader.cancel()
             return
           }
@@ -808,11 +866,14 @@ export function useAgent(skillId: string) {
         parseEventBlock(tail)
       }
 
+      flushAssistantText(true)
+      isReplayingRef.current = false
+
       if (shouldTerminate) {
         void reader.cancel()
       }
     },
-    [handleEvent],
+    [flushAssistantText, handleEvent],
   )
 
   const reconnectSessionStream = useCallback(
@@ -921,6 +982,7 @@ export function useAgent(skillId: string) {
       }))
 
       terminalEventRef.current = false
+      isReplayingRef.current = false
 
       // 中止上一轮未完成请求（防止快速连点导致竞态）
       abortRef.current?.abort()
@@ -928,6 +990,11 @@ export function useAgent(skillId: string) {
       // 准备助手消息
       assistantIdRef.current = crypto.randomUUID()
       currentTextRef.current = ''
+      pendingTextFlushRef.current = false
+      if (textFlushRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(textFlushRafRef.current)
+        textFlushRafRef.current = null
+      }
 
       abortRef.current = new AbortController()
 
@@ -1031,6 +1098,8 @@ export function useAgent(skillId: string) {
 
   const stop = useCallback(async () => {
     abortRef.current?.abort()
+    flushAssistantText(true)
+    isReplayingRef.current = false
 
     const sid = sessionIdRef.current
     if (sid) {
@@ -1044,12 +1113,14 @@ export function useAgent(skillId: string) {
     }
 
     setState((s) => ({ ...s, isRunning: false }))
-  }, [forgetActiveSessionId])
+  }, [flushAssistantText, forgetActiveSessionId])
 
   // 仅断开当前前端流连接，任务继续在后端运行
   const detach = useCallback(() => {
     abortByQuestionRef.current = false
     executeInFlightRef.current = false
+    flushAssistantText(true)
+    isReplayingRef.current = false
     abortRef.current?.abort()
     abortRef.current = null
     setState((s) => ({
@@ -1058,14 +1129,20 @@ export function useAgent(skillId: string) {
       connectionStatus: null,
       error: null,
     }))
-  }, [])
+  }, [flushAssistantText])
 
   // 清空消息
   const clear = useCallback(() => {
     forgetActiveSessionId(sessionIdRef.current)
     sessionIdRef.current = null
+    isReplayingRef.current = false
     assistantIdRef.current = crypto.randomUUID()
     currentTextRef.current = ''
+    pendingTextFlushRef.current = false
+    if (textFlushRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(textFlushRafRef.current)
+      textFlushRafRef.current = null
+    }
     setState({
       messages: [],
       isRunning: false,
@@ -1208,6 +1285,12 @@ export function useAgent(skillId: string) {
 
       assistantIdRef.current = crypto.randomUUID()
       currentTextRef.current = ''
+      pendingTextFlushRef.current = false
+      isReplayingRef.current = true
+      if (textFlushRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(textFlushRafRef.current)
+        textFlushRafRef.current = null
+      }
 
       try {
         const res = await fetchWithRetry(
@@ -1243,6 +1326,7 @@ export function useAgent(skillId: string) {
           }))
         }
       } finally {
+        isReplayingRef.current = false
         setState((s) => ({
           ...s,
           isRunning: false,

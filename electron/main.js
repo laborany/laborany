@@ -244,6 +244,8 @@ function processRuntimeCommand() {
         'gpucache',
         'dawncache',
         'shadercache',
+        'logs',
+        'Logs',
       ]),
     })
 

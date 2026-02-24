@@ -1,4 +1,4 @@
-
+﻿
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAgent, type PendingQuestion } from '../hooks/useAgent'
@@ -39,7 +39,7 @@ export default function HistoryPage() {
       const data = await res.json()
       setSessions(data)
     } catch {
-      // 忽略错误
+      // 蹇界暐閿欒
     } finally {
       setLoading(false)
     }
@@ -60,7 +60,7 @@ export default function HistoryPage() {
     const labels: Record<string, string> = {
       running: '运行中',
       completed: '已完成',
-      failed: '失败',
+      failed: '澶辫触',
       stopped: '已中止',
       aborted: '已中止',
     }
@@ -80,10 +80,10 @@ export default function HistoryPage() {
           : (skillId === '__converse__' ? 'converse' : 'desktop')))
 
     const sourceText: Record<'desktop' | 'converse' | 'cron' | 'feishu', string> = {
-      desktop: '桌面',
-      converse: '首页对话',
-      cron: '定时任务',
-      feishu: '飞书',
+      desktop: '妗岄潰',
+      converse: '棣栭〉瀵硅瘽',
+      cron: '瀹氭椂浠诲姟',
+      feishu: '椋炰功',
     }
 
     return (
@@ -114,7 +114,7 @@ export default function HistoryPage() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </Link>
-        <h2 className="text-2xl font-bold text-foreground">历史会话</h2>
+        <h2 className="text-2xl font-bold text-foreground">鍘嗗彶浼氳瘽</h2>
       </div>
 
       {sessions.length === 0 ? (
@@ -124,7 +124,7 @@ export default function HistoryPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <p className="text-muted-foreground">暂无历史会话</p>
+          <p className="text-muted-foreground">鏆傛棤鍘嗗彶浼氳瘽</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -194,18 +194,31 @@ function toTimestampMs(message: AgentMessage): number | null {
   return value
 }
 
+function summarizeToolInput(toolInput?: Record<string, unknown>): string {
+  if (!toolInput) return ''
+  const keys = ['file_path', 'path', 'command', 'pattern', 'url', 'query', 'description']
+  const parts = keys
+    .map((key) => toolInput[key])
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => normalizeMessageContent(value).slice(0, 120))
+
+  return parts.join('|')
+}
+
 function buildMessageSignature(
   message: AgentMessage,
   mode: 'strict' | 'loose' = 'strict',
 ): string {
   const ts = toTimestampMs(message)
   const tsBucket = ts === null ? 0 : Math.floor(ts / 1000)
-  const toolInput = message.toolInput ? JSON.stringify(message.toolInput) : ''
+  const toolHint = message.toolName || ''
+  const toolInputHint = summarizeToolInput(message.toolInput)
+  const contentSnippet = (message.content || '').slice(0, 200)
   return [
     message.type,
-    message.toolName || '',
-    normalizeMessageContent(message.content || ''),
-    toolInput,
+    toolHint,
+    toolInputHint,
+    normalizeMessageContent(contentSnippet),
     mode === 'strict' ? String(tsBucket) : '',
   ].join('|')
 }
@@ -294,7 +307,7 @@ function buildPendingQuestionFromHistory(session: SessionDetail | null): Pending
         header:
           typeof toolInput.header === 'string' && toolInput.header.trim()
             ? toolInput.header.trim()
-            : '问题',
+            : '闂',
         options: Array.isArray(toolInput.options) ? toolInput.options : [],
         multiSelect: Boolean(toolInput.multiSelect),
       }]
@@ -310,7 +323,7 @@ function buildPendingQuestionFromHistory(session: SessionDetail | null): Pending
       const header =
         typeof candidate.header === 'string' && candidate.header.trim()
           ? candidate.header.trim()
-          : '问题'
+          : '闂'
 
       const options = Array.isArray(candidate.options)
         ? candidate.options
@@ -356,6 +369,68 @@ const CHAT_PANEL_DEFAULT = 450
 const SIDEBAR_WIDTH = 280
 const CONVERSE_SYNC_RETRY_DELAY_MS = 900
 
+/* 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * convertMessages
+ * 灏嗗悗绔?SessionDetail 鐨勫師濮嬫秷鎭浆鎹负鍓嶇 AgentMessage 鏍煎紡
+ * 绾嚱鏁帮紝鎻愬彇鍒扮粍浠跺閮ㄤ互渚?useMemo 绋冲畾寮曠敤
+ * 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
+function convertMessages(session: SessionDetail | null): AgentMessage[] {
+  if (!session) return []
+
+  const messages: AgentMessage[] = []
+
+  for (const msg of session.messages) {
+    if (msg.type === 'user' && msg.content) {
+      messages.push({
+        id: String(msg.id),
+        type: 'user',
+        content: msg.content,
+        timestamp: new Date(msg.createdAt),
+      })
+    } else if (msg.type === 'assistant' && msg.content) {
+      messages.push({
+        id: String(msg.id),
+        type: 'assistant',
+        content: msg.content,
+        timestamp: new Date(msg.createdAt),
+      })
+    } else if (msg.type === 'tool_use' && msg.toolName) {
+      const parsedToolInput =
+        msg.toolInput && typeof msg.toolInput === 'object'
+          ? msg.toolInput as Record<string, unknown>
+          : undefined
+
+      messages.push({
+        id: String(msg.id),
+        type: 'tool',
+        content: '',
+        toolName: msg.toolName,
+        toolInput: parsedToolInput,
+        timestamp: new Date(msg.createdAt),
+      })
+    } else if (msg.type === 'tool_result' && msg.toolResult) {
+      messages.push({
+        id: `${msg.id}-result`,
+        type: 'tool',
+        content: msg.toolResult.substring(0, 500) + (msg.toolResult.length > 500 ? '...' : ''),
+        toolName: '鎵ц缁撴灉',
+        timestamp: new Date(msg.createdAt),
+      })
+    }
+  }
+
+  if (messages.length === 0) {
+    messages.push({
+      id: 'query',
+      type: 'user',
+      content: session.query,
+      timestamp: new Date(session.created_at),
+    })
+  }
+
+  return messages
+}
+
 export function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const { getSkillName } = useSkillNameMap()
@@ -370,7 +445,7 @@ export function SessionDetailPage() {
   const [selectedArtifact, setSelectedArtifact] = useState<FileArtifact | null>(null)
   const [showLivePreview, setShowLivePreview] = useState(false)
 
-  // 自动展开标记
+  // 鑷姩灞曞紑鏍囪
   const hasAutoExpandedRef = useRef(false)
   const attachInFlightRef = useRef<Promise<void> | null>(null)
   const attachedSessionRef = useRef<string | null>(null)
@@ -471,7 +546,7 @@ export function SessionDetailPage() {
             })
         }
       } catch {
-        // 忽略错误
+        // 蹇界暐閿欒
       }
     }
 
@@ -496,11 +571,11 @@ export function SessionDetailPage() {
       const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (!res.ok) throw new Error('获取会话详情失败')
+      if (!res.ok) throw new Error('鑾峰彇浼氳瘽璇︽儏澶辫触')
       const data = await res.json()
       setSession(data)
     } catch {
-      // 忽略错误
+      // 蹇界暐閿欒
     } finally {
       setLoading(false)
     }
@@ -528,7 +603,7 @@ export function SessionDetailPage() {
     if (!status) return '--'
     if (status === 'running') return '运行中'
     if (status === 'completed') return '已完成'
-    if (status === 'failed') return '失败'
+    if (status === 'failed') return '澶辫触'
     if (status === 'stopped' || status === 'aborted') return '已中止'
     return status
   }
@@ -545,7 +620,7 @@ export function SessionDetailPage() {
         setTaskFiles(data.files || [])
       }
     } catch {
-      // 忽略错误
+      // 蹇界暐閿欒
     }
   }
 
@@ -586,70 +661,6 @@ export function SessionDetailPage() {
     setSelectedArtifact(null)
     setShowLivePreview(false)
   }, [])
-
-  function convertMessages() {
-    if (!session) return []
-
-    const messages: Array<{
-      id: string
-      type: 'user' | 'assistant' | 'tool' | 'error'
-      content: string
-      toolName?: string
-      toolInput?: Record<string, unknown>
-      timestamp: Date
-    }> = []
-
-    for (const msg of session.messages) {
-      if (msg.type === 'user' && msg.content) {
-        messages.push({
-          id: String(msg.id),
-          type: 'user',
-          content: msg.content,
-          timestamp: new Date(msg.createdAt),
-        })
-      } else if (msg.type === 'assistant' && msg.content) {
-        messages.push({
-          id: String(msg.id),
-          type: 'assistant',
-          content: msg.content,
-          timestamp: new Date(msg.createdAt),
-        })
-      } else if (msg.type === 'tool_use' && msg.toolName) {
-        const parsedToolInput =
-          msg.toolInput && typeof msg.toolInput === 'object'
-            ? msg.toolInput as Record<string, unknown>
-            : undefined
-
-        messages.push({
-          id: String(msg.id),
-          type: 'tool',
-          content: msg.toolInput ? JSON.stringify(msg.toolInput, null, 2) : '',
-          toolName: msg.toolName,
-          toolInput: parsedToolInput,
-          timestamp: new Date(msg.createdAt),
-        })
-      } else if (msg.type === 'tool_result' && msg.toolResult) {
-        messages.push({
-          id: `${msg.id}-result`,
-          type: 'tool',
-          content: msg.toolResult.substring(0, 500) + (msg.toolResult.length > 500 ? '...' : ''),
-          toolName: '执行结果',
-          timestamp: new Date(msg.createdAt),
-        })
-      }
-    }
-
-    if (messages.length === 0) {
-      messages.push({
-        id: 'query',
-        type: 'user',
-        content: session.query,
-        timestamp: new Date(session.created_at),
-      })
-    }
-
-    return messages
-  }
 
   async function handleContinue(query: string) {
     const normalizedQuery = query.trim()
@@ -713,7 +724,7 @@ export function SessionDetailPage() {
 
     const timer = setInterval(() => {
       void fetchTaskFiles()
-    }, 2500)
+    }, 5000)
 
     return () => {
       clearInterval(timer)
@@ -733,7 +744,7 @@ export function SessionDetailPage() {
     const wasThinking = prevConverseThinkingRef.current
     prevConverseThinkingRef.current = converse.isThinking
 
-    // 仅在一轮 converse 从 running -> idle 时做一次服务端同步
+    // 浠呭湪涓€杞?converse 浠?running -> idle 鏃跺仛涓€娆℃湇鍔＄鍚屾
     if (converse.isThinking || !wasThinking) return
 
     let cancelled = false
@@ -741,7 +752,7 @@ export function SessionDetailPage() {
       await syncConverseSnapshot()
       if (cancelled) return
 
-      // 二次兜底：避免偶发网络/写库时序导致首轮同步拿到旧快照
+      // 浜屾鍏滃簳锛氶伩鍏嶅伓鍙戠綉缁?鍐欏簱鏃跺簭瀵艰嚧棣栬疆鍚屾鎷垮埌鏃у揩鐓?
       await new Promise((resolve) => window.setTimeout(resolve, CONVERSE_SYNC_RETRY_DELAY_MS))
       if (cancelled) return
       if (converseThinkingRef.current) return
@@ -759,6 +770,28 @@ export function SessionDetailPage() {
     syncConverseSnapshot,
   ])
 
+  const historyMessages = useMemo(
+    () => convertMessages(session),
+    [session],
+  )
+  const allMessages = useMemo(() => {
+    if (isConverseSession) {
+      return converse.messages.length > 0 ? converse.messages : historyMessages
+    }
+    return continuing && agent.messages.length > 0
+      ? mergeTimelineMessages(historyMessages, agent.messages)
+      : historyMessages
+  }, [isConverseSession, converse.messages, historyMessages, continuing, agent.messages])
+  const chatIsRunning = isConverseSession ? converse.isThinking : agent.isRunning
+  const activePendingQuestion = isConverseSession
+    ? converse.pendingQuestion
+    : (agent.pendingQuestion || (!continuing ? historyPendingQuestion : null))
+  const questionSubmitHandler = isConverseSession
+    ? converse.respondToQuestion
+    : (agent.pendingQuestion ? agent.respondToQuestion : handleQuestionSubmit)
+  const stopHandler = isConverseSession ? converse.stop : agent.stop
+  const showResizeHandle = isPreviewVisible || isRightSidebarVisible
+
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
@@ -774,33 +807,15 @@ export function SessionDetailPage() {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="text-center py-12 text-muted-foreground">
-          会话不存在
+          浼氳瘽涓嶅瓨鍦?
         </div>
       </div>
     )
   }
 
-  const historyMessages = convertMessages()
-  const allMessages = isConverseSession
-    ? (converse.messages.length > 0 ? converse.messages : historyMessages)
-    : (continuing && agent.messages.length > 0
-        ? mergeTimelineMessages(historyMessages, agent.messages)
-        : historyMessages)
-  const chatIsRunning = isConverseSession ? converse.isThinking : agent.isRunning
-  const activePendingQuestion = isConverseSession
-    ? converse.pendingQuestion
-    : (agent.pendingQuestion || (!continuing ? historyPendingQuestion : null))
-  const questionSubmitHandler = isConverseSession
-    ? converse.respondToQuestion
-    : (agent.pendingQuestion ? agent.respondToQuestion : handleQuestionSubmit)
-  const stopHandler = isConverseSession ? converse.stop : agent.stop
-
-  // 计算是否显示分隔条
-  const showResizeHandle = isPreviewVisible || isRightSidebarVisible
-
   return (
     <div className="flex h-[calc(100vh-64px)]">
-      {/* 左侧：聊天面板 */}
+      {/* 宸︿晶锛氳亰澶╅潰鏉?*/}
       <div
         className="flex flex-col px-4 py-6 overflow-hidden"
         style={{
@@ -809,7 +824,7 @@ export function SessionDetailPage() {
           margin: showResizeHandle ? undefined : '0 auto',
         }}
       >
-        {/* 顶部导航 */}
+        {/* 椤堕儴瀵艰埅 */}
         <div className="flex items-center justify-between mb-4 shrink-0">
           <div className="flex items-center gap-4">
             <Link to="/history" className="text-muted-foreground hover:text-foreground transition-colors">
@@ -825,7 +840,7 @@ export function SessionDetailPage() {
             </span>
           </div>
           <div className="flex items-center gap-3">
-            {/* Live Preview 按钮 */}
+            {/* Live Preview 鎸夐挳 */}
             {session.work_dir && (
               <Tooltip content="在浏览器中实时预览" side="bottom">
                 <button
@@ -834,11 +849,11 @@ export function SessionDetailPage() {
                     showLivePreview ? 'text-green-500' : 'text-primary hover:text-primary/80'
                   }`}
                 >
-                  🔍 Live
+                  馃攳 Live
                 </button>
               </Tooltip>
             )}
-            {/* 侧边栏切换 */}
+            {/* 渚ц竟鏍忓垏鎹?*/}
             {taskFiles.length > 0 && (
               <Tooltip content="切换侧边栏" side="bottom">
                 <button
@@ -853,14 +868,14 @@ export function SessionDetailPage() {
                 </button>
               </Tooltip>
             )}
-            {/* 时间 */}
+            {/* 鏃堕棿 */}
             <div className="text-sm text-muted-foreground">
               {new Date(session.created_at).toLocaleString('zh-CN')}
             </div>
           </div>
         </div>
 
-        {/* 消息列表 */}
+        {/* 娑堟伅鍒楄〃 */}
         <div className="flex-1 overflow-y-auto mb-4 min-h-0">
           <MessageList
             messages={allMessages}
@@ -870,7 +885,7 @@ export function SessionDetailPage() {
           />
         </div>
 
-        {/* 继续对话输入框 */}
+        {/* 缁х画瀵硅瘽杈撳叆妗?*/}
         <div className="border-t border-border pt-4 shrink-0">
           {activePendingQuestion ? (
             <>
@@ -887,14 +902,14 @@ export function SessionDetailPage() {
                 onSubmit={handleContinue}
                 onStop={stopHandler}
                 isRunning={chatIsRunning}
-                placeholder="输入新的问题继续对话..."
+                placeholder="杈撳叆鏂扮殑闂缁х画瀵硅瘽..."
               />
             </>
           )}
         </div>
       </div>
 
-      {/* 分隔条（聊天面板与预览/侧栏之间） */}
+      {/* 鍒嗛殧鏉★紙鑱婂ぉ闈㈡澘涓庨瑙?渚ф爮涔嬮棿锛?*/}
       {showResizeHandle && (
         <ResizeHandle
           onResize={handleChatResize}
@@ -903,7 +918,7 @@ export function SessionDetailPage() {
         />
       )}
 
-      {/* 中间：预览面板 */}
+      {/* 涓棿锛氶瑙堥潰鏉?*/}
       {isPreviewVisible && (
         <div className="flex-1 min-w-[300px] border-l border-border">
           {showLivePreview ? (
@@ -936,13 +951,13 @@ export function SessionDetailPage() {
               </div>
             </div>
           ) : selectedArtifact ? (
-            /* 静态预览 */
+            /* 闈欐€侀瑙?*/
             <ArtifactPreview artifact={selectedArtifact} onClose={handleClosePreview} />
           ) : null}
         </div>
       )}
 
-      {/* 右侧：工具侧栏 */}
+      {/* 鍙充晶锛氬伐鍏蜂晶鏍?*/}
       {isRightSidebarVisible && (
         <div style={{ width: SIDEBAR_WIDTH }} className="shrink-0">
           <RightSidebar
@@ -959,3 +974,4 @@ export function SessionDetailPage() {
     </div>
   )
 }
+

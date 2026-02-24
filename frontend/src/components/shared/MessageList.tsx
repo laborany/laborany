@@ -357,14 +357,39 @@ function MarkdownView({ content }: { content: string }) {
   )
 }
 
+/* ─────────────────────────────────────────────────────────
+ * useDebouncedValue
+ * 流式渲染时对高频变化的值做 debounce，降低 markdown parse 频率
+ * ───────────────────────────────────────────────────────── */
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    if (delayMs <= 0) { setDebounced(value); return }
+    const timer = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(timer)
+  }, [value, delayMs])
+  return debounced
+}
+
 function TextBlockView({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  // 流式时 300ms debounce，markdown parse 频率从 ~60fps 降到 ~3fps
+  const debouncedContent = useDebouncedValue(content, isStreaming ? 300 : 0)
+
   if (isStreaming) {
+    const canRenderStreamingMarkdown = debouncedContent.length <= 12000
     return (
       <div className="animate-in slide-in-from-bottom-1 duration-150 fade-in">
-        <div className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground/95">
-          {content}
-          <span className="ml-0.5 inline-block h-4 w-2 animate-pulse rounded-sm bg-primary/70" />
-        </div>
+        {canRenderStreamingMarkdown ? (
+          <div className="prose prose-sm max-w-none dark:prose-invert">
+            <MarkdownView content={debouncedContent} />
+            <span className="ml-0.5 inline-block h-4 w-2 animate-pulse rounded-sm bg-primary/70 align-middle" />
+          </div>
+        ) : (
+          <div className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground/95">
+            {content}
+            <span className="ml-0.5 inline-block h-4 w-2 animate-pulse rounded-sm bg-primary/70" />
+          </div>
+        )}
       </div>
     )
   }

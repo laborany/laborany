@@ -146,6 +146,47 @@ session.get('/:sessionId', (c) => {
     createdAt: msg.created_at,
   }))
 
+  const runtimeSnapshot = runtimeTaskManager.getLiveSnapshot(sessionId)
+  if (runtimeSnapshot?.isRunning) {
+    const runtimeQuery = runtimeSnapshot.query.trim()
+    if (runtimeQuery) {
+      const lastUserMessage = [...formattedMessages]
+        .reverse()
+        .find((msg) => msg.type === 'user')
+      const lastUserContent = (lastUserMessage?.content || '').trim()
+      if (lastUserContent !== runtimeQuery) {
+        formattedMessages.push({
+          id: -1,
+          type: 'user',
+          content: runtimeQuery,
+          toolName: null,
+          toolInput: null,
+          toolResult: null,
+          createdAt: runtimeSnapshot.startedAt,
+        })
+      }
+    }
+
+    const liveAssistant = runtimeSnapshot.assistantContent.trim()
+    if (liveAssistant) {
+      const lastAssistantMessage = [...formattedMessages]
+        .reverse()
+        .find((msg) => msg.type === 'assistant')
+      const lastAssistantContent = (lastAssistantMessage?.content || '').trim()
+      if (lastAssistantContent !== liveAssistant) {
+        formattedMessages.push({
+          id: -2,
+          type: 'assistant',
+          content: liveAssistant,
+          toolName: null,
+          toolInput: null,
+          toolResult: null,
+          createdAt: runtimeSnapshot.lastEventAt || runtimeSnapshot.startedAt,
+        })
+      }
+    }
+  }
+
   let workDir = sessionData.work_dir
   if (!workDir) {
     const computedDir = getTaskDir(sessionId)

@@ -156,13 +156,47 @@ export function useConverse(): UseConverseReturn {
     let assistantText = ''
     let shouldTerminate = false
     const assistantId = `assistant_${Date.now()}`
+    let pendingAssistantFlush = false
+    let assistantFlushRaf: number | null = null
     const upsertAssistant = (prev: AgentMessage[], text: string): AgentMessage[] => {
       const withoutCurrent = prev.filter((item) => item.id !== assistantId)
       if (!text) return withoutCurrent
       return [...withoutCurrent, { id: assistantId, type: 'assistant', content: text, timestamp: new Date() }]
     }
 
+    const flushAssistantText = (force = false) => {
+      if (!force && !pendingAssistantFlush) return
+      pendingAssistantFlush = false
+      const cleaned = stripActionMarker(assistantText)
+      setMessages((prev) => upsertAssistant(prev, cleaned))
+    }
+
+    const scheduleAssistantFlush = () => {
+      if (assistantFlushRaf !== null) return
+      if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        flushAssistantText()
+        return
+      }
+
+      assistantFlushRaf = window.requestAnimationFrame(() => {
+        assistantFlushRaf = null
+        flushAssistantText()
+      })
+    }
+
+    const cancelAssistantFlush = () => {
+      if (assistantFlushRaf !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(assistantFlushRaf)
+      }
+      assistantFlushRaf = null
+    }
+
     const handleEvent = (eventType: string, data: Record<string, unknown>) => {
+      if (eventType !== 'text') {
+        cancelAssistantFlush()
+        flushAssistantText(true)
+      }
+
       if (eventType === 'session') {
         const sid = data.sessionId as string
         sessionIdRef.current = sid
@@ -172,8 +206,8 @@ export function useConverse(): UseConverseReturn {
 
       if (eventType === 'text') {
         assistantText += (data.content as string) || ''
-        const cleaned = stripActionMarker(assistantText)
-        setMessages((prev) => upsertAssistant(prev, cleaned))
+        pendingAssistantFlush = true
+        scheduleAssistantFlush()
         return
       }
 
@@ -302,8 +336,8 @@ export function useConverse(): UseConverseReturn {
       parseSSEBlock(tail)
     }
 
-    const cleaned = stripActionMarker(assistantText)
-    setMessages((prev) => upsertAssistant(prev, cleaned))
+    cancelAssistantFlush()
+    flushAssistantText(true)
 
     if (shouldTerminate) {
       void reader.cancel()

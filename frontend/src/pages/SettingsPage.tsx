@@ -58,6 +58,7 @@ interface StorageHomeSwitchResponse {
   success?: boolean
   message?: string
   error?: string
+  targetHome?: string
 }
 
 type BannerType = 'success' | 'error' | 'warning'
@@ -111,7 +112,25 @@ function isNumeric(text: string): boolean {
 }
 
 function normalizeStoragePath(input: string): string {
-  return input.trim().replace(/[\\/]+$/, '')
+  let normalized = input.trim()
+  if (!normalized) return ''
+
+  normalized = normalized.replace(/\\/g, '/')
+
+  if (/^[a-z]:\/$/i.test(normalized)) {
+    return `${normalized.charAt(0).toLowerCase()}:/`
+  }
+
+  normalized = normalized.replace(/\/+$/, '')
+  if (/^[a-z]:$/i.test(normalized)) {
+    return `${normalized.charAt(0).toLowerCase()}:/`
+  }
+
+  if (/^[a-z]:\//i.test(normalized)) {
+    normalized = `${normalized.charAt(0).toLowerCase()}${normalized.slice(1)}`
+  }
+
+  return normalized
 }
 
 function isSameStoragePath(a: string, b: string): boolean {
@@ -400,6 +419,7 @@ export default function SettingsPage() {
     try {
       let requestFailed = false
       let res: Response | null = null
+      let expectedHome = requestedHome
       try {
         res = await fetch(`${API_BASE}/config/storage/home`, {
           method: 'POST',
@@ -422,6 +442,10 @@ export default function SettingsPage() {
           setMessage({ type: 'error', text: data.error || '存储路径切换请求失败' })
           return
         }
+
+        if (typeof data.targetHome === 'string' && data.targetHome.trim()) {
+          expectedHome = data.targetHome.trim()
+        }
       }
 
       const recovered = await waitForApiRecovery(70000, 1500)
@@ -434,7 +458,7 @@ export default function SettingsPage() {
       }
 
       const latest = await loadConfig()
-      if (!latest?.appHome || !isSameStoragePath(latest.appHome, requestedHome)) {
+      if (!latest?.appHome || !isSameStoragePath(latest.appHome, expectedHome)) {
         setMessage({
           type: 'warning',
           text: '服务已恢复，但检测到存储路径未完成切换，请重试一次或查看日志。',

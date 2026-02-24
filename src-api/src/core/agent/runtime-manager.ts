@@ -298,6 +298,31 @@ class RuntimeTaskManager {
     }
   }
 
+  getLiveSnapshot(sessionId: string): {
+    sessionId: string
+    skillId: string
+    query: string
+    startedAt: string
+    lastEventAt?: string
+    assistantContent: string
+    isRunning: boolean
+  } | null {
+    const task = this.tasks.get(sessionId)
+    if (!task) {
+      return null
+    }
+
+    return {
+      sessionId: task.sessionId,
+      skillId: task.skillId,
+      query: task.query,
+      startedAt: new Date(task.startedAt).toISOString(),
+      lastEventAt: task.lastEventAt,
+      assistantContent: task.assistantContent,
+      isRunning: task.status === 'running',
+    }
+  }
+
   isRunning(sessionId: string): boolean {
     const task = this.tasks.get(sessionId)
     return task?.status === 'running'
