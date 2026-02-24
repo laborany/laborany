@@ -369,10 +369,11 @@ const CHAT_PANEL_DEFAULT = 450
 const SIDEBAR_WIDTH = 280
 const CONVERSE_SYNC_RETRY_DELAY_MS = 900
 
+/**
  * convertMessages
  * 将后端 SessionDetail 的原始消息转换为前端 AgentMessage 格式
  * 纯函数，提取到组件外部以便 useMemo 稳定引用
-
+ */
 function convertMessages(session: SessionDetail | null): AgentMessage[] {
   if (!session) return []
 
