@@ -674,7 +674,6 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
   if (action === 'setup_schedule') {
     const cronExpr = asString(raw.cronExpr)
     const targetQuery = asString(raw.targetQuery) || asString(raw.query)
-    if (!cronExpr || !targetQuery) return null
     return {
       action: 'setup_schedule',
       cronExpr,
@@ -738,7 +737,6 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
   if (action === 'setup_cron') {
     const cronExpr = asString(raw.cronSchedule)
     const targetQuery = asString(raw.cronTargetQuery) || asString(raw.query)
-    if (!cronExpr || !targetQuery) return null
     return {
       action: 'setup_schedule',
       cronExpr,

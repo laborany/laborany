@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useAgent } from '../hooks/useAgent'
-import { useConverse, type ConverseAction } from '../hooks/useConverse'
+import { useConverse } from '../hooks/useConverse'
 import { useCronJobs } from '../hooks/useCron'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { type QuickStartItem } from '../contexts/QuickStartContext'
@@ -11,7 +11,7 @@ import { GuideBanner } from '../components/home/GuideBanner'
 import { ScenarioCards } from '../components/home/ScenarioCards'
 import ChatInput from '../components/shared/ChatInput'
 import { setPendingFiles } from '../utils/pendingFiles'
-import { ConversationPanel, type DecisionPrompt } from '../components/home/ConversationPanel'
+import { ConversationPanel } from '../components/home/ConversationPanel'
 import { CronSetupCard } from '../components/execution'
 import { SkillExecutingView, type HomePhase, type ExecutionContext } from '../components/home/ExecutingViews'
 import { PlanReviewPanel } from '../components/home/PlanReviewPanel'
@@ -75,8 +75,6 @@ export default function HomePage() {
   const [candidate, setCandidate] = useState<CandidateInfo | null>(null)
   const [genericPlan, setGenericPlan] = useState<GenericExecutionPlan | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
-  const [scheduleDecision, setScheduleDecision] = useState<DecisionPrompt | null>(null)
-  const [scheduleAction, setScheduleAction] = useState<ConverseAction | null>(null)
   const [backgroundTasks, setBackgroundTasks] = useState<RunningTaskBrief[]>([])
 
   const handledActionRef = useRef<string | null>(null)
@@ -175,18 +173,16 @@ export default function HomePage() {
     if (action.action === 'setup_schedule') {
       const cronExpr = action.cronExpr || ''
       const targetQuery = action.targetQuery || action.query || ''
-      const targetId = action.targetId
-      if (!cronExpr || !targetQuery || !targetId) return
-
-      setScheduleAction(action)
-      setScheduleDecision({
-        title: '检测到定时任务意图，是否创建？',
-        description: `${cronExpr}\n将先进入可编辑确认卡，再创建任务。`,
-        actions: [
-          { key: 'confirm', label: '创建定时任务', variant: 'primary' },
-          { key: 'ask_more', label: '继续确认', variant: 'ghost' },
-        ],
+      const targetId = action.targetId || ''
+      setCronPending({
+        schedule: cronExpr,
+        timezone: action.tz,
+        name: action.name,
+        targetQuery,
+        targetId,
       })
+      setPhase('idle')
+      return
     }
   }, [appendSessionFilesMarker, converse.action, converse.pendingQuestion])
 
@@ -207,8 +203,6 @@ export default function HomePage() {
     setCandidate(null)
     setGenericPlan(null)
     setErrorMsg('')
-    setScheduleDecision(null)
-    setScheduleAction(null)
     handledActionRef.current = null
     return true
   }, [converse.resumeSession])
@@ -235,13 +229,6 @@ export default function HomePage() {
       setPhase('error')
     }
   }, [converse.error, phase])
-
-  useEffect(() => {
-    if (converse.pendingQuestion) {
-      setScheduleDecision(null)
-      setScheduleAction(null)
-    }
-  }, [converse.pendingQuestion])
 
   const handleCandidateConfirm = useCallback(() => {
     if (!candidate) return
@@ -275,24 +262,6 @@ export default function HomePage() {
     setPhase('fallback_general')
   }, [appendSessionFilesMarker, candidate])
 
-  const handleScheduleDecision = useCallback((key: string) => {
-    if (key === 'confirm' && scheduleAction) {
-      const cronExpr = scheduleAction.cronExpr || ''
-      const targetQuery = scheduleAction.targetQuery || scheduleAction.query || ''
-      const targetId = scheduleAction.targetId || ''
-      setCronPending({
-        schedule: cronExpr,
-        timezone: scheduleAction.tz,
-        name: scheduleAction.name,
-        targetQuery,
-        targetId,
-      })
-      setPhase('idle')
-    }
-    setScheduleDecision(null)
-    setScheduleAction(null)
-  }, [scheduleAction])
-
   const handleCronConfirm = useCallback(async (next: CronPending) => {
     await createJob({
       name: next.name || next.targetQuery.slice(0, 50) || '定时任务',
@@ -313,8 +282,6 @@ export default function HomePage() {
     setCandidate(null)
     setGenericPlan(null)
     setErrorMsg('')
-    setScheduleDecision(null)
-    setScheduleAction(null)
     handledActionRef.current = null
   }, [agent.clear, converse.reset])
 
@@ -345,8 +312,6 @@ export default function HomePage() {
     setCandidate(null)
     setGenericPlan(null)
     setErrorMsg('')
-    setScheduleDecision(null)
-    setScheduleAction(null)
     handledActionRef.current = null
     void refreshBackgroundTasks()
   }, [agent.clear, agent.detach, agent.isRunning, agent.sessionId, phase, refreshBackgroundTasks])
@@ -397,8 +362,6 @@ export default function HomePage() {
       respondToQuestion={converse.respondToQuestion}
       isThinking={converse.isThinking}
       error={converse.error}
-      decisionPrompt={scheduleDecision}
-      onDecision={handleScheduleDecision}
       onBack={handleNewTask}
       stateSummary={converse.state}
     />

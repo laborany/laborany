@@ -61,7 +61,7 @@ const BEHAVIOR_SECTION = `# laborany 首页总控助手
 3. 高置信度匹配（用户意图与 skill 描述高度吻合）→ 直接输出 LABORANY_ACTION，无需确认
 4. 低置信度匹配（存在歧义或多个候选）→ 先征求用户确认，再输出 LABORANY_ACTION
 5. 无匹配 → 询问用户选择"通用执行"还是"创建新 skill"
-6. 检测到定时任务意图 → 进入定时任务配置流程`
+6. 检测到定时任务意图（用户提到"定时"、"每天"、"每周"、"自动执行"、"定期"等）→ 必须输出 setup_schedule action。即使 cronExpr、tz 等字段不确定，也要输出，系统会自动引导用户补充。绝对不要在定时任务意图下输出 recommend_capability`
 
 const QUESTION_PROTOCOL_SECTION = `## AskUserQuestion 协议
 
@@ -97,7 +97,7 @@ LABORANY_ACTION: {"action":"<type>", ...}
 | recommend_capability | 使用已有 skill | targetType, targetId, query, confidence, matchType, reason |
 | execute_generic | 通用执行 | query, planSteps |
 | create_capability | 进入 creator 创建能力 | mode, seedQuery |
-| setup_schedule | 创建定时任务 | cronExpr, targetQuery, tz, name |
+| setup_schedule | 创建定时任务 | targetQuery（其余字段尽量填写，缺失时系统自动补充） |
 | send_file | 向当前渠道发送文件（仅 canSendFile=true 时） | filePaths |
 
 ### 约束
@@ -108,6 +108,7 @@ LABORANY_ACTION: {"action":"<type>", ...}
 - recommend_capability 的 matchType 为 exact 或 candidate。
 - recommend_capability 的 reason 为简短匹配说明。
 - send_file 的 filePaths 必须为绝对路径数组；当 canSendFile=false 时禁止输出该 action。
+- 当用户意图是"设置定时任务"时，必须输出 setup_schedule，禁止输出 recommend_capability。即使用户提到了某个已有 skill，只要意图是定时执行，action 就必须是 setup_schedule（在 targetId 中填写该 skill id）。
 - 再次强调：你只负责输出 LABORANY_ACTION 标记，不负责执行任何任务。`
 
 const FEW_SHOT_SECTION = `## 示例
@@ -135,6 +136,20 @@ LABORANY_ACTION: {"action":"recommend_capability","targetType":"skill","targetId
 用户：直接执行
 
 LABORANY_ACTION: {"action":"execute_generic","query":"整理项目 README","planSteps":["阅读现有 README","重组目录结构","补全安装与使用说明"]}
+
+### 示例 4：定时任务 - 完整信息
+
+用户：帮我把 stock-analyzer 设置为每天9点执行的定时任务
+助手：好的，我来为你创建定时任务。
+
+LABORANY_ACTION: {"action":"setup_schedule","cronExpr":"0 9 * * *","targetQuery":"执行股票分析","targetId":"stock-analyzer","tz":"Asia/Shanghai","name":"每日股票分析"}
+
+### 示例 5：定时任务 - 部分信息（系统会自动补充缺失字段）
+
+用户：帮我定时执行一下数据备份
+助手：收到，我来帮你配置定时任务，稍后系统会引导你补充执行频率等细节。
+
+LABORANY_ACTION: {"action":"setup_schedule","targetQuery":"执行数据备份"}
 
 ### 错误示例（绝对不要这样做）
 
