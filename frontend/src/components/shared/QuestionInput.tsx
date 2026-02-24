@@ -76,7 +76,7 @@ export function QuestionInput({ pendingQuestion, onSubmit }: QuestionInputProps)
     Object.values(otherInputs).some((v) => v?.trim())
 
   return (
-    <div className="border-primary/30 bg-accent/30 space-y-4 rounded-xl border p-4">
+    <div className="border-primary/30 bg-accent/30 max-h-[70vh] space-y-4 overflow-y-auto rounded-xl border p-4">
       <div className="text-foreground flex items-center gap-2 text-sm font-medium">
         <span className="bg-primary size-2 animate-pulse rounded-full" />
         需要您的输入

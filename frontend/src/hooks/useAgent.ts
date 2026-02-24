@@ -54,6 +54,7 @@ interface AgentState {
 const EXECUTE_DEDUPE_WINDOW_MS = 1200
 const SSE_READER_POLL_INTERVAL_MS = 1200
 const SSE_STALL_AFTER_RESUME_MS = 90000
+const SSE_NO_PROGRESS_AFTER_RESUME_MS = 15000
 const LAST_SESSION_KEY_PREFIX = 'lastSession_'
 const LAST_SESSION_LIST_KEY_PREFIX = 'lastSessions_'
 const MAX_TRACKED_SESSIONS_PER_SKILL = 12
@@ -839,7 +840,11 @@ export function useAgent(skillId: string) {
             && lastProgressTs >= resumeHintAt
           const streamStalled = hasProgressSinceResume
             && now - lastProgressTs > SSE_STALL_AFTER_RESUME_MS
-          if (!shouldTerminate && enableResumeStallDetection && hasResumeSignal && streamStalled) {
+          // 兜底：resume 后完全没有收到任何事件，也判定为 stall
+          const noProgressSinceResume = hasResumeSignal
+            && !hasProgressSinceResume
+            && now - resumeHintAt > SSE_NO_PROGRESS_AFTER_RESUME_MS
+          if (!shouldTerminate && enableResumeStallDetection && hasResumeSignal && (streamStalled || noProgressSinceResume)) {
             void reader.cancel()
             throw new Error('Network stream stalled after resume')
           }
@@ -1052,7 +1057,7 @@ export function useAgent(skillId: string) {
           const errorData = await res.json().catch(() => ({ error: '请求失败' }))
           throw new Error(errorData.error || `请求失败: ${res.status}`)
         }
-        await readSseStream(res)
+        await readSseStream(res, { enableResumeStallDetection: true })
       } catch (err) {
         let recoveredByReconnect = false
 
