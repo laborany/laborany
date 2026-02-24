@@ -743,7 +743,8 @@ async function executeSkill(
   query: string,
   card: FeishuStreamingSession | null,
 ): Promise<void> {
-  const executeSessionId = `feishu-${randomUUID().slice(0, 12)}`
+  const state = getUserState(stateKey)
+  const executeSessionId = state.executeSessionId || `feishu-${randomUUID().slice(0, 12)}`
   setExecuteSessionId(stateKey, executeSessionId)
   let runtimeSessionId = executeSessionId
   let baselineSessionId = executeSessionId
@@ -757,6 +758,7 @@ async function executeSkill(
         skill_id: skillId,
         query,
         sessionId: executeSessionId,
+        source: 'feishu',
       }),
     })
 
@@ -804,7 +806,7 @@ async function executeSkill(
     }
     await sendArtifactsFromSession(client, chatId, runtimeSessionId, baselineMap)
   } finally {
-    clearExecuteSessionId(stateKey)
+    // session 仅在 /new (resetUser) 或 /stop (clearExecuteSessionId) 时清除
   }
 }
 
@@ -951,6 +953,7 @@ async function runConverse(
     body: JSON.stringify({
       sessionId: converseSessionId,
       messages: latestState.converseMessages,
+      source: 'feishu',
       context: {
         channel: 'feishu',
         locale: 'zh-CN',

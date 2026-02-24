@@ -136,8 +136,10 @@ export function useConverse(): UseConverseReturn {
   const messagesRef = useRef<AgentMessage[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const requestSeqRef = useRef(0)
+  const isThinkingRef = useRef(false)
 
   messagesRef.current = messages
+  isThinkingRef.current = isThinking
 
   const stop = useCallback(() => {
     abortRef.current?.abort()
@@ -434,6 +436,7 @@ export function useConverse(): UseConverseReturn {
   }, [pendingQuestion, sendMessage])
 
   const resumeSession = useCallback(async (targetSessionId: string): Promise<boolean> => {
+    if (isThinkingRef.current) return false
     const sid = targetSessionId.trim()
     if (!sid) return false
 

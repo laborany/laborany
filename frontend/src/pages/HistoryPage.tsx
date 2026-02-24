@@ -375,6 +375,7 @@ export function SessionDetailPage() {
   const attachInFlightRef = useRef<Promise<void> | null>(null)
   const attachedSessionRef = useRef<string | null>(null)
   const prevConverseThinkingRef = useRef(false)
+  const converseThinkingRef = useRef(false)
 
   const {
     width: chatPanelWidth,
@@ -393,6 +394,7 @@ export function SessionDetailPage() {
   const isConverseSession = session?.skill_id === '__converse__'
   const agent = useAgent(executionSkillId)
   const converse = useConverse()
+  converseThinkingRef.current = converse.isThinking
   const historyPendingQuestion = useMemo(
     () => buildPendingQuestionFromHistory(session),
     [session],
@@ -506,7 +508,9 @@ export function SessionDetailPage() {
 
   const syncConverseSnapshot = useCallback(async () => {
     if (!sessionId) return
+    if (converseThinkingRef.current) return
     await fetchSessionDetail()
+    if (converseThinkingRef.current) return
     await converse.resumeSession(sessionId)
   }, [sessionId, fetchSessionDetail, converse.resumeSession])
 
@@ -740,6 +744,7 @@ export function SessionDetailPage() {
       // 二次兜底：避免偶发网络/写库时序导致首轮同步拿到旧快照
       await new Promise((resolve) => window.setTimeout(resolve, CONVERSE_SYNC_RETRY_DELAY_MS))
       if (cancelled) return
+      if (converseThinkingRef.current) return
       await syncConverseSnapshot()
     })()
 
@@ -778,7 +783,9 @@ export function SessionDetailPage() {
   const historyMessages = convertMessages()
   const allMessages = isConverseSession
     ? (converse.messages.length > 0 ? converse.messages : historyMessages)
-    : (continuing ? mergeTimelineMessages(historyMessages, agent.messages) : historyMessages)
+    : (continuing && agent.messages.length > 0
+        ? mergeTimelineMessages(historyMessages, agent.messages)
+        : historyMessages)
   const chatIsRunning = isConverseSession ? converse.isThinking : agent.isRunning
   const activePendingQuestion = isConverseSession
     ? converse.pendingQuestion
