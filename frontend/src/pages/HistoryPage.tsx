@@ -256,6 +256,7 @@ const CHAT_PANEL_MIN = 300
 const CHAT_PANEL_MAX = 800
 const CHAT_PANEL_DEFAULT = 450
 const SIDEBAR_WIDTH = 280
+const CONVERSE_SYNC_RETRY_DELAY_MS = 900
 
 export function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>()
@@ -275,6 +276,7 @@ export function SessionDetailPage() {
   const hasAutoExpandedRef = useRef(false)
   const attachInFlightRef = useRef<Promise<void> | null>(null)
   const attachedSessionRef = useRef<string | null>(null)
+  const prevConverseThinkingRef = useRef(false)
 
   const {
     width: chatPanelWidth,
@@ -311,6 +313,7 @@ export function SessionDetailPage() {
     setContinuing(false)
     attachInFlightRef.current = null
     attachedSessionRef.current = null
+    prevConverseThinkingRef.current = false
     converse.reset()
     if (sessionId) {
       fetchSessionDetail()
@@ -387,7 +390,7 @@ export function SessionDetailPage() {
     }
   }, [session?.work_dir])
 
-  async function fetchSessionDetail() {
+  const fetchSessionDetail = useCallback(async () => {
     try {
       const token = localStorage.getItem('token')
       const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
@@ -401,7 +404,13 @@ export function SessionDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [sessionId])
+
+  const syncConverseSnapshot = useCallback(async () => {
+    if (!sessionId) return
+    await fetchSessionDetail()
+    await converse.resumeSession(sessionId)
+  }, [sessionId, fetchSessionDetail, converse.resumeSession])
 
   const effectiveStatus = liveStatus?.isRunning ? 'running' : session?.status
   const effectiveStatusBadgeClass =
@@ -611,6 +620,37 @@ export function SessionDetailPage() {
     isConverseSession,
     converse.isThinking,
     agent.isRunning,
+  ])
+
+  useEffect(() => {
+    if (!sessionId || !isConverseSession || !continuing) return
+
+    const wasThinking = prevConverseThinkingRef.current
+    prevConverseThinkingRef.current = converse.isThinking
+
+    // 仅在一轮 converse 从 running -> idle 时做一次服务端同步
+    if (converse.isThinking || !wasThinking) return
+
+    let cancelled = false
+    void (async () => {
+      await syncConverseSnapshot()
+      if (cancelled) return
+
+      // 二次兜底：避免偶发网络/写库时序导致首轮同步拿到旧快照
+      await new Promise((resolve) => window.setTimeout(resolve, CONVERSE_SYNC_RETRY_DELAY_MS))
+      if (cancelled) return
+      await syncConverseSnapshot()
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    sessionId,
+    isConverseSession,
+    continuing,
+    converse.isThinking,
+    syncConverseSnapshot,
   ])
 
   if (loading) {

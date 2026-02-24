@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type AnchorHTMLAttributes,
@@ -208,15 +209,18 @@ export default function MessageList({
     }
 
     const raf = window.requestAnimationFrame(() => {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+      bottomRef.current?.scrollIntoView({ behavior: isRunning ? 'auto' : 'smooth', block: 'end' })
     })
 
     return () => window.cancelAnimationFrame(raf)
-  }, [messages])
+  }, [messages, isRunning])
 
   if (messages.length === 0) return null
 
-  const blocks = buildRenderBlocks(messages, isRunning)
+  const blocks = useMemo(
+    () => buildRenderBlocks(messages, isRunning),
+    [messages, isRunning],
+  )
 
   return (
     <div className="space-y-4">
@@ -354,11 +358,21 @@ function MarkdownView({ content }: { content: string }) {
 }
 
 function TextBlockView({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  if (isStreaming) {
+    return (
+      <div className="animate-in slide-in-from-bottom-1 duration-150 fade-in">
+        <div className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground/95">
+          {content}
+          <span className="ml-0.5 inline-block h-4 w-2 animate-pulse rounded-sm bg-primary/70" />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="animate-in slide-in-from-bottom-1 duration-200 fade-in">
       <div className="prose prose-sm max-w-none dark:prose-invert">
         <MarkdownView content={content} />
-        {isStreaming && <span className="ml-0.5 inline-block h-4 w-2 animate-pulse rounded-sm bg-primary/70" />}
       </div>
     </div>
   )
