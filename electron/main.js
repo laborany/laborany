@@ -247,6 +247,10 @@ function processRuntimeCommand() {
       ]),
     })
 
+    if (counters.failed > 0) {
+      throw new Error(`migration failed for ${counters.failed} entries, switch aborted`)
+    }
+
     persistRuntimeMeta(targetHome)
     setRuntimeHome(targetHome, { bootstrapHome: runtimePaths.bootstrapHome })
 

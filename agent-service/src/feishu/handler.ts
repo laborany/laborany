@@ -8,6 +8,7 @@ import { DATA_DIR } from '../paths.js'
 import type { FeishuConfig } from './config.js'
 import {
   appendConverseMessage,
+  buildUserStateKey,
   clearExecuteSessionId,
   getUserState,
   resetUser,
@@ -737,13 +738,13 @@ async function updateExternalSessionStatus(
 async function executeSkill(
   client: Client,
   chatId: string,
-  openId: string,
+  stateKey: string,
   skillId: string,
   query: string,
   card: FeishuStreamingSession | null,
 ): Promise<void> {
   const executeSessionId = `feishu-${randomUUID().slice(0, 12)}`
-  setExecuteSessionId(openId, executeSessionId)
+  setExecuteSessionId(stateKey, executeSessionId)
   let runtimeSessionId = executeSessionId
   let baselineSessionId = executeSessionId
   let baselineMap = buildSnapshotMap(await fetchTaskFiles(executeSessionId))
@@ -768,7 +769,7 @@ async function executeSkill(
     for await (const event of streamSse(response)) {
       if (event.type === 'session' && event.sessionId) {
         runtimeSessionId = event.sessionId
-        setExecuteSessionId(openId, event.sessionId)
+        setExecuteSessionId(stateKey, event.sessionId)
         if (event.sessionId !== baselineSessionId) {
           baselineSessionId = event.sessionId
           baselineMap = buildSnapshotMap(await fetchTaskFiles(event.sessionId))
@@ -803,7 +804,7 @@ async function executeSkill(
     }
     await sendArtifactsFromSession(client, chatId, runtimeSessionId, baselineMap)
   } finally {
-    clearExecuteSessionId(openId)
+    clearExecuteSessionId(stateKey)
   }
 }
 
@@ -843,7 +844,7 @@ async function dispatchAction(
   client: Client,
   config: FeishuConfig,
   chatId: string,
-  openId: string,
+  stateKey: string,
   actionEvent: SseEvent,
   converseText: string,
   card: FeishuStreamingSession,
@@ -893,7 +894,7 @@ async function dispatchAction(
   if (actionType === 'recommend_capability' && targetId) {
     await card.update(`Matched capability ${targetId}, executing...`)
     await appendExternalMessage(historySessionId, 'assistant', `已匹配技能 ${targetId}，任务已开始执行。`)
-    await executeSkill(client, chatId, openId, targetId, query, card)
+    await executeSkill(client, chatId, stateKey, targetId, query, card)
     await updateExternalSessionStatus(historySessionId, 'completed')
     return
   }
@@ -901,7 +902,7 @@ async function dispatchAction(
   if (actionType === 'execute_generic') {
     await card.update('Executing in generic mode...')
     await appendExternalMessage(historySessionId, 'assistant', '已进入通用执行模式，任务已开始。')
-    await executeSkill(client, chatId, openId, config.defaultSkillId, query, card)
+    await executeSkill(client, chatId, stateKey, config.defaultSkillId, query, card)
     await updateExternalSessionStatus(historySessionId, 'completed')
     return
   }
@@ -923,7 +924,7 @@ async function dispatchAction(
   }
 
   await card.update('Executing...')
-  await executeSkill(client, chatId, openId, config.defaultSkillId, query, card)
+  await executeSkill(client, chatId, stateKey, config.defaultSkillId, query, card)
   await appendExternalMessage(historySessionId, 'assistant', '任务已开始执行。')
   await updateExternalSessionStatus(historySessionId, 'completed')
 }
@@ -932,23 +933,24 @@ async function runConverse(
   client: Client,
   config: FeishuConfig,
   chatId: string,
-  openId: string,
+  stateKey: string,
   text: string,
   card: FeishuStreamingSession,
   historySessionId: string,
 ): Promise<void> {
-  const state = getUserState(openId)
+  const state = getUserState(stateKey)
   const converseSessionId = state.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
-  setConverseSessionId(openId, converseSessionId)
+  setConverseSessionId(stateKey, converseSessionId)
 
-  appendConverseMessage(openId, 'user', text)
+  appendConverseMessage(stateKey, 'user', text)
+  const latestState = getUserState(stateKey)
 
   const response = await fetch(`${AGENT_SERVICE_URL}/converse`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       sessionId: converseSessionId,
-      messages: state.converseMessages,
+      messages: latestState.converseMessages,
       context: {
         channel: 'feishu',
         locale: 'zh-CN',
@@ -981,7 +983,7 @@ async function runConverse(
     if (event.type === 'question') {
       const questionText = extractQuestionText(event)
       await card.close(questionText)
-      appendConverseMessage(openId, 'assistant', questionText)
+      appendConverseMessage(stateKey, 'assistant', questionText)
       return
     }
 
@@ -997,12 +999,12 @@ async function runConverse(
   }
 
   if (action) {
-    await dispatchAction(client, config, chatId, openId, action, converseText, card, historySessionId)
+    await dispatchAction(client, config, chatId, stateKey, action, converseText, card, historySessionId)
     return
   }
 
   if (converseText.trim()) {
-    appendConverseMessage(openId, 'assistant', converseText)
+    appendConverseMessage(stateKey, 'assistant', converseText)
     await card.close(converseText)
     return
   }
@@ -1015,13 +1017,13 @@ async function handleCommand(
   client: Client,
   config: FeishuConfig,
   chatId: string,
-  openId: string,
+  stateKey: string,
   text: string,
 ): Promise<boolean> {
   const trimmed = text.trim()
 
   if (trimmed === '/new') {
-    resetUser(openId)
+    resetUser(stateKey)
     await sendText(client, chatId, '✅ 会话已重置。')
     return true
   }
@@ -1053,7 +1055,7 @@ async function handleCommand(
   }
 
   if (trimmed === '/stop') {
-    const state = getUserState(openId)
+    const state = getUserState(stateKey)
     if (!state.executeSessionId) {
       await sendText(client, chatId, '当前没有正在执行的任务')
       return true
@@ -1063,7 +1065,7 @@ async function handleCommand(
       const res = await fetch(`${SRC_API_BASE_URL}/skill/stop/${state.executeSessionId}`, { method: 'POST' })
       const payload: any = await res.json().catch(() => ({}))
       if (res.ok && payload?.success) {
-        clearExecuteSessionId(openId)
+        clearExecuteSessionId(stateKey)
         await sendText(client, chatId, '⏹️ 已发送中止请求')
       } else {
         await sendText(client, chatId, '中止失败：任务可能已结束')
@@ -1086,7 +1088,7 @@ async function handleCommand(
     }
 
     try {
-      await executeSkill(client, chatId, openId, skillId, query, started ? card : null)
+      await executeSkill(client, chatId, stateKey, skillId, query, started ? card : null)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (started) await card.close(`❌ ${msg}`)
@@ -1111,6 +1113,7 @@ export async function handleFeishuMessage(
 
   const chatId = normalized.message.chat_id
   const openId = normalized.sender.sender_id.open_id
+  const stateKey = buildUserStateKey(openId, chatId)
 
   if (isDuplicateMessage(normalized.message.message_id)) {
     console.log(`[Feishu] ignore duplicate message: ${normalized.message.message_id}`)
@@ -1143,11 +1146,11 @@ export async function handleFeishuMessage(
     return
   }
 
-  if (await handleCommand(larkClient, config, chatId, openId, text)) return
+  if (await handleCommand(larkClient, config, chatId, stateKey, text)) return
 
-  const userState = getUserState(openId)
+  const userState = getUserState(stateKey)
   const historySessionId = userState.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
-  setConverseSessionId(openId, historySessionId)
+  setConverseSessionId(stateKey, historySessionId)
 
   const card = new FeishuStreamingSession(larkClient, config)
   const started = await card.start(chatId, config.botName)
@@ -1156,7 +1159,7 @@ export async function handleFeishuMessage(
     await appendExternalMessage(historySessionId, 'user', text)
     await appendExternalMessage(historySessionId, 'assistant', '已开始执行任务，请查看执行结果。')
     try {
-      await executeSkill(larkClient, chatId, openId, config.defaultSkillId, text, null)
+      await executeSkill(larkClient, chatId, stateKey, config.defaultSkillId, text, null)
       await updateExternalSessionStatus(historySessionId, 'completed')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1169,7 +1172,7 @@ export async function handleFeishuMessage(
 
   await card.update('正在分析你的需求...')
   try {
-    await runConverse(larkClient, config, chatId, openId, text, card, historySessionId)
+    await runConverse(larkClient, config, chatId, stateKey, text, card, historySessionId)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     await appendExternalMessage(historySessionId, 'error', msg)

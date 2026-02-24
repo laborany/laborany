@@ -1,9 +1,3 @@
-/* ╔══════════════════════════════════════════════════════════════════════════╗
- * ║                         会话历史 API 路由                                 ║
- * ║                                                                          ║
- * ║  端点：列表、详情                                                         ║
- * ╚══════════════════════════════════════════════════════════════════════════╝ */
-
 import { Hono } from 'hono'
 import { existsSync } from 'fs'
 import { dbHelper } from '../core/database.js'
@@ -13,9 +7,23 @@ const session = new Hono()
 const ALLOWED_SESSION_STATUS = new Set(['running', 'completed', 'failed', 'stopped', 'aborted'])
 const ALLOWED_MESSAGE_TYPES = new Set(['user', 'assistant', 'tool_use', 'tool_result', 'error', 'system'])
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取会话列表                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
+type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu'
+
+function inferSessionSource(sessionId: string, skillId: string): SessionSource {
+  const sid = (sessionId || '').toLowerCase()
+  if (sid.startsWith('cron-') || sid.startsWith('cron-manual-')) return 'cron'
+  if (sid.startsWith('feishu-') || sid.startsWith('feishu-conv-')) return 'feishu'
+  if (skillId === '__converse__') return 'converse'
+  return 'desktop'
+}
+
+function getRunningSkillName(source: SessionSource, fallbackSkillName: string, skillId: string): string {
+  if (source === 'cron') return '定时任务'
+  if (source === 'feishu') return skillId === '__converse__' ? '飞书对话分派' : '飞书任务执行'
+  if (source === 'converse') return '首页对话分派'
+  return fallbackSkillName || skillId
+}
+
 session.get('/', (c) => {
   const sessions = dbHelper.query<{
     id: string
@@ -31,15 +39,35 @@ session.get('/', (c) => {
     LIMIT 100
   `)
 
-  return c.json(sessions)
+  return c.json(
+    sessions.map((item) => ({
+      ...item,
+      source: inferSessionSource(item.id, item.skill_id),
+    })),
+  )
 })
 
 session.get('/running-tasks', (c) => {
-  const runtimeTasks = runtimeTaskManager.getRunningTasks().map((task) => ({
-    ...task,
-    source: 'runtime' as const,
-    query: '',
-  }))
+  const runtimeTasks = runtimeTaskManager.getRunningTasks().map((task) => {
+    const sessionMeta = dbHelper.get<{
+      skill_id: string
+      query: string
+    }>(`
+      SELECT skill_id, query
+      FROM sessions
+      WHERE id = ?
+    `, [task.sessionId])
+
+    const effectiveSkillId = sessionMeta?.skill_id || task.skillId
+    const source = inferSessionSource(task.sessionId, effectiveSkillId)
+
+    return {
+      ...task,
+      source,
+      skillName: getRunningSkillName(source, task.skillName, effectiveSkillId),
+      query: sessionMeta?.query || '',
+    }
+  })
 
   const runtimeSessionIds = new Set(runtimeTasks.map((task) => task.sessionId))
   const converseTasks = dbHelper.query<{
@@ -54,14 +82,17 @@ session.get('/running-tasks', (c) => {
     LIMIT 50
   `)
     .filter((item) => !runtimeSessionIds.has(item.id))
-    .map((item) => ({
-      sessionId: item.id,
-      skillId: '__converse__',
-      skillName: '首页对话分派',
-      startedAt: item.created_at,
-      source: 'converse' as const,
-      query: item.query || '',
-    }))
+    .map((item) => {
+      const source = inferSessionSource(item.id, '__converse__')
+      return {
+        sessionId: item.id,
+        skillId: '__converse__',
+        skillName: getRunningSkillName(source, '', '__converse__'),
+        startedAt: item.created_at,
+        source,
+        query: item.query || '',
+      }
+    })
 
   const tasks = [...runtimeTasks, ...converseTasks]
   tasks.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
@@ -69,9 +100,6 @@ session.get('/running-tasks', (c) => {
   return c.json({ tasks, count: tasks.length })
 })
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                       获取会话详情                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
 session.get('/:sessionId', (c) => {
   const sessionId = c.req.param('sessionId')
 
@@ -108,18 +136,16 @@ session.get('/:sessionId', (c) => {
     ORDER BY created_at ASC
   `, [sessionId])
 
-  // 格式化消息
-  const formattedMessages = messages.map(msg => ({
+  const formattedMessages = messages.map((msg) => ({
     id: msg.id,
     type: msg.type,
     content: msg.content,
     toolName: msg.tool_name,
     toolInput: msg.tool_input ? JSON.parse(msg.tool_input) : null,
     toolResult: msg.tool_result,
-    createdAt: msg.created_at
+    createdAt: msg.created_at,
   }))
 
-  // 如果 work_dir 为空，尝试动态计算（兼容旧会话）
   let workDir = sessionData.work_dir
   if (!workDir) {
     const computedDir = getTaskDir(sessionId)
@@ -130,8 +156,9 @@ session.get('/:sessionId', (c) => {
 
   return c.json({
     ...sessionData,
+    source: inferSessionSource(sessionData.id, sessionData.skill_id),
     work_dir: workDir,
-    messages: formattedMessages
+    messages: formattedMessages,
   })
 })
 

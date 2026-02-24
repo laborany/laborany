@@ -5,7 +5,7 @@ import { useAgent, type PendingQuestion } from '../hooks/useAgent'
 import { useConverse } from '../hooks/useConverse'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { useVitePreview } from '../hooks/useVitePreview'
-import type { TaskFile, Session, SessionDetail, SessionLiveStatus } from '../types'
+import type { AgentMessage, TaskFile, Session, SessionDetail, SessionLiveStatus } from '../types'
 import { API_BASE } from '../config'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
@@ -71,6 +71,28 @@ export default function HistoryPage() {
     )
   }
 
+  function getSourceBadge(source: Session['source'] | undefined, sessionId: string, skillId: string) {
+    const inferred = source
+      || (sessionId.startsWith('cron-') || sessionId.startsWith('cron-manual-')
+        ? 'cron'
+        : (sessionId.startsWith('feishu-') || sessionId.startsWith('feishu-conv-')
+          ? 'feishu'
+          : (skillId === '__converse__' ? 'converse' : 'desktop')))
+
+    const sourceText: Record<'desktop' | 'converse' | 'cron' | 'feishu', string> = {
+      desktop: '桌面',
+      converse: '首页对话',
+      cron: '定时任务',
+      feishu: '飞书',
+    }
+
+    return (
+      <span className="badge bg-secondary text-secondary-foreground">
+        {sourceText[inferred]}
+      </span>
+    )
+  }
+
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
@@ -122,6 +144,7 @@ export default function HistoryPage() {
                   </p>
                 </div>
                 <div className="ml-4 flex items-center gap-2">
+                  {getSourceBadge(session.source, session.id, session.skill_id)}
                   {getStatusBadge(session.status)}
                 </div>
               </div>
@@ -159,6 +182,81 @@ function toFileArtifact(
     size: file.size,
     url: getFileUrl(file.path),
   }
+}
+
+function normalizeMessageContent(content: string): string {
+  return content.replace(/\s+/g, ' ').trim()
+}
+
+function toTimestampMs(message: AgentMessage): number | null {
+  const value = message.timestamp?.getTime?.()
+  if (!Number.isFinite(value)) return null
+  return value
+}
+
+function buildMessageSignature(
+  message: AgentMessage,
+  mode: 'strict' | 'loose' = 'strict',
+): string {
+  const ts = toTimestampMs(message)
+  const tsBucket = ts === null ? 0 : Math.floor(ts / 1000)
+  const toolInput = message.toolInput ? JSON.stringify(message.toolInput) : ''
+  return [
+    message.type,
+    message.toolName || '',
+    normalizeMessageContent(message.content || ''),
+    toolInput,
+    mode === 'strict' ? String(tsBucket) : '',
+  ].join('|')
+}
+
+function mergeTimelineMessages(
+  historyMessages: AgentMessage[],
+  liveMessages: AgentMessage[],
+): AgentMessage[] {
+  if (!liveMessages.length) return historyMessages
+
+  const strictSeen = new Set(historyMessages.map((message) => buildMessageSignature(message, 'strict')))
+  const recentHistory = historyMessages.slice(Math.max(0, historyMessages.length - 24))
+  const looseTimestampMap = new Map<string, number[]>()
+  for (const message of recentHistory) {
+    const looseSignature = buildMessageSignature(message, 'loose')
+    const ts = toTimestampMs(message)
+    if (ts === null) continue
+    const existing = looseTimestampMap.get(looseSignature)
+    if (existing) {
+      existing.push(ts)
+    } else {
+      looseTimestampMap.set(looseSignature, [ts])
+    }
+  }
+
+  const merged = [...historyMessages]
+  const LOOSE_DEDUPE_WINDOW_MS = 15_000
+  for (const message of liveMessages) {
+    const strictSignature = buildMessageSignature(message, 'strict')
+    if (strictSeen.has(strictSignature)) continue
+
+    const looseSignature = buildMessageSignature(message, 'loose')
+    const liveTs = toTimestampMs(message)
+    const looseCandidates = looseTimestampMap.get(looseSignature) || []
+    const shouldSkipByLooseMatch = liveTs !== null
+      && looseCandidates.some((historyTs) => Math.abs(liveTs - historyTs) <= LOOSE_DEDUPE_WINDOW_MS)
+
+    if (shouldSkipByLooseMatch) continue
+
+    merged.push(message)
+    strictSeen.add(strictSignature)
+    if (liveTs !== null) {
+      const existing = looseTimestampMap.get(looseSignature)
+      if (existing) {
+        existing.push(liveTs)
+      } else {
+        looseTimestampMap.set(looseSignature, [liveTs])
+      }
+    }
+  }
+  return merged
 }
 
 function buildPendingQuestionFromHistory(session: SessionDetail | null): PendingQuestion | null {
@@ -291,7 +389,7 @@ export function SessionDetailPage() {
 
   const executionSkillId = session?.skill_id === '__converse__'
     ? '__generic__'
-    : (session?.skill_id || '')
+    : (session?.skill_id || '__generic__')
   const isConverseSession = session?.skill_id === '__converse__'
   const agent = useAgent(executionSkillId)
   const converse = useConverse()
@@ -338,7 +436,7 @@ export function SessionDetailPage() {
   }, [sessionId, isConverseSession, converse.resumeSession])
 
   useEffect(() => {
-    if (!sessionId || isConverseSession) return
+    if (!sessionId || !session || isConverseSession) return
     let cancelled = false
 
     async function refreshLiveStatus() {
@@ -382,7 +480,7 @@ export function SessionDetailPage() {
       cancelled = true
       clearInterval(timer)
     }
-  }, [sessionId, isConverseSession, agent.isRunning, agent.resumeSession, agent.attachToSession])
+  }, [sessionId, session, isConverseSession, agent.isRunning, agent.resumeSession, agent.attachToSession])
 
   useEffect(() => {
     if (session?.work_dir) {
@@ -554,6 +652,9 @@ export function SessionDetailPage() {
     if (!session || !sessionId || !normalizedQuery) return
 
     if (isConverseSession) {
+      if (converse.messages.length === 0) {
+        await converse.resumeSession(sessionId)
+      }
       setContinuing(true)
       hasAutoExpandedRef.current = false
       await converse.sendMessage(normalizedQuery)
@@ -677,7 +778,7 @@ export function SessionDetailPage() {
   const historyMessages = convertMessages()
   const allMessages = isConverseSession
     ? (converse.messages.length > 0 ? converse.messages : historyMessages)
-    : (continuing ? [...historyMessages, ...agent.messages] : historyMessages)
+    : (continuing ? mergeTimelineMessages(historyMessages, agent.messages) : historyMessages)
   const chatIsRunning = isConverseSession ? converse.isThinking : agent.isRunning
   const activePendingQuestion = isConverseSession
     ? converse.pendingQuestion

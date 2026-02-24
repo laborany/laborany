@@ -55,6 +55,9 @@ const EXECUTE_DEDUPE_WINDOW_MS = 1200
 const SSE_READER_POLL_INTERVAL_MS = 1200
 const SSE_STALL_AFTER_RESUME_MS = 12000
 const RESUME_HINT_WINDOW_MS = 45000
+const LAST_SESSION_KEY_PREFIX = 'lastSession_'
+const LAST_SESSION_LIST_KEY_PREFIX = 'lastSessions_'
+const MAX_TRACKED_SESSIONS_PER_SKILL = 12
 
 const TRANSIENT_NETWORK_ERROR_PATTERNS = [
   'network error',
@@ -66,6 +69,114 @@ const TRANSIENT_NETWORK_ERROR_PATTERNS = [
   'load failed',
   'network stream stalled after resume',
 ]
+
+function getLegacyLastSessionKey(skillId: string): string {
+  return `${LAST_SESSION_KEY_PREFIX}${skillId}`
+}
+
+function getTrackedSessionListKey(skillId: string): string {
+  return `${LAST_SESSION_LIST_KEY_PREFIX}${skillId}`
+}
+
+function normalizeTrackedSessionIds(sessionIds: string[]): string[] {
+  const deduped: string[] = []
+  const seen = new Set<string>()
+
+  for (const raw of sessionIds) {
+    const sessionId = raw.trim()
+    if (!sessionId || seen.has(sessionId)) continue
+    seen.add(sessionId)
+    deduped.push(sessionId)
+    if (deduped.length >= MAX_TRACKED_SESSIONS_PER_SKILL) {
+      break
+    }
+  }
+
+  return deduped
+}
+
+function safeReadStorage(key: string): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function safeWriteStorage(key: string, value: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // ignore storage quota / privacy mode errors
+  }
+}
+
+function safeRemoveStorage(key: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // ignore storage quota / privacy mode errors
+  }
+}
+
+function readTrackedSessionIds(skillId: string): string[] {
+  const listRaw = safeReadStorage(getTrackedSessionListKey(skillId))
+  let sessionIds: string[] = []
+
+  if (listRaw) {
+    try {
+      const parsed = JSON.parse(listRaw)
+      if (Array.isArray(parsed)) {
+        sessionIds = parsed.filter((item): item is string => typeof item === 'string')
+      }
+    } catch {
+      sessionIds = []
+    }
+  }
+
+  const legacySessionId = (safeReadStorage(getLegacyLastSessionKey(skillId)) || '').trim()
+  if (legacySessionId && !sessionIds.includes(legacySessionId)) {
+    sessionIds.push(legacySessionId)
+  }
+
+  return normalizeTrackedSessionIds(sessionIds)
+}
+
+function writeTrackedSessionIds(skillId: string, sessionIds: string[]): void {
+  const normalized = normalizeTrackedSessionIds(sessionIds)
+  const legacyKey = getLegacyLastSessionKey(skillId)
+  const listKey = getTrackedSessionListKey(skillId)
+
+  if (!normalized.length) {
+    safeRemoveStorage(legacyKey)
+    safeRemoveStorage(listKey)
+    return
+  }
+
+  safeWriteStorage(legacyKey, normalized[0])
+  safeWriteStorage(listKey, JSON.stringify(normalized))
+}
+
+function rememberTrackedSessionId(skillId: string, sessionId: string): void {
+  const sid = sessionId.trim()
+  if (!sid) return
+  const previous = readTrackedSessionIds(skillId).filter((id) => id !== sid)
+  writeTrackedSessionIds(skillId, [sid, ...previous])
+}
+
+function forgetTrackedSessionId(skillId: string, sessionId: string): void {
+  const sid = sessionId.trim()
+  if (!sid) return
+  const next = readTrackedSessionIds(skillId).filter((id) => id !== sid)
+  writeTrackedSessionIds(skillId, next)
+}
+
+function clearTrackedSessionIds(skillId: string): void {
+  writeTrackedSessionIds(skillId, [])
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -219,6 +330,19 @@ export function useAgent(skillId: string) {
   const resumeHintAtRef = useRef(0)
   const prevSkillIdRef = useRef(skillId)
 
+  const rememberActiveSessionId = useCallback((sessionId: string) => {
+    rememberTrackedSessionId(skillId, sessionId)
+  }, [skillId])
+
+  const forgetActiveSessionId = useCallback((sessionId?: string | null) => {
+    const sid = (sessionId || sessionIdRef.current || '').trim()
+    if (sid) {
+      forgetTrackedSessionId(skillId, sid)
+      return
+    }
+    clearTrackedSessionIds(skillId)
+  }, [skillId])
+
   useEffect(() => {
     if (prevSkillIdRef.current === skillId) {
       return
@@ -289,7 +413,7 @@ export function useAgent(skillId: string) {
           const sid = event.sessionId as string
           sessionIdRef.current = sid
           setState((s) => ({ ...s, sessionId: sid }))
-          localStorage.setItem(`lastSession_${skillId}`, sid)
+          rememberActiveSessionId(sid)
           break
 
         case 'text': {
@@ -430,7 +554,7 @@ export function useAgent(skillId: string) {
 
         case 'error':
           setState((s) => ({ ...s, error: (event.message || event.content) as string, connectionStatus: null }))
-          localStorage.removeItem(`lastSession_${skillId}`)
+          forgetActiveSessionId((event.sessionId as string | undefined) || sessionIdRef.current)
           break
 
         case 'pipeline_start': {
@@ -564,7 +688,7 @@ export function useAgent(skillId: string) {
         case 'done':
         case 'aborted':
           terminalEventRef.current = true
-          localStorage.removeItem(`lastSession_${skillId}`)
+          forgetActiveSessionId((event.sessionId as string | undefined) || sessionIdRef.current)
           setState((s) => ({
             ...s,
             runCompletedAt: new Date().toISOString(),
@@ -573,7 +697,7 @@ export function useAgent(skillId: string) {
           break
       }
     },
-    [skillId],
+    [forgetActiveSessionId, rememberActiveSessionId],
   )
 
   const readSseStream = useCallback(
@@ -901,11 +1025,11 @@ export function useAgent(skillId: string) {
         headers: createAuthHeaders(token),
       })
       // 清理 localStorage
-      localStorage.removeItem(`lastSession_${skillId}`)
+      forgetActiveSessionId(sid)
     }
 
     setState((s) => ({ ...s, isRunning: false }))
-  }, [skillId])
+  }, [forgetActiveSessionId])
 
   // 仅断开当前前端流连接，任务继续在后端运行
   const detach = useCallback(() => {
@@ -923,6 +1047,7 @@ export function useAgent(skillId: string) {
 
   // 清空消息
   const clear = useCallback(() => {
+    forgetActiveSessionId(sessionIdRef.current)
     sessionIdRef.current = null
     assistantIdRef.current = crypto.randomUUID()
     currentTextRef.current = ''
@@ -941,13 +1066,13 @@ export function useAgent(skillId: string) {
       compositeSteps: [],
       currentCompositeStep: -1,
     })
-  }, [])
+  }, [forgetActiveSessionId])
 
   const resumeSession = useCallback((targetSessionId: string) => {
     sessionIdRef.current = targetSessionId
     setState(s => ({ ...s, sessionId: targetSessionId }))
-    localStorage.setItem(`lastSession_${skillId}`, targetSessionId)
-  }, [skillId])
+    rememberActiveSessionId(targetSessionId)
+  }, [rememberActiveSessionId])
 
   const fetchTaskFiles = useCallback(async () => {
     if (!state.sessionId) return
@@ -1001,8 +1126,8 @@ export function useAgent(skillId: string) {
   )
 
   const checkRunningTask = useCallback(async (): Promise<string | null> => {
-    const lastSessionId = localStorage.getItem(`lastSession_${skillId}`)
-    if (!lastSessionId) return null
+    const trackedSessionIds = readTrackedSessionIds(skillId)
+    if (!trackedSessionIds.length) return null
 
     try {
       const token = localStorage.getItem('token')
@@ -1010,28 +1135,34 @@ export function useAgent(skillId: string) {
         headers: createAuthHeaders(token),
       })
       if (!res.ok) {
-        localStorage.removeItem(`lastSession_${skillId}`)
+        clearTrackedSessionIds(skillId)
         return null
       }
 
       const runningData = await res.json().catch(() => null)
       const tasks = Array.isArray(runningData?.tasks) ? runningData.tasks : []
-      const matched = tasks.find((task: unknown) => {
-        if (!task || typeof task !== 'object') return false
+      const runningSessionSet = new Set<string>()
+      for (const task of tasks) {
+        if (!task || typeof task !== 'object') continue
         const item = task as Record<string, unknown>
-        return item.sessionId === lastSessionId && item.skillId === skillId
-      })
+        const taskSessionId = typeof item.sessionId === 'string' ? item.sessionId : ''
+        const taskSkillId = typeof item.skillId === 'string' ? item.skillId : ''
+        if (!taskSessionId || taskSkillId !== skillId) continue
+        runningSessionSet.add(taskSessionId)
+      }
 
-      if (matched) {
-        return lastSessionId
+      const matchedTrackedSessions = trackedSessionIds.filter((sessionId) => runningSessionSet.has(sessionId))
+      if (matchedTrackedSessions.length > 0) {
+        writeTrackedSessionIds(skillId, matchedTrackedSessions)
+        return matchedTrackedSessions[0]
       }
 
       if (!runningData) {
-        localStorage.removeItem(`lastSession_${skillId}`)
+        clearTrackedSessionIds(skillId)
         return null
       }
 
-      localStorage.removeItem(`lastSession_${skillId}`)
+      clearTrackedSessionIds(skillId)
       return null
     } catch {
       return null

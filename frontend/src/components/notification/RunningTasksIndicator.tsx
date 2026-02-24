@@ -18,8 +18,15 @@ interface RunningTask {
   skillId: string
   skillName: string
   startedAt: string
-  source?: 'runtime' | 'converse'
+  source?: 'desktop' | 'converse' | 'cron' | 'feishu'
   query?: string
+}
+
+function getTaskSourceLabel(source?: RunningTask['source']): string {
+  if (source === 'cron') return '定时'
+  if (source === 'feishu') return '飞书'
+  if (source === 'converse') return '首页'
+  return '桌面'
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -126,9 +133,7 @@ export function RunningTasksIndicator() {
             {tasks.map((task) => (
               <Link
                 key={task.sessionId}
-                to={task.source === 'converse' || task.skillId === '__converse__'
-                  ? `/?converseSid=${encodeURIComponent(task.sessionId)}`
-                  : `/execute/${task.skillId}?sid=${encodeURIComponent(task.sessionId)}`}
+                to={`/history/${encodeURIComponent(task.sessionId)}`}
                 onClick={() => setShowPanel(false)}
                 className="block px-4 py-3 border-b border-border last:border-b-0 hover:bg-accent/50 transition-colors"
               >
@@ -140,7 +145,7 @@ export function RunningTasksIndicator() {
                       {task.skillName || task.query || task.skillId}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      已运行 {formatDuration(task.startedAt)}
+                      {getTaskSourceLabel(task.source)} · 已运行 {formatDuration(task.startedAt)}
                     </p>
                   </div>
                 </div>

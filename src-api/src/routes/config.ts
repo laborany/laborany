@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import {
   getConfigDir,
   getEnvPath,
@@ -107,6 +108,16 @@ function isSubPath(parentPath: string, candidatePath: string): boolean {
   const candidate = normalizeComparablePath(candidatePath)
   if (parent === candidate) return false
   return candidate.startsWith(`${parent}/`) || candidate.startsWith(`${parent}\\`)
+}
+
+function normalizeHomePathInput(input: string): string {
+  const trimmed = input.trim()
+  if (!trimmed) return ''
+  if (trimmed === '~') return homedir()
+  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return resolve(homedir(), trimmed.slice(2))
+  }
+  return trimmed
 }
 
 async function applyAgentRuntimeConfig(changedKeys: string[]): Promise<{
@@ -438,7 +449,7 @@ config.post('/storage/home', async (c) => {
     payload = {}
   }
 
-  const requestedHome = (payload.homePath || '').trim()
+  const requestedHome = normalizeHomePathInput(payload.homePath || '')
   if (!requestedHome) {
     return c.json({ error: 'homePath is required' }, 400)
   }

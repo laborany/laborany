@@ -1,8 +1,11 @@
 import * as Lark from '@larksuiteoapi/node-sdk'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { dirname, join } from 'path'
 import { createLarkClient, createLarkWsClient } from './client.js'
 import { loadFeishuConfig } from './config.js'
 import type { FeishuConfig } from './config.js'
 import { handleFeishuMessage } from './handler.js'
+import { DATA_DIR } from '../paths.js'
 
 interface UserState {
   converseSessionId?: string
@@ -12,38 +15,92 @@ interface UserState {
 
 const userStates = new Map<string, UserState>()
 const MAX_CONVERSE_MESSAGES = 40
+const STATE_FILE_PATH = join(DATA_DIR, 'feishu', 'user-states.json')
 
-export function getUserState(openId: string): UserState {
-  let state = userStates.get(openId)
+function loadPersistedStates(): void {
+  try {
+    if (!existsSync(STATE_FILE_PATH)) return
+    const raw = readFileSync(STATE_FILE_PATH, 'utf-8')
+    const parsed = JSON.parse(raw) as Record<string, UserState>
+    for (const [key, value] of Object.entries(parsed || {})) {
+      if (!value || typeof value !== 'object') continue
+      const converseMessages = Array.isArray(value.converseMessages)
+        ? value.converseMessages
+          .filter((item) => item && typeof item.role === 'string' && typeof item.content === 'string')
+          .slice(-MAX_CONVERSE_MESSAGES)
+        : []
+
+      userStates.set(key, {
+        converseSessionId: typeof value.converseSessionId === 'string' ? value.converseSessionId : undefined,
+        executeSessionId: typeof value.executeSessionId === 'string' ? value.executeSessionId : undefined,
+        converseMessages,
+      })
+    }
+  } catch (error) {
+    console.warn('[Feishu] failed to load persisted user states:', error)
+  }
+}
+
+function persistStates(): void {
+  try {
+    mkdirSync(dirname(STATE_FILE_PATH), { recursive: true })
+    const plain: Record<string, UserState> = {}
+    for (const [key, value] of userStates.entries()) {
+      plain[key] = {
+        converseSessionId: value.converseSessionId,
+        executeSessionId: value.executeSessionId,
+        converseMessages: value.converseMessages.slice(-MAX_CONVERSE_MESSAGES),
+      }
+    }
+    writeFileSync(STATE_FILE_PATH, JSON.stringify(plain, null, 2), 'utf-8')
+  } catch (error) {
+    console.warn('[Feishu] failed to persist user states:', error)
+  }
+}
+
+loadPersistedStates()
+
+export function buildUserStateKey(openId: string, chatId: string): string {
+  return `${openId.trim()}@@${chatId.trim()}`
+}
+
+export function getUserState(stateKey: string): UserState {
+  let state = userStates.get(stateKey)
   if (!state) {
     state = { converseMessages: [] }
-    userStates.set(openId, state)
+    userStates.set(stateKey, state)
+    persistStates()
   }
   return state
 }
 
-export function appendConverseMessage(openId: string, role: string, content: string): void {
-  const state = getUserState(openId)
+export function appendConverseMessage(stateKey: string, role: string, content: string): void {
+  const state = getUserState(stateKey)
   state.converseMessages.push({ role, content })
   if (state.converseMessages.length > MAX_CONVERSE_MESSAGES) {
     state.converseMessages.splice(0, state.converseMessages.length - MAX_CONVERSE_MESSAGES)
   }
+  persistStates()
 }
 
-export function setConverseSessionId(openId: string, sessionId: string): void {
-  getUserState(openId).converseSessionId = sessionId
+export function setConverseSessionId(stateKey: string, sessionId: string): void {
+  getUserState(stateKey).converseSessionId = sessionId
+  persistStates()
 }
 
-export function setExecuteSessionId(openId: string, sessionId: string): void {
-  getUserState(openId).executeSessionId = sessionId
+export function setExecuteSessionId(stateKey: string, sessionId: string): void {
+  getUserState(stateKey).executeSessionId = sessionId
+  persistStates()
 }
 
-export function clearExecuteSessionId(openId: string): void {
-  getUserState(openId).executeSessionId = undefined
+export function clearExecuteSessionId(stateKey: string): void {
+  getUserState(stateKey).executeSessionId = undefined
+  persistStates()
 }
 
-export function resetUser(openId: string): void {
-  userStates.delete(openId)
+export function resetUser(stateKey: string): void {
+  userStates.delete(stateKey)
+  persistStates()
 }
 
 let wsClient: Lark.WSClient | null = null

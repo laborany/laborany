@@ -18,6 +18,8 @@ export interface HistoryMessage {
   createdAt: string
 }
 
+export type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu'
+
 export interface Session {
   id: string
   skill_id: string
@@ -25,6 +27,7 @@ export interface Session {
   status: string
   cost: number
   created_at: string
+  source?: SessionSource
 }
 
 export interface SessionDetail extends Session {

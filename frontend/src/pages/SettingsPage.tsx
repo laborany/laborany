@@ -131,6 +131,8 @@ function isSameStoragePath(a: string, b: string): boolean {
 function isAbsoluteStoragePath(input: string): boolean {
   const value = normalizeStoragePath(input)
   if (!value) return false
+  if (value === '~') return true
+  if (value.startsWith('~/') || value.startsWith('~\\')) return true
   if (/^[a-z]:[\\/]/i.test(value)) return true
   if (/^\\\\[^\\]+\\[^\\]+/.test(value)) return true
   return value.startsWith('/')
@@ -383,7 +385,7 @@ export default function SettingsPage() {
     }
 
     if (!isAbsoluteStoragePath(requestedHome)) {
-      setMessage({ type: 'error', text: '存储路径必须是绝对路径（例如 D:\\LaborAnyData）' })
+      setMessage({ type: 'error', text: '存储路径必须是绝对路径（例如 D:\\LaborAnyData 或 /Users/you/LaborAnyData，支持 ~/LaborAnyData）' })
       return
     }
 
@@ -705,7 +707,7 @@ export default function SettingsPage() {
                 value={storageHomeInput}
                 onChange={event => setStorageHomeInput(event.target.value)}
                 disabled={switchingStorageHome}
-                placeholder="例如: D:\\LaborAnyData"
+                placeholder="例如: D:\\LaborAnyData 或 ~/LaborAnyData"
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-60"
               />
               <div className="flex items-center gap-3">
@@ -756,7 +758,7 @@ export default function SettingsPage() {
                 <p className="text-xs text-muted-foreground">当前输入路径与现有路径一致。</p>
               )}
               {!storagePathUnchanged && storageHomeInput.trim() && !isAbsoluteStoragePath(storageHomeInput) && (
-                <p className="text-xs text-amber-700">请输入绝对路径，例如 `D:\LaborAnyData`。</p>
+                <p className="text-xs text-amber-700">请输入绝对路径，例如 `D:\LaborAnyData`、`/Users/you/LaborAnyData` 或 `~/LaborAnyData`。</p>
               )}
             </div>
             <div className="mt-3 rounded border border-blue-300/60 bg-blue-50 p-3 text-xs text-blue-900">

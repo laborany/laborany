@@ -47,8 +47,15 @@ interface RunningTaskBrief {
   skillId: string
   skillName: string
   startedAt: string
-  source?: 'runtime' | 'converse'
+  source?: 'desktop' | 'converse' | 'cron' | 'feishu'
   query?: string
+}
+
+function getTaskSourceLabel(source?: RunningTaskBrief['source']): string {
+  if (source === 'cron') return '定时任务'
+  if (source === 'feishu') return '飞书'
+  if (source === 'converse') return '首页对话'
+  return '桌面任务'
 }
 
 export default function HomePage() {
@@ -345,12 +352,8 @@ export default function HomePage() {
   }, [agent.clear, agent.detach, agent.isRunning, agent.sessionId, phase, refreshBackgroundTasks])
 
   const handleResumeBackgroundTask = useCallback((task: RunningTaskBrief) => {
-    if (task.source === 'converse' || task.skillId === '__converse__') {
-      void resumeConverseSession(task.sessionId)
-      return
-    }
-    navigate(`/execute/${task.skillId}?sid=${encodeURIComponent(task.sessionId)}`)
-  }, [navigate, resumeConverseSession])
+    navigate(`/history/${encodeURIComponent(task.sessionId)}`)
+  }, [navigate])
 
   const handleCapabilityCreated = useCallback((created: {
     type: 'skill'
@@ -533,9 +536,7 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
                     {task.skillName || task.query || task.skillId}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {task.skillId === '__converse__'
-                      ? `分派会话: ${task.sessionId.slice(0, 12)}... · 点击继续对话`
-                      : `会话: ${task.sessionId.slice(0, 12)}... · 点击继续查看`}
+                    {`${getTaskSourceLabel(task.source)} · 会话 ${task.sessionId.slice(0, 12)}... · 点击继续`}
                   </p>
                 </button>
               ))}
