@@ -53,8 +53,7 @@ interface AgentState {
 
 const EXECUTE_DEDUPE_WINDOW_MS = 1200
 const SSE_READER_POLL_INTERVAL_MS = 1200
-const SSE_STALL_AFTER_RESUME_MS = 12000
-const RESUME_HINT_WINDOW_MS = 45000
+const SSE_STALL_AFTER_RESUME_MS = 90000
 const LAST_SESSION_KEY_PREFIX = 'lastSession_'
 const LAST_SESSION_LIST_KEY_PREFIX = 'lastSessions_'
 const MAX_TRACKED_SESSIONS_PER_SKILL = 12
@@ -69,6 +68,10 @@ const TRANSIENT_NETWORK_ERROR_PATTERNS = [
   'load failed',
   'network stream stalled after resume',
 ]
+
+interface ReadSseStreamOptions {
+  enableResumeStallDetection?: boolean
+}
 
 function getLegacyLastSessionKey(skillId: string): string {
   return `${LAST_SESSION_KEY_PREFIX}${skillId}`
@@ -701,15 +704,17 @@ export function useAgent(skillId: string) {
   )
 
   const readSseStream = useCallback(
-    async (res: Response) => {
+    async (res: Response, options?: ReadSseStreamOptions) => {
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
+      const enableResumeStallDetection = Boolean(options?.enableResumeStallDetection)
 
       if (!reader) throw new Error('无法读取响应流')
 
       let buffer = ''
       let eventType = ''
       let shouldTerminate = false
+      let lastProgressAt: number | null = null
       const parseEventBlock = (rawBlock: string): void => {
         const lines = rawBlock.split(/\r?\n/)
         let dataLine = ''
@@ -733,6 +738,9 @@ export function useAgent(skillId: string) {
           }
           handleEvent(event)
           const type = typeof event.type === 'string' ? event.type : eventType
+          if (type && type !== 'session') {
+            lastProgressAt = Date.now()
+          }
           if (type === 'done' || type === 'stopped' || type === 'aborted') {
             shouldTerminate = true
           }
@@ -743,7 +751,6 @@ export function useAgent(skillId: string) {
         }
       }
 
-      let lastChunkAt = Date.now()
       while (true) {
         let readResult: ReadableStreamReadResult<Uint8Array>
         try {
@@ -754,9 +761,14 @@ export function useAgent(skillId: string) {
 
           if (raceResult.kind === 'tick') {
             const now = Date.now()
-            const resumedRecently = now - resumeHintAtRef.current < RESUME_HINT_WINDOW_MS
-            const streamStalled = now - lastChunkAt > SSE_STALL_AFTER_RESUME_MS
-            if (!shouldTerminate && resumedRecently && streamStalled) {
+            const resumeHintAt = resumeHintAtRef.current
+            const hasResumeSignal = resumeHintAt > 0
+            const lastProgressTs = lastProgressAt ?? 0
+            const hasProgressSinceResume = lastProgressAt !== null
+              && lastProgressTs >= resumeHintAt
+            const streamStalled = hasProgressSinceResume
+              && now - lastProgressTs > SSE_STALL_AFTER_RESUME_MS
+            if (!shouldTerminate && enableResumeStallDetection && hasResumeSignal && streamStalled) {
               void reader.cancel()
               throw new Error('Network stream stalled after resume')
             }
@@ -774,7 +786,6 @@ export function useAgent(skillId: string) {
         const { done, value } = readResult
         if (done) break
 
-        lastChunkAt = Date.now()
         buffer += decoder.decode(value, { stream: true })
         const blocks = buffer.split(/\r?\n\r?\n/)
         buffer = blocks.pop() || ''
@@ -833,7 +844,7 @@ export function useAgent(skillId: string) {
             throw new Error(`Unable to reconnect task (${reconnectRes.status})`)
           }
 
-          await readSseStream(reconnectRes)
+          await readSseStream(reconnectRes, { enableResumeStallDetection: true })
           return true
         } catch (err) {
           reconnectError = err
@@ -1209,7 +1220,7 @@ export function useAgent(skillId: string) {
           throw new Error('无法连接到任务')
         }
 
-        await readSseStream(res)
+        await readSseStream(res, { enableResumeStallDetection: true })
       } catch (err) {
         let recoveredByReconnect = false
 
