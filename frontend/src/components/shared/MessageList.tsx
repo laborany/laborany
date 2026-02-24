@@ -215,12 +215,12 @@ export default function MessageList({
     return () => window.cancelAnimationFrame(raf)
   }, [messages, isRunning])
 
-  if (messages.length === 0) return null
-
   const blocks = useMemo(
     () => buildRenderBlocks(messages, isRunning),
     [messages, isRunning],
   )
+
+  if (messages.length === 0) return null
 
   return (
     <div className="space-y-4">

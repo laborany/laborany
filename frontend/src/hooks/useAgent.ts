@@ -751,31 +751,18 @@ export function useAgent(skillId: string) {
         }
       }
 
+      let pendingReadPromise: Promise<ReadableStreamReadResult<Uint8Array>> | null = null
       while (true) {
-        let readResult: ReadableStreamReadResult<Uint8Array>
+        if (!pendingReadPromise) {
+          pendingReadPromise = reader.read()
+        }
+
+        let raceResult: { kind: 'read'; result: ReadableStreamReadResult<Uint8Array> } | { kind: 'tick' }
         try {
-          const raceResult = await Promise.race([
-            reader.read().then((result) => ({ kind: 'read' as const, result })),
+          raceResult = await Promise.race([
+            pendingReadPromise.then((result) => ({ kind: 'read' as const, result })),
             sleep(SSE_READER_POLL_INTERVAL_MS).then(() => ({ kind: 'tick' as const })),
           ])
-
-          if (raceResult.kind === 'tick') {
-            const now = Date.now()
-            const resumeHintAt = resumeHintAtRef.current
-            const hasResumeSignal = resumeHintAt > 0
-            const lastProgressTs = lastProgressAt ?? 0
-            const hasProgressSinceResume = lastProgressAt !== null
-              && lastProgressTs >= resumeHintAt
-            const streamStalled = hasProgressSinceResume
-              && now - lastProgressTs > SSE_STALL_AFTER_RESUME_MS
-            if (!shouldTerminate && enableResumeStallDetection && hasResumeSignal && streamStalled) {
-              void reader.cancel()
-              throw new Error('Network stream stalled after resume')
-            }
-            continue
-          }
-
-          readResult = raceResult.result
         } catch (err) {
           if (shouldTerminate || isAbortLikeError(err)) {
             break
@@ -783,7 +770,24 @@ export function useAgent(skillId: string) {
           throw err
         }
 
-        const { done, value } = readResult
+        if (raceResult.kind === 'tick') {
+          const now = Date.now()
+          const resumeHintAt = resumeHintAtRef.current
+          const hasResumeSignal = resumeHintAt > 0
+          const lastProgressTs = lastProgressAt ?? 0
+          const hasProgressSinceResume = lastProgressAt !== null
+            && lastProgressTs >= resumeHintAt
+          const streamStalled = hasProgressSinceResume
+            && now - lastProgressTs > SSE_STALL_AFTER_RESUME_MS
+          if (!shouldTerminate && enableResumeStallDetection && hasResumeSignal && streamStalled) {
+            void reader.cancel()
+            throw new Error('Network stream stalled after resume')
+          }
+          continue
+        }
+
+        pendingReadPromise = null
+        const { done, value } = raceResult.result
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
