@@ -497,7 +497,8 @@ export function useAgent(skillId: string) {
           break
 
         case 'text': {
-          // 收到文本说明 CLI 已成功连接 API，清除连接状态
+          // 重放期间跳过文本累积，历史文本由 HistoryPage 的 convertMessages 提供
+          if (isReplayingRef.current) break
           currentTextRef.current += event.content as string
           pendingTextFlushRef.current = true
           scheduleAssistantTextFlush()
@@ -534,6 +535,9 @@ export function useAgent(skillId: string) {
             }
             return
           }
+
+          // 重放期间跳过 tool 消息入列，历史 tool 消息由 convertMessages 提供
+          if (isReplayingRef.current) break
 
           setState((s) => ({
             ...s,
