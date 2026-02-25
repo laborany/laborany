@@ -187,7 +187,7 @@ function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
             </span>
           </div>
           <div className="mt-1 text-xs text-muted-foreground">
-            {new Date(run.startedAt).toLocaleString('zh-CN')}
+            {new Date(run.startedAt.endsWith('Z') ? run.startedAt : run.startedAt + 'Z').toLocaleString('zh-CN')}
           </div>
           {run.error && (
             <div className="mt-2 p-2 rounded bg-red-50 dark:bg-red-900/20 text-xs text-red-600 dark:text-red-400">

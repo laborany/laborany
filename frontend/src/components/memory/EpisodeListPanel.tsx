@@ -89,7 +89,7 @@ export function EpisodeListPanel({ onClose }: Props) {
 function EpisodeRow({ episode, expanded, onToggle }: {
   episode: EpisodeItem; expanded: boolean; onToggle: () => void
 }) {
-  const date = new Date(episode.createdAt).toLocaleDateString('zh-CN')
+  const date = new Date(episode.createdAt.endsWith('Z') ? episode.createdAt : episode.createdAt + 'Z').toLocaleDateString('zh-CN')
 
   return (
     <div className="px-4 py-3">

@@ -68,6 +68,12 @@ function stripActionMarker(text: string): string {
   return text.replace(ACTION_MARKER_RE, '').trim()
 }
 
+function parseUTCDate(dateStr: string): Date {
+  const s = dateStr.trim()
+  if (s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s)) return new Date(s)
+  return new Date(s + 'Z')
+}
+
 function mergeUniqueIds(...lists: string[][]): string[] {
   const merged = new Set<string>()
   for (const list of lists) {
@@ -495,7 +501,7 @@ export function useConverse(): UseConverseReturn {
       const restored = (Array.isArray(payload.messages) ? payload.messages : [])
         .reduce<AgentMessage[]>((acc, item, idx) => {
           const type = (item.type || '').trim()
-          const createdAt = item.createdAt ? new Date(item.createdAt) : new Date()
+          const createdAt = item.createdAt ? parseUTCDate(item.createdAt) : new Date()
           const id = `resume_${sid}_${item.id ?? idx}`
 
           if (type === 'user') {

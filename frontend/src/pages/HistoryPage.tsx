@@ -46,7 +46,7 @@ export default function HistoryPage() {
   }
 
   function formatDate(dateStr: string) {
-    return new Date(dateStr).toLocaleString('zh-CN')
+    return parseUTCDate(dateStr).toLocaleString('zh-CN')
   }
 
   function getStatusBadge(status: string) {
@@ -369,6 +369,14 @@ const CHAT_PANEL_DEFAULT = 450
 const SIDEBAR_WIDTH = 280
 const CONVERSE_SYNC_RETRY_DELAY_MS = 900
 
+/* ── SQLite datetime('now') 返回 UTC 但不带时区标记，
+ *    补上 'Z' 让 JS 正确识别为 UTC，toLocaleString 自动转本地时区 ── */
+function parseUTCDate(dateStr: string): Date {
+  const s = dateStr.trim()
+  if (s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s)) return new Date(s)
+  return new Date(s + 'Z')
+}
+
 /**
  * convertMessages
  * 将后端 SessionDetail 的原始消息转换为前端 AgentMessage 格式
@@ -385,14 +393,14 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
         id: String(msg.id),
         type: 'user',
         content: msg.content,
-        timestamp: new Date(msg.createdAt),
+        timestamp: parseUTCDate(msg.createdAt),
       })
     } else if (msg.type === 'assistant' && msg.content) {
       messages.push({
         id: String(msg.id),
         type: 'assistant',
         content: msg.content,
-        timestamp: new Date(msg.createdAt),
+        timestamp: parseUTCDate(msg.createdAt),
       })
     } else if (msg.type === 'tool_use' && msg.toolName) {
       const parsedToolInput =
@@ -406,7 +414,7 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
         content: '',
         toolName: msg.toolName,
         toolInput: parsedToolInput,
-        timestamp: new Date(msg.createdAt),
+        timestamp: parseUTCDate(msg.createdAt),
       })
     } else if (msg.type === 'tool_result' && msg.toolResult) {
       messages.push({
@@ -414,7 +422,7 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
         type: 'tool',
         content: msg.toolResult.substring(0, 500) + (msg.toolResult.length > 500 ? '...' : ''),
         toolName: '执行结果',
-        timestamp: new Date(msg.createdAt),
+        timestamp: parseUTCDate(msg.createdAt),
       })
     }
   }
@@ -424,7 +432,7 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
       id: 'query',
       type: 'user',
       content: session.query,
-      timestamp: new Date(session.created_at),
+      timestamp: parseUTCDate(session.created_at),
     })
   }
 
@@ -870,7 +878,7 @@ export function SessionDetailPage() {
             )}
             {/* 时间 */}
             <div className="text-sm text-muted-foreground">
-              {new Date(session.created_at).toLocaleString('zh-CN')}
+              {parseUTCDate(session.created_at).toLocaleString('zh-CN')}
             </div>
           </div>
         </div>

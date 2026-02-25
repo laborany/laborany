@@ -78,7 +78,7 @@ export function RunningTasksIndicator() {
 
   // 格式化运行时间
   const formatDuration = (startedAt: string): string => {
-    const start = new Date(startedAt).getTime()
+    const start = new Date(startedAt.endsWith('Z') ? startedAt : startedAt + 'Z').getTime()
     const now = Date.now()
     const diffSec = Math.floor((now - start) / 1000)
 
