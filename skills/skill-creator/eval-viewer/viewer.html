@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skill Eval Review</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --text-muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; background: var(--bg); color: var(--text); padding: 2rem; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+  h2 { font-size: 1.2rem; margin: 1.5rem 0 0.75rem; color: var(--accent); }
+  .meta { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  .score-bar { display: flex; align-items: center; gap: 0.5rem; margin: 0.25rem 0; }
+  .score-fill { height: 8px; border-radius: 4px; transition: width 0.3s; }
+  .score-fill.high { background: var(--green); }
+  .score-fill.mid { background: var(--yellow); }
+  .score-fill.low { background: var(--red); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+  .badge.pass { background: rgba(63,185,80,0.2); color: var(--green); }
+  .badge.fail { background: rgba(248,81,73,0.2); color: var(--red); }
+  table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; }
+  th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+  th { color: var(--text-muted); font-weight: 500; }
+  .chart-container { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .chart-bar { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
+  .chart-bar .bar { width: 32px; background: var(--accent); border-radius: 4px 4px 0 0; transition: height 0.3s; }
+  .chart-bar .label { font-size: 0.7rem; color: var(--text-muted); }
+  .empty { color: var(--text-muted); font-style: italic; padding: 2rem; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1 id="title">Skill Eval Review</h1>
+<div class="meta" id="meta"></div>
+
+<h2>Score Overview</h2>
+<div class="card" id="score-overview"><div class="empty">No data loaded</div></div>
+
+<h2>Benchmark Trend</h2>
+<div class="card" id="benchmark-trend"><div class="empty">No benchmark data</div></div>
+
+<h2>Test Case Results</h2>
+<div id="test-results"><div class="empty">No grading results</div></div>
+
+<script>
+/* __REVIEW_DATA__ */
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof REVIEW_DATA === 'undefined') return;
+  const d = REVIEW_DATA;
+
+  // ── 标题和元信息 ──
+  document.getElementById('title').textContent = `Eval Review: ${d.skill_name}`;
+  document.getElementById('meta').textContent =
+    `Generated: ${d.generated_at} | Test cases: ${d.num_test_cases} | Runs: ${d.num_runs}`;
+
+  // ── 分数概览 ──
+  const scores = d.grading_results.map(r => r.overall_score || 0);
+  if (scores.length > 0) {
+    const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const cls = mean >= 0.8 ? 'high' : mean >= 0.5 ? 'mid' : 'low';
+    document.getElementById('score-overview').innerHTML = `
+      <div class="score-bar">
+        <span style="width:60px">Mean:</span>
+        <div style="flex:1;background:var(--border);border-radius:4px;height:8px">
+          <div class="score-fill ${cls}" style="width:${mean*100}%"></div>
+        </div>
+        <span>${(mean*100).toFixed(1)}%</span>
+      </div>
+      <div style="color:var(--text-muted);font-size:0.8rem;margin-top:0.5rem">
+        ${scores.length} graded results | Min: ${(Math.min(...scores)*100).toFixed(1)}% | Max: ${(Math.max(...scores)*100).toFixed(1)}%
+      </div>`;
+  }
+
+  // ── Benchmark 趋势 ──
+  if (d.benchmark && d.benchmark.entries && d.benchmark.entries.length > 0) {
+    const entries = d.benchmark.entries;
+    const maxScore = Math.max(...entries.map(e => e.scores.mean));
+    const barH = 120;
+    let bars = entries.map(e => {
+      const h = maxScore > 0 ? (e.scores.mean / maxScore) * barH : 0;
+      const cls = e.scores.mean >= 0.8 ? 'high' : e.scores.mean >= 0.5 ? 'mid' : 'low';
+      return `<div class="chart-bar">
+        <div class="bar score-fill ${cls}" style="height:${h}px"></div>
+        <div class="label">v${e.description_version}</div>
+        <div class="label">${(e.scores.mean*100).toFixed(0)}%</div>
+      </div>`;
+    }).join('');
+    document.getElementById('benchmark-trend').innerHTML =
+      `<div class="chart-container" style="align-items:flex-end;height:${barH+40}px">${bars}</div>`;
+  }
+
+  // ── 测试用例结果 ──
+  if (d.grading_results.length > 0) {
+    let html = '';
+    for (const r of d.grading_results) {
+      const assertions = (r.assertions || []).map(a =>
+        `<tr><td><span class="badge ${a.result}">${a.result}</span></td><td>${a.assertion}</td><td>${a.evidence || ''}</td></tr>`
+      ).join('');
+      html += `<div class="card">
+        <strong>${r.test_case_id || 'unknown'}</strong>
+        <span style="float:right">${((r.overall_score||0)*100).toFixed(0)}%</span>
+        <table><tr><th>Result</th><th>Assertion</th><th>Evidence</th></tr>${assertions}</table>
+      </div>`;
+    }
+    document.getElementById('test-results').innerHTML = html;
+  }
+});
+</script>
+</body>
+</html>
