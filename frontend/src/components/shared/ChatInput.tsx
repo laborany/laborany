@@ -289,34 +289,45 @@ export default function ChatInput({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded-md px-2 py-1.5 transition-colors disabled:opacity-50 max-w-[120px]"
+                  className="flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-card px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 max-w-[240px] sm:max-w-[300px]"
                   disabled={isRunning}
                   title={activeProfile?.name}
                 >
-                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-2" />
                   </svg>
-                  <span className="truncate">
-                    {activeProfile ? (activeProfile.name.length > 10 ? activeProfile.name.slice(0, 10) + '…' : activeProfile.name) : '默认模型'}
+                  <span className="truncate max-w-[160px] sm:max-w-[220px] font-medium">
+                    {activeProfile?.name || '默认模型'}
                   </span>
+                  <svg className="w-3.5 h-3.5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
+              <DropdownMenuContent align="start" side="top" className="min-w-[300px] max-w-[420px] p-1.5">
                 {profiles.map((p, idx) => (
                   <DropdownMenuItem
                     key={p.id}
                     onClick={() => setActiveProfile(p.id)}
-                    className={p.id === activeProfileId ? 'font-medium' : ''}
+                    className={`${p.id === activeProfileId ? 'bg-accent/70' : ''} items-start gap-3 rounded-md px-2.5 py-2.5`}
                   >
-                    <span className="flex items-center gap-2">
-                      {p.id === activeProfileId && (
-                        <svg className="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
+                    <span className="flex w-full items-start gap-2.5">
+                      <span className="w-4 pt-0.5">
+                        {p.id === activeProfileId && (
+                          <svg className="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium leading-snug [overflow-wrap:anywhere]">{p.name}</span>
+                        {p.model && (
+                          <span className="mt-0.5 block text-xs text-muted-foreground [overflow-wrap:anywhere]">{p.model}</span>
+                        )}
+                      </span>
+                      {idx === 0 && (
+                        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">默认</span>
                       )}
-                      {p.id !== activeProfileId && <span className="w-3.5" />}
-                      {p.name}
-                      {idx === 0 && <span className="ml-1 text-xs text-muted-foreground">(默认)</span>}
                     </span>
                   </DropdownMenuItem>
                 ))}
@@ -324,7 +335,7 @@ export default function ChatInput({
             </DropdownMenu>
           )}
 
-          <span className="text-xs text-muted-foreground">Ctrl + Enter 发送</span>
+          <span className="hidden sm:inline text-xs text-muted-foreground">Ctrl + Enter 发送</span>
         </div>
 
         {isRunning ? (

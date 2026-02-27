@@ -4,7 +4,8 @@
  * ║  下拉菜单组件，支持触发器、菜单项、分隔符                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { ReactNode, useState, useRef, useEffect, createContext, useContext } from 'react'
+import { CSSProperties, MutableRefObject, ReactNode, useState, useRef, useEffect, createContext, useContext, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           Context                                        │
@@ -12,6 +13,7 @@ import { ReactNode, useState, useRef, useEffect, createContext, useContext } fro
 interface DropdownContextValue {
   open: boolean
   setOpen: (open: boolean) => void
+  triggerRef: MutableRefObject<HTMLElement | null>
 }
 
 const DropdownContext = createContext<DropdownContextValue | null>(null)
@@ -27,9 +29,11 @@ function useDropdown() {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function DropdownMenu({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLElement | null>(null)
+
   return (
-    <DropdownContext.Provider value={{ open, setOpen }}>
-      <div className="relative inline-block">{children}</div>
+    <DropdownContext.Provider value={{ open, setOpen, triggerRef }}>
+      <div className="inline-flex">{children}</div>
     </DropdownContext.Provider>
   )
 }
@@ -38,11 +42,19 @@ function DropdownMenu({ children }: { children: ReactNode }) {
  * │                           触发器                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function DropdownMenuTrigger({ children, asChild }: { children: ReactNode; asChild?: boolean }) {
-  const { open, setOpen } = useDropdown()
+  const { open, setOpen, triggerRef } = useDropdown()
+
+  const handleToggle = () => setOpen(!open)
 
   if (asChild) {
     return (
-      <span onClick={() => setOpen(!open)} className="cursor-pointer">
+      <span
+        ref={(node) => {
+          triggerRef.current = node
+        }}
+        onClick={handleToggle}
+        className="inline-flex"
+      >
         {children}
       </span>
     )
@@ -50,7 +62,10 @@ function DropdownMenuTrigger({ children, asChild }: { children: ReactNode; asChi
 
   return (
     <button
-      onClick={() => setOpen(!open)}
+      ref={(node) => {
+        triggerRef.current = node
+      }}
+      onClick={handleToggle}
       className="inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
     >
       {children}
@@ -64,35 +79,140 @@ function DropdownMenuTrigger({ children, asChild }: { children: ReactNode; asChi
 function DropdownMenuContent({
   children,
   align = 'start',
+  side = 'bottom',
+  className,
 }: {
   children: ReactNode
   align?: 'start' | 'end'
+  side?: 'top' | 'bottom'
+  className?: string
 }) {
-  const { open, setOpen } = useDropdown()
+  const { open, setOpen, triggerRef } = useDropdown()
   const ref = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState<{ top: number; left: number; side: 'top' | 'bottom'; minWidth: number } | null>(null)
+
+  const updatePosition = useCallback(() => {
+    const triggerEl = triggerRef.current
+    const contentEl = ref.current
+    if (!triggerEl || !contentEl) return
+
+    const triggerRect = triggerEl.getBoundingClientRect()
+    const contentRect = contentEl.getBoundingClientRect()
+
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+    const margin = 8
+    const gap = 6
+
+    const spaceAbove = triggerRect.top - margin
+    const spaceBelow = viewportHeight - triggerRect.bottom - margin
+
+    let resolvedSide = side
+    if (side === 'top' && spaceAbove < contentRect.height && spaceBelow > spaceAbove) {
+      resolvedSide = 'bottom'
+    } else if (side === 'bottom' && spaceBelow < contentRect.height && spaceAbove > spaceBelow) {
+      resolvedSide = 'top'
+    }
+
+    let top = resolvedSide === 'top'
+      ? triggerRect.top - contentRect.height - gap
+      : triggerRect.bottom + gap
+    top = Math.max(margin, Math.min(top, viewportHeight - contentRect.height - margin))
+
+    let left = align === 'end'
+      ? triggerRect.right - contentRect.width
+      : triggerRect.left
+    left = Math.max(margin, Math.min(left, viewportWidth - contentRect.width - margin))
+
+    setPosition((prev) => {
+      if (
+        prev &&
+        Math.abs(prev.top - top) < 0.5 &&
+        Math.abs(prev.left - left) < 0.5 &&
+        Math.abs(prev.minWidth - triggerRect.width) < 0.5 &&
+        prev.side === resolvedSide
+      ) {
+        return prev
+      }
+      return { top, left, side: resolvedSide, minWidth: triggerRect.width }
+    })
+  }, [align, side, triggerRef])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      setPosition(null)
+      return
+    }
+
     const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      if (ref.current?.contains(target)) return
+      if (triggerRef.current?.contains(target)) return
+      setOpen(false)
+    }
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
         setOpen(false)
       }
     }
+
+    const raf = requestAnimationFrame(updatePosition)
+
     document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [open, setOpen])
+    document.addEventListener('keydown', handleEscape)
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(updatePosition)
+      : null
+    if (resizeObserver && triggerRef.current) resizeObserver.observe(triggerRef.current)
+    if (resizeObserver && ref.current) resizeObserver.observe(ref.current)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+      resizeObserver?.disconnect()
+    }
+  }, [open, setOpen, triggerRef, updatePosition])
+
+  useEffect(() => {
+    if (open) updatePosition()
+  }, [open, updatePosition])
 
   if (!open) return null
 
-  const alignClass = align === 'end' ? 'right-0' : 'left-0'
+  if (typeof document === 'undefined') return null
 
-  return (
+  const contentStyle: CSSProperties = position
+    ? {
+      position: 'fixed',
+      top: position.top,
+      left: position.left,
+      minWidth: position.minWidth,
+      zIndex: 80,
+    }
+    : {
+      position: 'fixed',
+      visibility: 'hidden',
+      zIndex: 80,
+    }
+
+  const sideClass = position?.side === 'top' ? 'slide-in-from-bottom-1' : 'slide-in-from-top-1'
+
+  return createPortal(
     <div
       ref={ref}
-      className={`absolute top-full mt-1 ${alignClass} z-50 min-w-[8rem] rounded-lg border border-border bg-card p-1 shadow-lg animate-in fade-in slide-in-from-bottom-1`}
+      style={contentStyle}
+      className={`min-w-[8rem] rounded-lg border border-border bg-card p-1 shadow-lg animate-in fade-in ${sideClass} ${className ?? ''}`}
     >
       {children}
-    </div>
+    </div>,
+    document.body
   )
 }
 
