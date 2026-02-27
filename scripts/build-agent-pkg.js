@@ -35,6 +35,7 @@ function main() {
   const rootDir = resolve(__dirname, '..')
   const agentDir = join(rootDir, 'agent-service')
   const fixNativeScript = join(rootDir, 'scripts', 'fix-native-modules.js')
+  const patchPkgFetchScript = join(rootDir, 'scripts', 'patch-pkg-fetch.js')
   const nativeBinaryPath = join(
     agentDir,
     'node_modules',
@@ -55,6 +56,7 @@ function main() {
       copyFileSync(nativeBinaryPath, backupPath)
     }
 
+    run(process.execPath, [patchPkgFetchScript, 'agent-service'], rootDir)
     run(process.execPath, [fixNativeScript, platform, arch], rootDir)
     run('npm', ['run', 'build:bundle'], agentDir)
     run(
