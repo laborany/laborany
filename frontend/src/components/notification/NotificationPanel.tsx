@@ -100,7 +100,7 @@ export function NotificationPanel({ onClose, onMarkAllRead }: NotificationPanelP
   }
 
   return (
-    <div className="absolute right-0 top-full mt-2 w-80 bg-card border border-border rounded-lg shadow-lg z-50">
+    <div className="absolute right-0 top-full z-50 mt-2 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-lg border border-border bg-card shadow-lg">
       {/* 头部 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <h3 className="font-medium text-foreground">通知</h3>
@@ -113,7 +113,7 @@ export function NotificationPanel({ onClose, onMarkAllRead }: NotificationPanelP
       </div>
 
       {/* 通知列表 */}
-      <div className="max-h-96 overflow-y-auto">
+      <div className="max-h-[min(60vh,24rem)] overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center py-8">
             <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary border-t-transparent" />

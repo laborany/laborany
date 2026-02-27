@@ -37,6 +37,7 @@ export function RunningTasksIndicator() {
   const [tasks, setTasks] = useState<RunningTask[]>([])
   const [showPanel, setShowPanel] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const hasRunningTasks = tasks.length > 0
 
   // 轮询运行中任务
   useEffect(() => {
@@ -76,6 +77,13 @@ export function RunningTasksIndicator() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showPanel])
 
+  // 任务清空时，自动关闭面板，避免空面板悬挂
+  useEffect(() => {
+    if (!hasRunningTasks && showPanel) {
+      setShowPanel(false)
+    }
+  }, [hasRunningTasks, showPanel])
+
   // 格式化运行时间
   const formatDuration = (startedAt: string): string => {
     const start = new Date(startedAt.endsWith('Z') ? startedAt : startedAt + 'Z').getTime()
@@ -89,19 +97,24 @@ export function RunningTasksIndicator() {
     return `${diffHour} 小时 ${diffMin % 60} 分钟`
   }
 
-  // 没有运行中的任务时不显示
-  if (tasks.length === 0) return null
-
   return (
     <div ref={containerRef} className="relative">
       <button
-        onClick={() => setShowPanel(!showPanel)}
-        className="relative p-2 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-        title="运行中的任务"
+        onClick={() => {
+          if (!hasRunningTasks) return
+          setShowPanel(!showPanel)
+        }}
+        disabled={!hasRunningTasks}
+        className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+          hasRunningTasks
+            ? 'text-muted-foreground hover:bg-accent hover:text-foreground'
+            : 'cursor-default text-muted-foreground/45'
+        }`}
+        title={hasRunningTasks ? `运行中的任务（${tasks.length}）` : '暂无运行中的任务'}
       >
-        {/* 旋转的加载图标 */}
+        {/* 任务图标：有任务时旋转，无任务时静态占位 */}
         <svg
-          className="w-5 h-5 animate-spin"
+          className={`w-5 h-5 ${hasRunningTasks ? 'animate-spin text-blue-500' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -115,21 +128,23 @@ export function RunningTasksIndicator() {
         </svg>
 
         {/* 任务数量徽章 */}
-        <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-xs font-medium text-white bg-blue-500 rounded-full">
-          {tasks.length > 9 ? '9+' : tasks.length}
-        </span>
+        {hasRunningTasks && (
+          <span className="absolute -top-0.5 -right-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-blue-500 px-1 text-xs font-medium text-white">
+            {tasks.length > 9 ? '9+' : tasks.length}
+          </span>
+        )}
       </button>
 
       {/* 任务列表面板 */}
-      {showPanel && (
-        <div className="absolute right-0 top-full mt-2 w-72 bg-card border border-border rounded-lg shadow-lg z-50">
+      {showPanel && hasRunningTasks && (
+        <div className="absolute right-0 top-full z-50 mt-2 w-[min(18rem,calc(100vw-1rem))] overflow-hidden rounded-lg border border-border bg-card shadow-lg">
           {/* 头部 */}
           <div className="px-4 py-3 border-b border-border">
             <h3 className="font-medium text-foreground">运行中的任务</h3>
           </div>
 
           {/* 任务列表 */}
-          <div className="max-h-64 overflow-y-auto">
+          <div className="max-h-[min(55vh,16rem)] overflow-y-auto">
             {tasks.map((task) => (
               <Link
                 key={task.sessionId}

@@ -199,8 +199,9 @@ function AppLayout({
         className={`flex-1 transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-56'}`}
       >
         {/* 顶部通知栏 */}
-        <div className="fixed top-0 right-0 h-14 flex items-center gap-4 px-6 z-30">
+        <div className="fixed right-2 top-3 z-30 flex max-w-[calc(100vw-1rem)] items-center gap-1 rounded-xl border border-border/80 bg-card/90 px-1.5 py-1 shadow-sm backdrop-blur sm:right-6">
           <RunningTasksIndicator />
+          <div className="h-5 w-px bg-border/70" />
           <NotificationBell />
         </div>
         {children}
