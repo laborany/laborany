@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { API_BASE, AGENT_API_BASE } from '../config/api'
+import { useModelProfile } from '../contexts/ModelProfileContext'
+import type { ModelProfile } from '../contexts/ModelProfileContext'
 
 interface ConfigItem {
   value: string
@@ -180,8 +182,22 @@ export default function SettingsPage() {
   const [retryingApply, setRetryingApply] = useState(false)
   const [message, setMessage] = useState<{ type: BannerType; text: string } | null>(null)
 
-  const [testingModel, setTestingModel] = useState(false)
-  const [modelTestResult, setModelTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  // Model profiles state
+  const { profiles: ctxProfiles, refreshProfiles } = useModelProfile()
+  const [editProfiles, setEditProfiles] = useState<ModelProfile[]>([])
+  const [profilesLoaded, setProfilesLoaded] = useState(false)
+  const [savingProfiles, setSavingProfiles] = useState(false)
+  const [profilesMessage, setProfilesMessage] = useState<{ type: BannerType; text: string } | null>(null)
+  const [showProfileKeys, setShowProfileKeys] = useState<Record<string, boolean>>({})
+  const [testingProfileId, setTestingProfileId] = useState<string | null>(null)
+  const [profileTestResults, setProfileTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
+
+  useEffect(() => {
+    if (!profilesLoaded && ctxProfiles.length > 0) {
+      setEditProfiles(ctxProfiles.map(p => ({ ...p })))
+      setProfilesLoaded(true)
+    }
+  }, [ctxProfiles, profilesLoaded])
 
   const [testingEmail, setTestingEmail] = useState(false)
   const [emailTestResult, setEmailTestResult] = useState<{ success: boolean; message: string } | null>(null)
@@ -242,9 +258,8 @@ export default function SettingsPage() {
   function validateBeforeSave(): string[] {
     const errors: string[] = []
 
-    if (!(editValues.ANTHROPIC_API_KEY || '').trim()) {
-      errors.push('模型服务缺少 ANTHROPIC_API_KEY')
-    }
+    // ANTHROPIC_API_KEY is now managed via model profiles; only warn if both profiles and env are missing
+    // Skip hard validation here — model profiles page handles this
 
     const feishuEnabled = normalizeBool(editValues.FEISHU_ENABLED)
     if (feishuEnabled) {
@@ -472,30 +487,115 @@ export default function SettingsPage() {
     }
   }
 
-  async function testModelConfig() {
-    setTestingModel(true)
-    setModelTestResult(null)
+  async function saveModelProfiles() {
+    if (editProfiles.length === 0) {
+      setProfilesMessage({ type: 'error', text: '至少需要一个模型配置' })
+      return
+    }
+    const normalizedNames = new Set<string>()
+    for (let i = 0; i < editProfiles.length; i++) {
+      const profile = editProfiles[i]
+      const name = profile.name.trim()
+      if (!name) {
+        setProfilesMessage({ type: 'error', text: `配置 #${i + 1} 的名称不能为空` })
+        return
+      }
+      const normalized = name.toLowerCase()
+      if (normalizedNames.has(normalized)) {
+        setProfilesMessage({ type: 'error', text: `模型配置名称重复：${name}` })
+        return
+      }
+      normalizedNames.add(normalized)
+    }
+
+    const firstApiKey = editProfiles[0].apiKey.trim()
+    if (!firstApiKey) {
+      setProfilesMessage({ type: 'error', text: '默认配置（第一项）必须填写 API Key' })
+      return
+    }
+
+    setSavingProfiles(true)
+    setProfilesMessage(null)
     try {
-      const res = await fetch(`${API_BASE}/setup/validate-api`, {
+      const res = await fetch(`${API_BASE}/config/model-profiles`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profiles: editProfiles }),
+      })
+      const data = await res.json() as { success?: boolean; error?: string; profiles?: ModelProfile[] }
+      if (!res.ok) {
+        setProfilesMessage({ type: 'error', text: data.error || '保存失败' })
+        return
+      }
+      setProfilesMessage({ type: 'success', text: '模型配置已保存' })
+      await refreshProfiles()
+      if (data.profiles) {
+        setEditProfiles(data.profiles.map(p => ({ ...p })))
+      }
+      await loadConfig()
+    } catch {
+      setProfilesMessage({ type: 'error', text: '保存失败，请检查网络' })
+    } finally {
+      setSavingProfiles(false)
+    }
+  }
+
+  async function testProfileConnection(profile: ModelProfile) {
+    setTestingProfileId(profile.id)
+    setProfileTestResults(prev => ({ ...prev, [profile.id]: { success: false, message: '测试中...' } }))
+    try {
+      const res = await fetch(`${API_BASE}/config/model-profiles/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ANTHROPIC_API_KEY: editValues.ANTHROPIC_API_KEY || '',
-          ANTHROPIC_BASE_URL: editValues.ANTHROPIC_BASE_URL || '',
-          ANTHROPIC_MODEL: editValues.ANTHROPIC_MODEL || '',
+          apiKey: profile.apiKey,
+          baseUrl: profile.baseUrl,
+          model: profile.model,
+          profileId: profile.id,
         }),
       })
-      const data = await res.json() as { success?: boolean; message?: string; error?: string; diagnostic?: string }
-      if (res.ok && data.success) {
-        setModelTestResult({ success: true, message: data.message || '模型配置验证成功' })
-      } else {
-        setModelTestResult({ success: false, message: data.message || data.error || '模型配置验证失败' })
-      }
+      const data = await res.json() as { success?: boolean; message?: string }
+      setProfileTestResults(prev => ({
+        ...prev,
+        [profile.id]: { success: Boolean(data.success), message: data.message || (data.success ? '连接成功' : '连接失败') },
+      }))
     } catch {
-      setModelTestResult({ success: false, message: '无法连接 API 服务' })
+      setProfileTestResults(prev => ({ ...prev, [profile.id]: { success: false, message: '请求失败' } }))
     } finally {
-      setTestingModel(false)
+      setTestingProfileId(null)
     }
+  }
+
+  function addProfile() {
+    const newProfile: ModelProfile = {
+      id: crypto.randomUUID(),
+      name: `配置 ${editProfiles.length + 1}`,
+      apiKey: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    setEditProfiles(prev => [...prev, newProfile])
+  }
+
+  function removeProfile(id: string) {
+    if (editProfiles.length <= 1) return
+    setEditProfiles(prev => prev.filter(p => p.id !== id))
+  }
+
+  function moveProfile(id: string, dir: -1 | 1) {
+    setEditProfiles(prev => {
+      const idx = prev.findIndex(p => p.id === id)
+      if (idx < 0) return prev
+      const next = idx + dir
+      if (next < 0 || next >= prev.length) return prev
+      const arr = [...prev]
+      ;[arr[idx], arr[next]] = [arr[next], arr[idx]]
+      return arr
+    })
+  }
+
+  function updateProfile(id: string, field: keyof ModelProfile, value: string) {
+    setEditProfiles(prev => prev.map(p => p.id === id ? { ...p, [field]: value, updatedAt: new Date().toISOString() } : p))
   }
 
   async function testEmailConfig() {
@@ -793,23 +893,153 @@ export default function SettingsPage() {
 
         <SettingsCard
           title={groups.find(g => g.id === 'model')?.title || '模型服务'}
-          description={groups.find(g => g.id === 'model')?.description || '核心模型配置'}
+          description="管理多个模型配置，支持不同 API Key、Base URL 和模型名称。profiles[0] 为默认配置。"
           action={
             <button
-              onClick={testModelConfig}
-              disabled={testingModel}
-              className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={addProfile}
+              className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90"
             >
-              {testingModel ? '验证中...' : '测试模型连接'}
+              + 新增配置
             </button>
           }
         >
-          {renderFields(groupedKeys.model)}
-          {modelTestResult && (
-            <p className={`mt-3 text-xs ${modelTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
-              {modelTestResult.message}
-            </p>
+          {profilesMessage && (
+            <div className={`rounded-lg border p-3 text-sm ${
+              profilesMessage.type === 'success'
+                ? 'bg-green-500/10 text-green-700 border-green-500/20'
+                : profilesMessage.type === 'warning'
+                  ? 'bg-amber-500/10 text-amber-700 border-amber-500/20'
+                  : 'bg-red-500/10 text-red-700 border-red-500/20'
+            }`}>
+              {profilesMessage.text}
+            </div>
           )}
+
+          <div className="space-y-4">
+            {editProfiles.map((profile, idx) => (
+              <div key={profile.id} className="rounded-lg border border-border p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-foreground">{profile.name || `配置 ${idx + 1}`}</span>
+                    {idx === 0 && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">默认</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => moveProfile(profile.id, -1)}
+                      disabled={idx === 0}
+                      className="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
+                      title="上移（提升优先级）"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => moveProfile(profile.id, 1)}
+                      disabled={idx === editProfiles.length - 1}
+                      className="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
+                      title="下移"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => testProfileConnection(profile)}
+                      disabled={testingProfileId === profile.id}
+                      className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {testingProfileId === profile.id ? '测试中...' : '测试'}
+                    </button>
+                    <button
+                      onClick={() => removeProfile(profile.id)}
+                      disabled={editProfiles.length <= 1}
+                      className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive disabled:opacity-30"
+                      title="删除（至少保留一个）"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">名称 *</label>
+                    <input
+                      type="text"
+                      value={profile.name}
+                      onChange={e => updateProfile(profile.id, 'name', e.target.value)}
+                      placeholder="例如: Default"
+                      className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">模型名称</label>
+                    <input
+                      type="text"
+                      value={profile.model || ''}
+                      onChange={e => updateProfile(profile.id, 'model', e.target.value)}
+                      placeholder="claude-sonnet-4-20250514"
+                      className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">
+                    API Key {idx === 0 && <span className="text-red-500">*</span>}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showProfileKeys[profile.id] ? 'text' : 'password'}
+                      value={profile.apiKey}
+                      onChange={e => updateProfile(profile.id, 'apiKey', e.target.value)}
+                      placeholder="sk-ant-api03-..."
+                      className="w-full rounded border border-border bg-background px-2 py-1.5 pr-14 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowProfileKeys(prev => ({ ...prev, [profile.id]: !prev[profile.id] }))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      {showProfileKeys[profile.id] ? '隐藏' : '显示'}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Base URL（可选）</label>
+                  <input
+                    type="text"
+                    value={profile.baseUrl || ''}
+                    onChange={e => updateProfile(profile.id, 'baseUrl', e.target.value)}
+                    placeholder="https://api.anthropic.com"
+                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                </div>
+
+                {profileTestResults[profile.id] && (
+                  <p className={`text-xs ${profileTestResults[profile.id].success ? 'text-green-700' : 'text-red-700'}`}>
+                    {profileTestResults[profile.id].message}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <button
+              onClick={saveModelProfiles}
+              disabled={savingProfiles}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+            >
+              {savingProfiles ? '保存中...' : '保存模型配置'}
+            </button>
+          </div>
         </SettingsCard>
 
         <SettingsCard

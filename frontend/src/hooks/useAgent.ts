@@ -2,6 +2,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import type { AgentMessage, TaskFile } from '../types'
 import { API_BASE } from '../config/api'
+import { useModelProfile } from '../contexts/ModelProfileContext'
 
 export type { AgentMessage, TaskFile }
 
@@ -336,6 +337,7 @@ export function useAgent(skillId: string) {
   const textFlushRafRef = useRef<number | null>(null)
   const pendingTextFlushRef = useRef(false)
   const isReplayingRef = useRef(false)
+  const { activeProfileId } = useModelProfile()
 
   const flushAssistantText = useCallback((force = false) => {
     // Fix P0-3: force flush 时先取消 pending RAF，防止 tool_use 后文本丢失
@@ -1050,7 +1052,8 @@ export function useAgent(skillId: string) {
           skill_id: executionSkillId,
           query: finalQuery,
           originQuery: options?.originQuery,
-          sessionId: currentSessionId
+          sessionId: currentSessionId,
+          modelProfileId: activeProfileId || undefined,
         })
 
         const res = await fetchWithRetry(
@@ -1116,7 +1119,7 @@ export function useAgent(skillId: string) {
         }
       }
     },
-    [skillId, reconnectSessionStream, readSseStream],
+    [activeProfileId, skillId, reconnectSessionStream, readSseStream],
   )
 
   const stop = useCallback(async () => {

@@ -36,6 +36,12 @@ export interface AgentEvent {
   taskDir?: string
 }
 
+export interface ModelOverride {
+  apiKey: string
+  baseUrl?: string
+  model?: string
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                    stderr 分类：识别 CLI 重试/错误信息                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -116,6 +122,7 @@ interface ExecuteOptions {
   signal: AbortSignal
   onEvent: (event: AgentEvent) => void
   workDir?: string  // 可选的工作目录，用于复合技能共享目录
+  modelOverride?: ModelOverride
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -523,7 +530,7 @@ function checkRuntimeDependencies(): RuntimeDependencyIssue | null {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       构建环境配置                                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function buildEnvConfig(): Record<string, string | undefined> {
+function buildEnvConfig(overrides?: ModelOverride): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = withUtf8Env({ ...process.env })
 
   /* ── 只传 ANTHROPIC_API_KEY，不要额外设置 ANTHROPIC_AUTH_TOKEN ──
@@ -535,10 +542,25 @@ function buildEnvConfig(): Record<string, string | undefined> {
    * process.env 已经包含 ANTHROPIC_API_KEY，无需重复赋值。       */
   delete env.ANTHROPIC_AUTH_TOKEN
 
-  if (process.env.ANTHROPIC_BASE_URL) {
+  if (overrides?.apiKey) {
+    env.ANTHROPIC_API_KEY = overrides.apiKey
+  } else if (process.env.ANTHROPIC_API_KEY) {
+    env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
+  }
+
+  if (overrides?.baseUrl) {
+    env.ANTHROPIC_BASE_URL = overrides.baseUrl
+  } else if (overrides && 'baseUrl' in overrides && !overrides.baseUrl) {
+    delete env.ANTHROPIC_BASE_URL
+  } else if (process.env.ANTHROPIC_BASE_URL) {
     env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL
   }
-  if (process.env.ANTHROPIC_MODEL) {
+
+  if (overrides?.model) {
+    env.ANTHROPIC_MODEL = overrides.model
+  } else if (overrides && 'model' in overrides && !overrides.model) {
+    delete env.ANTHROPIC_MODEL
+  } else if (process.env.ANTHROPIC_MODEL) {
     env.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL
   }
 
@@ -653,7 +675,7 @@ function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) =>
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, workDir } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, workDir, modelOverride } = options
 
   let lastProgressAt = Date.now()
   let idleWarningSent = false
@@ -713,8 +735,16 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     return
   }
 
+  const effectiveApiKey = modelOverride?.apiKey?.trim() || process.env.ANTHROPIC_API_KEY || ''
+  const effectiveBaseUrl = modelOverride
+    ? (modelOverride.baseUrl?.trim() || undefined)
+    : process.env.ANTHROPIC_BASE_URL
+  const effectiveModel = modelOverride
+    ? (modelOverride.model?.trim() || undefined)
+    : process.env.ANTHROPIC_MODEL
+
   // 检查 API Key 配置
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!effectiveApiKey) {
     emitEvent({
       type: 'error',
       content: 'ANTHROPIC_API_KEY 未配置。请在设置页面配置 API 密钥。',
@@ -727,8 +757,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
    * │  智谱 MCP 自动注入                                                      │
    * │  当使用智谱 API 时，自动将智谱 MCP 服务器配置注入 settings.json          │
    * └────────────────────────────────────────────────────────────────────────┘ */
-  if (isZhipuApi(process.env.ANTHROPIC_BASE_URL)) {
-    const zhipuServers = buildZhipuMcpServers(process.env.ANTHROPIC_API_KEY)
+  if (isZhipuApi(effectiveBaseUrl)) {
+    const zhipuServers = buildZhipuMcpServers(effectiveApiKey)
     injectMcpServers(zhipuServers)
     console.log('[Agent] 检测到智谱 API，已注入 MCP 服务器配置')
   }
@@ -739,8 +769,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   } else {
     console.log(`[Agent] Claude Code: ${claudeConfig.claudePath}`)
   }
-  console.log(`[Agent] Model: ${process.env.ANTHROPIC_MODEL || 'default'}`)
-  console.log(`[Agent] API Key configured: ${process.env.ANTHROPIC_API_KEY ? 'Yes' : 'No'}`)
+  console.log(`[Agent] Model: ${effectiveModel || 'default'}`)
+  console.log(`[Agent] API Key configured: ${effectiveApiKey ? 'Yes' : 'No'}`)
 
   const isWindows = platform() === 'win32'
   const args = [
@@ -754,8 +784,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     args.push('--continue')
   }
 
-  if (process.env.ANTHROPIC_MODEL) {
-    args.push('--model', process.env.ANTHROPIC_MODEL)
+  if (effectiveModel) {
+    args.push('--model', effectiveModel)
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -772,14 +802,14 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     const bundledArgs = [claudeConfig.cliPath!, ...args]
     proc = spawn(claudeConfig.nodePath!, bundledArgs, {
       cwd: taskDir,
-      env: buildEnvConfig(),
+      env: buildEnvConfig(modelOverride),
       stdio: ['pipe', 'pipe', 'pipe'],
     })
   } else {
     // 使用系统安装的 claude 命令
     proc = spawn(claudeConfig.claudePath!, args, {
       cwd: taskDir,
-      env: buildEnvConfig(),
+      env: buildEnvConfig(modelOverride),
       shell: isWindows,
       stdio: ['pipe', 'pipe', 'pipe'],
     })

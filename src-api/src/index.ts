@@ -56,6 +56,7 @@ import authRoutes from './routes/auth.js'
 import skillRoutes from './routes/skill.js'
 import fileRoutes from './routes/file.js'
 import configRoutes from './routes/config.js'
+import modelProfilesRoutes from './routes/model-profiles.js'
 import logsRoutes from './routes/logs.js'
 import sessionRoutes from './routes/session.js'
 import setupRoutes from './routes/setup.js'
@@ -98,6 +99,7 @@ app.get('/health', (c) => {
 app.route('/api/auth', authRoutes)
 app.route('/api/skill', skillRoutes)
 app.route('/api/config', configRoutes)
+app.route('/api/config/model-profiles', modelProfilesRoutes)
 app.route('/api/logs', logsRoutes)
 app.route('/api/sessions', sessionRoutes)
 app.route('/api/setup', setupRoutes)

@@ -16,6 +16,7 @@ import { buildConverseSystemPrompt, type ConverseRuntimeContext } from '../conve
 import { memoryInjector } from '../memory/io.js'
 import { loadCatalog } from '../catalog.js'
 import { DATA_DIR } from '../paths.js'
+import { resolveModelProfile } from '../lib/resolve-model-profile.js'
 import type { Skill } from 'laborany-shared'
 
 const router = Router()
@@ -826,7 +827,7 @@ function detectDirectIntentAction(query: string): ConverseActionPayload | null {
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 router.post('/', async (req: Request, res: Response) => {
-  const { sessionId: incomingId, messages: rawMessages, context: rawContext } = req.body
+  const { sessionId: incomingId, messages: rawMessages, context: rawContext, modelProfileId } = req.body
   const runtimeContext = normalizeRuntimeContext(rawContext)
 
   if (!rawMessages || !Array.isArray(rawMessages) || !rawMessages.length) {
@@ -904,6 +905,13 @@ router.post('/', async (req: Request, res: Response) => {
       sseWrite(res, 'warning', { content: '未能解析上传文件，请重新上传后重试。' })
     }
     const query = buildConverseQuery(baseQuery, uploadedFiles)
+
+    // Resolve model profile for this round
+    const modelOverride = await resolveModelProfile(modelProfileId)
+    if (modelProfileId && !modelOverride) {
+      sseWrite(res, 'warning', { content: `模型配置 ${modelProfileId} 未找到，已回退到默认模型` })
+    }
+
     /* ── 构建 converse skill ── */
     const memoryCtx = memoryInjector.buildContext({
       skillId: '__converse__',
@@ -927,6 +935,7 @@ router.post('/', async (req: Request, res: Response) => {
       query,
       sessionId,
       signal: abortController.signal,
+      modelOverride,
       onEvent: (event) => {
         if (event.type === 'tool_use') {
           if (/^AskU(?:ser|er)Question$/i.test(event.toolName || '')) {

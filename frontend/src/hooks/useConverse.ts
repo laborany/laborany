@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import { AGENT_API_BASE, API_BASE } from '../config/api'
 import type { PendingQuestion } from './useAgent'
 import type { AgentMessage } from '../types/message'
+import { useModelProfile } from '../contexts/ModelProfileContext'
 
 export interface ConverseAction {
   action:
@@ -133,6 +134,7 @@ export function useConverse(): UseConverseReturn {
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [state, setState] = useState<UseConverseReturn['state']>(null)
   const [isThinking, setIsThinking] = useState(false)
+  const { activeProfileId } = useModelProfile()
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionFileIds, setSessionFileIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -414,6 +416,7 @@ export function useConverse(): UseConverseReturn {
         body: JSON.stringify({
           sessionId: sessionIdRef.current,
           messages: payloadMessages,
+          modelProfileId: activeProfileId || undefined,
           context: {
             channel: 'desktop',
             locale: 'zh-CN',
@@ -459,7 +462,7 @@ export function useConverse(): UseConverseReturn {
         setIsThinking(false)
       }
     }
-  }, [processSSEStream])
+  }, [activeProfileId, processSSEStream])
 
   const respondToQuestion = useCallback(async (
     _questionId: string,

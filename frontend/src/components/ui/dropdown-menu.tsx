@@ -103,10 +103,12 @@ function DropdownMenuItem({
   children,
   onClick,
   disabled,
+  className,
 }: {
   children: ReactNode
   onClick?: () => void
   disabled?: boolean
+  className?: string
 }) {
   const { setOpen } = useDropdown()
 
@@ -120,7 +122,7 @@ function DropdownMenuItem({
     <button
       onClick={handleClick}
       disabled={disabled}
-      className="flex w-full items-center rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+      className={`flex w-full items-center rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50 ${className ?? ''}`}
     >
       {children}
     </button>

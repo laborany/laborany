@@ -59,6 +59,7 @@ async function runSkillJob(job: CronJob, sessionId: string): Promise<void> {
       skill_id: job.targetId,
       query: job.targetQuery,
       sessionId,
+      modelProfileId: job.modelProfileId,
     }),
   })
 

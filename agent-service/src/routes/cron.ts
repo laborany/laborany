@@ -27,6 +27,13 @@ import type { CreateJobRequest, UpdateJobRequest, Schedule } from '../cron/index
 
 const router = Router()
 
+function withDetail(fallback: string, error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return `${fallback}：${error.message}`
+  }
+  return fallback
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取定时任务列表                                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -35,7 +42,7 @@ router.get('/jobs', (_req: Request, res: Response) => {
     const jobs = listJobs()
     res.json({ jobs })
   } catch (error) {
-    res.status(500).json({ error: '获取任务列表失败' })
+    res.status(500).json({ error: withDetail('获取任务列表失败', error) })
   }
 })
 
@@ -56,7 +63,7 @@ router.get('/jobs/:id', (req: Request, res: Response) => {
  * │                       创建定时任务                                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 router.post('/jobs', (req: Request, res: Response) => {
-  const { name, description, schedule, target, enabled } = req.body as CreateJobRequest
+  const { name, description, schedule, target, enabled, modelProfileId } = req.body as CreateJobRequest
 
   if (!name || !schedule || !target) {
     res.status(400).json({ error: '缺少必要参数: name, schedule, target' })
@@ -72,10 +79,10 @@ router.post('/jobs', (req: Request, res: Response) => {
   }
 
   try {
-    const job = createJob({ name, description, schedule, target, enabled })
+    const job = createJob({ name, description, schedule, target, enabled, modelProfileId })
     res.json(job)
   } catch (error) {
-    res.status(500).json({ error: '创建任务失败' })
+    res.status(500).json({ error: withDetail('创建任务失败', error) })
   }
 })
 
@@ -102,7 +109,7 @@ router.patch('/jobs/:id', (req: Request, res: Response) => {
     }
     res.json(job)
   } catch (error) {
-    res.status(500).json({ error: '更新任务失败' })
+    res.status(500).json({ error: withDetail('更新任务失败', error) })
   }
 })
 

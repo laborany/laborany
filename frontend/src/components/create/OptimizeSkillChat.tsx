@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AGENT_API_BASE } from '../../config/api'
 import type { AgentMessage } from '../../types'
 import { ExecutionPanel } from '../execution'
+import { useModelProfile } from '../../contexts/ModelProfileContext'
 
 interface OptimizeSkillChatProps {
   skillId: string
@@ -64,6 +65,7 @@ export function OptimizeSkillChat({ skillId, skillName, onBack, onComplete }: Op
   const [isRunning, setIsRunning] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { activeProfileId } = useModelProfile()
 
   const abortRef = useRef<AbortController | null>(null)
   const currentAssistantIdRef = useRef<string>(crypto.randomUUID())
@@ -189,6 +191,7 @@ export function OptimizeSkillChat({ skillId, skillName, onBack, onComplete }: Op
         },
         body: JSON.stringify({
           messages: toConversationMessages(nextMessages),
+          modelProfileId: activeProfileId || undefined,
         }),
         signal: abortController.signal,
       })
@@ -247,7 +250,7 @@ export function OptimizeSkillChat({ skillId, skillName, onBack, onComplete }: Op
         abortRef.current = null
       }
     }
-  }, [handleEvent, isRunning, messages, pushErrorMessage, resetAssistantDraft, skillId])
+  }, [activeProfileId, handleEvent, isRunning, messages, pushErrorMessage, resetAssistantDraft, skillId])
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort()
@@ -314,4 +317,3 @@ export function OptimizeSkillChat({ skillId, skillName, onBack, onComplete }: Op
     </div>
   )
 }
-

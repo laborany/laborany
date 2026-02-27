@@ -52,6 +52,7 @@ export interface CronJob {
   targetType: TargetType
   targetId: string
   targetQuery: string
+  modelProfileId?: string
   nextRunAtMs?: number
   lastRunAtMs?: number
   lastStatus?: 'ok' | 'error' | 'running' | null
@@ -77,6 +78,7 @@ export interface CreateJobRequest {
   schedule: Schedule
   target: ExecutionTarget
   enabled?: boolean
+  modelProfileId?: string
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

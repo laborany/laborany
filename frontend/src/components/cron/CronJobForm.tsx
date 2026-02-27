@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react'
 import type { CronJob, CreateJobRequest, Schedule, ExecutionTarget } from '../../hooks/useCron'
 import { ScheduleInput } from './ScheduleInput'
 import { TargetInput } from './TargetInput'
+import { useModelProfile } from '../../contexts/ModelProfileContext'
 
 interface Props {
   job: CronJob | null
@@ -21,8 +22,10 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
   const [enabled, setEnabled] = useState(true)
   const [schedule, setSchedule] = useState<Schedule>({ kind: 'every', everyMs: 3600000 })
   const [target, setTarget] = useState<ExecutionTarget>({ type: 'skill', id: '', query: '' })
+  const [modelProfileId, setModelProfileId] = useState<string>('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { profiles } = useModelProfile()
 
   // 编辑模式：填充现有数据
   useEffect(() => {
@@ -32,6 +35,7 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
     setDescription(job.description || '')
     setEnabled(job.enabled)
     setTarget({ type: job.targetType, id: job.targetId, query: job.targetQuery })
+    setModelProfileId((job as any).modelProfileId || '')
 
     // 重建 Schedule
     if (job.scheduleKind === 'at') {
@@ -42,6 +46,12 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
       setSchedule({ kind: 'cron', expr: job.scheduleCronExpr!, tz: job.scheduleCronTz })
     }
   }, [job])
+
+  useEffect(() => {
+    if (!modelProfileId) return
+    if (profiles.some((profile) => profile.id === modelProfileId)) return
+    setModelProfileId('')
+  }, [modelProfileId, profiles])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -64,7 +74,7 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
 
     setSubmitting(true)
     try {
-      await onSubmit({ name, description, schedule, target, enabled })
+      await onSubmit({ name, description, schedule, target, enabled, modelProfileId })
     } catch (err) {
       setError(err instanceof Error ? err.message : '提交失败')
     } finally {
@@ -131,6 +141,27 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
 
           {/* 执行目标 */}
           <TargetInput value={target} onChange={setTarget} />
+
+          {/* 执行模型 */}
+          {profiles.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5">
+                执行模型
+              </label>
+              <select
+                value={modelProfileId}
+                onChange={e => setModelProfileId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                <option value="">默认（{profiles[0]?.name || '第一个配置'}）</option>
+                {profiles.map((p, idx) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}{idx === 0 ? '（默认）' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* 启用状态 */}
           <div className="flex items-center gap-2">

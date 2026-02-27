@@ -60,6 +60,7 @@ export interface CronJob {
   targetType: TargetType
   targetId: string
   targetQuery: string
+  modelProfileId?: string
 
   retryMaxRetries: number
   retryBackoffMs: number
@@ -93,6 +94,7 @@ export interface CreateJobRequest {
   target: ExecutionTarget
   enabled?: boolean
   retry?: RetryPolicy
+  modelProfileId?: string
 }
 
 export interface UpdateJobRequest {
@@ -102,6 +104,7 @@ export interface UpdateJobRequest {
   target?: ExecutionTarget
   enabled?: boolean
   retry?: RetryPolicy
+  modelProfileId?: string
 }
 
 export function flattenSchedule(s: Schedule): {

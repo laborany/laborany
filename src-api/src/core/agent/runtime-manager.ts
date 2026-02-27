@@ -7,7 +7,7 @@ import {
   pickUniqueCapabilityId,
 } from 'laborany-shared'
 import { dbHelper } from '../database.js'
-import { executeAgent, ensureTaskDir, type AgentEvent } from './executor.js'
+import { executeAgent, ensureTaskDir, type AgentEvent, type ModelOverride } from './executor.js'
 import { sessionManager } from './session-manager.js'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'path'
 import { existsSync } from 'fs'
@@ -109,6 +109,9 @@ interface RuntimeTask {
   skillName: string
   query: string
   workDir: string
+  modelProfileId?: string
+  modelProfileName?: string
+  modelName?: string
   status: RuntimeTaskStatus
   startedAt: number
   completedAt?: number
@@ -129,6 +132,10 @@ interface StartTaskOptions {
   skillId: string
   skill: Skill
   query: string
+  modelOverride?: ModelOverride
+  modelProfileId?: string
+  modelProfileName?: string
+  modelName?: string
   originQuery?: string
   beforeSkillIds?: Set<string>
 }
@@ -176,6 +183,9 @@ class RuntimeTaskManager {
       skillName: options.skill.meta.name || options.skillId,
       query: options.query,
       workDir,
+      modelProfileId: options.modelProfileId,
+      modelProfileName: options.modelProfileName,
+      modelName: options.modelName,
       status: 'running',
       startedAt: Date.now(),
       stopRequested: false,
@@ -196,10 +206,44 @@ class RuntimeTaskManager {
   }
 
   private ensureSessionRecord(task: RuntimeTask): void {
-    dbHelper.run(
-      `INSERT OR IGNORE INTO sessions (id, user_id, skill_id, query, status, work_dir) VALUES (?, ?, ?, ?, ?, ?)`,
-      [task.sessionId, 'default', task.skillId, task.query, 'running', task.workDir],
+    const existing = dbHelper.get<{ id: string }>(
+      `SELECT id FROM sessions WHERE id = ?`,
+      [task.sessionId],
     )
+
+    if (!existing) {
+      dbHelper.run(
+        `INSERT INTO sessions (
+          id, user_id, skill_id, query, status, work_dir,
+          model_profile_id, model_profile_name, model_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          task.sessionId,
+          'default',
+          task.skillId,
+          task.query,
+          'running',
+          task.workDir,
+          task.modelProfileId || null,
+          task.modelProfileName || null,
+          task.modelName || null,
+        ],
+      )
+    } else {
+      dbHelper.run(
+        `UPDATE sessions
+         SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?
+         WHERE id = ?`,
+        [
+          'running',
+          task.workDir,
+          task.modelProfileId || null,
+          task.modelProfileName || null,
+          task.modelName || null,
+          task.sessionId,
+        ],
+      )
+    }
 
     const userMessageCount = dbHelper.get<{ count: number }>(
       `SELECT COUNT(1) as count FROM messages WHERE session_id = ? AND type = ?`,
@@ -596,6 +640,7 @@ class RuntimeTaskManager {
           query: options.query,
           sessionId: task.sessionId,
           signal: task.controller.signal,
+          modelOverride: options.modelOverride,
           onEvent: (event) => this.handleAgentEvent(task, event),
         })
       }
@@ -698,6 +743,7 @@ class RuntimeTaskManager {
         baseQuery: options.query,
         previousOutput,
         workDir: sharedWorkDir,
+        modelOverride: options.modelOverride,
       })
 
       results.push(result)
@@ -738,6 +784,7 @@ class RuntimeTaskManager {
       baseQuery: string
       previousOutput: string
       workDir: string
+      modelOverride?: ModelOverride
     },
   ): Promise<CompositeStepResult> {
     const startedAt = new Date().toISOString()
@@ -768,6 +815,7 @@ class RuntimeTaskManager {
         sessionId: stepSessionId,
         signal: task.controller.signal,
         workDir: options.workDir,
+        modelOverride: options.modelOverride,
         onEvent: (event) => {
           if (event.type === 'text' && event.content) {
             output += event.content

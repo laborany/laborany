@@ -13,6 +13,7 @@ import {
   ensureTaskDir,
   runtimeTaskManager,
   type RuntimeEvent,
+  type ModelOverride,
 } from '../core/agent/index.js'
 import { dbHelper } from '../core/database.js'
 import { getUploadsDir } from './file.js'
@@ -22,6 +23,22 @@ import {
   detectInstallSourceFromQuery,
   isSkillInstallIntent,
 } from '../core/skills/installer.js'
+import {
+  migrateFromEnvIfNeeded,
+  readModelProfiles,
+  type ModelProfile,
+} from '../lib/model-profiles.js'
+
+interface SessionModelMeta {
+  modelProfileId?: string
+  modelProfileName?: string
+  modelName?: string
+}
+
+interface ResolvedModelSelection extends SessionModelMeta {
+  modelOverride?: ModelOverride
+  warning?: string
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │  将前端上传的文件 ID 解析为绝对路径                                        │
@@ -63,6 +80,7 @@ function ensureRunningSession(
   skillId: string,
   query: string,
   workDir: string,
+  modelMeta?: SessionModelMeta,
 ): void {
   const existing = dbHelper.get<{ id: string }>(
     `SELECT id FROM sessions WHERE id = ?`,
@@ -71,15 +89,37 @@ function ensureRunningSession(
 
   if (!existing) {
     dbHelper.run(
-      `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir) VALUES (?, ?, ?, ?, ?, ?)`,
-      [sessionId, 'default', skillId, query, 'running', workDir],
+      `INSERT INTO sessions (
+        id, user_id, skill_id, query, status, work_dir,
+        model_profile_id, model_profile_name, model_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sessionId,
+        'default',
+        skillId,
+        query,
+        'running',
+        workDir,
+        modelMeta?.modelProfileId || null,
+        modelMeta?.modelProfileName || null,
+        modelMeta?.modelName || null,
+      ],
     )
     return
   }
 
   dbHelper.run(
-    `UPDATE sessions SET status = ?, work_dir = ? WHERE id = ?`,
-    ['running', workDir, sessionId],
+    `UPDATE sessions
+     SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?
+     WHERE id = ?`,
+    [
+      'running',
+      workDir,
+      modelMeta?.modelProfileId || null,
+      modelMeta?.modelProfileName || null,
+      modelMeta?.modelName || null,
+      sessionId,
+    ],
   )
 }
 
@@ -99,6 +139,91 @@ function normalizeExecutionSkillId(rawSkillId: string | undefined): string {
     return '__generic__'
   }
   return normalized
+}
+
+function toModelOverride(profile: ModelProfile): ModelOverride | undefined {
+  const apiKey = (profile.apiKey || '').trim()
+  if (!apiKey) return undefined
+
+  return {
+    apiKey,
+    baseUrl: (profile.baseUrl || '').trim() || undefined,
+    model: (profile.model || '').trim() || undefined,
+  }
+}
+
+function toSessionModelMeta(profile: ModelProfile): SessionModelMeta {
+  const model = (profile.model || '').trim() || undefined
+  return {
+    modelProfileId: profile.id,
+    modelProfileName: profile.name,
+    modelName: model,
+  }
+}
+
+function resolveModelSelection(requestedProfileId?: string): ResolvedModelSelection {
+  migrateFromEnvIfNeeded()
+  const store = readModelProfiles()
+  const defaultProfile = store.profiles[0]
+
+  const defaultSelection: ResolvedModelSelection = (() => {
+    if (!defaultProfile) {
+      return {
+        modelName: process.env.ANTHROPIC_MODEL,
+      }
+    }
+
+    const defaultOverride = toModelOverride(defaultProfile)
+    if (!defaultOverride) {
+      return {
+        ...toSessionModelMeta(defaultProfile),
+        warning: `默认模型配置 ${defaultProfile.name} 缺少 API Key，已回退到环境变量配置`,
+        modelName: process.env.ANTHROPIC_MODEL,
+      }
+    }
+
+    return {
+      modelOverride: defaultOverride,
+      ...toSessionModelMeta(defaultProfile),
+    }
+  })()
+
+  if (!requestedProfileId) {
+    return defaultSelection
+  }
+
+  const requested = store.profiles.find((profile) => profile.id === requestedProfileId)
+  if (!requested) {
+    if (defaultSelection.modelOverride) {
+      return {
+        ...defaultSelection,
+        warning: `模型配置 ${requestedProfileId} 未找到，已回退到默认模型`,
+      }
+    }
+    return {
+      ...defaultSelection,
+      warning: `模型配置 ${requestedProfileId} 未找到，且无可用默认配置，已回退到环境变量配置`,
+    }
+  }
+
+  const requestedOverride = toModelOverride(requested)
+  if (!requestedOverride) {
+    if (defaultSelection.modelOverride) {
+      return {
+        ...defaultSelection,
+        warning: `模型配置 ${requested.name} 缺少 API Key，已回退到默认模型`,
+      }
+    }
+    return {
+      ...defaultSelection,
+      warning: `模型配置 ${requested.name} 缺少 API Key，已回退到环境变量配置`,
+    }
+  }
+
+  return {
+    modelOverride: requestedOverride,
+    ...toSessionModelMeta(requested),
+  }
 }
 
 skill.get('/', async (c) => {
@@ -267,6 +392,7 @@ skill.post('/execute', async (c) => {
   let query: string | undefined
   let originQuery: string | undefined
   let existingSessionId: string | undefined
+  let modelProfileIdRaw: string | undefined
   const files: File[] = []
 
   const contentType = c.req.header('Content-Type') || ''
@@ -277,6 +403,7 @@ skill.post('/execute', async (c) => {
     query = body['query'] as string
     originQuery = body['originQuery'] as string
     existingSessionId = (body['sessionId'] as string) || (body['session_id'] as string)
+    modelProfileIdRaw = (body['modelProfileId'] as string) || (body['model_profile_id'] as string)
 
     const uploadedFiles = body['files']
     if (uploadedFiles) {
@@ -294,9 +421,12 @@ skill.post('/execute', async (c) => {
     query = body.query
     originQuery = body.originQuery
     existingSessionId = body.sessionId || body.session_id
+    modelProfileIdRaw = body.modelProfileId || body.model_profile_id
   }
 
   let skillId = normalizeExecutionSkillId(skillIdRaw)
+  const requestedModelProfileId = (modelProfileIdRaw || '').trim() || undefined
+  const modelSelection = resolveModelSelection(requestedModelProfileId)
 
   if (!skillId || !query) {
     return c.json({ error: '缺少 skillId 或 query 参数' }, 400)
@@ -513,7 +643,11 @@ skill.post('/execute', async (c) => {
 
   const workDir = taskDir
 
-  ensureRunningSession(sessionId, skillId, query, workDir)
+  ensureRunningSession(sessionId, skillId, query, workDir, {
+    modelProfileId: modelSelection.modelProfileId,
+    modelProfileName: modelSelection.modelProfileName,
+    modelName: modelSelection.modelName,
+  })
   // 保存用户消息
   dbHelper.run(
     `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
@@ -525,12 +659,21 @@ skill.post('/execute', async (c) => {
     skillId,
     skill: skillData,
     query: finalQuery,
+    modelOverride: modelSelection.modelOverride,
+    modelProfileId: modelSelection.modelProfileId,
+    modelProfileName: modelSelection.modelProfileName,
+    modelName: modelSelection.modelName,
     originQuery: skillId === 'skill-creator' ? (originQuery || query) : undefined,
     beforeSkillIds: skillId === 'skill-creator' ? beforeSkillIds : undefined,
   })
 
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId }) })
+    if (modelSelection.warning) {
+      await stream.writeSSE({
+        data: JSON.stringify({ type: 'warning', content: modelSelection.warning }),
+      }).catch(() => {})
+    }
 
     // Fix P0-6: writeSSE 包装 try-catch，防止客户端断开时异常导致 unsubscribe 不执行
     const writeRuntimeEvent = async (event: RuntimeEvent) => {
@@ -631,7 +774,14 @@ skill.post('/detect-new', async (c) => {
 
 skill.post('/:skillId/optimize', async (c) => {
   const skillId = c.req.param('skillId')
-  const { messages } = await c.req.json()
+  const body = await c.req.json<{
+    messages?: Array<{ role?: string; content?: string }>
+    modelProfileId?: string
+    model_profile_id?: string
+  }>()
+  const messages = body.messages
+  const requestedModelProfileId = (body.modelProfileId || body.model_profile_id || '').trim() || undefined
+  const modelSelection = resolveModelSelection(requestedModelProfileId)
 
   if (!messages || !Array.isArray(messages)) {
     return c.json({ error: '缺少 messages 参数' }, 400)
@@ -663,18 +813,35 @@ skill.post('/:skillId/optimize', async (c) => {
 
   return streamSSE(c, async (stream) => {
     try {
+      if (modelSelection.warning) {
+        await stream.writeSSE({
+          data: JSON.stringify({ type: 'warning', content: modelSelection.warning }),
+        }).catch(() => {})
+      }
+
+      let hasErrorEvent = false
       await executeAgent({
         skill: skillCreator,
         query,
         sessionId,
         signal: abortController.signal,
-        onEvent: async (event) => {
-          await stream.writeSSE({ data: JSON.stringify(event) })
+        modelOverride: modelSelection.modelOverride,
+        onEvent: (event) => {
+          if (event.type === 'error') {
+            hasErrorEvent = true
+          }
+          if (event.type === 'done') {
+            return
+          }
+          void stream.writeSSE({ data: JSON.stringify(event) }).catch(() => {})
         },
       })
-      loadSkill.clearCache()
-      await stream.writeSSE({ data: JSON.stringify({ type: 'skill_updated', skillId }) })
-      await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
+
+      if (!hasErrorEvent) {
+        loadSkill.clearCache()
+        await stream.writeSSE({ data: JSON.stringify({ type: 'skill_updated', skillId }) }).catch(() => {})
+      }
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) }).catch(() => {})
     } catch (error) {
       const message = error instanceof Error ? error.message : '优化失败'
       await stream.writeSSE({ data: JSON.stringify({ type: 'error', message }) }).catch(() => {})

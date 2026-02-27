@@ -265,19 +265,39 @@ export function resolveClaudeCliLaunch(): ClaudeCliLaunchConfig | undefined {
   }
 }
 
-export function buildClaudeEnvConfig(): Record<string, string | undefined> {
+export interface ModelOverride {
+  apiKey: string
+  baseUrl?: string
+  model?: string
+}
+
+export function buildClaudeEnvConfig(overrides?: ModelOverride): Record<string, string | undefined> {
   refreshRuntimeConfig()
 
   const env: Record<string, string | undefined> = withUtf8Env({ ...process.env })
   delete env.ANTHROPIC_AUTH_TOKEN
 
-  if (process.env.ANTHROPIC_API_KEY) {
+  // overrides > process.env, never mutate process.env itself
+  if (overrides?.apiKey) {
+    env.ANTHROPIC_API_KEY = overrides.apiKey
+  } else if (process.env.ANTHROPIC_API_KEY) {
     env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
   }
-  if (process.env.ANTHROPIC_BASE_URL) {
+
+  if (overrides?.baseUrl) {
+    env.ANTHROPIC_BASE_URL = overrides.baseUrl
+  } else if (overrides && 'baseUrl' in overrides && !overrides.baseUrl) {
+    // explicit undefined means clear it
+    delete env.ANTHROPIC_BASE_URL
+  } else if (process.env.ANTHROPIC_BASE_URL) {
     env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL
   }
-  if (process.env.ANTHROPIC_MODEL) {
+
+  if (overrides?.model) {
+    env.ANTHROPIC_MODEL = overrides.model
+  } else if (overrides && 'model' in overrides && !overrides.model) {
+    delete env.ANTHROPIC_MODEL
+  } else if (process.env.ANTHROPIC_MODEL) {
     env.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL
   }
 

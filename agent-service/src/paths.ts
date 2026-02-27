@@ -17,6 +17,8 @@ export function getAppHomeDir(): string {
 }
 
 function getDataDir(): string {
+  const fromEnv = (process.env.LABORANY_HOME || '').trim()
+  if (fromEnv) return join(fromEnv, 'data')
   if (!isPkg) return join(__dirname, '../../data')
   return join(getUserDir(), 'data')
 }

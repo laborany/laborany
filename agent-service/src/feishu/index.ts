@@ -11,6 +11,7 @@ interface UserState {
   converseSessionId?: string
   executeSessionId?: string
   converseMessages: Array<{ role: string; content: string }>
+  defaultModelProfileId?: string
 }
 
 const userStates = new Map<string, UserState>()
@@ -33,6 +34,7 @@ function loadPersistedStates(): void {
       userStates.set(key, {
         converseSessionId: typeof value.converseSessionId === 'string' ? value.converseSessionId : undefined,
         executeSessionId: typeof value.executeSessionId === 'string' ? value.executeSessionId : undefined,
+        defaultModelProfileId: typeof value.defaultModelProfileId === 'string' ? value.defaultModelProfileId : undefined,
         converseMessages,
       })
     }
@@ -49,6 +51,7 @@ function persistStates(): void {
       plain[key] = {
         converseSessionId: value.converseSessionId,
         executeSessionId: value.executeSessionId,
+        defaultModelProfileId: value.defaultModelProfileId,
         converseMessages: value.converseMessages.slice(-MAX_CONVERSE_MESSAGES),
       }
     }
@@ -101,6 +104,15 @@ export function clearExecuteSessionId(stateKey: string): void {
 export function resetUser(stateKey: string): void {
   userStates.delete(stateKey)
   persistStates()
+}
+
+export function setDefaultModelProfileId(stateKey: string, profileId: string | undefined): void {
+  getUserState(stateKey).defaultModelProfileId = profileId
+  persistStates()
+}
+
+export function getDefaultModelProfileId(stateKey: string): string | undefined {
+  return getUserState(stateKey).defaultModelProfileId
 }
 
 let wsClient: Lark.WSClient | null = null

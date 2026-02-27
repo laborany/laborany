@@ -14,6 +14,8 @@ import {
   resetUser,
   setConverseSessionId,
   setExecuteSessionId,
+  setDefaultModelProfileId,
+  getDefaultModelProfileId,
 } from './index.js'
 import { FeishuStreamingSession } from './streaming.js'
 
@@ -65,6 +67,11 @@ interface SkillListItem {
   id: string
   name: string
   description?: string
+}
+
+interface ModelProfile {
+  id: string
+  name: string
 }
 
 interface TaskFileNode {
@@ -682,6 +689,39 @@ async function fetchSkillList(): Promise<SkillListItem[]> {
   return skills
 }
 
+function normalizeProfileAlias(raw: string): string {
+  const trimmed = raw.trim()
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith('\'') && trimmed.endsWith('\''))) {
+    return trimmed.slice(1, -1).trim()
+  }
+  return trimmed
+}
+
+async function fetchModelProfiles(): Promise<ModelProfile[]> {
+  const res = await fetch(`${SRC_API_BASE_URL}/config/model-profiles`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const payload = await res.json() as { profiles?: unknown[] }
+  const source = Array.isArray(payload?.profiles) ? payload.profiles : []
+
+  return source
+    .filter((item): item is ModelProfile => (
+      Boolean(item)
+      && typeof (item as Record<string, unknown>).id === 'string'
+      && typeof (item as Record<string, unknown>).name === 'string'
+    ))
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+    }))
+}
+
+function findModelProfileByAlias(profiles: ModelProfile[], alias: string): ModelProfile | undefined {
+  const normalized = normalizeProfileAlias(alias).toLowerCase()
+  return profiles.find((profile) => (
+    profile.id.toLowerCase() === normalized || profile.name.toLowerCase() === normalized
+  ))
+}
+
 async function upsertExternalSession(
   sessionId: string,
   query: string,
@@ -742,8 +782,10 @@ async function executeSkill(
   skillId: string,
   query: string,
   card: FeishuStreamingSession | null,
+  oneTimeModelProfileId?: string,
 ): Promise<void> {
   const state = getUserState(stateKey)
+  const modelProfileId = oneTimeModelProfileId ?? state.defaultModelProfileId
   const executeSessionId = state.executeSessionId || `feishu-${randomUUID().slice(0, 12)}`
   setExecuteSessionId(stateKey, executeSessionId)
   let runtimeSessionId = executeSessionId
@@ -758,6 +800,7 @@ async function executeSkill(
         skill_id: skillId,
         query,
         sessionId: executeSessionId,
+        modelProfileId,
         source: 'feishu',
       }),
     })
@@ -851,6 +894,7 @@ async function dispatchAction(
   converseText: string,
   card: FeishuStreamingSession,
   historySessionId: string,
+  modelProfileIdOverride?: string,
 ): Promise<void> {
   const actionType = (actionEvent as any)?.action || ''
   const targetId = (actionEvent as any)?.targetId || ''
@@ -896,7 +940,7 @@ async function dispatchAction(
   if (actionType === 'recommend_capability' && targetId) {
     await card.update(`Matched capability ${targetId}, executing...`)
     await appendExternalMessage(historySessionId, 'assistant', `已匹配技能 ${targetId}，任务已开始执行。`)
-    await executeSkill(client, chatId, stateKey, targetId, query, card)
+    await executeSkill(client, chatId, stateKey, targetId, query, card, modelProfileIdOverride)
     await updateExternalSessionStatus(historySessionId, 'completed')
     return
   }
@@ -904,7 +948,7 @@ async function dispatchAction(
   if (actionType === 'execute_generic') {
     await card.update('Executing in generic mode...')
     await appendExternalMessage(historySessionId, 'assistant', '已进入通用执行模式，任务已开始。')
-    await executeSkill(client, chatId, stateKey, config.defaultSkillId, query, card)
+    await executeSkill(client, chatId, stateKey, config.defaultSkillId, query, card, modelProfileIdOverride)
     await updateExternalSessionStatus(historySessionId, 'completed')
     return
   }
@@ -926,7 +970,7 @@ async function dispatchAction(
   }
 
   await card.update('Executing...')
-  await executeSkill(client, chatId, stateKey, config.defaultSkillId, query, card)
+  await executeSkill(client, chatId, stateKey, config.defaultSkillId, query, card, modelProfileIdOverride)
   await appendExternalMessage(historySessionId, 'assistant', '任务已开始执行。')
   await updateExternalSessionStatus(historySessionId, 'completed')
 }
@@ -939,6 +983,7 @@ async function runConverse(
   text: string,
   card: FeishuStreamingSession,
   historySessionId: string,
+  oneTimeModelProfileId?: string,
 ): Promise<void> {
   const state = getUserState(stateKey)
   const converseSessionId = state.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
@@ -947,6 +992,9 @@ async function runConverse(
   appendConverseMessage(stateKey, 'user', text)
   const latestState = getUserState(stateKey)
 
+  // one-time override (#model=xxx) takes priority over persistent default
+  const modelProfileId = oneTimeModelProfileId ?? state.defaultModelProfileId
+
   const response = await fetch(`${AGENT_SERVICE_URL}/converse`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -954,6 +1002,7 @@ async function runConverse(
       sessionId: converseSessionId,
       messages: latestState.converseMessages,
       source: 'feishu',
+      modelProfileId,
       context: {
         channel: 'feishu',
         locale: 'zh-CN',
@@ -1002,7 +1051,7 @@ async function runConverse(
   }
 
   if (action) {
-    await dispatchAction(client, config, chatId, stateKey, action, converseText, card, historySessionId)
+    await dispatchAction(client, config, chatId, stateKey, action, converseText, card, historySessionId, modelProfileId)
     return
   }
 
@@ -1038,9 +1087,12 @@ async function handleCommand(
       '直接发送消息 -> 智能匹配技能并执行',
       '/skill <id> [query] -> 指定技能执行',
       '/skills -> 查看可用技能',
+      '/model [name|id] -> 查看或切换模型配置',
       '/new -> 重置会话',
       '/stop -> 中止当前任务',
       '/help -> 查看帮助',
+      '',
+      '提示：消息前加 #model=<name 或 id> 可临时使用指定模型',
     ].join('\n'))
     return true
   }
@@ -1075,6 +1127,51 @@ async function handleCommand(
       }
     } catch {
       await sendText(client, chatId, '中止请求失败')
+    }
+    return true
+  }
+
+  const modelMatch = trimmed.match(/^\/model(?:\s+(.+))?$/)
+  if (modelMatch) {
+    const profileAlias = modelMatch[1]?.trim()
+    try {
+      const profiles = await fetchModelProfiles()
+      const currentId = getDefaultModelProfileId(stateKey)
+
+      if (!profileAlias) {
+        if (profiles.length === 0) {
+          await sendText(client, chatId, '当前没有可用模型配置，将使用环境变量默认模型。')
+          return true
+        }
+        const currentProfile = profiles.find((profile) => profile.id === currentId)
+        const effectiveCurrent = currentProfile || profiles[0]
+        const lines = profiles.map((profile, idx) => {
+          const isCurrent = profile.id === effectiveCurrent.id
+          return `${isCurrent ? '•' : '-'} ${profile.name}${idx === 0 ? '（默认）' : ''}`
+        })
+        await sendText(client, chatId, [
+          `当前模型配置: ${effectiveCurrent.name}`,
+          '',
+          '可用模型配置：',
+          ...lines,
+          '',
+          '使用方式：/model <name 或 id>',
+        ].join('\n'))
+        return true
+      }
+
+      const profile = findModelProfileByAlias(profiles, profileAlias)
+      if (profile) {
+        setDefaultModelProfileId(stateKey, profile.id)
+        await sendText(client, chatId, `✅ 已切换到模型配置: ${profile.name}`)
+      } else {
+        const hint = profiles.slice(0, 5).map((item) => item.name).join('、')
+        await sendText(client, chatId, hint
+          ? `❌ 未找到模型配置: ${profileAlias}\n可用配置：${hint}\n使用 /model 查看完整列表`
+          : `❌ 未找到模型配置: ${profileAlias}`)
+      }
+    } catch {
+      await sendText(client, chatId, '❌ 切换模型配置失败，请稍后重试')
     }
     return true
   }
@@ -1151,6 +1248,25 @@ export async function handleFeishuMessage(
 
   if (await handleCommand(larkClient, config, chatId, stateKey, text)) return
 
+  // Parse #model=<name> prefix for one-time model override (not persisted)
+  let oneTimeModelProfileId: string | undefined
+  const modelPrefixMatch = text.match(/^#model=("[^"]+"|'[^']+'|\S+)\s*/i)
+  if (modelPrefixMatch) {
+    const profileAlias = normalizeProfileAlias(modelPrefixMatch[1])
+    text = text.slice(modelPrefixMatch[0].length).trim()
+    try {
+      const profiles = await fetchModelProfiles()
+      const profile = findModelProfileByAlias(profiles, profileAlias)
+      if (profile) {
+        oneTimeModelProfileId = profile.id
+      } else {
+        await sendText(larkClient, chatId, `⚠️ 未找到模型配置: ${profileAlias}，将使用默认模型继续执行`)
+      }
+    } catch {
+      // ignore, fall back to default
+    }
+  }
+
   const userState = getUserState(stateKey)
   const historySessionId = userState.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
   setConverseSessionId(stateKey, historySessionId)
@@ -1162,7 +1278,7 @@ export async function handleFeishuMessage(
     await appendExternalMessage(historySessionId, 'user', text)
     await appendExternalMessage(historySessionId, 'assistant', '已开始执行任务，请查看执行结果。')
     try {
-      await executeSkill(larkClient, chatId, stateKey, config.defaultSkillId, text, null)
+      await executeSkill(larkClient, chatId, stateKey, config.defaultSkillId, text, null, oneTimeModelProfileId)
       await updateExternalSessionStatus(historySessionId, 'completed')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1175,7 +1291,7 @@ export async function handleFeishuMessage(
 
   await card.update('正在分析你的需求...')
   try {
-    await runConverse(larkClient, config, chatId, stateKey, text, card, historySessionId)
+    await runConverse(larkClient, config, chatId, stateKey, text, card, historySessionId, oneTimeModelProfileId)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     await appendExternalMessage(historySessionId, 'error', msg)

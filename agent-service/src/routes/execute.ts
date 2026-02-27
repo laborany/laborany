@@ -11,6 +11,7 @@ import { loadSkill } from 'laborany-shared'
 import { SessionManager } from '../session-manager.js'
 import { executeAgent } from '../agent-executor.js'
 import { taskManager as taskManagerInstance } from '../task-manager.js'
+import { resolveModelProfile } from '../lib/resolve-model-profile.js'
 
 type TaskManagerType = typeof taskManagerInstance
 
@@ -28,7 +29,7 @@ function createExecuteRouter(sessionManager: SessionManager, taskManager: TaskMa
    * │  - 用户离开页面：任务继续后台执行，完成后发送通知                          │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   router.post('/execute', async (req: Request, res: Response) => {
-    const { skillId, query, sessionId: existingSessionId } = req.body
+    const { skillId, query, sessionId: existingSessionId, modelProfileId } = req.body
 
     if (!skillId || !query) {
       res.status(400).json({ error: '缺少 skillId 或 query 参数' })
@@ -53,6 +54,14 @@ function createExecuteRouter(sessionManager: SessionManager, taskManager: TaskMa
 
     res.write(`data: ${JSON.stringify({ type: 'session', sessionId })}\n\n`)
 
+    // Resolve model profile (non-blocking warning on failure)
+    const modelOverride = await resolveModelProfile(modelProfileId)
+    if (modelProfileId && !modelOverride) {
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'warning', content: `模型配置 ${modelProfileId} 未找到，已回退到默认模型` })}\n\n`)
+      } catch { /* ignore */ }
+    }
+
     // Fix P1-6: res.write 包装 try-catch，防止缓冲区满或连接断开时进程崩溃
     const unsubscribe = taskManager.subscribe(sessionId, (event) => {
       if (!res.writableEnded) {
@@ -73,6 +82,7 @@ function createExecuteRouter(sessionManager: SessionManager, taskManager: TaskMa
         sessionId,
         signal: abortController.signal,
         onEvent: (event) => taskManager.addEvent(sessionId, event),
+        modelOverride,
       })
     } catch (error) {
       if ((error as Error).name === 'AbortError') {

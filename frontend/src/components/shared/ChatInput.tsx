@@ -12,6 +12,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '../ui'
+import { useModelProfile } from '../../contexts/ModelProfileContext'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           常量定义                                        │
@@ -66,6 +67,8 @@ export default function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const prevIsRunningRef = useRef(isRunning)
+  const { profiles, activeProfileId, setActiveProfile } = useModelProfile()
+  const activeProfile = profiles.find(p => p.id === activeProfileId) ?? profiles[0]
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                       任务完成后自动聚焦                                   │
@@ -251,7 +254,7 @@ export default function ChatInput({
         className={textareaStyles}
       />
       <div className="flex justify-between items-center px-4 py-2 border-t border-border">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
           <input
             type="file"
             multiple
@@ -280,6 +283,47 @@ export default function ChatInput({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {/* 模型选择按钮：只有多个 profile 时显示 */}
+          {profiles.length > 1 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded-md px-2 py-1.5 transition-colors disabled:opacity-50 max-w-[120px]"
+                  disabled={isRunning}
+                  title={activeProfile?.name}
+                >
+                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-2" />
+                  </svg>
+                  <span className="truncate">
+                    {activeProfile ? (activeProfile.name.length > 10 ? activeProfile.name.slice(0, 10) + '…' : activeProfile.name) : '默认模型'}
+                  </span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {profiles.map((p, idx) => (
+                  <DropdownMenuItem
+                    key={p.id}
+                    onClick={() => setActiveProfile(p.id)}
+                    className={p.id === activeProfileId ? 'font-medium' : ''}
+                  >
+                    <span className="flex items-center gap-2">
+                      {p.id === activeProfileId && (
+                        <svg className="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                      {p.id !== activeProfileId && <span className="w-3.5" />}
+                      {p.name}
+                      {idx === 0 && <span className="ml-1 text-xs text-muted-foreground">(默认)</span>}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
           <span className="text-xs text-muted-foreground">Ctrl + Enter 发送</span>
         </div>
 

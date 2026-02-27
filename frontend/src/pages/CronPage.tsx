@@ -10,6 +10,7 @@ import { useCronJobs, useCronJobRuns, describeSchedule, formatTime, formatDurati
 import type { CronJob, CreateJobRequest, Schedule } from '../hooks/useCron'
 import { CronJobForm } from '../components/cron/CronJobForm'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
+import { useModelProfile } from '../contexts/ModelProfileContext'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           状态图标                                        │
@@ -44,7 +45,8 @@ function JobCard({
   onDelete,
   onTrigger,
   onViewRuns,
-  isSelected
+  isSelected,
+  modelLabel,
 }: {
   job: CronJob
   targetName: string
@@ -53,6 +55,7 @@ function JobCard({
   onTrigger: () => void
   onViewRuns: () => void
   isSelected: boolean
+  modelLabel: string
 }) {
   const schedule: Schedule = job.scheduleKind === 'at'
     ? { kind: 'at', atMs: job.scheduleAtMs! }
@@ -88,6 +91,9 @@ function JobCard({
             <span title="调度规则">⏰ {describeSchedule(schedule)}</span>
             <span title="目标">
               🧪 {targetName}
+            </span>
+            <span title="模型">
+              🤖 {modelLabel}
             </span>
           </div>
         </div>
@@ -215,6 +221,7 @@ function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
 export default function CronPage() {
   const { jobs, loading, error, createJob, updateJob, deleteJob, triggerJob } = useCronJobs()
   const { getCapabilityName } = useSkillNameMap()
+  const { profiles } = useModelProfile()
   const [showForm, setShowForm] = useState(false)
   const [editingJob, setEditingJob] = useState<CronJob | null>(null)
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
@@ -303,6 +310,11 @@ export default function CronPage() {
                   key={job.id}
                   job={job}
                   targetName={getCapabilityName(job.targetId)}
+                  modelLabel={
+                    job.modelProfileId
+                      ? (profiles.find((p) => p.id === job.modelProfileId)?.name || '已删除配置（回退默认）')
+                      : `默认（${profiles[0]?.name || '第一配置'}）`
+                  }
                   isSelected={selectedJobId === job.id}
                   onEdit={() => setEditingJob(job)}
                   onDelete={() => handleDelete(job.id)}

@@ -20,6 +20,7 @@ import {
 } from 'laborany-shared'
 import type { SessionManager } from '../session-manager.js'
 import { executeAgent } from '../agent-executor.js'
+import { resolveModelProfile } from '../lib/resolve-model-profile.js'
 
 const router = Router()
 
@@ -278,7 +279,7 @@ async function collectTextFiles(dir: string, prefix: string, result: string[]) {
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 function mountCreateAndOptimize(r: ReturnType<typeof Router>, sm: SessionManager) {
   r.post('/skills/create', async (req: Request, res: Response) => {
-    const { messages } = req.body
+    const { messages, modelProfileId } = req.body
 
     if (!messages || !Array.isArray(messages)) {
       res.status(400).json({ error: '缺少 messages 参数' })
@@ -293,6 +294,10 @@ function mountCreateAndOptimize(r: ReturnType<typeof Router>, sm: SessionManager
     const sessionId = uuid()
     const abortController = new AbortController()
     sm.register(sessionId, abortController)
+    const modelOverride = await resolveModelProfile(modelProfileId)
+    if (modelProfileId && !modelOverride) {
+      res.write(`data: ${JSON.stringify({ type: 'warning', content: `模型配置 ${modelProfileId} 未找到，已回退到默认模型` })}\n\n`)
+    }
 
     const skillsBefore = await getSkillIds()
 
@@ -301,27 +306,38 @@ function mountCreateAndOptimize(r: ReturnType<typeof Router>, sm: SessionManager
       const conversationHistory = formatMessages(messages)
       const absoluteSkillsDir = USER_SKILLS_DIR.replace(/\\/g, '/')
       const query = buildCreateQuery(absoluteSkillsDir, conversationHistory)
+      let hasErrorEvent = false
 
       await executeAgent({
         skill: creatorSkill,
         query,
         sessionId,
         signal: abortController.signal,
+        modelOverride,
         onEvent: (event) => {
+          if (event.type === 'error') {
+            hasErrorEvent = true
+          }
+          if (event.type === 'done') {
+            return
+          }
           if (!res.writableEnded) {
             res.write(`data: ${JSON.stringify(event)}\n\n`)
           }
         },
       })
 
-      const normalizedNewSkills = await normalizeNewlyCreatedSkills(skillsBefore)
-      for (const skillId of normalizedNewSkills) {
-        res.write(`data: ${JSON.stringify({ type: 'skill_created', skillId })}\n\n`)
+      if (!hasErrorEvent) {
+        const normalizedNewSkills = await normalizeNewlyCreatedSkills(skillsBefore)
+        for (const skillId of normalizedNewSkills) {
+          res.write(`data: ${JSON.stringify({ type: 'skill_created', skillId })}\n\n`)
+        }
       }
       res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`)
     } catch (error) {
       const message = error instanceof Error ? error.message : '创建失败'
       res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`)
+      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`)
     } finally {
       sm.unregister(sessionId)
       res.end()
@@ -330,7 +346,7 @@ function mountCreateAndOptimize(r: ReturnType<typeof Router>, sm: SessionManager
 
   r.post('/skills/:skillId/optimize', async (req: Request, res: Response) => {
     const { skillId } = req.params
-    const { messages } = req.body
+    const { messages, modelProfileId } = req.body
 
     if (!messages || !Array.isArray(messages)) {
       res.status(400).json({ error: '缺少 messages 参数' })
@@ -351,6 +367,10 @@ function mountCreateAndOptimize(r: ReturnType<typeof Router>, sm: SessionManager
     const sessionId = uuid()
     const abortController = new AbortController()
     sm.register(sessionId, abortController)
+    const modelOverride = await resolveModelProfile(modelProfileId)
+    if (modelProfileId && !modelOverride) {
+      res.write(`data: ${JSON.stringify({ type: 'warning', content: `模型配置 ${modelProfileId} 未找到，已回退到默认模型` })}\n\n`)
+    }
 
     try {
       const skillFiles = await readSkillFiles(skillId)
@@ -361,25 +381,36 @@ function mountCreateAndOptimize(r: ReturnType<typeof Router>, sm: SessionManager
         ? skillPath.replace(/\\/g, '/')
         : `${USER_SKILLS_DIR.replace(/\\/g, '/')}/${skillId}`
       const query = buildOptimizeQuery(skillId, absPath, skillFiles, conversationHistory)
+      let hasErrorEvent = false
 
       await executeAgent({
         skill: optimizerSkill,
         query,
         sessionId,
         signal: abortController.signal,
+        modelOverride,
         onEvent: (event) => {
+          if (event.type === 'error') {
+            hasErrorEvent = true
+          }
+          if (event.type === 'done') {
+            return
+          }
           if (!res.writableEnded) {
             res.write(`data: ${JSON.stringify(event)}\n\n`)
           }
         },
       })
 
-      loadSkill.clearCache()
-      res.write(`data: ${JSON.stringify({ type: 'skill_updated', skillId })}\n\n`)
+      if (!hasErrorEvent) {
+        loadSkill.clearCache()
+        res.write(`data: ${JSON.stringify({ type: 'skill_updated', skillId })}\n\n`)
+      }
       res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`)
     } catch (error) {
       const message = error instanceof Error ? error.message : '优化失败'
       res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`)
+      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`)
     } finally {
       sm.unregister(sessionId)
       res.end()

@@ -13,6 +13,7 @@ import { NotificationBell } from './components/notification/NotificationBell'
 import { RunningTasksIndicator } from './components/notification/RunningTasksIndicator'
 import { API_BASE } from './config'
 import { LaborAnyLogo } from './components/ui/LaborAnyLogo'
+import { ModelProfileProvider } from './contexts/ModelProfileContext'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           懒加载页面组件                                   │
@@ -258,22 +259,24 @@ export default function App() {
   // 正常应用
   return (
     <ErrorBoundary>
-      <AppLayout profileName={profileName}>
-        <Suspense fallback={<PageLoader />}>
-          <Routes>
-            <Route path="/login" element={<Navigate to="/" replace />} />
-            <Route path="/" element={<HomePage />} />
-            <Route path="/execute/:skillId" element={<ExecutePage />} />
-            <Route path="/history" element={<HistoryPage />} />
-            <Route path="/history/:sessionId" element={<SessionDetailPage />} />
-            <Route path="/skills" element={<SkillsPage />} />
-            <Route path="/create" element={<CreatePage />} />
-            <Route path="/cron" element={<CronPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/memory" element={<MemoryPage />} />
-          </Routes>
-        </Suspense>
-      </AppLayout>
+      <ModelProfileProvider>
+        <AppLayout profileName={profileName}>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/login" element={<Navigate to="/" replace />} />
+              <Route path="/" element={<HomePage />} />
+              <Route path="/execute/:skillId" element={<ExecutePage />} />
+              <Route path="/history" element={<HistoryPage />} />
+              <Route path="/history/:sessionId" element={<SessionDetailPage />} />
+              <Route path="/skills" element={<SkillsPage />} />
+              <Route path="/create" element={<CreatePage />} />
+              <Route path="/cron" element={<CronPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/memory" element={<MemoryPage />} />
+            </Routes>
+          </Suspense>
+        </AppLayout>
+      </ModelProfileProvider>
     </ErrorBoundary>
   )
 }

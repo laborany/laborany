@@ -158,6 +158,9 @@ function initTables(db: Database.Database): void {
   try {
     db.exec(`ALTER TABLE cron_jobs ADD COLUMN retry_count INTEGER DEFAULT 0`)
   } catch { /* 列已存在 */ }
+  try {
+    db.exec(`ALTER TABLE cron_jobs ADD COLUMN model_profile_id TEXT`)
+  } catch { /* 列已存在 */ }
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -190,8 +193,9 @@ export function createJob(req: CreateJobRequest): CronJob {
       schedule_kind, schedule_at_ms, schedule_every_ms, schedule_cron_expr, schedule_cron_tz,
       target_type, target_id, target_query,
       retry_max_retries, retry_backoff_ms,
+      model_profile_id,
       next_run_at_ms, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     req.name,
@@ -207,6 +211,7 @@ export function createJob(req: CreateJobRequest): CronJob {
     req.target.query,
     retry.maxRetries,
     retry.backoffMs,
+    req.modelProfileId || null,
     nextRunAtMs,
     now,
     now
@@ -262,6 +267,11 @@ export function updateJob(id: string, req: UpdateJobRequest): CronJob | null {
   if (req.retry !== undefined) {
     updates.push('retry_max_retries = ?', 'retry_backoff_ms = ?')
     values.push(req.retry.maxRetries, req.retry.backoffMs)
+  }
+
+  if (req.modelProfileId !== undefined) {
+    updates.push('model_profile_id = ?')
+    values.push(req.modelProfileId || null)
   }
 
   if (updates.length === 0) return existing
@@ -433,6 +443,7 @@ function rowToJob(row: unknown): CronJob {
     targetType: r.target_type as CronJob['targetType'],
     targetId: r.target_id as string,
     targetQuery: r.target_query as string,
+    modelProfileId: r.model_profile_id as string | undefined,
     retryMaxRetries: (r.retry_max_retries as number) ?? 0,
     retryBackoffMs: (r.retry_backoff_ms as number) ?? 1000,
     nextRunAtMs: r.next_run_at_ms as number | undefined,

@@ -12,7 +12,7 @@ import { join } from 'path'
 import type { Skill } from 'laborany-shared'
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR, getUserDir } from 'laborany-shared'
 import { memoryFileManager, memoryOrchestrator, memoryAsyncQueue } from './memory/index.js'
-import { buildClaudeEnvConfig, checkRuntimeDependencies, resolveClaudeCliLaunch } from './claude-cli.js'
+import { buildClaudeEnvConfig, checkRuntimeDependencies, resolveClaudeCliLaunch, type ModelOverride } from './claude-cli.js'
 import { APP_HOME_DIR, DATA_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
 
@@ -68,6 +68,7 @@ interface ExecuteOptions {
   sessionId: string
   signal: AbortSignal
   onEvent: (event: AgentEvent) => void
+  modelOverride?: ModelOverride
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -218,7 +219,7 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): Ag
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, modelOverride } = options
 
   refreshRuntimeConfig()
 
@@ -266,7 +267,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   console.log(`[Agent] Claude CLI source: ${cliLaunch.source}`)
   console.log(`[Agent] Claude CLI command: ${cliLaunch.command}`)
-  console.log(`[Agent] Model: ${process.env.ANTHROPIC_MODEL || 'default'}`)
+  const effectiveModel = modelOverride?.model || process.env.ANTHROPIC_MODEL
+  console.log(`[Agent] Model: ${effectiveModel || 'default'}`)
 
   const args = [
     '--print',
@@ -280,8 +282,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     args.push('--continue')
   }
 
-  if (process.env.ANTHROPIC_MODEL) {
-    args.push('--model', process.env.ANTHROPIC_MODEL)
+  if (effectiveModel) {
+    args.push('--model', effectiveModel)
   }
 
   // 每轮都构建并写入系统提示词（确保记忆实时生效）
@@ -311,7 +313,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   const proc = spawn(cliLaunch.command, spawnArgs, {
     cwd: taskDir,
-    env: buildClaudeEnvConfig(),
+    env: buildClaudeEnvConfig(modelOverride),
     shell: cliLaunch.shell,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
