@@ -89,7 +89,7 @@ function DropdownMenuContent({
 }) {
   const { open, setOpen, triggerRef } = useDropdown()
   const ref = useRef<HTMLDivElement>(null)
-  const [position, setPosition] = useState<{ top: number; left: number; side: 'top' | 'bottom'; minWidth: number } | null>(null)
+  const [position, setPosition] = useState<{ top: number; left: number; side: 'top' | 'bottom'; triggerWidth: number } | null>(null)
 
   const updatePosition = useCallback(() => {
     const triggerEl = triggerRef.current
@@ -129,12 +129,12 @@ function DropdownMenuContent({
         prev &&
         Math.abs(prev.top - top) < 0.5 &&
         Math.abs(prev.left - left) < 0.5 &&
-        Math.abs(prev.minWidth - triggerRect.width) < 0.5 &&
+        Math.abs(prev.triggerWidth - triggerRect.width) < 0.5 &&
         prev.side === resolvedSide
       ) {
         return prev
       }
-      return { top, left, side: resolvedSide, minWidth: triggerRect.width }
+      return { top, left, side: resolvedSide, triggerWidth: triggerRect.width }
     })
   }, [align, side, triggerRef])
 
@@ -193,13 +193,14 @@ function DropdownMenuContent({
       position: 'fixed',
       top: position.top,
       left: position.left,
-      minWidth: position.minWidth,
       zIndex: 80,
+      ['--dropdown-trigger-width' as string]: `${position.triggerWidth}px`,
     }
     : {
       position: 'fixed',
       visibility: 'hidden',
       zIndex: 80,
+      ['--dropdown-trigger-width' as string]: '0px',
     }
 
   const sideClass = position?.side === 'top' ? 'slide-in-from-bottom-1' : 'slide-in-from-top-1'
@@ -208,7 +209,7 @@ function DropdownMenuContent({
     <div
       ref={ref}
       style={contentStyle}
-      className={`min-w-[8rem] rounded-lg border border-border bg-card p-1 shadow-lg animate-in fade-in ${sideClass} ${className ?? ''}`}
+      className={`min-w-[max(8rem,var(--dropdown-trigger-width))] rounded-lg border border-border bg-card p-1 shadow-lg animate-in fade-in ${sideClass} ${className ?? ''}`}
     >
       {children}
     </div>,
@@ -242,7 +243,7 @@ function DropdownMenuItem({
     <button
       onClick={handleClick}
       disabled={disabled}
-      className={`flex w-full items-center rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50 ${className ?? ''}`}
+      className={`flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50 ${className ?? ''}`}
     >
       {children}
     </button>

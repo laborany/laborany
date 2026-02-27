@@ -304,33 +304,42 @@ export default function ChatInput({
                   </svg>
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" side="top" className="min-w-[300px] max-w-[420px] p-1.5">
-                {profiles.map((p, idx) => (
-                  <DropdownMenuItem
-                    key={p.id}
-                    onClick={() => setActiveProfile(p.id)}
-                    className={`${p.id === activeProfileId ? 'bg-accent/70' : ''} items-start gap-3 rounded-md px-2.5 py-2.5`}
-                  >
-                    <span className="flex w-full items-start gap-2.5">
-                      <span className="w-4 pt-0.5">
-                        {p.id === activeProfileId && (
-                          <svg className="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
+              <DropdownMenuContent align="start" side="top" className="min-w-[320px] max-w-[440px] p-1.5">
+                {profiles.map((p, idx) => {
+                  const isActive = p.id === activeProfileId
+                  return (
+                    <DropdownMenuItem
+                      key={p.id}
+                      onClick={() => setActiveProfile(p.id)}
+                      className={`${isActive ? 'bg-accent/70' : ''} rounded-lg px-3 py-2.5`}
+                    >
+                      <span className="grid w-full grid-cols-[1rem,minmax(0,1fr)] gap-x-3 gap-y-1">
+                        <span className="row-span-2 mt-0.5 flex h-4 w-4 items-center justify-center">
+                          {isActive && (
+                            <svg className="h-4 w-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </span>
+
+                        <span className="flex min-w-0 items-start justify-between gap-2">
+                          <span className="min-w-0 text-left text-sm font-medium leading-snug [overflow-wrap:anywhere]">
+                            {p.name}
+                          </span>
+                          {idx === 0 && (
+                            <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                              默认
+                            </span>
+                          )}
+                        </span>
+
+                        <span className="min-w-0 truncate text-left font-mono text-[11px] text-muted-foreground">
+                          {p.model || '未配置模型'}
+                        </span>
                       </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium leading-snug [overflow-wrap:anywhere]">{p.name}</span>
-                        {p.model && (
-                          <span className="mt-0.5 block text-xs text-muted-foreground [overflow-wrap:anywhere]">{p.model}</span>
-                        )}
-                      </span>
-                      {idx === 0 && (
-                        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">默认</span>
-                      )}
-                    </span>
-                  </DropdownMenuItem>
-                ))}
+                    </DropdownMenuItem>
+                  )
+                })}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
