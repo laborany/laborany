@@ -338,6 +338,12 @@ export function useAgent(skillId: string) {
   const isReplayingRef = useRef(false)
 
   const flushAssistantText = useCallback((force = false) => {
+    // Fix P0-3: force flush 时先取消 pending RAF，防止 tool_use 后文本丢失
+    if (force && textFlushRafRef.current !== null) {
+      window.cancelAnimationFrame(textFlushRafRef.current)
+      textFlushRafRef.current = null
+    }
+
     if (!force && !pendingTextFlushRef.current) {
       return
     }
@@ -387,6 +393,10 @@ export function useAgent(skillId: string) {
     textFlushRafRef.current = window.requestAnimationFrame(() => {
       textFlushRafRef.current = null
       flushAssistantText()
+      // Fix P0-2: RAF 执行期间可能又来了新 chunk，立即再 flush 一次
+      if (pendingTextFlushRef.current) {
+        flushAssistantText()
+      }
     })
   }, [flushAssistantText])
 
@@ -893,6 +903,10 @@ export function useAgent(skillId: string) {
       const maxReconnectAttempts = 3
 
       for (let attempt = 1; attempt <= maxReconnectAttempts; attempt++) {
+        // Fix P0-4: 每次重连前重置状态，防止 isReplayingRef 卡住导致消息丢弃
+        isReplayingRef.current = false
+        resumeHintAtRef.current = 0  // 清除 resume 信号，防止 stall 误判循环
+
         if (abortRef.current?.signal.aborted) {
           return false
         }

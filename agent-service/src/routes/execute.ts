@@ -53,9 +53,14 @@ function createExecuteRouter(sessionManager: SessionManager, taskManager: TaskMa
 
     res.write(`data: ${JSON.stringify({ type: 'session', sessionId })}\n\n`)
 
+    // Fix P1-6: res.write 包装 try-catch，防止缓冲区满或连接断开时进程崩溃
     const unsubscribe = taskManager.subscribe(sessionId, (event) => {
       if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify(event)}\n\n`)
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`)
+        } catch {
+          // 写入失败时忽略，连接已断开
+        }
       }
     })
 
@@ -129,9 +134,14 @@ function createExecuteRouter(sessionManager: SessionManager, taskManager: TaskMa
 
     res.write(`data: ${JSON.stringify({ type: 'session', sessionId })}\n\n`)
 
+    // Fix P1-6: res.write 包装 try-catch，防止缓冲区满或连接断开时进程崩溃
     const unsubscribe = taskManager.subscribe(sessionId, (event) => {
       if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify(event)}\n\n`)
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`)
+        } catch {
+          // 写入失败时忽略，连接已断开
+        }
       }
     })
 

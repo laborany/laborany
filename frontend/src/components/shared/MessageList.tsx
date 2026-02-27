@@ -372,8 +372,8 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 function TextBlockView({ content, isStreaming }: { content: string; isStreaming: boolean }) {
-  // 流式时 300ms debounce，markdown parse 频率从 ~60fps 降到 ~3fps
-  const debouncedContent = useDebouncedValue(content, isStreaming ? 300 : 0)
+  // Fix P0-1: 降低 debounce 延迟，从 300ms → 50ms，减少卡顿感
+  const debouncedContent = useDebouncedValue(content, isStreaming ? 50 : 0)
 
   if (isStreaming) {
     const canRenderStreamingMarkdown = debouncedContent.length <= 12000

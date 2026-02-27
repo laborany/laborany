@@ -187,6 +187,10 @@ export function useConverse(): UseConverseReturn {
       assistantFlushRaf = window.requestAnimationFrame(() => {
         assistantFlushRaf = null
         flushAssistantText()
+        // Fix P0-2 (useConverse): RAF 执行期间可能又来了新 chunk，立即再 flush 一次
+        if (pendingAssistantFlush) {
+          flushAssistantText()
+        }
       })
     }
 

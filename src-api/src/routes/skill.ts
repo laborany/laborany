@@ -532,8 +532,13 @@ skill.post('/execute', async (c) => {
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId }) })
 
+    // Fix P0-6: writeSSE 包装 try-catch，防止客户端断开时异常导致 unsubscribe 不执行
     const writeRuntimeEvent = async (event: RuntimeEvent) => {
-      await stream.writeSSE({ data: JSON.stringify(event) })
+      try {
+        await stream.writeSSE({ data: JSON.stringify(event) })
+      } catch {
+        // 客户端断开时忽略写入错误，unsubscribe 会在 finally 中执行
+      }
     }
 
     const unsubscribe = runtimeTaskManager.subscribe(sessionId, writeRuntimeEvent, {
@@ -578,8 +583,13 @@ skill.get('/runtime/attach/:sessionId', (c) => {
   }
 
   return streamSSE(c, async (stream) => {
+    // Fix P0-6: writeSSE 包装 try-catch，防止客户端断开时异常导致 unsubscribe 不执行
     const writeRuntimeEvent = async (event: RuntimeEvent) => {
-      await stream.writeSSE({ data: JSON.stringify(event) })
+      try {
+        await stream.writeSSE({ data: JSON.stringify(event) })
+      } catch {
+        // 客户端断开时忽略写入错误，unsubscribe 会在 finally 中执行
+      }
     }
 
     const unsubscribe = runtimeTaskManager.subscribe(sessionId, writeRuntimeEvent, {
@@ -667,7 +677,9 @@ skill.post('/:skillId/optimize', async (c) => {
       await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
     } catch (error) {
       const message = error instanceof Error ? error.message : '优化失败'
-      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message }) })
+      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message }) }).catch(() => {})
+      // Fix P0-7: optimize catch 块补充 done 事件，防止客户端永久等待
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) }).catch(() => {})
     } finally {
       sessionManager.unregister(sessionId)
     }

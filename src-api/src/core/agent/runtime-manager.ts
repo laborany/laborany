@@ -238,6 +238,10 @@ class RuntimeTaskManager {
     }
 
     if (task.status !== 'running') {
+      // Fix P0-5: replay 后立即推送终态，让前端知道任务已结束，不再挂起
+      const terminalEvent: RuntimeEvent =
+        task.status === 'aborted' ? { type: 'aborted' } : { type: 'done' }
+      this.safeCallSubscriber(onEvent, terminalEvent)
       return () => {}
     }
 
@@ -884,11 +888,14 @@ class RuntimeTaskManager {
     try {
       const maybePromise = subscriber(event)
       if (maybePromise instanceof Promise) {
-        maybePromise.catch(() => {
+        maybePromise.catch((err) => {
+          // Fix P1-7: 添加错误日志，便于诊断 SSE 写入失败原因
+          console.error('[RuntimeManager] subscriber error:', err)
           if (onError) onError()
         })
       }
-    } catch {
+    } catch (err) {
+      console.error('[RuntimeManager] subscriber error:', err)
       if (onError) onError()
     }
   }
