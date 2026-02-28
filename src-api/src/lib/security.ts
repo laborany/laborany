@@ -11,12 +11,15 @@ import bcrypt from 'bcryptjs'
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           配置常量                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-const SECRET_KEY = process.env.LABORANY_SECRET_KEY || 'laborany-secret-key-change-in-production'
 const ALGORITHM = 'HS256'
 const TOKEN_EXPIRE_DAYS = 7
 
-// 将密钥转换为 Uint8Array
-const secretKey = new TextEncoder().encode(SECRET_KEY)
+const textEncoder = new TextEncoder()
+
+function getSecretKey(): Uint8Array {
+  const raw = process.env.LABORANY_SECRET_KEY || 'laborany-secret-key-change-in-production'
+  return textEncoder.encode(raw)
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           密码处理                                        │
@@ -37,13 +40,13 @@ export async function createAccessToken(userId: string): Promise<string> {
     .setProtectedHeader({ alg: ALGORITHM })
     .setExpirationTime(`${TOKEN_EXPIRE_DAYS}d`)
     .setIssuedAt()
-    .sign(secretKey)
+    .sign(getSecretKey())
   return jwt
 }
 
 export async function decodeToken(token: string): Promise<string | null> {
   try {
-    const { payload } = await jose.jwtVerify(token, secretKey, {
+    const { payload } = await jose.jwtVerify(token, getSecretKey(), {
       algorithms: [ALGORITHM],
     })
     return (payload.sub as string) || null

@@ -57,6 +57,7 @@
     "test:dispatch": "concurrently -k -s first -n AGENT,API,E2E -c yellow,blue,green \"tmp-debug\\run-agent-e2e.cmd\" \"tmp-debug\\run-api-e2e.cmd\" \"tmp-debug\\run-e2e-dispatch.cmd\"",
     "build:electron": "npm run bundle:all:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && npm run fix:native:win && electron-builder --win --publish never",
     "build:electron:mac": "npm run bundle:all:mac-universal && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && npm run fix:native:mac && electron-builder --mac --publish never",
+    "build:electron:mac-arm64": "npm run bundle:all:mac-universal && npm run build:api:mac-arm64 && npm run build:agent:mac-arm64 && npm run build:frontend && npm run fix:native:mac && electron-builder --mac --publish never",
     "build:electron:linux": "npm run bundle:all:linux && npm run build:api:linux && npm run build:agent:linux && npm run build:frontend && npm run fix:native:linux && electron-builder --linux --publish never",
     "install:all": "npm install && cd shared && npm install && cd ../src-api && npm install && cd ../agent-service && npm install && cd ../frontend && npm install"
   },

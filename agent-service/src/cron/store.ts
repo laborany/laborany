@@ -89,6 +89,11 @@ function initTables(db: Database.Database): void {
       target_type TEXT NOT NULL,
       target_id TEXT NOT NULL,
       target_query TEXT NOT NULL,
+      source_channel TEXT DEFAULT 'desktop',
+      source_feishu_open_id TEXT,
+      source_feishu_chat_id TEXT,
+      notify_channel TEXT DEFAULT 'app',
+      notify_feishu_open_id TEXT,
 
       -- 重试配置
       retry_max_retries INTEGER DEFAULT 0,
@@ -127,6 +132,7 @@ function initTables(db: Database.Database): void {
 
     -- 索引：按任务 ID 查询执行历史
     CREATE INDEX IF NOT EXISTS idx_runs_job_id ON cron_runs(job_id);
+    CREATE INDEX IF NOT EXISTS idx_jobs_source_open_id ON cron_jobs(source_feishu_open_id);
 
     /* ════════════════════════════════════════════════════════════════════════
      * notifications 表：通知记录
@@ -161,6 +167,21 @@ function initTables(db: Database.Database): void {
   try {
     db.exec(`ALTER TABLE cron_jobs ADD COLUMN model_profile_id TEXT`)
   } catch { /* 列已存在 */ }
+  try {
+    db.exec(`ALTER TABLE cron_jobs ADD COLUMN source_channel TEXT DEFAULT 'desktop'`)
+  } catch { /* 列已存在 */ }
+  try {
+    db.exec(`ALTER TABLE cron_jobs ADD COLUMN source_feishu_open_id TEXT`)
+  } catch { /* 列已存在 */ }
+  try {
+    db.exec(`ALTER TABLE cron_jobs ADD COLUMN source_feishu_chat_id TEXT`)
+  } catch { /* 列已存在 */ }
+  try {
+    db.exec(`ALTER TABLE cron_jobs ADD COLUMN notify_channel TEXT DEFAULT 'app'`)
+  } catch { /* 列已存在 */ }
+  try {
+    db.exec(`ALTER TABLE cron_jobs ADD COLUMN notify_feishu_open_id TEXT`)
+  } catch { /* 列已存在 */ }
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -170,6 +191,17 @@ function initTables(db: Database.Database): void {
 /** 获取所有任务 */
 export function listJobs(): CronJob[] {
   const rows = getDb().prepare('SELECT * FROM cron_jobs ORDER BY created_at DESC').all()
+  return rows.map(rowToJob)
+}
+
+/** 获取指定飞书用户创建的任务 */
+export function listJobsBySourceOpenId(openId: string): CronJob[] {
+  const rows = getDb().prepare(`
+    SELECT * FROM cron_jobs
+    WHERE source_channel = 'feishu'
+      AND source_feishu_open_id = ?
+    ORDER BY created_at DESC
+  `).all(openId)
   return rows.map(rowToJob)
 }
 
@@ -186,16 +218,29 @@ export function createJob(req: CreateJobRequest): CronJob {
   const scheduleFields = flattenSchedule(req.schedule)
   const nextRunAtMs = computeNextRunAtMs(req.schedule)
   const retry = req.retry ?? DEFAULT_RETRY_POLICY
+  const sourceChannel = req.source?.channel ?? 'desktop'
+  const sourceFeishuOpenId = sourceChannel === 'feishu'
+    ? (req.source?.feishuOpenId?.trim() || null)
+    : null
+  const sourceFeishuChatId = sourceChannel === 'feishu'
+    ? (req.source?.feishuChatId?.trim() || null)
+    : null
+  const notifyChannel = req.notify?.channel ?? 'app'
+  const notifyFeishuOpenId = notifyChannel === 'feishu_dm'
+    ? (req.notify?.feishuOpenId?.trim() || req.source?.feishuOpenId?.trim() || null)
+    : null
 
   getDb().prepare(`
     INSERT INTO cron_jobs (
       id, name, description, enabled,
       schedule_kind, schedule_at_ms, schedule_every_ms, schedule_cron_expr, schedule_cron_tz,
       target_type, target_id, target_query,
+      source_channel, source_feishu_open_id, source_feishu_chat_id,
+      notify_channel, notify_feishu_open_id,
       retry_max_retries, retry_backoff_ms,
       model_profile_id,
       next_run_at_ms, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     req.name,
@@ -209,6 +254,11 @@ export function createJob(req: CreateJobRequest): CronJob {
     req.target.type,
     req.target.id,
     req.target.query,
+    sourceChannel,
+    sourceFeishuOpenId,
+    sourceFeishuChatId,
+    notifyChannel,
+    notifyFeishuOpenId,
     retry.maxRetries,
     retry.backoffMs,
     req.modelProfileId || null,
@@ -272,6 +322,15 @@ export function updateJob(id: string, req: UpdateJobRequest): CronJob | null {
   if (req.modelProfileId !== undefined) {
     updates.push('model_profile_id = ?')
     values.push(req.modelProfileId || null)
+  }
+
+  if (req.notify !== undefined) {
+    const notifyChannel = req.notify.channel
+    updates.push('notify_channel = ?', 'notify_feishu_open_id = ?')
+    values.push(
+      notifyChannel,
+      notifyChannel === 'feishu_dm' ? (req.notify.feishuOpenId?.trim() || null) : null,
+    )
   }
 
   if (updates.length === 0) return existing
@@ -444,6 +503,11 @@ function rowToJob(row: unknown): CronJob {
     targetId: r.target_id as string,
     targetQuery: r.target_query as string,
     modelProfileId: r.model_profile_id as string | undefined,
+    sourceChannel: (r.source_channel as CronJob['sourceChannel']) || 'desktop',
+    sourceFeishuOpenId: r.source_feishu_open_id as string | undefined,
+    sourceFeishuChatId: r.source_feishu_chat_id as string | undefined,
+    notifyChannel: (r.notify_channel as CronJob['notifyChannel']) || 'app',
+    notifyFeishuOpenId: r.notify_feishu_open_id as string | undefined,
     retryMaxRetries: (r.retry_max_retries as number) ?? 0,
     retryBackoffMs: (r.retry_backoff_ms as number) ?? 1000,
     nextRunAtMs: r.next_run_at_ms as number | undefined,

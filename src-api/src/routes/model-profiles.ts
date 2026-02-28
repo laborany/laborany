@@ -20,7 +20,17 @@ import {
 
 const router = new Hono()
 
-const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || 'laborany-internal'
+function getInternalToken(): string {
+  return process.env.INTERNAL_TOKEN || 'laborany-internal'
+}
+
+function getAgentServiceUrl(): string {
+  return process.env.AGENT_SERVICE_URL || 'http://localhost:3002'
+}
+
+function getApiBaseUrl(): string {
+  return `http://127.0.0.1:${process.env.PORT || '3620'}/api`
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │  GET /api/config/model-profiles                                          │
@@ -42,7 +52,7 @@ router.get('/', (c) => {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 router.get('/internal/:id', (c) => {
   const token = c.req.header('X-Internal-Token')
-  if (token !== INTERNAL_TOKEN) {
+  if (token !== getInternalToken()) {
     return c.json({ error: 'Unauthorized' }, 401)
   }
 
@@ -137,8 +147,7 @@ router.put('/', async (c) => {
 
   // 通知 agent-service 重新加载配置
   try {
-    const agentServiceUrl = process.env.AGENT_SERVICE_URL || 'http://localhost:3002'
-    await fetch(`${agentServiceUrl}/runtime/apply-config`, {
+    await fetch(`${getAgentServiceUrl()}/runtime/apply-config`, {
       method: 'POST',
       signal: AbortSignal.timeout(2000),
     })
@@ -187,8 +196,7 @@ router.post('/test', async (c) => {
 
   // 调用 setup 路由的验证逻辑（通过内部 fetch）
   try {
-    const apiBase = `http://127.0.0.1:${process.env.PORT || '3620'}/api`
-    const res = await fetch(`${apiBase}/setup/validate-api`, {
+    const res = await fetch(`${getApiBaseUrl()}/setup/validate-api`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

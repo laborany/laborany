@@ -8,6 +8,7 @@
 import { createTransport, type Transporter } from 'nodemailer'
 import { createNotification } from './store.js'
 import type { CronJob } from './types.js'
+import { sendTextToOpenId, sendArtifactsToOpenId } from '../feishu/push.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           配置读取                                        │
@@ -104,7 +105,8 @@ export async function notifyJobComplete(
   job: CronJob,
   status: 'ok' | 'error',
   sessionId: string,
-  error?: string
+  error?: string,
+  runStartedAtMs?: number,
 ): Promise<void> {
   const config = getNotifyConfig()
   const isSuccess = status === 'ok'
@@ -116,7 +118,30 @@ export async function notifyJobComplete(
   const title = `${job.name} ${isSuccess ? '执行成功' : '执行失败'}`
   const content = error || '任务已完成'
 
-  // 1. 写入系统通知
+  if (job.notifyChannel === 'feishu_dm' && job.notifyFeishuOpenId) {
+    const summary = buildFeishuSummaryText(job, status, sessionId, error)
+    const summarySent = await sendTextToOpenId(job.notifyFeishuOpenId, summary)
+    if (!summarySent) {
+      console.warn(`[Notifier] 飞书摘要推送失败: job=${job.id}`)
+      createNotification({
+        type: isSuccess ? 'cron_success' : 'cron_error',
+        title: `${title}（飞书推送失败）`,
+        content,
+        jobId: job.id,
+        sessionId,
+      })
+      return
+    }
+
+    const artifacts = await sendArtifactsToOpenId(job.notifyFeishuOpenId, sessionId, runStartedAtMs)
+    if (artifacts.sent > 0 || artifacts.failed > 0 || artifacts.skipped > 0) {
+      const followup = `文件回传结果：成功 ${artifacts.sent}，失败 ${artifacts.failed}，跳过 ${artifacts.skipped}。`
+      await sendTextToOpenId(job.notifyFeishuOpenId, followup)
+    }
+    return
+  }
+
+  // 默认通知渠道：写入 app 内通知
   createNotification({
     type: isSuccess ? 'cron_success' : 'cron_error',
     title,
@@ -125,7 +150,7 @@ export async function notifyJobComplete(
     sessionId,
   })
 
-  // 2. 发送邮件（如配置）
+  // 发送邮件（如配置）
   if (config.email && config.smtp) {
     const html = buildEmailHtml(job, status, sessionId, error)
     await sendEmail(config.email, `[LaborAny] ${title}`, html)
@@ -301,4 +326,22 @@ function buildEmailHtml(
 </body>
 </html>
   `.trim()
+}
+
+function buildFeishuSummaryText(
+  job: CronJob,
+  status: 'ok' | 'error',
+  sessionId: string,
+  error?: string,
+): string {
+  const statusLabel = status === 'ok' ? '执行成功' : '执行失败'
+  const when = new Date().toLocaleString('zh-CN')
+  const lines = [
+    `【LaborAny 定时任务】${statusLabel}`,
+    `任务：${job.name}`,
+    `时间：${when}`,
+    `会话：${sessionId}`,
+  ]
+  if (error) lines.push(`错误：${error}`)
+  return lines.join('\n')
 }

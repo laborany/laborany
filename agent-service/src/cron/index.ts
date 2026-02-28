@@ -11,6 +11,10 @@ export type {
   ScheduleCron,
   TargetType,
   ExecutionTarget,
+  JobSourceChannel,
+  JobNotifyChannel,
+  JobSource,
+  JobNotify,
   CronJob,
   CronRun,
   CreateJobRequest,
@@ -31,6 +35,7 @@ export {
 export {
   listJobs,
   getJob,
+  listJobsBySourceOpenId,
   createJob,
   updateJob,
   deleteJob,

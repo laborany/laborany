@@ -9,7 +9,9 @@ import {
 } from './store.js'
 import { notifyJobComplete } from './notifier.js'
 
-const SRC_API_BASE_URL = (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
+function getSrcApiBaseUrl(): string {
+  return (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
+}
 
 interface SkillExecuteEvent {
   type?: string
@@ -50,7 +52,7 @@ async function readErrorMessage(response: Response): Promise<string> {
 }
 
 async function runSkillJob(job: CronJob, sessionId: string): Promise<void> {
-  const response = await fetch(`${SRC_API_BASE_URL}/skill/execute`, {
+  const response = await fetch(`${getSrcApiBaseUrl()}/skill/execute`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -148,7 +150,7 @@ export async function runJob(job: CronJob): Promise<void> {
     completeRun(runId, 'ok', undefined, durationMs)
     console.log(`[Cron] job completed: ${job.name}, duration ${durationMs}ms`)
 
-    await notifyJobComplete(job, 'ok', sessionId)
+    await notifyJobComplete(job, 'ok', sessionId, undefined, startTime)
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     const durationMs = Date.now() - startTime
@@ -164,7 +166,7 @@ export async function runJob(job: CronJob): Promise<void> {
       )
     } else {
       markJobCompleted(job.id, 'error', error)
-      await notifyJobComplete(job, 'error', sessionId, error)
+      await notifyJobComplete(job, 'error', sessionId, error, startTime)
     }
   }
 }
@@ -190,13 +192,13 @@ export async function triggerJob(jobId: string): Promise<{
 
     const durationMs = Date.now() - startTime
     completeRun(runId, 'ok', undefined, durationMs)
-    await notifyJobComplete(job, 'ok', sessionId)
+    await notifyJobComplete(job, 'ok', sessionId, undefined, startTime)
 
     return { success: true, sessionId }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     completeRun(runId, 'error', error, Date.now() - startTime)
-    await notifyJobComplete(job, 'error', sessionId, error)
+    await notifyJobComplete(job, 'error', sessionId, error, startTime)
 
     return { success: false, error, sessionId }
   }

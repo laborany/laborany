@@ -45,13 +45,27 @@ function toInt(value: string | undefined, fallback: number): number {
   return parsed
 }
 
-const MEMORY_ASYNC_ENABLED = (process.env.MEMORY_ASYNC_ENABLED || 'true').toLowerCase() !== 'false'
-const MEMORY_QUEUE_MAX = toInt(process.env.MEMORY_QUEUE_MAX, 100)
-const MEMORY_AUTO_CLUSTER_ENABLED = (process.env.MEMORY_AUTO_CLUSTER_ENABLED || 'true').toLowerCase() !== 'false'
-const MEMORY_CLUSTER_COOLDOWN_MS = toInt(process.env.MEMORY_CLUSTER_COOLDOWN_MS, 10 * 60 * 1000)
-const MEMORY_CLUSTER_DAYS = toInt(process.env.MEMORY_CLUSTER_DAYS, 7)
-const MEMORY_CLUSTER_MIN_COMPLETED_JOBS = toInt(process.env.MEMORY_CLUSTER_MIN_COMPLETED_JOBS, 3)
-const MEMORY_CLUSTER_MAX_INTERVAL_MS = toInt(process.env.MEMORY_CLUSTER_MAX_INTERVAL_MS, 24 * 60 * 60 * 1000)
+interface MemoryAsyncSettings {
+  enabled: boolean
+  maxSize: number
+  autoClusterEnabled: boolean
+  clusterCooldownMs: number
+  clusterDays: number
+  clusterMinCompletedJobs: number
+  clusterMaxIntervalMs: number
+}
+
+function getMemoryAsyncSettings(): MemoryAsyncSettings {
+  return {
+    enabled: (process.env.MEMORY_ASYNC_ENABLED || 'true').toLowerCase() !== 'false',
+    maxSize: toInt(process.env.MEMORY_QUEUE_MAX, 100),
+    autoClusterEnabled: (process.env.MEMORY_AUTO_CLUSTER_ENABLED || 'true').toLowerCase() !== 'false',
+    clusterCooldownMs: toInt(process.env.MEMORY_CLUSTER_COOLDOWN_MS, 10 * 60 * 1000),
+    clusterDays: toInt(process.env.MEMORY_CLUSTER_DAYS, 7),
+    clusterMinCompletedJobs: toInt(process.env.MEMORY_CLUSTER_MIN_COMPLETED_JOBS, 3),
+    clusterMaxIntervalMs: toInt(process.env.MEMORY_CLUSTER_MAX_INTERVAL_MS, 24 * 60 * 60 * 1000),
+  }
+}
 
 const CLUSTER_MARKER_PATH = join(DATA_DIR, 'memory', 'last-cluster.txt')
 
@@ -82,8 +96,6 @@ function writeClusterMarker(atMs: number): void {
 }
 
 class MemoryAsyncQueue {
-  private readonly enabled = MEMORY_ASYNC_ENABLED
-  private readonly maxSize = MEMORY_QUEUE_MAX
   private readonly queue: MemoryQueueJob[] = []
   private processing = false
 
@@ -100,17 +112,18 @@ class MemoryAsyncQueue {
   private completedSinceCluster = 0
 
   enqueue(params: ExtractAndUpsertParams): MemoryQueueResult {
+    const settings = getMemoryAsyncSettings()
     const job: MemoryQueueJob = {
       id: `mq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       acceptedAt: new Date().toISOString(),
       params,
     }
 
-    if (this.queue.length >= this.maxSize) {
+    if (this.queue.length >= settings.maxSize) {
       this.queue.shift()
       this.dropped += 1
-      this.lastError = `queue_overflow:max=${this.maxSize}`
-      console.warn(`[MemoryQueue] queue full, dropping oldest job (max=${this.maxSize})`)
+      this.lastError = `queue_overflow:max=${settings.maxSize}`
+      console.warn(`[MemoryQueue] queue full, dropping oldest job (max=${settings.maxSize})`)
     }
 
     this.queue.push(job)
@@ -132,7 +145,7 @@ class MemoryAsyncQueue {
   }
 
   async submit(params: ExtractAndUpsertParams): Promise<UpsertResult> {
-    if (this.enabled) {
+    if (getMemoryAsyncSettings().enabled) {
       this.enqueue(params)
       return ASYNC_FALLBACK_RESULT
     }
@@ -141,7 +154,7 @@ class MemoryAsyncQueue {
 
   getStats(): MemoryQueueStats {
     return {
-      enabled: this.enabled,
+      enabled: getMemoryAsyncSettings().enabled,
       pending: this.queue.length,
       processing: this.processing,
       accepted: this.accepted,
@@ -155,7 +168,7 @@ class MemoryAsyncQueue {
   }
 
   isEnabled(): boolean {
-    return this.enabled
+    return getMemoryAsyncSettings().enabled
   }
 
   async drain(timeoutMs = 3000): Promise<{ pending: number; drained: boolean }> {
@@ -202,16 +215,17 @@ class MemoryAsyncQueue {
   }
 
   private maybeAutoClusterEpisodes(): void {
-    if (!MEMORY_AUTO_CLUSTER_ENABLED) return
+    const settings = getMemoryAsyncSettings()
+    if (!settings.autoClusterEnabled) return
     if (this.clusterInFlight) return
 
     const now = Date.now()
     const sinceLast = now - this.lastClusterAt
-    const cooldownOk = sinceLast >= MEMORY_CLUSTER_COOLDOWN_MS
+    const cooldownOk = sinceLast >= settings.clusterCooldownMs
     if (!cooldownOk) return
 
-    const thresholdReached = this.completedSinceCluster >= MEMORY_CLUSTER_MIN_COMPLETED_JOBS
-    const maxIntervalReached = this.lastClusterAt === 0 || sinceLast >= MEMORY_CLUSTER_MAX_INTERVAL_MS
+    const thresholdReached = this.completedSinceCluster >= settings.clusterMinCompletedJobs
+    const maxIntervalReached = this.lastClusterAt === 0 || sinceLast >= settings.clusterMaxIntervalMs
 
     if (!thresholdReached && !maxIntervalReached) return
 
@@ -222,7 +236,7 @@ class MemoryAsyncQueue {
     this.clusterInFlight = true
 
     void memoryProcessor
-      .clusterRecentCellsAsync(MEMORY_CLUSTER_DAYS)
+      .clusterRecentCellsAsync(settings.clusterDays)
       .then((episodeIds) => {
         if (episodeIds.length > 0) {
           console.log(`[MemoryQueue] auto-cluster completed: episodes=${episodeIds.length}`)

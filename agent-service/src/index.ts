@@ -40,8 +40,12 @@ const runtimeConfig = refreshRuntimeConfig()
 console.log(`[Agent Service] Loaded runtime env from: ${runtimeConfig.loadedFrom.join(', ') || 'none'}`)
 
 const app = express()
-const PORT = process.env.AGENT_PORT || 3002
 const sessionManager = new SessionManager()
+
+function getAgentPort(): number {
+  const parsed = Number.parseInt(process.env.AGENT_PORT || '3002', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 3002
+}
 
 app.use(cors())
 app.use(express.json())
@@ -62,8 +66,9 @@ if (!existsSync(DATA_DIR)) {
   mkdirSync(DATA_DIR, { recursive: true })
 }
 
-app.listen(PORT, () => {
-  console.log(`[Agent Service] 运行在 http://localhost:${PORT}`)
+const port = getAgentPort()
+app.listen(port, () => {
+  console.log(`[Agent Service] 运行在 http://localhost:${port}`)
   console.log(`[Agent Service] 数据目录: ${DATA_DIR}`)
   startCronTimer()
 

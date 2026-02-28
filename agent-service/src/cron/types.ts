@@ -38,6 +38,20 @@ export interface RetryPolicy {
   backoffMs: number
 }
 
+export type JobSourceChannel = 'desktop' | 'feishu'
+export type JobNotifyChannel = 'app' | 'feishu_dm'
+
+export interface JobSource {
+  channel: JobSourceChannel
+  feishuOpenId?: string
+  feishuChatId?: string
+}
+
+export interface JobNotify {
+  channel: JobNotifyChannel
+  feishuOpenId?: string
+}
+
 export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxRetries: 0,
   backoffMs: 1000,
@@ -61,6 +75,12 @@ export interface CronJob {
   targetId: string
   targetQuery: string
   modelProfileId?: string
+
+  sourceChannel: JobSourceChannel
+  sourceFeishuOpenId?: string
+  sourceFeishuChatId?: string
+  notifyChannel: JobNotifyChannel
+  notifyFeishuOpenId?: string
 
   retryMaxRetries: number
   retryBackoffMs: number
@@ -95,6 +115,8 @@ export interface CreateJobRequest {
   enabled?: boolean
   retry?: RetryPolicy
   modelProfileId?: string
+  source?: JobSource
+  notify?: JobNotify
 }
 
 export interface UpdateJobRequest {
@@ -105,6 +127,7 @@ export interface UpdateJobRequest {
   enabled?: boolean
   retry?: RetryPolicy
   modelProfileId?: string
+  notify?: JobNotify
 }
 
 export function flattenSchedule(s: Schedule): {
@@ -134,4 +157,3 @@ export function unflattenSchedule(job: CronJob): Schedule {
     tz: job.scheduleCronTz,
   }
 }
-

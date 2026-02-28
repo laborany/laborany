@@ -70,8 +70,11 @@ function stripPipelineContext(userQuery: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : userQuery
 }
 
-const AGENT_SERVICE_URL = (process.env.AGENT_SERVICE_URL || 'http://localhost:3002').replace(/\/+$/, '')
 const AGENT_SERVICE_TIMEOUT_MS = 15_000
+
+function getAgentServiceUrl(): string {
+  return (process.env.AGENT_SERVICE_URL || 'http://localhost:3002').replace(/\/+$/, '')
+}
 
 interface JsonFetchResult<T> {
   ok: boolean
@@ -89,7 +92,7 @@ async function fetchJsonWithTimeout<T>(
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetch(`${AGENT_SERVICE_URL}${path}`, {
+    const response = await fetch(`${getAgentServiceUrl()}${path}`, {
       ...init,
       signal: controller.signal,
     })

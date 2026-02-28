@@ -95,6 +95,12 @@ function JobCard({
             <span title="模型">
               🤖 {modelLabel}
             </span>
+            <span title="来源">
+              📍 {job.sourceChannel === 'feishu' ? '飞书' : '桌面'}
+            </span>
+            <span title="通知">
+              🔔 {job.notifyChannel === 'feishu_dm' ? '飞书私聊' : '应用内'}
+            </span>
           </div>
         </div>
 

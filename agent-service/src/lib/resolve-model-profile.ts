@@ -8,15 +8,20 @@
 
 import type { ModelOverride } from '../claude-cli.js'
 
-const SRC_API_BASE_URL = (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
-const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || 'laborany-internal'
+function getSrcApiBaseUrl(): string {
+  return (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
+}
+
+function getInternalToken(): string {
+  return process.env.INTERNAL_TOKEN || 'laborany-internal'
+}
 
 export async function resolveModelProfile(profileId?: string): Promise<ModelOverride | undefined> {
   if (!profileId) return undefined
 
   try {
-    const res = await fetch(`${SRC_API_BASE_URL}/config/model-profiles/internal/${encodeURIComponent(profileId)}`, {
-      headers: { 'X-Internal-Token': INTERNAL_TOKEN },
+    const res = await fetch(`${getSrcApiBaseUrl()}/config/model-profiles/internal/${encodeURIComponent(profileId)}`, {
+      headers: { 'X-Internal-Token': getInternalToken() },
       signal: AbortSignal.timeout(3000),
     })
 

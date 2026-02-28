@@ -36,7 +36,10 @@ function sseWrite(res: Response, event: string, data: unknown): void {
 
 const FILE_ID_PATTERN = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
 const ACTION_MARKER_CLEAN_RE = /LABORANY_ACTION:\s*\{[\s\S]*?\}\s*$/gm
-const SRC_API_BASE_URL = (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
+
+function getSrcApiBaseUrl(): string {
+  return (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
+}
 
 type ExternalSessionStatus = 'running' | 'completed' | 'failed' | 'stopped' | 'aborted'
 
@@ -76,7 +79,7 @@ async function upsertExternalSession(
   status: ExternalSessionStatus = 'running',
 ): Promise<void> {
   try {
-    await fetch(`${SRC_API_BASE_URL}/sessions/external/upsert`, {
+    await fetch(`${getSrcApiBaseUrl()}/sessions/external/upsert`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -99,7 +102,7 @@ async function appendExternalMessage(
   const text = content.trim()
   if (!text) return
   try {
-    await fetch(`${SRC_API_BASE_URL}/sessions/external/message`, {
+    await fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, type, content: text }),
@@ -114,7 +117,7 @@ async function updateExternalSessionStatus(
   status: ExternalSessionStatus,
 ): Promise<void> {
   try {
-    await fetch(`${SRC_API_BASE_URL}/sessions/external/status`, {
+    await fetch(`${getSrcApiBaseUrl()}/sessions/external/status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, status }),
@@ -548,13 +551,13 @@ function guardAction(action: ConverseActionPayload, runtimeContext?: ConverseRun
     if (!action.targetType) {
       action.targetType = 'skill'
     }
-    if (!action.targetId) missing.push('targetId')
     if (!action.targetQuery) missing.push('targetQuery')
 
-    if (!missing.length && action.targetType && action.targetId) {
+    if (action.targetType && action.targetId) {
       const exists = findCapability(action.targetType, action.targetId)
       if (!exists) {
-        missing.push('targetId')
+        // 对于定时任务，targetId 允许缺失：下游会自动创建技能并绑定
+        action.targetId = ''
       }
     }
 

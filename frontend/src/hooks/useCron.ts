@@ -39,6 +39,20 @@ export interface ExecutionTarget {
   query: string
 }
 
+export type JobSourceChannel = 'desktop' | 'feishu'
+export type JobNotifyChannel = 'app' | 'feishu_dm'
+
+export interface JobSource {
+  channel: JobSourceChannel
+  feishuOpenId?: string
+  feishuChatId?: string
+}
+
+export interface JobNotify {
+  channel: JobNotifyChannel
+  feishuOpenId?: string
+}
+
 export interface CronJob {
   id: string
   name: string
@@ -53,6 +67,11 @@ export interface CronJob {
   targetId: string
   targetQuery: string
   modelProfileId?: string
+  sourceChannel: JobSourceChannel
+  sourceFeishuOpenId?: string
+  sourceFeishuChatId?: string
+  notifyChannel: JobNotifyChannel
+  notifyFeishuOpenId?: string
   nextRunAtMs?: number
   lastRunAtMs?: number
   lastStatus?: 'ok' | 'error' | 'running' | null
@@ -79,6 +98,8 @@ export interface CreateJobRequest {
   target: ExecutionTarget
   enabled?: boolean
   modelProfileId?: string
+  source?: JobSource
+  notify?: JobNotify
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

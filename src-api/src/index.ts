@@ -77,8 +77,11 @@ patchConsole()
 installGlobalErrorHandlers()
 
 const app = new Hono()
-const PORT = parseInt(process.env.PORT || '3620', 10)
-const isProduction = process.env.NODE_ENV === 'production'
+
+function getApiPort(): number {
+  const parsed = Number.parseInt(process.env.PORT || '3620', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 3620
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           中间件配置                                      │
@@ -112,7 +115,9 @@ app.route('/api', fileRoutes)
  * │  将 /agent-api/* 请求代理到 agent-service (端口 3002)                      │
  * │  增强：健康检查缓存 + 友好错误提示                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-const AGENT_SERVICE_URL = process.env.AGENT_SERVICE_URL || 'http://localhost:3002'
+function getAgentServiceUrl(): string {
+  return process.env.AGENT_SERVICE_URL || 'http://localhost:3002'
+}
 
 /* ════════════════════════════════════════════════════════════════════════════
  *  Agent 服务健康状态缓存
@@ -129,7 +134,7 @@ async function checkAgentHealth(): Promise<boolean> {
   }
 
   try {
-    const res = await fetch(`${AGENT_SERVICE_URL}/health`, {
+    const res = await fetch(`${getAgentServiceUrl()}/health`, {
       signal: AbortSignal.timeout(2000)
     })
     agentHealthy = res.ok
@@ -157,7 +162,7 @@ app.all('/agent-api/*', async (c) => {
 
   const path = c.req.path.replace('/agent-api', '')
   const url = new URL(c.req.url)
-  const targetUrl = `${AGENT_SERVICE_URL}${path}${url.search}`
+  const targetUrl = `${getAgentServiceUrl()}${path}${url.search}`
 
   try {
     const headers = new Headers(c.req.raw.headers)
@@ -274,7 +279,7 @@ async function main() {
 
   serve({
     fetch: app.fetch,
-    port: PORT,
+    port: getApiPort(),
   }, (info) => {
     console.log(`[LaborAny API] 运行在 http://localhost:${info.port}`)
   })

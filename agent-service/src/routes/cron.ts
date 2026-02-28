@@ -6,8 +6,10 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Router, Request, Response } from 'express'
+import { loadCatalog } from '../catalog.js'
 import {
   listJobs,
+  listJobsBySourceOpenId,
   getJob,
   createJob,
   updateJob,
@@ -23,7 +25,14 @@ import {
   markAllNotificationsRead,
   sendTestEmail,
 } from '../cron/index.js'
-import type { CreateJobRequest, UpdateJobRequest, Schedule } from '../cron/index.js'
+import type {
+  CreateJobRequest,
+  UpdateJobRequest,
+  Schedule,
+  JobNotify,
+  JobSource,
+  JobSourceChannel,
+} from '../cron/index.js'
 
 const router = Router()
 
@@ -34,12 +43,54 @@ function withDetail(fallback: string, error: unknown): string {
   return fallback
 }
 
+function isSourceChannel(value: unknown): value is JobSourceChannel {
+  return value === 'desktop' || value === 'feishu'
+}
+
+function validateSource(source: JobSource | undefined): string | null {
+  if (!source) return null
+  if (!isSourceChannel(source.channel)) return 'source.channel 必须是 desktop 或 feishu'
+  if (source.channel === 'feishu' && !source.feishuOpenId?.trim()) {
+    return 'source.channel=feishu 时必须提供 source.feishuOpenId'
+  }
+  return null
+}
+
+function validateNotify(notify: JobNotify | undefined): string | null {
+  if (!notify) return null
+  if (notify.channel !== 'app' && notify.channel !== 'feishu_dm') {
+    return 'notify.channel 必须是 app 或 feishu_dm'
+  }
+  if (notify.channel === 'feishu_dm' && !notify.feishuOpenId?.trim()) {
+    return 'notify.channel=feishu_dm 时必须提供 notify.feishuOpenId'
+  }
+  return null
+}
+
+function validateTarget(target: CreateJobRequest['target'] | UpdateJobRequest['target'] | undefined): string | null {
+  if (!target) return null
+  if (target.type !== 'skill') return 'target.type 当前仅支持 skill'
+  const exists = loadCatalog().some(item => item.type === 'skill' && item.id === target.id)
+  if (!exists) return `未找到目标技能: ${target.id}`
+  return null
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取定时任务列表                                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-router.get('/jobs', (_req: Request, res: Response) => {
+router.get('/jobs', (req: Request, res: Response) => {
   try {
-    const jobs = listJobs()
+    const sourceOpenId = typeof req.query.sourceOpenId === 'string' ? req.query.sourceOpenId.trim() : ''
+    const sourceChannel = typeof req.query.sourceChannel === 'string' ? req.query.sourceChannel.trim() : ''
+
+    let jobs = sourceOpenId ? listJobsBySourceOpenId(sourceOpenId) : listJobs()
+    if (sourceChannel) {
+      if (!isSourceChannel(sourceChannel)) {
+        res.status(400).json({ error: 'sourceChannel 必须是 desktop 或 feishu' })
+        return
+      }
+      jobs = jobs.filter(job => job.sourceChannel === sourceChannel)
+    }
     res.json({ jobs })
   } catch (error) {
     res.status(500).json({ error: withDetail('获取任务列表失败', error) })
@@ -63,7 +114,7 @@ router.get('/jobs/:id', (req: Request, res: Response) => {
  * │                       创建定时任务                                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 router.post('/jobs', (req: Request, res: Response) => {
-  const { name, description, schedule, target, enabled, modelProfileId } = req.body as CreateJobRequest
+  const { name, description, schedule, target, enabled, modelProfileId, source, notify } = req.body as CreateJobRequest
 
   if (!name || !schedule || !target) {
     res.status(400).json({ error: '缺少必要参数: name, schedule, target' })
@@ -78,8 +129,26 @@ router.post('/jobs', (req: Request, res: Response) => {
     }
   }
 
+  const sourceError = validateSource(source)
+  if (sourceError) {
+    res.status(400).json({ error: sourceError })
+    return
+  }
+
+  const notifyError = validateNotify(notify)
+  if (notifyError) {
+    res.status(400).json({ error: notifyError })
+    return
+  }
+
+  const targetError = validateTarget(target)
+  if (targetError) {
+    res.status(400).json({ error: targetError })
+    return
+  }
+
   try {
-    const job = createJob({ name, description, schedule, target, enabled, modelProfileId })
+    const job = createJob({ name, description, schedule, target, enabled, modelProfileId, source, notify })
     res.json(job)
   } catch (error) {
     res.status(500).json({ error: withDetail('创建任务失败', error) })
@@ -99,6 +168,18 @@ router.patch('/jobs/:id', (req: Request, res: Response) => {
       res.status(400).json({ error: `无效的 Cron 表达式: ${error}` })
       return
     }
+  }
+
+  const notifyError = validateNotify(updates.notify)
+  if (notifyError) {
+    res.status(400).json({ error: notifyError })
+    return
+  }
+
+  const targetError = validateTarget(updates.target)
+  if (targetError) {
+    res.status(400).json({ error: targetError })
+    return
   }
 
   try {

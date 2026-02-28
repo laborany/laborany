@@ -19,9 +19,17 @@ import {
 } from './index.js'
 import { FeishuStreamingSession } from './streaming.js'
 
-const SRC_API_BASE_URL = (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
-const AGENT_SERVICE_URL = (process.env.AGENT_SERVICE_URL || 'http://127.0.0.1:3002').replace(/\/+$/, '')
-const FEISHU_HISTORY_SKILL_ID = process.env.FEISHU_HISTORY_SKILL_ID?.trim() || '__generic__'
+function getSrcApiBaseUrl(): string {
+  return (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
+}
+
+function getAgentServiceUrl(): string {
+  return (process.env.AGENT_SERVICE_URL || 'http://127.0.0.1:3002').replace(/\/+$/, '')
+}
+
+function getFeishuHistorySkillId(): string {
+  return process.env.FEISHU_HISTORY_SKILL_ID?.trim() || '__generic__'
+}
 
 interface FeishuRawEvent {
   sender?: { sender_id?: { open_id?: string } }
@@ -57,6 +65,13 @@ interface SseEvent {
   action?: string
   targetId?: string
   query?: string
+  targetQuery?: string
+  cronExpr?: string
+  tz?: string
+  name?: string
+  seedQuery?: string
+  capabilityId?: string
+  filePaths?: string[]
   questions?: unknown[]
 }
 
@@ -100,13 +115,46 @@ interface FileSendResult {
   failedPaths: string[]
 }
 
+interface CronApiJob {
+  id: string
+  name: string
+  enabled: boolean
+  scheduleKind: 'at' | 'every' | 'cron'
+  scheduleAtMs?: number
+  scheduleEveryMs?: number
+  scheduleCronExpr?: string
+  scheduleCronTz?: string
+  targetId: string
+  targetQuery: string
+  nextRunAtMs?: number
+  sourceChannel?: 'desktop' | 'feishu'
+  sourceFeishuOpenId?: string
+}
+
+interface CreateFeishuCronInput {
+  name?: string
+  cronExpr: string
+  tz?: string
+  targetId: string
+  targetQuery: string
+}
+
 const PROCESSED_MESSAGE_TTL_MS = 10 * 60 * 1000
 const MAX_PROCESSED_MESSAGES = 2000
 const MAX_ARTIFACTS_PER_RUN = 5
 const MAX_ARTIFACT_BYTES = 20 * 1024 * 1024
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg'])
 const IGNORE_ARTIFACT_NAMES = new Set(['history.txt', 'CLAUDE.md'])
+const FEISHU_DEFAULT_CRON_TZ = 'Asia/Shanghai'
+const CRON_TEMPLATE_MAP: Record<string, { expr: string; label: string }> = {
+  daily9: { expr: '0 9 * * *', label: '每天 09:00' },
+  hourly: { expr: '0 * * * *', label: '每小时整点' },
+  weekday9: { expr: '0 9 * * 1-5', label: '工作日 09:00' },
+}
+const SCHEDULE_CREATE_DEDUPE_WINDOW_MS = 30 * 1000
 const processedMessageIds = new Map<string, number>()
+const userProcessingQueue = new Map<string, Promise<void>>()
+const recentScheduleCreateMap = new Map<string, number>()
 
 function isDuplicateMessage(messageId: string): boolean {
   const now = Date.now()
@@ -128,6 +176,39 @@ function isDuplicateMessage(messageId: string): boolean {
     if (!oldest.done) processedMessageIds.delete(oldest.value)
   }
   return false
+}
+
+function runSerialByStateKey(stateKey: string, task: () => Promise<void>): Promise<void> {
+  const previous = userProcessingQueue.get(stateKey) || Promise.resolve()
+  const next = previous
+    .catch(() => {})
+    .then(task)
+    .catch((err) => {
+      console.error('[Feishu] serial task failed:', err)
+    })
+    .finally(() => {
+      if (userProcessingQueue.get(stateKey) === next) {
+        userProcessingQueue.delete(stateKey)
+      }
+    })
+
+  userProcessingQueue.set(stateKey, next)
+  return next
+}
+
+function tryMarkScheduleCreateFingerprint(key: string): boolean {
+  const now = Date.now()
+  for (const [fingerprint, ts] of recentScheduleCreateMap) {
+    if (now - ts > SCHEDULE_CREATE_DEDUPE_WINDOW_MS) {
+      recentScheduleCreateMap.delete(fingerprint)
+    }
+  }
+  const existing = recentScheduleCreateMap.get(key)
+  if (existing && now - existing <= SCHEDULE_CREATE_DEDUPE_WINDOW_MS) {
+    return false
+  }
+  recentScheduleCreateMap.set(key, now)
+  return true
 }
 
 function normalizeIncomingEvent(rawEvent: unknown): FeishuMessageEvent | null {
@@ -268,7 +349,7 @@ function resolveFeishuFileType(fileName: string): 'pdf' | 'doc' | 'xls' | 'ppt' 
 
 async function fetchTaskFiles(sessionId: string): Promise<TaskFileNode[]> {
   try {
-    const response = await fetch(`${SRC_API_BASE_URL}/task/${encodeURIComponent(sessionId)}/files`)
+    const response = await fetch(`${getSrcApiBaseUrl()}/task/${encodeURIComponent(sessionId)}/files`)
     if (!response.ok) return []
     const payload = await response.json() as { files?: unknown }
     return Array.isArray(payload.files) ? payload.files as TaskFileNode[] : []
@@ -280,7 +361,7 @@ async function fetchTaskFiles(sessionId: string): Promise<TaskFileNode[]> {
 async function downloadTaskFile(sessionId: string, filePath: string): Promise<Buffer | null> {
   const normalizedPath = normalizeApiFilePath(filePath)
   try {
-    const response = await fetch(`${SRC_API_BASE_URL}/task/${encodeURIComponent(sessionId)}/files/${normalizedPath}`)
+    const response = await fetch(`${getSrcApiBaseUrl()}/task/${encodeURIComponent(sessionId)}/files/${normalizedPath}`)
     if (!response.ok) return null
     const data = Buffer.from(await response.arrayBuffer())
     if (data.length > MAX_ARTIFACT_BYTES) {
@@ -662,7 +743,7 @@ async function sendFilesByAbsolutePaths(
 }
 
 async function fetchSkillList(): Promise<SkillListItem[]> {
-  const res = await fetch(`${SRC_API_BASE_URL}/skill/list`)
+  const res = await fetch(`${getSrcApiBaseUrl()}/skill/list`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
   const payload = await res.json() as unknown
@@ -689,6 +770,38 @@ async function fetchSkillList(): Promise<SkillListItem[]> {
   return skills
 }
 
+async function detectNewSkillIdFromKnown(knownSkillIds: string[]): Promise<string | undefined> {
+  if (!knownSkillIds.length) return undefined
+
+  const knownSet = new Set(knownSkillIds)
+
+  try {
+    const res = await fetch(`${getSrcApiBaseUrl()}/skill/detect-new`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ knownIds: knownSkillIds }),
+    })
+    if (res.ok) {
+      const payload = await res.json() as { newSkills?: Array<{ id?: string }> }
+      const candidate = Array.isArray(payload.newSkills)
+        ? payload.newSkills.find(item => typeof item?.id === 'string' && !knownSet.has((item.id || '').trim()))
+        : undefined
+      const id = typeof candidate?.id === 'string' ? candidate.id.trim() : ''
+      if (id) return id
+    }
+  } catch {
+  }
+
+  try {
+    const current = await fetchSkillList()
+    const found = current.find(item => !knownSet.has(item.id))
+    if (found?.id) return found.id
+  } catch {
+  }
+
+  return undefined
+}
+
 function normalizeProfileAlias(raw: string): string {
   const trimmed = raw.trim()
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith('\'') && trimmed.endsWith('\''))) {
@@ -698,7 +811,7 @@ function normalizeProfileAlias(raw: string): string {
 }
 
 async function fetchModelProfiles(): Promise<ModelProfile[]> {
-  const res = await fetch(`${SRC_API_BASE_URL}/config/model-profiles`)
+  const res = await fetch(`${getSrcApiBaseUrl()}/config/model-profiles`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const payload = await res.json() as { profiles?: unknown[] }
   const source = Array.isArray(payload?.profiles) ? payload.profiles : []
@@ -722,20 +835,213 @@ function findModelProfileByAlias(profiles: ModelProfile[], alias: string): Model
   ))
 }
 
+function parseCommandArgs(text: string): string[] {
+  const args: string[] = []
+  const re = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(text)) !== null) {
+    const raw = match[1] ?? match[2] ?? match[3] ?? ''
+    const unescaped = raw.replace(/\\(["'\\])/g, '$1')
+    args.push(unescaped.trim())
+  }
+  return args.filter(Boolean)
+}
+
+async function readJsonError(response: Response): Promise<string> {
+  const text = await response.text().catch(() => '')
+  if (!text) return `HTTP ${response.status}`
+  try {
+    const payload = JSON.parse(text) as { error?: string; message?: string }
+    return payload.error || payload.message || text
+  } catch {
+    return text
+  }
+}
+
+function formatCronScheduleLabel(job: CronApiJob): string {
+  if (job.scheduleKind === 'at') {
+    return job.scheduleAtMs ? `一次性 @ ${new Date(job.scheduleAtMs).toLocaleString('zh-CN')}` : '一次性'
+  }
+  if (job.scheduleKind === 'every') {
+    const ms = Number(job.scheduleEveryMs || 0)
+    if (ms <= 0) return '周期任务'
+    if (ms < 60_000) return `每 ${Math.round(ms / 1000)} 秒`
+    if (ms < 3_600_000) return `每 ${Math.round(ms / 60_000)} 分钟`
+    if (ms < 86_400_000) return `每 ${Math.round(ms / 3_600_000)} 小时`
+    return `每 ${Math.round(ms / 86_400_000)} 天`
+  }
+  const tz = job.scheduleCronTz || FEISHU_DEFAULT_CRON_TZ
+  return `Cron ${job.scheduleCronExpr || ''} (${tz})`.trim()
+}
+
+async function createFeishuCronJob(
+  openId: string,
+  chatId: string,
+  input: CreateFeishuCronInput,
+): Promise<{ job?: CronApiJob; error?: string }> {
+  const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+  const payload = {
+    name: input.name?.trim() || input.targetQuery.trim().slice(0, 40) || '定时任务',
+    description: input.targetQuery.trim(),
+    schedule: {
+      kind: 'cron',
+      expr: input.cronExpr.trim(),
+      tz: (input.tz || FEISHU_DEFAULT_CRON_TZ).trim(),
+    },
+    target: {
+      type: 'skill',
+      id: input.targetId.trim(),
+      query: input.targetQuery.trim(),
+    },
+    source: {
+      channel: 'feishu',
+      feishuOpenId: openId,
+      feishuChatId: chatId,
+    },
+    notify: {
+      channel: 'feishu_dm',
+      feishuOpenId: openId,
+    },
+  }
+
+  let lastError = '创建任务失败'
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(`${getAgentServiceUrl()}/cron/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (response.ok) {
+      const job = await response.json() as CronApiJob
+      return { job }
+    }
+    lastError = await readJsonError(response)
+    const shouldRetry = lastError.includes('未找到目标技能')
+    if (!shouldRetry || attempt === 2) break
+    await wait(500)
+  }
+  return { error: lastError }
+}
+
+async function skillExists(skillId: string): Promise<boolean> {
+  const id = skillId.trim()
+  if (!id) return false
+  const skills = await fetchSkillList()
+  return skills.some(item => item.id === id)
+}
+
+async function createCapabilityFromSeed(
+  stateKey: string,
+  seedQuery: string,
+  oneTimeModelProfileId?: string,
+): Promise<{ skillId?: string; error?: string; sessionId?: string }> {
+  const state = getUserState(stateKey)
+  const modelProfileId = oneTimeModelProfileId ?? state.defaultModelProfileId
+  const sessionId = `feishu-create-skill-${randomUUID().slice(0, 12)}`
+  const creatorQuery = [
+    '请创建一个新的 LaborAny skill，满足以下需求：',
+    seedQuery.trim(),
+    '',
+    '要求：生成可复用技能并完成必要文件。'
+  ].join('\n')
+
+  const knownSkillIds = await fetchSkillList()
+    .then(list => list.map(item => item.id))
+    .catch(() => [])
+
+  const response = await fetch(`${getSrcApiBaseUrl()}/skill/execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      skill_id: 'skill-creator',
+      query: creatorQuery,
+      originQuery: seedQuery.trim(),
+      sessionId,
+      source: 'feishu',
+      modelProfileId,
+    }),
+  })
+
+  if (!response.ok) {
+    return { error: await readJsonError(response) }
+  }
+
+  let createdSkillId = ''
+  let runtimeSessionId = sessionId
+  let streamError = ''
+  for await (const event of streamSse(response)) {
+    if (event.type === 'session' && event.sessionId) {
+      runtimeSessionId = event.sessionId
+    }
+    if (event.type === 'created_capability') {
+      const id = (event as any).capabilityId || (event as any).primary?.id
+      if (typeof id === 'string' && id.trim()) {
+        createdSkillId = id.trim()
+      }
+    }
+    if (event.type === 'error') {
+      streamError = (event.message || event.content || '技能创建失败').trim()
+      break
+    }
+  }
+
+  if (createdSkillId) {
+    return { skillId: createdSkillId, sessionId: runtimeSessionId }
+  }
+
+  const inferredSkillId = await detectNewSkillIdFromKnown(knownSkillIds)
+  if (inferredSkillId) {
+    return { skillId: inferredSkillId, sessionId: runtimeSessionId }
+  }
+
+  return {
+    error: streamError || '技能创建结束，但未检测到新技能产物',
+    sessionId: runtimeSessionId,
+  }
+}
+
+async function listOwnedCronJobs(openId: string): Promise<CronApiJob[]> {
+  const response = await fetch(
+    `${getAgentServiceUrl()}/cron/jobs?sourceChannel=feishu&sourceOpenId=${encodeURIComponent(openId)}`,
+  )
+  if (!response.ok) {
+    throw new Error(await readJsonError(response))
+  }
+  const payload = await response.json() as { jobs?: CronApiJob[] }
+  return Array.isArray(payload.jobs) ? payload.jobs : []
+}
+
+async function getCronJobDetail(jobId: string): Promise<CronApiJob | null> {
+  const response = await fetch(`${getAgentServiceUrl()}/cron/jobs/${encodeURIComponent(jobId)}`)
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error(await readJsonError(response))
+  return await response.json() as CronApiJob
+}
+
+async function deleteCronJob(jobId: string): Promise<{ success: boolean; error?: string }> {
+  const response = await fetch(`${getAgentServiceUrl()}/cron/jobs/${encodeURIComponent(jobId)}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    return { success: false, error: await readJsonError(response) }
+  }
+  return { success: true }
+}
+
 async function upsertExternalSession(
   sessionId: string,
   query: string,
   status: ExternalSessionStatus = 'running',
 ): Promise<void> {
   try {
-    await fetch(`${SRC_API_BASE_URL}/sessions/external/upsert`, {
+    await fetch(`${getSrcApiBaseUrl()}/sessions/external/upsert`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sessionId,
         query,
         status,
-        skillId: FEISHU_HISTORY_SKILL_ID,
+        skillId: getFeishuHistorySkillId(),
       }),
     })
   } catch (err) {
@@ -750,7 +1056,7 @@ async function appendExternalMessage(
 ): Promise<void> {
   if (!content.trim()) return
   try {
-    await fetch(`${SRC_API_BASE_URL}/sessions/external/message`, {
+    await fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, type, content }),
@@ -765,7 +1071,7 @@ async function updateExternalSessionStatus(
   status: ExternalSessionStatus,
 ): Promise<void> {
   try {
-    await fetch(`${SRC_API_BASE_URL}/sessions/external/status`, {
+    await fetch(`${getSrcApiBaseUrl()}/sessions/external/status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, status }),
@@ -793,7 +1099,7 @@ async function executeSkill(
   let baselineMap = buildSnapshotMap(await fetchTaskFiles(executeSessionId))
 
   try {
-    const response = await fetch(`${SRC_API_BASE_URL}/skill/execute`, {
+    const response = await fetch(`${getSrcApiBaseUrl()}/skill/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -885,9 +1191,25 @@ function stripMentions(text: string, mentions?: Array<{ key: string }>): string 
   return result
 }
 
+function tryExtractQuickTextCommand(event: FeishuMessageEvent): string {
+  if (event.message.message_type !== 'text') return ''
+  const rawContent = event.message.content || ''
+  if (!rawContent.trim()) return ''
+  try {
+    const parsed = JSON.parse(rawContent) as { text?: unknown }
+    if (typeof parsed.text === 'string') {
+      return stripMentions(parsed.text, event.message.mentions).trim()
+    }
+  } catch {
+    return stripMentions(rawContent, event.message.mentions).trim()
+  }
+  return ''
+}
+
 async function dispatchAction(
   client: Client,
   config: FeishuConfig,
+  openId: string,
   chatId: string,
   stateKey: string,
   actionEvent: SseEvent,
@@ -954,7 +1276,30 @@ async function dispatchAction(
   }
 
   if (actionType === 'create_capability') {
-    const msg = '该任务需要创建新技能，请在桌面端完成创建。'
+    const seedQuery = ((actionEvent as any)?.seedQuery || query || '').trim()
+    if (!seedQuery) {
+      const msg = '缺少技能创建需求，请补充你希望沉淀成技能的任务描述。'
+      await appendExternalMessage(historySessionId, 'assistant', msg)
+      await updateExternalSessionStatus(historySessionId, 'completed')
+      await card.close(msg)
+      return
+    }
+
+    await card.update('正在创建新技能...')
+    const created = await createCapabilityFromSeed(stateKey, seedQuery, modelProfileIdOverride)
+    if (!created.skillId) {
+      const msg = `技能创建失败：${created.error || '未知错误'}`
+      await appendExternalMessage(historySessionId, 'assistant', msg)
+      await updateExternalSessionStatus(historySessionId, 'completed')
+      await card.close(msg)
+      return
+    }
+
+    const msg = [
+      '新技能创建成功 ✅',
+      `技能 ID：${created.skillId}`,
+      '你现在可以直接 /skill <id> 执行，或继续说“每天/每周...”来创建定时任务。',
+    ].join('\n')
     await appendExternalMessage(historySessionId, 'assistant', msg)
     await updateExternalSessionStatus(historySessionId, 'completed')
     await card.close(msg)
@@ -962,10 +1307,96 @@ async function dispatchAction(
   }
 
   if (actionType === 'setup_schedule') {
-    const msg = '定时任务请在桌面端配置。'
-    await appendExternalMessage(historySessionId, 'assistant', msg)
+    const cronExpr = (actionEvent as any)?.cronExpr || ''
+    const tz = (actionEvent as any)?.tz || FEISHU_DEFAULT_CRON_TZ
+    const scheduleQuery = (actionEvent as any)?.targetQuery || query || ''
+    let resolvedTargetId = targetId.trim()
+
+    if (!cronExpr || !scheduleQuery.trim()) {
+      const msg = '定时任务信息还不完整，请补充执行频率和执行内容。'
+      await appendExternalMessage(historySessionId, 'assistant', msg)
+      await updateExternalSessionStatus(historySessionId, 'completed')
+      await card.close(msg)
+      return
+    }
+
+    if (resolvedTargetId) {
+      try {
+        const exists = await skillExists(resolvedTargetId)
+        if (!exists) {
+          resolvedTargetId = ''
+        }
+      } catch (err) {
+        const msg = `校验目标技能失败：${err instanceof Error ? err.message : String(err)}`
+        await appendExternalMessage(historySessionId, 'assistant', msg)
+        await updateExternalSessionStatus(historySessionId, 'completed')
+        await card.close(msg)
+        return
+      }
+    }
+
+    if (!resolvedTargetId) {
+      await card.update('未找到可用技能，正在先创建技能...')
+      const created = await createCapabilityFromSeed(stateKey, scheduleQuery, modelProfileIdOverride)
+      if (!created.skillId) {
+        const msg = `定时任务创建失败：自动创建技能未成功（${created.error || '未知错误'}）`
+        await appendExternalMessage(historySessionId, 'assistant', msg)
+        await updateExternalSessionStatus(historySessionId, 'completed')
+        await card.close(msg)
+        return
+      }
+      resolvedTargetId = created.skillId
+      await appendExternalMessage(
+        historySessionId,
+        'assistant',
+        `已自动创建技能 ${resolvedTargetId}，继续创建定时任务。`,
+      )
+    }
+
+    const scheduleFingerprint = [
+      openId,
+      cronExpr.trim(),
+      (tz || FEISHU_DEFAULT_CRON_TZ).trim(),
+      resolvedTargetId,
+      scheduleQuery.trim(),
+    ].join('::')
+    if (!tryMarkScheduleCreateFingerprint(scheduleFingerprint)) {
+      const msg = '检测到短时间内重复创建同一条定时任务，已自动忽略。'
+      await appendExternalMessage(historySessionId, 'assistant', msg)
+      await updateExternalSessionStatus(historySessionId, 'completed')
+      await card.close(msg)
+      return
+    }
+
+    await card.update('正在创建定时任务...')
+    const result = await createFeishuCronJob(openId, chatId, {
+      name: (actionEvent as any)?.name,
+      cronExpr,
+      tz,
+      targetId: resolvedTargetId,
+      targetQuery: scheduleQuery,
+    })
+
+    if (!result.job) {
+      const msg = `定时任务创建失败：${result.error || '未知错误'}`
+      await appendExternalMessage(historySessionId, 'assistant', msg)
+      await updateExternalSessionStatus(historySessionId, 'completed')
+      await card.close(msg)
+      return
+    }
+
+    const summary = [
+      `定时任务创建成功 ✅`,
+      `任务名：${result.job.name}`,
+      `任务 ID：${result.job.id}`,
+      `调度：${formatCronScheduleLabel(result.job)}`,
+      `目标技能：${result.job.targetId}`,
+      result.job.nextRunAtMs ? `下次执行：${new Date(result.job.nextRunAtMs).toLocaleString('zh-CN')}` : '',
+      '结果将通过飞书私聊主动通知你。',
+    ].filter(Boolean).join('\n')
+    await appendExternalMessage(historySessionId, 'assistant', summary)
     await updateExternalSessionStatus(historySessionId, 'completed')
-    await card.close(msg)
+    await card.close(summary)
     return
   }
 
@@ -978,6 +1409,7 @@ async function dispatchAction(
 async function runConverse(
   client: Client,
   config: FeishuConfig,
+  openId: string,
   chatId: string,
   stateKey: string,
   text: string,
@@ -995,7 +1427,7 @@ async function runConverse(
   // one-time override (#model=xxx) takes priority over persistent default
   const modelProfileId = oneTimeModelProfileId ?? state.defaultModelProfileId
 
-  const response = await fetch(`${AGENT_SERVICE_URL}/converse`, {
+  const response = await fetch(`${getAgentServiceUrl()}/converse`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1051,7 +1483,7 @@ async function runConverse(
   }
 
   if (action) {
-    await dispatchAction(client, config, chatId, stateKey, action, converseText, card, historySessionId, modelProfileId)
+    await dispatchAction(client, config, openId, chatId, stateKey, action, converseText, card, historySessionId, modelProfileId)
     return
   }
 
@@ -1068,6 +1500,7 @@ async function runConverse(
 async function handleCommand(
   client: Client,
   config: FeishuConfig,
+  openId: string,
   chatId: string,
   stateKey: string,
   text: string,
@@ -1087,6 +1520,7 @@ async function handleCommand(
       '直接发送消息 -> 智能匹配技能并执行',
       '/skill <id> [query] -> 指定技能执行',
       '/skills -> 查看可用技能',
+      '/cron help -> 查看定时任务命令',
       '/model [name|id] -> 查看或切换模型配置',
       '/new -> 重置会话',
       '/stop -> 中止当前任务',
@@ -1094,6 +1528,157 @@ async function handleCommand(
       '',
       '提示：消息前加 #model=<name 或 id> 可临时使用指定模型',
     ].join('\n'))
+    return true
+  }
+
+  if (trimmed.startsWith('/cron')) {
+    const args = parseCommandArgs(trimmed)
+    const sub = (args[1] || '').toLowerCase()
+
+    if (!sub || sub === 'help') {
+      await sendText(client, chatId, [
+        '定时任务命令：',
+        '/cron create "<name>" "<cronExpr>" "<skillId>" "<query>" [tz]',
+        '/cron quick <daily9|hourly|weekday9> <skillId> "<query>" [name] [tz]',
+        '/cron list',
+        '/cron delete <jobId>',
+        '',
+        '示例：',
+        '/cron create "每日早报" "0 9 * * *" "news-digest" "抓取 AI 新闻并输出 300 字摘要" "Asia/Shanghai"',
+        '/cron quick daily9 news-digest "抓取 AI 新闻并输出 300 字摘要" "每日早报"',
+      ].join('\n'))
+      return true
+    }
+
+    if (sub === 'create') {
+      if (args.length < 6) {
+        await sendText(client, chatId, '参数不足。用法：/cron create "<name>" "<cronExpr>" "<skillId>" "<query>" [tz]')
+        return true
+      }
+      const [, , name, cronExpr, targetId, targetQuery, tz] = args
+      try {
+        const exists = await skillExists(targetId)
+        if (!exists) {
+          await sendText(client, chatId, `❌ 未找到技能：${targetId}`)
+          return true
+        }
+      } catch (err) {
+        await sendText(client, chatId, `❌ 校验技能失败：${err instanceof Error ? err.message : String(err)}`)
+        return true
+      }
+      const result = await createFeishuCronJob(openId, chatId, {
+        name,
+        cronExpr,
+        targetId,
+        targetQuery,
+        tz: tz || FEISHU_DEFAULT_CRON_TZ,
+      })
+      if (!result.job) {
+        await sendText(client, chatId, `❌ 创建失败：${result.error || '未知错误'}`)
+        return true
+      }
+      await sendText(client, chatId, [
+        '✅ 定时任务已创建',
+        `任务名：${result.job.name}`,
+        `任务 ID：${result.job.id}`,
+        `调度：${formatCronScheduleLabel(result.job)}`,
+        result.job.nextRunAtMs ? `下次执行：${new Date(result.job.nextRunAtMs).toLocaleString('zh-CN')}` : '',
+        '结果将推送到你的飞书私聊。',
+      ].filter(Boolean).join('\n'))
+      return true
+    }
+
+    if (sub === 'quick') {
+      if (args.length < 5) {
+        await sendText(client, chatId, '参数不足。用法：/cron quick <daily9|hourly|weekday9> <skillId> "<query>" [name] [tz]')
+        return true
+      }
+      const [, , templateRaw, targetId, targetQuery, customName, customTz] = args
+      const template = CRON_TEMPLATE_MAP[templateRaw.toLowerCase()]
+      if (!template) {
+        await sendText(client, chatId, '不支持的模板。可选：daily9、hourly、weekday9')
+        return true
+      }
+      try {
+        const exists = await skillExists(targetId)
+        if (!exists) {
+          await sendText(client, chatId, `❌ 未找到技能：${targetId}`)
+          return true
+        }
+      } catch (err) {
+        await sendText(client, chatId, `❌ 校验技能失败：${err instanceof Error ? err.message : String(err)}`)
+        return true
+      }
+      const result = await createFeishuCronJob(openId, chatId, {
+        name: customName || `${template.label} - ${targetQuery.slice(0, 20)}`,
+        cronExpr: template.expr,
+        targetId,
+        targetQuery,
+        tz: customTz || FEISHU_DEFAULT_CRON_TZ,
+      })
+      if (!result.job) {
+        await sendText(client, chatId, `❌ 创建失败：${result.error || '未知错误'}`)
+        return true
+      }
+      await sendText(client, chatId, [
+        '✅ 快速定时任务已创建',
+        `任务名：${result.job.name}`,
+        `任务 ID：${result.job.id}`,
+        `调度：${formatCronScheduleLabel(result.job)}`,
+      ].join('\n'))
+      return true
+    }
+
+    if (sub === 'list') {
+      try {
+        const jobs = await listOwnedCronJobs(openId)
+        if (!jobs.length) {
+          await sendText(client, chatId, '你还没有在飞书创建的定时任务。')
+          return true
+        }
+        const lines = jobs.slice(0, 20).map((job) => {
+          const enabled = job.enabled ? '启用' : '禁用'
+          const nextRun = job.nextRunAtMs ? new Date(job.nextRunAtMs).toLocaleString('zh-CN') : '无'
+          return `- ${job.id}\n  ${job.name} | ${enabled} | ${formatCronScheduleLabel(job)} | 下次：${nextRun}`
+        })
+        await sendText(client, chatId, ['你的飞书定时任务：', ...lines].join('\n'))
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        await sendText(client, chatId, `获取定时任务失败：${msg}`)
+      }
+      return true
+    }
+
+    if (sub === 'delete') {
+      const jobId = args[2]?.trim()
+      if (!jobId) {
+        await sendText(client, chatId, '请提供要删除的任务 ID。用法：/cron delete <jobId>')
+        return true
+      }
+      try {
+        const job = await getCronJobDetail(jobId)
+        if (!job) {
+          await sendText(client, chatId, '任务不存在。')
+          return true
+        }
+        if (job.sourceChannel !== 'feishu' || job.sourceFeishuOpenId !== openId) {
+          await sendText(client, chatId, '你只能删除自己在飞书创建的任务。')
+          return true
+        }
+        const result = await deleteCronJob(jobId)
+        if (!result.success) {
+          await sendText(client, chatId, `删除失败：${result.error || '未知错误'}`)
+          return true
+        }
+        await sendText(client, chatId, `✅ 已删除任务：${job.name} (${job.id})`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        await sendText(client, chatId, `删除失败：${msg}`)
+      }
+      return true
+    }
+
+    await sendText(client, chatId, '未知 /cron 子命令。输入 /cron help 查看用法。')
     return true
   }
 
@@ -1117,7 +1702,7 @@ async function handleCommand(
     }
 
     try {
-      const res = await fetch(`${SRC_API_BASE_URL}/skill/stop/${state.executeSessionId}`, { method: 'POST' })
+      const res = await fetch(`${getSrcApiBaseUrl()}/skill/stop/${state.executeSessionId}`, { method: 'POST' })
       const payload: any = await res.json().catch(() => ({}))
       if (res.ok && payload?.success) {
         clearExecuteSessionId(stateKey)
@@ -1229,75 +1814,84 @@ export async function handleFeishuMessage(
     return
   }
 
-  const parsed = await parseMessageContent(larkClient, normalized)
-  if (!parsed) {
-    await sendText(larkClient, chatId, '暂不支持该消息类型，请发送文本、图片或文件。')
+  // 快速通道：避免串行队列阻塞 /stop，保证中止命令能及时生效
+  const quickCommand = tryExtractQuickTextCommand(normalized)
+  if (quickCommand === '/stop') {
+    await handleCommand(larkClient, config, openId, chatId, stateKey, quickCommand)
     return
   }
 
-  let text = stripMentions(parsed.text, normalized.message.mentions)
-  if (parsed.fileIds.length > 0) {
-    const ids = parsed.fileIds.join(', ')
-    text = text ? `${text}\n[LABORANY_FILE_IDS: ${ids}]` : `[LABORANY_FILE_IDS: ${ids}]`
-  }
-
-  if (!text.trim()) {
-    await sendText(larkClient, chatId, '请发送文本消息或附带说明的文件。')
-    return
-  }
-
-  if (await handleCommand(larkClient, config, chatId, stateKey, text)) return
-
-  // Parse #model=<name> prefix for one-time model override (not persisted)
-  let oneTimeModelProfileId: string | undefined
-  const modelPrefixMatch = text.match(/^#model=("[^"]+"|'[^']+'|\S+)\s*/i)
-  if (modelPrefixMatch) {
-    const profileAlias = normalizeProfileAlias(modelPrefixMatch[1])
-    text = text.slice(modelPrefixMatch[0].length).trim()
-    try {
-      const profiles = await fetchModelProfiles()
-      const profile = findModelProfileByAlias(profiles, profileAlias)
-      if (profile) {
-        oneTimeModelProfileId = profile.id
-      } else {
-        await sendText(larkClient, chatId, `⚠️ 未找到模型配置: ${profileAlias}，将使用默认模型继续执行`)
-      }
-    } catch {
-      // ignore, fall back to default
+  await runSerialByStateKey(stateKey, async () => {
+    const parsed = await parseMessageContent(larkClient, normalized)
+    if (!parsed) {
+      await sendText(larkClient, chatId, '暂不支持该消息类型，请发送文本、图片或文件。')
+      return
     }
-  }
 
-  const userState = getUserState(stateKey)
-  const historySessionId = userState.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
-  setConverseSessionId(stateKey, historySessionId)
+    let text = stripMentions(parsed.text, normalized.message.mentions)
+    if (parsed.fileIds.length > 0) {
+      const ids = parsed.fileIds.join(', ')
+      text = text ? `${text}\n[LABORANY_FILE_IDS: ${ids}]` : `[LABORANY_FILE_IDS: ${ids}]`
+    }
 
-  const card = new FeishuStreamingSession(larkClient, config)
-  const started = await card.start(chatId, config.botName)
-  if (!started) {
-    await upsertExternalSession(historySessionId, text, 'running')
-    await appendExternalMessage(historySessionId, 'user', text)
-    await appendExternalMessage(historySessionId, 'assistant', '已开始执行任务，请查看执行结果。')
+    if (!text.trim()) {
+      await sendText(larkClient, chatId, '请发送文本消息或附带说明的文件。')
+      return
+    }
+
+    if (await handleCommand(larkClient, config, openId, chatId, stateKey, text)) return
+
+    // Parse #model=<name> prefix for one-time model override (not persisted)
+    let oneTimeModelProfileId: string | undefined
+    const modelPrefixMatch = text.match(/^#model=("[^"]+"|'[^']+'|\S+)\s*/i)
+    if (modelPrefixMatch) {
+      const profileAlias = normalizeProfileAlias(modelPrefixMatch[1])
+      text = text.slice(modelPrefixMatch[0].length).trim()
+      try {
+        const profiles = await fetchModelProfiles()
+        const profile = findModelProfileByAlias(profiles, profileAlias)
+        if (profile) {
+          oneTimeModelProfileId = profile.id
+        } else {
+          await sendText(larkClient, chatId, `⚠️ 未找到模型配置: ${profileAlias}，将使用默认模型继续执行`)
+        }
+      } catch {
+        // ignore, fall back to default
+      }
+    }
+
+    const userState = getUserState(stateKey)
+    const historySessionId = userState.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
+    setConverseSessionId(stateKey, historySessionId)
+
+    const card = new FeishuStreamingSession(larkClient, config)
+    const started = await card.start(chatId, config.botName)
+    if (!started) {
+      await upsertExternalSession(historySessionId, text, 'running')
+      await appendExternalMessage(historySessionId, 'user', text)
+      await appendExternalMessage(historySessionId, 'assistant', '已开始执行任务，请查看执行结果。')
+      try {
+        await executeSkill(larkClient, chatId, stateKey, config.defaultSkillId, text, null, oneTimeModelProfileId)
+        await updateExternalSessionStatus(historySessionId, 'completed')
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        await appendExternalMessage(historySessionId, 'error', msg)
+        await updateExternalSessionStatus(historySessionId, 'failed')
+        await sendText(larkClient, chatId, `❌ ${msg}`)
+      }
+      return
+    }
+
+    await card.update('正在分析你的需求...')
     try {
-      await executeSkill(larkClient, chatId, stateKey, config.defaultSkillId, text, null, oneTimeModelProfileId)
-      await updateExternalSessionStatus(historySessionId, 'completed')
+      await runConverse(larkClient, config, openId, chatId, stateKey, text, card, historySessionId, oneTimeModelProfileId)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       await appendExternalMessage(historySessionId, 'error', msg)
       await updateExternalSessionStatus(historySessionId, 'failed')
-      await sendText(larkClient, chatId, `❌ ${msg}`)
+      console.error('[Feishu] message handling failed:', err)
+      if (card.isActive()) await card.close(`❌ ${msg}`)
+      else await sendText(larkClient, chatId, `❌ ${msg}`)
     }
-    return
-  }
-
-  await card.update('正在分析你的需求...')
-  try {
-    await runConverse(larkClient, config, chatId, stateKey, text, card, historySessionId, oneTimeModelProfileId)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    await appendExternalMessage(historySessionId, 'error', msg)
-    await updateExternalSessionStatus(historySessionId, 'failed')
-    console.error('[Feishu] message handling failed:', err)
-    if (card.isActive()) await card.close(`❌ ${msg}`)
-    else await sendText(larkClient, chatId, `❌ ${msg}`)
-  }
+  })
 }
