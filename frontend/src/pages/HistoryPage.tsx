@@ -15,11 +15,11 @@ import { ResizeHandle, useResizablePanel } from '../components/shared/ResizeHand
 import {
   ArtifactPreview,
   VitePreview,
-  isPreviewable,
   getExt,
   getCategory,
   type FileArtifact,
 } from '../components/preview'
+import { findLatestPreviewableTaskFile, findTaskFileByArtifactPath, toArtifactPath } from '../components/shared/taskFileUtils'
 import { Tooltip } from '../components/ui'
 
 export default function HistoryPage() {
@@ -156,24 +156,13 @@ export default function HistoryPage() {
   )
 }
 
-function findFirstPreviewableFile(files: TaskFile[]): TaskFile | null {
-  for (const file of files) {
-    if (file.type === 'file' && isPreviewable(file.ext || '')) return file
-    if (file.children) {
-      const found = findFirstPreviewableFile(file.children)
-      if (found) return found
-    }
-  }
-  return null
-}
-
 function toFileArtifact(
   file: TaskFile,
   getFileUrl: (path: string) => string,
   workDir: string | null,
 ): FileArtifact {
   const ext = file.ext || getExt(file.name)
-  const fullPath = workDir ? `${workDir}/${file.path}`.replace(/\\/g, '/') : file.path
+  const fullPath = toArtifactPath(file.path, workDir)
   return {
     name: file.name,
     path: fullPath,
@@ -455,6 +444,7 @@ export function SessionDetailPage() {
 
   // 自动展开标记
   const hasAutoExpandedRef = useRef(false)
+  const selectedPathRef = useRef<string | null>(null)
   const attachInFlightRef = useRef<Promise<void> | null>(null)
   const attachedSessionRef = useRef<string | null>(null)
   const prevConverseThinkingRef = useRef(false)
@@ -652,17 +642,39 @@ export function SessionDetailPage() {
   }, [session?.work_dir, startPreview])
 
   useEffect(() => {
+    selectedPathRef.current = selectedArtifact?.path || null
+  }, [selectedArtifact?.path])
+
+  useEffect(() => {
     if (hasAutoExpandedRef.current) return
     if (taskFiles.length === 0) return
 
     setIsRightSidebarVisible(true)
     hasAutoExpandedRef.current = true
 
-    const firstFile = findFirstPreviewableFile(taskFiles)
-    if (!firstFile) return
+    const latestFile = findLatestPreviewableTaskFile(taskFiles)
+    if (!latestFile) return
 
-    handleSelectArtifact(toFileArtifact(firstFile, getFileUrl, session?.work_dir || null))
+    handleSelectArtifact(toFileArtifact(latestFile, getFileUrl, session?.work_dir || null))
   }, [taskFiles, handleSelectArtifact, getFileUrl, session?.work_dir])
+
+  useEffect(() => {
+    if (taskFiles.length === 0) return
+
+    const currentFile = selectedPathRef.current
+      ? findTaskFileByArtifactPath(taskFiles, selectedPathRef.current, session?.work_dir || null)
+      : null
+
+    if (currentFile) {
+      setSelectedArtifact(toFileArtifact(currentFile, getFileUrl, session?.work_dir || null))
+      return
+    }
+
+    const latestFile = findLatestPreviewableTaskFile(taskFiles)
+    if (latestFile) {
+      setSelectedArtifact(toFileArtifact(latestFile, getFileUrl, session?.work_dir || null))
+    }
+  }, [taskFiles, getFileUrl, session?.work_dir])
 
   const handleClosePreview = useCallback(() => {
     setIsPreviewVisible(false)
@@ -982,4 +994,3 @@ export function SessionDetailPage() {
     </div>
   )
 }
-

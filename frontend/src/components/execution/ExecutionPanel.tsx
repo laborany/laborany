@@ -11,13 +11,14 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { AgentMessage, TaskFile } from '../../types'
 import type { FileArtifact } from '../preview'
-import { getExt, getCategory, isPreviewable } from '../preview'
+import { getExt, getCategory } from '../preview'
 import { useVitePreview } from '../../hooks/useVitePreview'
 import type { PendingQuestion } from '../../hooks/useAgent'
 import { ResizeHandle, useResizablePanel } from '../shared/ResizeHandle'
 import ChatInput from '../shared/ChatInput'
 import MessageList from '../shared/MessageList'
 import { QuestionInput } from '../shared/QuestionInput'
+import { findLatestPreviewableTaskFile, findTaskFileByArtifactPath, toArtifactPath } from '../shared/taskFileUtils'
 import { PreviewPanel } from './PreviewPanel'
 import { FileSidebar } from './FileSidebar'
 import { StepProgress } from './StepProgress'
@@ -72,23 +73,6 @@ const CHAT_PANEL_MAX = 800
 const CHAT_PANEL_DEFAULT = 450
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                      递归查找文件（通用）                                  │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function findFile(files: TaskFile[], predicate: (f: TaskFile) => boolean): TaskFile | null {
-  for (const file of files) {
-    if (predicate(file)) return file
-    if (file.children) {
-      const found = findFile(file.children, predicate)
-      if (found) return found
-    }
-  }
-  return null
-}
-
-const isPreviewableFile = (f: TaskFile) => f.type === 'file' && isPreviewable(f.ext || '')
-const matchesPath = (path: string) => (f: TaskFile) => f.path === path
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                      TaskFile → FileArtifact 转换                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function toFileArtifact(
@@ -97,7 +81,7 @@ function toFileArtifact(
   workDir: string | null,
 ): FileArtifact {
   const ext = file.ext || getExt(file.name)
-  const fullPath = workDir ? `${workDir}/${file.path}`.replace(/\\/g, '/') : file.path
+  const fullPath = toArtifactPath(file.path, workDir)
   return {
     name: file.name,
     path: fullPath,
@@ -451,10 +435,10 @@ function useAutoExpandPreview(
 
     if (taskFiles.length === 0) return
 
-    const firstFile = findFile(taskFiles, isPreviewableFile)
-    if (!firstFile) return
+    const latestFile = findLatestPreviewableTaskFile(taskFiles)
+    if (!latestFile) return
 
-    handleSelectArtifact(toFileArtifact(firstFile, getFileUrl, workDir))
+    handleSelectArtifact(toFileArtifact(latestFile, getFileUrl, workDir))
   }, [taskFiles, messages, hasAutoExpandedRef, setIsRightSidebarVisible, handleSelectArtifact, getFileUrl, workDir])
 }
 
@@ -477,11 +461,20 @@ function useRefreshPreview(
 
   /* 当 filesVersion 变化时，刷新当前选中的 artifact */
   useEffect(() => {
-    if (filesVersion === 0 || !selectedPathRef.current || taskFiles.length === 0) return
+    if (filesVersion === 0 || taskFiles.length === 0) return
 
-    const currentFile = findFile(taskFiles, matchesPath(selectedPathRef.current))
+    const currentFile = selectedPathRef.current
+      ? findTaskFileByArtifactPath(taskFiles, selectedPathRef.current, workDir)
+      : null
+
     if (currentFile) {
       setSelectedArtifact(toFileArtifact(currentFile, getFileUrl, workDir))
+      return
+    }
+
+    const latestFile = findLatestPreviewableTaskFile(taskFiles)
+    if (latestFile) {
+      setSelectedArtifact(toFileArtifact(latestFile, getFileUrl, workDir))
     }
   }, [filesVersion, taskFiles, getFileUrl, workDir, selectedPathRef, setSelectedArtifact])
 }

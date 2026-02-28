@@ -67,6 +67,26 @@ function resolveHighlightLanguage(lang: string): string | undefined {
   return lang
 }
 
+const MAX_HIGHLIGHT_CHAR_COUNT = 400_000
+const MAX_HIGHLIGHT_LINE_LENGTH = 4_000
+
+function getLongestLineLength(text: string): number {
+  let maxLength = 0
+  let currentLength = 0
+
+  for (let i = 0; i < text.length; i++) {
+    const charCode = text.charCodeAt(i)
+    if (charCode === 10 || charCode === 13) {
+      if (currentLength > maxLength) maxLength = currentLength
+      currentLength = 0
+      continue
+    }
+    currentLength += 1
+  }
+
+  return currentLength > maxLength ? currentLength : maxLength
+}
+
 export function CodeRenderer({ artifact }: RendererProps) {
   const [content, setContent] = useState<string>('')
   const [loading, setLoading] = useState(true)
@@ -74,6 +94,8 @@ export function CodeRenderer({ artifact }: RendererProps) {
 
   useEffect(() => {
     let cancelled = false
+    setError(null)
+    setLoading(true)
 
     if (artifact.content) {
       setContent(artifact.content)
@@ -120,19 +142,43 @@ export function CodeRenderer({ artifact }: RendererProps) {
 
   const lang = getLang(artifact.ext)
   const highlightLang = resolveHighlightLanguage(lang)
+  const shouldSkipHighlight = content.length > MAX_HIGHLIGHT_CHAR_COUNT || getLongestLineLength(content) > MAX_HIGHLIGHT_LINE_LENGTH
+
+  if (shouldSkipHighlight) {
+    return (
+      <div className="h-full min-w-0 overflow-auto bg-[#282c34] text-[#abb2bf]">
+        <div className="border-b border-white/10 px-4 py-2 text-xs text-[#8f97a3]">
+          文件内容较大或存在超长单行，已切换到纯文本模式以避免预览卡顿。
+        </div>
+        <pre className="m-0 whitespace-pre-wrap break-words p-4 text-[13px] leading-6 [overflow-wrap:anywhere]">
+          {content}
+        </pre>
+      </div>
+    )
+  }
 
   return (
-    <div className="h-full overflow-auto">
+    <div className="h-full min-w-0 overflow-auto">
       <SyntaxHighlighter
         language={highlightLang}
         style={oneDark}
         showLineNumbers
+        wrapLongLines
+        codeTagProps={{
+          style: {
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+            wordBreak: 'break-word',
+          },
+        }}
         customStyle={{
           margin: 0,
           padding: '1rem',
           fontSize: '13px',
           lineHeight: '1.5',
           minHeight: '100%',
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
         }}
       >
         {content}

@@ -4,6 +4,7 @@ import type { FileArtifact } from '../preview'
 import { getCategory, getExt, getFileIcon, isPreviewable } from '../preview'
 import { CollapsibleSection } from './CollapsibleSection'
 import { FileTree, type TreeFile } from './FileTreeItem'
+import { isSelectedArtifactPath, sortTaskFilesByRecency, toArtifactPath } from './taskFileUtils'
 
 interface RightSidebarProps {
   messages: AgentMessage[]
@@ -91,7 +92,7 @@ function toFileArtifact(
   workDir: string | null,
 ): FileArtifact {
   const ext = file.ext || getExt(file.name)
-  const fullPath = workDir ? `${workDir}/${file.path}`.replace(/\\/g, '/') : file.path
+  const fullPath = toArtifactPath(file.path, workDir)
 
   return {
     name: file.name,
@@ -165,21 +166,6 @@ function ArtifactItem({
   )
 }
 
-function collectAllFiles(files: TaskFile[]): TaskFile[] {
-  const result: TaskFile[] = []
-
-  for (const file of files) {
-    if (file.type === 'file') {
-      result.push(file)
-    }
-    if (file.children) {
-      result.push(...collectAllFiles(file.children))
-    }
-  }
-
-  return result
-}
-
 export function RightSidebar({
   messages,
   isRunning,
@@ -193,7 +179,7 @@ export function RightSidebar({
 
   const toolUsages = extractToolUsages(messages)
   const visibleTools = showAllTools ? toolUsages : toolUsages.slice(-5)
-  const allFiles = collectAllFiles(artifacts)
+  const allFiles = useMemo(() => sortTaskFilesByRecency(artifacts), [artifacts])
 
   const handlePreview = useCallback(
     (file: TreeFile) => {
@@ -219,7 +205,7 @@ export function RightSidebar({
               <ArtifactItem
                 key={file.path}
                 file={file}
-                isSelected={selectedArtifact?.path === file.path}
+                isSelected={isSelectedArtifactPath(file, selectedArtifact?.path, workDir)}
                 onClick={() => onSelectArtifact(toFileArtifact(file, getFileUrl, workDir))}
               />
             ))}
