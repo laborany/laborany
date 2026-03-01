@@ -43,30 +43,55 @@ function getResourcesPath(): string | null {
  */
 export function getUvPath(): string | null {
   const os = platform()
+  const arch = process.arch
   const uvBin = os === 'win32' ? 'uv.exe' : 'uv'
   const exeDir = dirname(process.execPath)
   const resourcesPath = getResourcesPath()
+  const bundleDirNames = os === 'darwin'
+    ? [arch === 'arm64' ? 'uv-bundle-arm64' : 'uv-bundle-x64', 'uv-bundle']
+    : ['uv-bundle']
 
   const candidates: string[] = []
+  const seen = new Set<string>()
 
   // 1. Electron 打包路径（resourcesPath 存在时）
   if (resourcesPath) {
-    candidates.push(join(resourcesPath, 'uv-bundle', uvBin))
+    for (const dirName of bundleDirNames) {
+      const candidate = join(resourcesPath, dirName, uvBin)
+      if (!seen.has(candidate)) {
+        seen.add(candidate)
+        candidates.push(candidate)
+      }
+    }
   }
 
   // 2. pkg 打包路径（API exe 在 resources/api/）
-  candidates.push(
-    join(exeDir, '..', 'uv-bundle', uvBin),
-    join(exeDir, 'uv-bundle', uvBin),
-    join(exeDir, uvBin),
-  )
+  for (const base of [join(exeDir, '..'), exeDir, join(exeDir, '..', 'resources'), join(exeDir, 'resources')]) {
+    for (const dirName of bundleDirNames) {
+      const candidate = join(base, dirName, uvBin)
+      if (!seen.has(candidate)) {
+        seen.add(candidate)
+        candidates.push(candidate)
+      }
+    }
+  }
+  const exeLocalUv = join(exeDir, uvBin)
+  if (!seen.has(exeLocalUv)) {
+    seen.add(exeLocalUv)
+    candidates.push(exeLocalUv)
+  }
 
   // 3. 开发模式路径
   if (!isPackaged()) {
-    candidates.push(
-      join(__dirname, '..', '..', '..', '..', 'uv-bundle', uvBin),
-      join(process.cwd(), 'uv-bundle', uvBin),
-    )
+    for (const base of [join(__dirname, '..', '..', '..', '..'), process.cwd()]) {
+      for (const dirName of bundleDirNames) {
+        const candidate = join(base, dirName, uvBin)
+        if (!seen.has(candidate)) {
+          seen.add(candidate)
+          candidates.push(candidate)
+        }
+      }
+    }
   }
 
   for (const path of candidates) {

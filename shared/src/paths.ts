@@ -7,10 +7,10 @@
  * ║    - 用户 Skills（可写）：系统用户目录，自动创建                            ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { join, dirname } from 'path'
+import { join, dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir, platform } from 'os'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -89,13 +89,41 @@ function getUserDir(): string {
  * │         skills 在 resources/skills/                                      │
  * │  开发模式：相对于 shared 包                                               │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function getBuiltinSkillsDir(): string {
-  // 打包后：检查 exe 同级的 ../skills 目录
-  const pkgPath = join(dirname(process.execPath), '..', 'skills')
-  if (existsSync(pkgPath)) return pkgPath
+function hasSkillManifests(skillsDir: string): boolean {
+  if (!existsSync(skillsDir)) return false
+  try {
+    const entries = readdirSync(skillsDir, { withFileTypes: true })
+    return entries.some((entry) => (
+      entry.isDirectory() && existsSync(join(skillsDir, entry.name, 'SKILL.md'))
+    ))
+  } catch {
+    return false
+  }
+}
 
-  // 开发模式：shared/src/paths.ts -> laborany/skills
-  // __dirname = shared/src, 所以需要 ../../skills
+function getBuiltinSkillsDir(): string {
+  const envOverride = (process.env.LABORANY_BUILTIN_SKILLS_DIR || '').trim()
+  const execDir = dirname(process.execPath)
+  const candidates = [
+    envOverride,
+    join(execDir, '..', 'skills'),
+    join(execDir, '..', '..', 'skills'),
+    join(execDir, '..', '..', '..', 'skills'),
+    join(process.cwd(), 'skills'),
+    join(__dirname, '../..', 'skills'),
+    join(__dirname, '../../..', 'skills'),
+  ]
+
+  const seen = new Set<string>()
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    const resolved = resolve(candidate)
+    if (seen.has(resolved)) continue
+    seen.add(resolved)
+    if (hasSkillManifests(resolved)) return resolved
+  }
+
+  // 兜底：保持原行为，避免返回空路径
   return join(__dirname, '../..', 'skills')
 }
 

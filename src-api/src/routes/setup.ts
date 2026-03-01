@@ -35,13 +35,34 @@ interface GitDependencyStatus {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getBundledClaudePath(): { node: string; cli: string } | null {
   const os = platform()
+  const arch = process.arch
   const exeDir = dirname(process.execPath)
+  const proc = process as NodeJS.Process & { resourcesPath?: string }
 
-  const candidates = [
-    join(exeDir, '..', 'resources', 'cli-bundle'),
-    join(exeDir, 'resources', 'cli-bundle'),
-    join(exeDir, '..', 'cli-bundle'),
+  const bundleDirNames = os === 'darwin'
+    ? [arch === 'arm64' ? 'cli-bundle-arm64' : 'cli-bundle-x64', 'cli-bundle']
+    : ['cli-bundle']
+
+  const baseCandidates = [
+    proc.resourcesPath || '',
+    join(exeDir, '..'),
+    exeDir,
+    join(exeDir, '..', 'resources'),
+    join(exeDir, 'resources'),
+    process.cwd(),
   ]
+
+  const candidates: string[] = []
+  const seen = new Set<string>()
+  for (const base of baseCandidates) {
+    if (!base) continue
+    for (const dirName of bundleDirNames) {
+      const candidate = join(base, dirName)
+      if (seen.has(candidate)) continue
+      seen.add(candidate)
+      candidates.push(candidate)
+    }
+  }
 
   for (const bundleDir of candidates) {
     const nodeBin = os === 'win32'

@@ -156,6 +156,37 @@ const processedMessageIds = new Map<string, number>()
 const userProcessingQueue = new Map<string, Promise<void>>()
 const recentScheduleCreateMap = new Map<string, number>()
 
+interface FeishuOutputSession {
+  update(text: string): Promise<void>
+  close(finalText?: string, summary?: string): Promise<void>
+  isActive(): boolean
+}
+
+class FeishuTextSession implements FeishuOutputSession {
+  private closed = false
+
+  constructor(
+    private readonly client: Client,
+    private readonly chatId: string,
+  ) {}
+
+  async update(_text: string): Promise<void> {
+    // 文本降级通道不做中间增量更新，避免刷屏
+  }
+
+  async close(finalText?: string): Promise<void> {
+    if (this.closed) return
+    this.closed = true
+    const text = (finalText || '').trim()
+    if (!text) return
+    await sendText(this.client, this.chatId, text)
+  }
+
+  isActive(): boolean {
+    return !this.closed
+  }
+}
+
 function isDuplicateMessage(messageId: string): boolean {
   const now = Date.now()
 
@@ -770,6 +801,36 @@ async function fetchSkillList(): Promise<SkillListItem[]> {
   return skills
 }
 
+async function sendSkillListInChunks(client: Client, chatId: string, skills: SkillListItem[]): Promise<void> {
+  if (skills.length === 0) {
+    await sendText(client, chatId, '暂无可用技能')
+    return
+  }
+
+  const lines = skills.map((skill, index) => `${index + 1}. ${skill.id} - ${skill.name}`)
+  const maxChunkLength = 1400
+  const chunks: string[] = []
+  let current = ''
+
+  for (const line of lines) {
+    const nextLine = `${line}\n`
+    if ((current + nextLine).length > maxChunkLength) {
+      chunks.push(current.trimEnd())
+      current = ''
+    }
+    current += nextLine
+  }
+
+  if (current.trim()) chunks.push(current.trimEnd())
+
+  for (let i = 0; i < chunks.length; i++) {
+    const header = chunks.length > 1
+      ? `可用技能列表 (${i + 1}/${chunks.length})`
+      : '可用技能列表'
+    await sendText(client, chatId, `${header}\n${chunks[i]}`)
+  }
+}
+
 async function detectNewSkillIdFromKnown(knownSkillIds: string[]): Promise<string | undefined> {
   if (!knownSkillIds.length) return undefined
 
@@ -930,6 +991,38 @@ async function skillExists(skillId: string): Promise<boolean> {
   return skills.some(item => item.id === id)
 }
 
+async function resolveExecutableSkillId(
+  preferredSkillId: string,
+  fallbackSkillId: string,
+): Promise<{ skillId: string; fallbackUsed: boolean; reason?: string }> {
+  const preferred = preferredSkillId.trim()
+  let fallbackReason = ''
+  if (preferred) {
+    try {
+      if (await skillExists(preferred)) {
+        return { skillId: preferred, fallbackUsed: false }
+      }
+      fallbackReason = `技能 ${preferred} 不可用，已回退默认技能`
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      fallbackReason = `校验技能 ${preferred} 失败：${detail}`
+    }
+  }
+
+  const fallback = fallbackSkillId.trim() || '__generic__'
+  if (fallback) {
+    const fallbackExists = await skillExists(fallback)
+    if (fallbackExists) {
+      const reason = fallbackReason || (preferred
+        ? `技能 ${preferred} 不可用，已回退 ${fallback}`
+        : undefined)
+      return { skillId: fallback, fallbackUsed: preferred !== '', reason }
+    }
+  }
+
+  throw new Error('当前运行环境无可执行技能，请检查内置 skills 是否完整')
+}
+
 async function createCapabilityFromSeed(
   stateKey: string,
   seedQuery: string,
@@ -1032,20 +1125,28 @@ async function upsertExternalSession(
   sessionId: string,
   query: string,
   status: ExternalSessionStatus = 'running',
-): Promise<void> {
+): Promise<boolean> {
+  const normalizedQuery = query.trim() || '飞书会话'
   try {
-    await fetch(`${getSrcApiBaseUrl()}/sessions/external/upsert`, {
+    const response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/upsert`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sessionId,
-        query,
+        query: normalizedQuery,
         status,
         skillId: getFeishuHistorySkillId(),
       }),
     })
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      console.warn(`[Feishu] upsert external session failed: status=${response.status} ${detail}`)
+      return false
+    }
+    return true
   } catch (err) {
     console.warn('[Feishu] failed to upsert external session:', err)
+    return false
   }
 }
 
@@ -1054,13 +1155,34 @@ async function appendExternalMessage(
   type: 'user' | 'assistant' | 'error' | 'system',
   content: string,
 ): Promise<void> {
-  if (!content.trim()) return
+  const normalizedContent = content.trim()
+  if (!normalizedContent) return
+
+  const payload = JSON.stringify({ sessionId, type, content: normalizedContent })
+
   try {
-    await fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
+    let response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, type, content }),
+      body: payload,
     })
+
+    if (response.status === 404) {
+      const queryHint = type === 'user' ? normalizedContent : '飞书会话'
+      const created = await upsertExternalSession(sessionId, queryHint, 'running')
+      if (created) {
+        response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+        })
+      }
+    }
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      console.warn(`[Feishu] append external message failed: status=${response.status} ${detail}`)
+    }
   } catch (err) {
     console.warn('[Feishu] failed to append external message:', err)
   }
@@ -1071,11 +1193,27 @@ async function updateExternalSessionStatus(
   status: ExternalSessionStatus,
 ): Promise<void> {
   try {
-    await fetch(`${getSrcApiBaseUrl()}/sessions/external/status`, {
+    let response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, status }),
     })
+
+    if (response.status === 404) {
+      const created = await upsertExternalSession(sessionId, '飞书会话', status)
+      if (created) {
+        response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, status }),
+        })
+      }
+    }
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      console.warn(`[Feishu] update external status failed: status=${response.status} ${detail}`)
+    }
   } catch (err) {
     console.warn('[Feishu] failed to update external session status:', err)
   }
@@ -1087,7 +1225,7 @@ async function executeSkill(
   stateKey: string,
   skillId: string,
   query: string,
-  card: FeishuStreamingSession | null,
+  card: FeishuOutputSession | null,
   oneTimeModelProfileId?: string,
 ): Promise<void> {
   const state = getUserState(stateKey)
@@ -1140,7 +1278,7 @@ async function executeSkill(
         const msg = event.message || event.content || 'Execution error'
         if (card) await card.close(accumulated || msg)
         else await sendText(client, chatId, `❌ ${msg}`)
-        return
+        throw new Error(msg)
       }
 
       if (event.type === 'done' || event.type === 'stopped' || event.type === 'aborted') {
@@ -1214,7 +1352,7 @@ async function dispatchAction(
   stateKey: string,
   actionEvent: SseEvent,
   converseText: string,
-  card: FeishuStreamingSession,
+  card: FeishuOutputSession,
   historySessionId: string,
   modelProfileIdOverride?: string,
 ): Promise<void> {
@@ -1260,17 +1398,25 @@ async function dispatchAction(
   }
 
   if (actionType === 'recommend_capability' && targetId) {
-    await card.update(`Matched capability ${targetId}, executing...`)
-    await appendExternalMessage(historySessionId, 'assistant', `已匹配技能 ${targetId}，任务已开始执行。`)
-    await executeSkill(client, chatId, stateKey, targetId, query, card, modelProfileIdOverride)
+    const resolved = await resolveExecutableSkillId(targetId, config.defaultSkillId)
+    const notifyText = resolved.fallbackUsed
+      ? `匹配技能 ${targetId} 失败，已回退到 ${resolved.skillId} 执行。`
+      : `已匹配技能 ${targetId}，任务已开始执行。`
+    await card.update(`Matched capability ${resolved.skillId}, executing...`)
+    await appendExternalMessage(historySessionId, 'assistant', notifyText)
+    await executeSkill(client, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
     await updateExternalSessionStatus(historySessionId, 'completed')
     return
   }
 
   if (actionType === 'execute_generic') {
+    const resolved = await resolveExecutableSkillId(config.defaultSkillId, '__generic__')
     await card.update('Executing in generic mode...')
-    await appendExternalMessage(historySessionId, 'assistant', '已进入通用执行模式，任务已开始。')
-    await executeSkill(client, chatId, stateKey, config.defaultSkillId, query, card, modelProfileIdOverride)
+    const hint = resolved.fallbackUsed && resolved.reason
+      ? `已进入通用执行模式（${resolved.reason}）。`
+      : '已进入通用执行模式，任务已开始。'
+    await appendExternalMessage(historySessionId, 'assistant', hint)
+    await executeSkill(client, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
     await updateExternalSessionStatus(historySessionId, 'completed')
     return
   }
@@ -1400,8 +1546,9 @@ async function dispatchAction(
     return
   }
 
+  const resolved = await resolveExecutableSkillId(config.defaultSkillId, '__generic__')
   await card.update('Executing...')
-  await executeSkill(client, chatId, stateKey, config.defaultSkillId, query, card, modelProfileIdOverride)
+  await executeSkill(client, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
   await appendExternalMessage(historySessionId, 'assistant', '任务已开始执行。')
   await updateExternalSessionStatus(historySessionId, 'completed')
 }
@@ -1413,7 +1560,7 @@ async function runConverse(
   chatId: string,
   stateKey: string,
   text: string,
-  card: FeishuStreamingSession,
+  card: FeishuOutputSession,
   historySessionId: string,
   oneTimeModelProfileId?: string,
 ): Promise<void> {
@@ -1467,6 +1614,7 @@ async function runConverse(
     if (event.type === 'question') {
       const questionText = extractQuestionText(event)
       await card.close(questionText)
+      await appendExternalMessage(historySessionId, 'assistant', questionText)
       appendConverseMessage(stateKey, 'assistant', questionText)
       return
     }
@@ -1474,7 +1622,7 @@ async function runConverse(
     if (event.type === 'error') {
       const msg = event.message || event.content || 'Converse error'
       await card.close(`❌ ${msg}`)
-      return
+      throw new Error(msg)
     }
 
     if (event.type === 'done') {
@@ -1489,11 +1637,15 @@ async function runConverse(
 
   if (converseText.trim()) {
     appendConverseMessage(stateKey, 'assistant', converseText)
+    await appendExternalMessage(historySessionId, 'assistant', converseText)
+    await updateExternalSessionStatus(historySessionId, 'completed')
     await card.close(converseText)
     return
   }
 
   const fallback = '我还需要更多信息，请补充你的需求。'
+  await appendExternalMessage(historySessionId, 'assistant', fallback)
+  await updateExternalSessionStatus(historySessionId, 'completed')
   await card.close(fallback)
 }
 
@@ -1685,8 +1837,7 @@ async function handleCommand(
   if (trimmed === '/skills') {
     try {
       const skills = await fetchSkillList()
-      const list = skills.map(s => `- ${s.id} - ${s.name}`).join('\n')
-      await sendText(client, chatId, list || '暂无可用技能')
+      await sendSkillListInChunks(client, chatId, skills)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       await sendText(client, chatId, `获取技能列表失败: ${msg}`)
@@ -1765,6 +1916,26 @@ async function handleCommand(
   if (skillMatch) {
     const skillId = skillMatch[1]
     const query = skillMatch[2]?.trim() || '请执行该技能'
+    const commandText = `/skill ${skillId}${query ? ` ${query}` : ''}`
+
+    try {
+      const exists = await skillExists(skillId)
+      if (!exists) {
+        await sendText(client, chatId, `❌ 未找到技能：${skillId}。可先输入 /skills 查看可用技能。`)
+        return true
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await sendText(client, chatId, `❌ 校验技能失败：${msg}`)
+      return true
+    }
+
+    const userState = getUserState(stateKey)
+    const historySessionId = userState.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
+    setConverseSessionId(stateKey, historySessionId)
+    await upsertExternalSession(historySessionId, commandText, 'running')
+    await appendExternalMessage(historySessionId, 'user', commandText)
+    await appendExternalMessage(historySessionId, 'assistant', `已开始执行技能 ${skillId}。`)
 
     const card = new FeishuStreamingSession(client, config)
     const started = await card.start(chatId, `技能执行：${config.botName}`)
@@ -1774,8 +1945,11 @@ async function handleCommand(
 
     try {
       await executeSkill(client, chatId, stateKey, skillId, query, started ? card : null)
+      await updateExternalSessionStatus(historySessionId, 'completed')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      await appendExternalMessage(historySessionId, 'error', msg)
+      await updateExternalSessionStatus(historySessionId, 'failed')
       if (started) await card.close(`❌ ${msg}`)
       else await sendText(client, chatId, `❌ ${msg}`)
     }
@@ -1863,35 +2037,38 @@ export async function handleFeishuMessage(
     const userState = getUserState(stateKey)
     const historySessionId = userState.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
     setConverseSessionId(stateKey, historySessionId)
+    await upsertExternalSession(historySessionId, text, 'running')
+    await appendExternalMessage(historySessionId, 'user', text)
 
-    const card = new FeishuStreamingSession(larkClient, config)
-    const started = await card.start(chatId, config.botName)
+    const streamingCard = new FeishuStreamingSession(larkClient, config)
+    const started = await streamingCard.start(chatId, config.botName)
+    const outputSession: FeishuOutputSession = started
+      ? streamingCard
+      : new FeishuTextSession(larkClient, chatId)
+
     if (!started) {
-      await upsertExternalSession(historySessionId, text, 'running')
-      await appendExternalMessage(historySessionId, 'user', text)
-      await appendExternalMessage(historySessionId, 'assistant', '已开始执行任务，请查看执行结果。')
-      try {
-        await executeSkill(larkClient, chatId, stateKey, config.defaultSkillId, text, null, oneTimeModelProfileId)
-        await updateExternalSessionStatus(historySessionId, 'completed')
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        await appendExternalMessage(historySessionId, 'error', msg)
-        await updateExternalSessionStatus(historySessionId, 'failed')
-        await sendText(larkClient, chatId, `❌ ${msg}`)
-      }
-      return
+      await sendText(larkClient, chatId, '⚠️ 流式卡片不可用，已切换文本回复模式。')
     }
+    await outputSession.update('正在分析你的需求...')
 
-    await card.update('正在分析你的需求...')
     try {
-      await runConverse(larkClient, config, openId, chatId, stateKey, text, card, historySessionId, oneTimeModelProfileId)
+      await runConverse(
+        larkClient,
+        config,
+        openId,
+        chatId,
+        stateKey,
+        text,
+        outputSession,
+        historySessionId,
+        oneTimeModelProfileId,
+      )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       await appendExternalMessage(historySessionId, 'error', msg)
       await updateExternalSessionStatus(historySessionId, 'failed')
       console.error('[Feishu] message handling failed:', err)
-      if (card.isActive()) await card.close(`❌ ${msg}`)
-      else await sendText(larkClient, chatId, `❌ ${msg}`)
+      await outputSession.close(`❌ ${msg}`)
     }
   })
 }

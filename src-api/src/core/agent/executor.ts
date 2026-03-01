@@ -255,18 +255,35 @@ export function ensureTaskDir(sessionId: string): string {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getBundledClaudePath(): { node: string; cli: string } | null {
   const os = platform()
+  const arch = process.arch
   const exeDir = dirname(process.execPath)
+  const proc = process as NodeJS.Process & { resourcesPath?: string }
 
-  // 内置 CLI Bundle 的可能位置
-  const candidates = [
-    // Electron 打包后：API exe 在 resources/api/，cli-bundle 在 resources/cli-bundle
-    join(exeDir, '..', 'cli-bundle'),
-    // Windows 备选路径
-    join(exeDir, '..', 'resources', 'cli-bundle'),
-    join(exeDir, 'resources', 'cli-bundle'),
-    // 开发模式
-    join(__dirname, '..', '..', '..', '..', 'cli-bundle'),
+  const bundleDirNames = os === 'darwin'
+    ? [arch === 'arm64' ? 'cli-bundle-arm64' : 'cli-bundle-x64', 'cli-bundle']
+    : ['cli-bundle']
+
+  const baseCandidates = [
+    proc.resourcesPath || '',
+    join(exeDir, '..'),
+    exeDir,
+    join(exeDir, '..', 'resources'),
+    join(exeDir, 'resources'),
+    join(__dirname, '..', '..', '..', '..'),
+    process.cwd(),
   ]
+
+  const candidates: string[] = []
+  const seen = new Set<string>()
+  for (const base of baseCandidates) {
+    if (!base) continue
+    for (const dirName of bundleDirNames) {
+      const candidate = join(base, dirName)
+      if (seen.has(candidate)) continue
+      seen.add(candidate)
+      candidates.push(candidate)
+    }
+  }
 
   for (const bundleDir of candidates) {
     const nodeBin = os === 'win32'
