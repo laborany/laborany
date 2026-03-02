@@ -602,6 +602,31 @@ export default function SettingsPage() {
     setTestingEmail(true)
     setEmailTestResult(null)
     try {
+      // 先自动保存邮件相关配置
+      const emailKeys = groupedKeys.email.filter(key => editValues[key] !== undefined)
+      if (emailKeys.length > 0) {
+        const payload: Record<string, string> = {}
+        for (const key of emailKeys) {
+          payload[key] = editValues[key] || ''
+        }
+
+        const saveRes = await fetch(`${API_BASE}/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config: payload }),
+        })
+
+        if (!saveRes.ok) {
+          setEmailTestResult({ success: false, message: '保存配置失败，无法测试' })
+          setTestingEmail(false)
+          return
+        }
+
+        // 等待配置生效
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+
+      // 发送测试邮件
       const res = await fetch(`${AGENT_API_BASE}/notifications/test-email`, { method: 'POST' })
       const data = await res.json() as { success?: boolean; error?: string; message?: string }
       if (data.success) {

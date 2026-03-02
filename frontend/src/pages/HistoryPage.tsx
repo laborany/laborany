@@ -1,6 +1,6 @@
 ﻿
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useAgent, type PendingQuestion } from '../hooks/useAgent'
 import { useConverse } from '../hooks/useConverse'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
@@ -25,6 +25,7 @@ import { Tooltip } from '../components/ui'
 export default function HistoryPage() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchSessions()
@@ -42,6 +43,35 @@ export default function HistoryPage() {
       // 忽略错误
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function deleteSession(sessionId: string, event: React.MouseEvent) {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (!confirm('确定要删除这条会话记录吗？此操作无法撤销。')) {
+      return
+    }
+
+    setDeletingId(sessionId)
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.id !== sessionId))
+      } else {
+        const data = await res.json()
+        alert(data.error || '删除失败')
+      }
+    } catch {
+      alert('删除失败，请稍后重试')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -146,6 +176,22 @@ export default function HistoryPage() {
                 <div className="ml-4 flex items-center gap-2">
                   {getSourceBadge(session.source, session.id, session.skill_id)}
                   {getStatusBadge(session.status)}
+                  <button
+                    onClick={(e) => deleteSession(session.id, e)}
+                    disabled={deletingId === session.id}
+                    className="p-1.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50"
+                    title="删除会话"
+                  >
+                    {deletingId === session.id ? (
+                      <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    )}
+                  </button>
                 </div>
               </div>
             </Link>
@@ -430,12 +476,14 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
 
 export function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>()
+  const navigate = useNavigate()
   const { getSkillName } = useSkillNameMap()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [liveStatus, setLiveStatus] = useState<SessionLiveStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [continuing, setContinuing] = useState(false)
   const [taskFiles, setTaskFiles] = useState<TaskFile[]>([])
+  const [deleting, setDeleting] = useState(false)
 
   const [isPreviewVisible, setIsPreviewVisible] = useState(false)
   const [isRightSidebarVisible, setIsRightSidebarVisible] = useState(false)
@@ -715,6 +763,34 @@ export function SessionDetailPage() {
     [handleContinue],
   )
 
+  async function handleDeleteSession() {
+    if (!sessionId) return
+
+    if (!confirm('确定要删除这条会话记录吗？此操作无法撤销。')) {
+      return
+    }
+
+    setDeleting(true)
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (res.ok) {
+        navigate('/history')
+      } else {
+        const data = await res.json()
+        alert(data.error || '删除失败')
+      }
+    } catch {
+      alert('删除失败，请稍后重试')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   useEffect(() => {
     if (!continuing) return
 
@@ -888,6 +964,25 @@ export function SessionDetailPage() {
                 </button>
               </Tooltip>
             )}
+            {/* 删除按钮 */}
+            <Tooltip content="删除会话" side="bottom">
+              <button
+                onClick={handleDeleteSession}
+                disabled={deleting || effectiveStatus === 'running'}
+                className="p-1.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title={effectiveStatus === 'running' ? '无法删除正在运行的会话' : '删除会话'}
+              >
+                {deleting ? (
+                  <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                )}
+              </button>
+            </Tooltip>
             {/* 时间 */}
             <div className="text-sm text-muted-foreground">
               {parseUTCDate(session.created_at).toLocaleString('zh-CN')}

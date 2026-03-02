@@ -361,4 +361,31 @@ session.post('/external/status', async (c) => {
   return c.json({ success: true })
 })
 
+session.delete('/:sessionId', (c) => {
+  const sessionId = c.req.param('sessionId')
+
+  const sessionExists = dbHelper.get<{ id: string }>(
+    `SELECT id FROM sessions WHERE id = ?`,
+    [sessionId],
+  )
+
+  if (!sessionExists) {
+    return c.json({ error: '会话不存在' }, 404)
+  }
+
+  // 检查会话是否正在运行
+  const runtimeStatus = runtimeTaskManager.getStatus(sessionId)
+  if (runtimeStatus?.isRunning) {
+    return c.json({ error: '无法删除正在运行的会话，请先停止任务' }, 400)
+  }
+
+  // 删除会话相关的消息
+  dbHelper.run(`DELETE FROM messages WHERE session_id = ?`, [sessionId])
+
+  // 删除会话记录
+  dbHelper.run(`DELETE FROM sessions WHERE id = ?`, [sessionId])
+
+  return c.json({ success: true, message: '会话已删除' })
+})
+
 export default session
