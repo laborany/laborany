@@ -275,12 +275,17 @@ function processRuntimeCommand() {
 }
 
 function buildSidecarEnv(extra = {}) {
+  const builtinSkillsDir = isDev
+    ? path.join(__dirname, '..', 'skills')
+    : path.join(process.resourcesPath, 'skills')
+
   return {
     ...process.env,
     LABORANY_HOME: runtimePaths.appHome || process.env.LABORANY_HOME || '',
     LABORANY_LOG_DIR: runtimePaths.logsDir || process.env.LABORANY_LOG_DIR || '',
     LABORANY_RUNTIME_META_PATH: runtimePaths.runtimeMetaPath || process.env.LABORANY_RUNTIME_META_PATH || '',
     LABORANY_RUNTIME_COMMAND_PATH: runtimePaths.runtimeCommandPath || process.env.LABORANY_RUNTIME_COMMAND_PATH || '',
+    LABORANY_BUILTIN_SKILLS_DIR: builtinSkillsDir,
     ...extra,
   }
 }
@@ -413,6 +418,7 @@ function startApiServer() {
     env: buildSidecarEnv({
       PORT: API_PORT.toString(),
       NODE_ENV: 'production',
+      AGENT_SERVICE_URL: `http://127.0.0.1:${AGENT_PORT}`,
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -467,6 +473,8 @@ function startAgentServer() {
       AGENT_PORT: AGENT_PORT.toString(),
       NODE_ENV: 'production',
       BETTER_SQLITE3_BINDING: sqliteBindingPath,
+      SRC_API_BASE_URL: `http://127.0.0.1:${API_PORT}/api`,
+      AGENT_SERVICE_URL: `http://127.0.0.1:${AGENT_PORT}`,
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
