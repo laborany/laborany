@@ -104,14 +104,18 @@ function hasSkillManifests(skillsDir: string): boolean {
 function getBuiltinSkillsDir(): string {
   const envOverride = (process.env.LABORANY_BUILTIN_SKILLS_DIR || '').trim()
   const execDir = dirname(process.execPath)
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath || ''
+  const userHomeDir = resolve(getUserDir())
+  const userSkillsDir = resolve(join(getUserDir(), 'skills'))
   const candidates = [
     envOverride,
+    resourcesPath ? join(resourcesPath, 'skills') : '',
     join(execDir, '..', 'skills'),
     join(execDir, '..', '..', 'skills'),
     join(execDir, '..', '..', '..', 'skills'),
-    join(process.cwd(), 'skills'),
     join(__dirname, '../..', 'skills'),
     join(__dirname, '../../..', 'skills'),
+    join(process.cwd(), 'skills'),
   ]
 
   const seen = new Set<string>()
@@ -120,6 +124,8 @@ function getBuiltinSkillsDir(): string {
     const resolved = resolve(candidate)
     if (seen.has(resolved)) continue
     seen.add(resolved)
+    if (resolved === userHomeDir || resolved.startsWith(`${userHomeDir}/`) || resolved.startsWith(`${userHomeDir}\\`)) continue
+    if (resolved === userSkillsDir) continue
     if (hasSkillManifests(resolved)) return resolved
   }
 
