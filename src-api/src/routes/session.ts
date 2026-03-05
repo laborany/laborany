@@ -9,7 +9,13 @@ const ALLOWED_MESSAGE_TYPES = new Set(['user', 'assistant', 'tool_use', 'tool_re
 
 type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu'
 
-function inferSessionSource(sessionId: string, skillId: string): SessionSource {
+function inferSessionSource(sessionId: string, skillId: string, dbSource?: string): SessionSource {
+  // 优先使用数据库中的 source 字段
+  if (dbSource && ['desktop', 'feishu', 'cron', 'converse'].includes(dbSource)) {
+    return dbSource as SessionSource
+  }
+
+  // 向后兼容：根据 sessionId 推断
   const sid = (sessionId || '').toLowerCase()
   if (sid.startsWith('cron-') || sid.startsWith('cron-manual-')) return 'cron'
   if (sid.startsWith('feishu-') || sid.startsWith('feishu-conv-')) return 'feishu'
@@ -32,8 +38,9 @@ session.get('/', (c) => {
     status: string
     cost: number
     created_at: string
+    source?: string
   }>(`
-    SELECT id, skill_id, query, status, cost, created_at
+    SELECT id, skill_id, query, status, cost, created_at, source
     FROM sessions
     ORDER BY created_at DESC
     LIMIT 100
@@ -42,7 +49,7 @@ session.get('/', (c) => {
   return c.json(
     sessions.map((item) => ({
       ...item,
-      source: inferSessionSource(item.id, item.skill_id),
+      source: inferSessionSource(item.id, item.skill_id, item.source),
     })),
   )
 })
@@ -111,8 +118,9 @@ session.get('/:sessionId', (c) => {
     cost: number
     work_dir: string | null
     created_at: string
+    source?: string
   }>(`
-    SELECT id, skill_id, query, status, cost, work_dir, created_at
+    SELECT id, skill_id, query, status, cost, work_dir, created_at, source
     FROM sessions
     WHERE id = ?
   `, [sessionId])
@@ -197,7 +205,7 @@ session.get('/:sessionId', (c) => {
 
   return c.json({
     ...sessionData,
-    source: inferSessionSource(sessionData.id, sessionData.skill_id),
+    source: inferSessionSource(sessionData.id, sessionData.skill_id, sessionData.source),
     work_dir: workDir,
     messages: formattedMessages,
   })

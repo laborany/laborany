@@ -2,7 +2,7 @@ import { execSync, spawnSync } from 'child_process'
 import { existsSync } from 'fs'
 import { homedir, platform } from 'os'
 import { dirname, join } from 'path'
-import { wrapCmdForUtf8, withUtf8Env } from 'laborany-shared'
+import { wrapCmdForUtf8, withUtf8Env, sanitizeClaudeEnv } from 'laborany-shared'
 import { RESOURCES_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
 
@@ -274,8 +274,9 @@ export interface ModelOverride {
 export function buildClaudeEnvConfig(overrides?: ModelOverride): Record<string, string | undefined> {
   refreshRuntimeConfig()
 
-  const env: Record<string, string | undefined> = withUtf8Env({ ...process.env })
-  delete env.ANTHROPIC_AUTH_TOKEN
+  const env: Record<string, string | undefined> = sanitizeClaudeEnv(
+    withUtf8Env({ ...process.env }),
+  )
 
   // overrides > process.env, never mutate process.env itself
   if (overrides?.apiKey) {

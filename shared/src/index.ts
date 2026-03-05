@@ -30,4 +30,6 @@ export {
 export {
   wrapCmdForUtf8,
   withUtf8Env,
+  removeEnvKeysCaseInsensitive,
+  sanitizeClaudeEnv,
 } from './encoding.js'

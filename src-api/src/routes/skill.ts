@@ -81,6 +81,8 @@ function ensureRunningSession(
   query: string,
   workDir: string,
   modelMeta?: SessionModelMeta,
+  source?: string,
+  sourceMeta?: Record<string, unknown>,
 ): void {
   const existing = dbHelper.get<{ id: string }>(
     `SELECT id FROM sessions WHERE id = ?`,
@@ -91,8 +93,8 @@ function ensureRunningSession(
     dbHelper.run(
       `INSERT INTO sessions (
         id, user_id, skill_id, query, status, work_dir,
-        model_profile_id, model_profile_name, model_name
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        model_profile_id, model_profile_name, model_name, source, source_meta
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         sessionId,
         'default',
@@ -103,6 +105,8 @@ function ensureRunningSession(
         modelMeta?.modelProfileId || null,
         modelMeta?.modelProfileName || null,
         modelMeta?.modelName || null,
+        source || 'desktop',
+        sourceMeta ? JSON.stringify(sourceMeta) : null,
       ],
     )
     return
@@ -110,7 +114,7 @@ function ensureRunningSession(
 
   dbHelper.run(
     `UPDATE sessions
-     SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?
+     SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?, source = ?, source_meta = ?
      WHERE id = ?`,
     [
       'running',
@@ -118,6 +122,8 @@ function ensureRunningSession(
       modelMeta?.modelProfileId || null,
       modelMeta?.modelProfileName || null,
       modelMeta?.modelName || null,
+      source || 'desktop',
+      sourceMeta ? JSON.stringify(sourceMeta) : null,
       sessionId,
     ],
   )
@@ -393,6 +399,8 @@ skill.post('/execute', async (c) => {
   let originQuery: string | undefined
   let existingSessionId: string | undefined
   let modelProfileIdRaw: string | undefined
+  let sourceRaw: string | undefined
+  let sourceMeta: Record<string, unknown> | undefined
   const files: File[] = []
 
   const contentType = c.req.header('Content-Type') || ''
@@ -404,6 +412,15 @@ skill.post('/execute', async (c) => {
     originQuery = body['originQuery'] as string
     existingSessionId = (body['sessionId'] as string) || (body['session_id'] as string)
     modelProfileIdRaw = (body['modelProfileId'] as string) || (body['model_profile_id'] as string)
+    sourceRaw = body['source'] as string
+    const sourceMetaStr = body['sourceMeta'] as string
+    if (sourceMetaStr) {
+      try {
+        sourceMeta = JSON.parse(sourceMetaStr)
+      } catch {
+        sourceMeta = undefined
+      }
+    }
 
     const uploadedFiles = body['files']
     if (uploadedFiles) {
@@ -422,11 +439,14 @@ skill.post('/execute', async (c) => {
     originQuery = body.originQuery
     existingSessionId = body.sessionId || body.session_id
     modelProfileIdRaw = body.modelProfileId || body.model_profile_id
+    sourceRaw = body.source
+    sourceMeta = body.sourceMeta
   }
 
   let skillId = normalizeExecutionSkillId(skillIdRaw)
   const requestedModelProfileId = (modelProfileIdRaw || '').trim() || undefined
   const modelSelection = resolveModelSelection(requestedModelProfileId)
+  const source = (sourceRaw || '').trim() || 'desktop'
 
   if (!skillId || !query) {
     return c.json({ error: '缺少 skillId 或 query 参数' }, 400)
@@ -643,11 +663,6 @@ skill.post('/execute', async (c) => {
 
   const workDir = taskDir
 
-  ensureRunningSession(sessionId, skillId, query, workDir, {
-    modelProfileId: modelSelection.modelProfileId,
-    modelProfileName: modelSelection.modelProfileName,
-    modelName: modelSelection.modelName,
-  })
   // 保存用户消息
   dbHelper.run(
     `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
@@ -665,6 +680,8 @@ skill.post('/execute', async (c) => {
     modelName: modelSelection.modelName,
     originQuery: skillId === 'skill-creator' ? (originQuery || query) : undefined,
     beforeSkillIds: skillId === 'skill-creator' ? beforeSkillIds : undefined,
+    source: source as 'desktop' | 'feishu' | 'cron' | 'converse',
+    sourceMeta,
   })
 
   return streamSSE(c, async (stream) => {

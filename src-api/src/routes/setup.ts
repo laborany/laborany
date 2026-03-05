@@ -10,7 +10,7 @@ import { existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { homedir, platform } from 'os'
 import { execSync, spawnSync } from 'child_process'
-import { wrapCmdForUtf8 } from 'laborany-shared'
+import { wrapCmdForUtf8, sanitizeClaudeEnv } from 'laborany-shared'
 import {
   getConfigDir,
   getEnvPath,
@@ -314,7 +314,7 @@ async function validateAnthropicConfig(params: {
   }
 
   try {
-    const env: Record<string, string | undefined> = { ...process.env }
+    const env: Record<string, string | undefined> = sanitizeClaudeEnv({ ...process.env })
     env.ANTHROPIC_API_KEY = apiKey
     env.ANTHROPIC_MODEL = model
     if (baseUrl) {
@@ -325,7 +325,6 @@ async function validateAnthropicConfig(params: {
     if (platform() === 'win32' && gitDependency.path) {
       env.CLAUDE_CODE_GIT_BASH_PATH = gitDependency.path
     }
-    delete env.ANTHROPIC_AUTH_TOKEN
 
     const args = [...cliLaunch.argsPrefix, '--print', '--dangerously-skip-permissions', '--model', model]
     const prompt = 'Reply with exactly: OK'

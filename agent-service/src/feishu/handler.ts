@@ -807,7 +807,7 @@ async function sendSkillListInChunks(client: Client, chatId: string, skills: Ski
     return
   }
 
-  const lines = skills.map((skill, index) => `${index + 1}. ${skill.id} - ${skill.name}`)
+  const lines = skills.map((skill, index) => `${index + 1}. ${skill.name}`)
   const maxChunkLength = 1400
   const chunks: string[] = []
   let current = ''
@@ -1121,103 +1121,6 @@ async function deleteCronJob(jobId: string): Promise<{ success: boolean; error?:
   return { success: true }
 }
 
-async function upsertExternalSession(
-  sessionId: string,
-  query: string,
-  status: ExternalSessionStatus = 'running',
-): Promise<boolean> {
-  const normalizedQuery = query.trim() || '飞书会话'
-  try {
-    const response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/upsert`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId,
-        query: normalizedQuery,
-        status,
-        skillId: getFeishuHistorySkillId(),
-      }),
-    })
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '')
-      console.warn(`[Feishu] upsert external session failed: status=${response.status} ${detail}`)
-      return false
-    }
-    return true
-  } catch (err) {
-    console.warn('[Feishu] failed to upsert external session:', err)
-    return false
-  }
-}
-
-async function appendExternalMessage(
-  sessionId: string,
-  type: 'user' | 'assistant' | 'error' | 'system',
-  content: string,
-): Promise<void> {
-  const normalizedContent = content.trim()
-  if (!normalizedContent) return
-
-  const payload = JSON.stringify({ sessionId, type, content: normalizedContent })
-
-  try {
-    let response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: payload,
-    })
-
-    if (response.status === 404) {
-      const queryHint = type === 'user' ? normalizedContent : '飞书会话'
-      const created = await upsertExternalSession(sessionId, queryHint, 'running')
-      if (created) {
-        response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: payload,
-        })
-      }
-    }
-
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '')
-      console.warn(`[Feishu] append external message failed: status=${response.status} ${detail}`)
-    }
-  } catch (err) {
-    console.warn('[Feishu] failed to append external message:', err)
-  }
-}
-
-async function updateExternalSessionStatus(
-  sessionId: string,
-  status: ExternalSessionStatus,
-): Promise<void> {
-  try {
-    let response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, status }),
-    })
-
-    if (response.status === 404) {
-      const created = await upsertExternalSession(sessionId, '飞书会话', status)
-      if (created) {
-        response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/status`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, status }),
-        })
-      }
-    }
-
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '')
-      console.warn(`[Feishu] update external status failed: status=${response.status} ${detail}`)
-    }
-  } catch (err) {
-    console.warn('[Feishu] failed to update external session status:', err)
-  }
-}
 
 async function executeSkill(
   client: Client,
@@ -1246,6 +1149,11 @@ async function executeSkill(
         sessionId: executeSessionId,
         modelProfileId,
         source: 'feishu',
+        sourceMeta: {
+          chatId,
+          openId: stateKey,
+          timestamp: new Date().toISOString(),
+        },
       }),
     })
 
@@ -1371,17 +1279,10 @@ async function dispatchAction(
 
     if (!filePaths.length) {
       const msg = '缺少可发送的文件路径，请提供完整绝对路径。'
-      await appendExternalMessage(historySessionId, 'assistant', msg)
-      await updateExternalSessionStatus(historySessionId, 'completed')
       await card.close(msg)
       return
     }
 
-    await appendExternalMessage(
-      historySessionId,
-      'assistant',
-      `已收到文件发送请求，共 ${filePaths.length} 个路径。`,
-    )
     const result = await sendFilesByAbsolutePaths(client, chatId, filePaths)
     const summary = `文件发送结果：成功 ${result.sent}，失败 ${result.failed}，未找到 ${result.missing}。`
     const missingDetail = result.missingPaths.length > 0
@@ -1391,8 +1292,6 @@ async function dispatchAction(
       ? `发送失败：${result.failedPaths.slice(0, 3).join('；')}${result.failedPaths.length > 3 ? '；...' : ''}`
       : ''
     const detailParts = [summary, missingDetail, failedDetail].filter(Boolean)
-    await appendExternalMessage(historySessionId, 'assistant', detailParts.join('\n'))
-    await updateExternalSessionStatus(historySessionId, 'completed')
     await card.close(summary)
     return
   }
@@ -1403,9 +1302,7 @@ async function dispatchAction(
       ? `匹配技能 ${targetId} 失败，已回退到 ${resolved.skillId} 执行。`
       : `已匹配技能 ${targetId}，任务已开始执行。`
     await card.update(`Matched capability ${resolved.skillId}, executing...`)
-    await appendExternalMessage(historySessionId, 'assistant', notifyText)
     await executeSkill(client, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
-    await updateExternalSessionStatus(historySessionId, 'completed')
     return
   }
 
@@ -1415,9 +1312,7 @@ async function dispatchAction(
     const hint = resolved.fallbackUsed && resolved.reason
       ? `已进入通用执行模式（${resolved.reason}）。`
       : '已进入通用执行模式，任务已开始。'
-    await appendExternalMessage(historySessionId, 'assistant', hint)
     await executeSkill(client, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
-    await updateExternalSessionStatus(historySessionId, 'completed')
     return
   }
 
@@ -1425,8 +1320,6 @@ async function dispatchAction(
     const seedQuery = ((actionEvent as any)?.seedQuery || query || '').trim()
     if (!seedQuery) {
       const msg = '缺少技能创建需求，请补充你希望沉淀成技能的任务描述。'
-      await appendExternalMessage(historySessionId, 'assistant', msg)
-      await updateExternalSessionStatus(historySessionId, 'completed')
       await card.close(msg)
       return
     }
@@ -1435,8 +1328,6 @@ async function dispatchAction(
     const created = await createCapabilityFromSeed(stateKey, seedQuery, modelProfileIdOverride)
     if (!created.skillId) {
       const msg = `技能创建失败：${created.error || '未知错误'}`
-      await appendExternalMessage(historySessionId, 'assistant', msg)
-      await updateExternalSessionStatus(historySessionId, 'completed')
       await card.close(msg)
       return
     }
@@ -1444,10 +1335,8 @@ async function dispatchAction(
     const msg = [
       '新技能创建成功 ✅',
       `技能 ID：${created.skillId}`,
-      '你现在可以直接 /skill <id> 执行，或继续说“每天/每周...”来创建定时任务。',
+      '你现在可以直接 /skill <id> 执行，或继续说”每天/每周...”来创建定时任务。',
     ].join('\n')
-    await appendExternalMessage(historySessionId, 'assistant', msg)
-    await updateExternalSessionStatus(historySessionId, 'completed')
     await card.close(msg)
     return
   }
@@ -1460,8 +1349,6 @@ async function dispatchAction(
 
     if (!cronExpr || !scheduleQuery.trim()) {
       const msg = '定时任务信息还不完整，请补充执行频率和执行内容。'
-      await appendExternalMessage(historySessionId, 'assistant', msg)
-      await updateExternalSessionStatus(historySessionId, 'completed')
       await card.close(msg)
       return
     }
@@ -1474,8 +1361,6 @@ async function dispatchAction(
         }
       } catch (err) {
         const msg = `校验目标技能失败：${err instanceof Error ? err.message : String(err)}`
-        await appendExternalMessage(historySessionId, 'assistant', msg)
-        await updateExternalSessionStatus(historySessionId, 'completed')
         await card.close(msg)
         return
       }
@@ -1486,17 +1371,10 @@ async function dispatchAction(
       const created = await createCapabilityFromSeed(stateKey, scheduleQuery, modelProfileIdOverride)
       if (!created.skillId) {
         const msg = `定时任务创建失败：自动创建技能未成功（${created.error || '未知错误'}）`
-        await appendExternalMessage(historySessionId, 'assistant', msg)
-        await updateExternalSessionStatus(historySessionId, 'completed')
         await card.close(msg)
         return
       }
       resolvedTargetId = created.skillId
-      await appendExternalMessage(
-        historySessionId,
-        'assistant',
-        `已自动创建技能 ${resolvedTargetId}，继续创建定时任务。`,
-      )
     }
 
     const scheduleFingerprint = [
@@ -1508,8 +1386,6 @@ async function dispatchAction(
     ].join('::')
     if (!tryMarkScheduleCreateFingerprint(scheduleFingerprint)) {
       const msg = '检测到短时间内重复创建同一条定时任务，已自动忽略。'
-      await appendExternalMessage(historySessionId, 'assistant', msg)
-      await updateExternalSessionStatus(historySessionId, 'completed')
       await card.close(msg)
       return
     }
@@ -1525,8 +1401,6 @@ async function dispatchAction(
 
     if (!result.job) {
       const msg = `定时任务创建失败：${result.error || '未知错误'}`
-      await appendExternalMessage(historySessionId, 'assistant', msg)
-      await updateExternalSessionStatus(historySessionId, 'completed')
       await card.close(msg)
       return
     }
@@ -1540,8 +1414,6 @@ async function dispatchAction(
       result.job.nextRunAtMs ? `下次执行：${new Date(result.job.nextRunAtMs).toLocaleString('zh-CN')}` : '',
       '结果将通过飞书私聊主动通知你。',
     ].filter(Boolean).join('\n')
-    await appendExternalMessage(historySessionId, 'assistant', summary)
-    await updateExternalSessionStatus(historySessionId, 'completed')
     await card.close(summary)
     return
   }
@@ -1549,8 +1421,6 @@ async function dispatchAction(
   const resolved = await resolveExecutableSkillId(config.defaultSkillId, '__generic__')
   await card.update('Executing...')
   await executeSkill(client, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
-  await appendExternalMessage(historySessionId, 'assistant', '任务已开始执行。')
-  await updateExternalSessionStatus(historySessionId, 'completed')
 }
 
 async function runConverse(
@@ -1614,7 +1484,6 @@ async function runConverse(
     if (event.type === 'question') {
       const questionText = extractQuestionText(event)
       await card.close(questionText)
-      await appendExternalMessage(historySessionId, 'assistant', questionText)
       appendConverseMessage(stateKey, 'assistant', questionText)
       return
     }
@@ -1637,15 +1506,11 @@ async function runConverse(
 
   if (converseText.trim()) {
     appendConverseMessage(stateKey, 'assistant', converseText)
-    await appendExternalMessage(historySessionId, 'assistant', converseText)
-    await updateExternalSessionStatus(historySessionId, 'completed')
     await card.close(converseText)
     return
   }
 
   const fallback = '我还需要更多信息，请补充你的需求。'
-  await appendExternalMessage(historySessionId, 'assistant', fallback)
-  await updateExternalSessionStatus(historySessionId, 'completed')
   await card.close(fallback)
 }
 
@@ -1933,9 +1798,6 @@ async function handleCommand(
     const userState = getUserState(stateKey)
     const historySessionId = userState.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
     setConverseSessionId(stateKey, historySessionId)
-    await upsertExternalSession(historySessionId, commandText, 'running')
-    await appendExternalMessage(historySessionId, 'user', commandText)
-    await appendExternalMessage(historySessionId, 'assistant', `已开始执行技能 ${skillId}。`)
 
     const card = new FeishuStreamingSession(client, config)
     const started = await card.start(chatId, `技能执行：${config.botName}`)
@@ -1945,11 +1807,8 @@ async function handleCommand(
 
     try {
       await executeSkill(client, chatId, stateKey, skillId, query, started ? card : null)
-      await updateExternalSessionStatus(historySessionId, 'completed')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      await appendExternalMessage(historySessionId, 'error', msg)
-      await updateExternalSessionStatus(historySessionId, 'failed')
       if (started) await card.close(`❌ ${msg}`)
       else await sendText(client, chatId, `❌ ${msg}`)
     }
@@ -2037,8 +1896,6 @@ export async function handleFeishuMessage(
     const userState = getUserState(stateKey)
     const historySessionId = userState.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
     setConverseSessionId(stateKey, historySessionId)
-    await upsertExternalSession(historySessionId, text, 'running')
-    await appendExternalMessage(historySessionId, 'user', text)
 
     const streamingCard = new FeishuStreamingSession(larkClient, config)
     const started = await streamingCard.start(chatId, config.botName)
@@ -2065,8 +1922,6 @@ export async function handleFeishuMessage(
       )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      await appendExternalMessage(historySessionId, 'error', msg)
-      await updateExternalSessionStatus(historySessionId, 'failed')
       console.error('[Feishu] message handling failed:', err)
       await outputSession.close(`❌ ${msg}`)
     }

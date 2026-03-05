@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { parse as parseDotenv } from 'dotenv'
+import { removeEnvKeysCaseInsensitive } from 'laborany-shared'
 import { APP_HOME_DIR } from './paths.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -131,6 +132,9 @@ export function refreshRuntimeConfig(): RuntimeConfigSnapshot {
   if (runtimeLogDir) {
     process.env.LABORANY_LOG_DIR = runtimeLogDir
   }
+
+  // Remove Claude nested-session marker inherited from parent process.
+  removeEnvKeysCaseInsensitive(process.env as Record<string, string | undefined>, ['CLAUDECODE'])
 
   lastLoadedEnvKeys = new Set(Object.keys(merged))
 

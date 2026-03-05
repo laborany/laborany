@@ -38,3 +38,39 @@ export function withUtf8Env(
     PYTHONUTF8: '1',
   }
 }
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │  环境变量清理（大小写不敏感）                                             │
+ * │                                                                          │
+ * │  Windows 环境变量大小写不敏感，部分运行时会出现 claudecode / CLAUDECODE    │
+ * │  混用，统一按不区分大小写删除。                                           │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export function removeEnvKeysCaseInsensitive(
+  env: Record<string, string | undefined>,
+  keys: readonly string[],
+): Record<string, string | undefined> {
+  if (keys.length === 0) return env
+
+  const keySet = new Set(keys.map(key => key.toLowerCase()))
+  for (const key of Object.keys(env)) {
+    if (keySet.has(key.toLowerCase())) {
+      delete env[key]
+    }
+  }
+  return env
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │  Claude 子进程环境净化                                                    │
+ * │                                                                          │
+ * │  - 清除 ANTHROPIC_AUTH_TOKEN，避免与 ANTHROPIC_API_KEY 认证头冲突         │
+ * │  - 清除 CLAUDECODE，避免 Claude Code 检测为嵌套会话                        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+export function sanitizeClaudeEnv(
+  env: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  return removeEnvKeysCaseInsensitive(env, [
+    'ANTHROPIC_AUTH_TOKEN',
+    'CLAUDECODE',
+  ])
+}

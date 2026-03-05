@@ -132,7 +132,6 @@ function initTables(db: Database.Database): void {
 
     -- 索引：按任务 ID 查询执行历史
     CREATE INDEX IF NOT EXISTS idx_runs_job_id ON cron_runs(job_id);
-    CREATE INDEX IF NOT EXISTS idx_jobs_source_open_id ON cron_jobs(source_feishu_open_id);
 
     /* ════════════════════════════════════════════════════════════════════════
      * notifications 表：通知记录
@@ -182,6 +181,13 @@ function initTables(db: Database.Database): void {
   try {
     db.exec(`ALTER TABLE cron_jobs ADD COLUMN notify_feishu_open_id TEXT`)
   } catch { /* 列已存在 */ }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  创建索引（在列迁移之后）
+   * ──────────────────────────────────────────────────────────────────────── */
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_source_open_id ON cron_jobs(source_feishu_open_id)`)
+  } catch { /* 索引已存在 */ }
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

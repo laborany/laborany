@@ -9,6 +9,7 @@ import { config } from 'dotenv'
 import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { existsSync, readFileSync, copyFileSync } from 'fs'
+import { removeEnvKeysCaseInsensitive } from 'laborany-shared'
 import { getConfigDir, getEnvPath } from './lib/app-config.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -35,6 +36,7 @@ function loadEnvConfig(): void {
 
   // 加载配置（覆盖父进程同名环境变量，避免系统全局变量污染）
   config({ path: envPath, override: true })
+  removeEnvKeysCaseInsensitive(process.env as Record<string, string | undefined>, ['CLAUDECODE'])
   if (runtimeHome) {
     process.env.LABORANY_HOME = runtimeHome
   }

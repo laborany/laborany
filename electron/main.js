@@ -27,6 +27,17 @@ const API_PORT = 3620
 const AGENT_PORT = 3002
 const isDev = !app.isPackaged
 
+function removeEnvKeysCaseInsensitive(env, keys) {
+  if (!keys || keys.length === 0) return env
+  const keySet = new Set(keys.map(key => String(key).toLowerCase()))
+  for (const key of Object.keys(env)) {
+    if (keySet.has(key.toLowerCase())) {
+      delete env[key]
+    }
+  }
+  return env
+}
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -279,7 +290,7 @@ function buildSidecarEnv(extra = {}) {
     ? path.join(__dirname, '..', 'skills')
     : path.join(process.resourcesPath, 'skills')
 
-  return {
+  const env = {
     ...process.env,
     LABORANY_HOME: runtimePaths.appHome || process.env.LABORANY_HOME || '',
     LABORANY_LOG_DIR: runtimePaths.logsDir || process.env.LABORANY_LOG_DIR || '',
@@ -288,6 +299,9 @@ function buildSidecarEnv(extra = {}) {
     LABORANY_BUILTIN_SKILLS_DIR: builtinSkillsDir,
     ...extra,
   }
+
+  // Never pass Claude nested-session marker to sidecars.
+  return removeEnvKeysCaseInsensitive(env, ['CLAUDECODE'])
 }
 
 function initRuntimePathsAndLogger() {

@@ -138,6 +138,8 @@ interface StartTaskOptions {
   modelName?: string
   originQuery?: string
   beforeSkillIds?: Set<string>
+  source?: 'desktop' | 'feishu' | 'cron' | 'converse'
+  sourceMeta?: Record<string, unknown>
 }
 
 interface CompositeStepResult {
@@ -200,12 +202,16 @@ class RuntimeTaskManager {
     }
 
     this.tasks.set(task.sessionId, task)
-    this.ensureSessionRecord(task)
+    this.ensureSessionRecord(task, options.source, options.sourceMeta)
     this.runTask(task, options)
     return task
   }
 
-  private ensureSessionRecord(task: RuntimeTask): void {
+  private ensureSessionRecord(
+    task: RuntimeTask,
+    source?: string,
+    sourceMeta?: Record<string, unknown>,
+  ): void {
     const existing = dbHelper.get<{ id: string }>(
       `SELECT id FROM sessions WHERE id = ?`,
       [task.sessionId],
@@ -215,8 +221,8 @@ class RuntimeTaskManager {
       dbHelper.run(
         `INSERT INTO sessions (
           id, user_id, skill_id, query, status, work_dir,
-          model_profile_id, model_profile_name, model_name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          model_profile_id, model_profile_name, model_name, source, source_meta
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           task.sessionId,
           'default',
@@ -227,12 +233,14 @@ class RuntimeTaskManager {
           task.modelProfileId || null,
           task.modelProfileName || null,
           task.modelName || null,
+          source || 'desktop',
+          sourceMeta ? JSON.stringify(sourceMeta) : null,
         ],
       )
     } else {
       dbHelper.run(
         `UPDATE sessions
-         SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?
+         SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?, source = ?, source_meta = ?
          WHERE id = ?`,
         [
           'running',
@@ -240,6 +248,8 @@ class RuntimeTaskManager {
           task.modelProfileId || null,
           task.modelProfileName || null,
           task.modelName || null,
+          source || 'desktop',
+          sourceMeta ? JSON.stringify(sourceMeta) : null,
           task.sessionId,
         ],
       )

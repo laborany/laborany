@@ -14,6 +14,7 @@ import type { Skill } from 'laborany-shared'
 import {
   wrapCmdForUtf8,
   withUtf8Env,
+  sanitizeClaudeEnv,
   BUILTIN_SKILLS_DIR,
   USER_SKILLS_DIR,
   getUserDir,
@@ -551,7 +552,9 @@ function checkRuntimeDependencies(): RuntimeDependencyIssue | null {
  * │                       构建环境配置                                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function buildEnvConfig(overrides?: ModelOverride): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = withUtf8Env({ ...process.env })
+  const env: Record<string, string | undefined> = sanitizeClaudeEnv(
+    withUtf8Env({ ...process.env }),
+  )
 
   /* ── 只传 ANTHROPIC_API_KEY，不要额外设置 ANTHROPIC_AUTH_TOKEN ──
    * CLI SDK 对两者的处理不同：
@@ -560,7 +563,6 @@ function buildEnvConfig(overrides?: ModelOverride): Record<string, string | unde
    * 第三方代理（如 xchai.xyz）可能只认 X-Api-Key，
    * 同时发送两个 header 会导致 401 "Invalid API key format"。
    * process.env 已经包含 ANTHROPIC_API_KEY，无需重复赋值。       */
-  delete env.ANTHROPIC_AUTH_TOKEN
 
   if (overrides?.apiKey) {
     env.ANTHROPIC_API_KEY = overrides.apiKey

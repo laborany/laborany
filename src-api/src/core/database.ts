@@ -168,6 +168,14 @@ function migrateDatabase(db: Database): void {
       db.run('ALTER TABLE sessions ADD COLUMN model_name TEXT')
       console.log('[DB] 迁移：添加 sessions.model_name 列')
     }
+    if (!columns.includes('source')) {
+      db.run("ALTER TABLE sessions ADD COLUMN source TEXT DEFAULT 'desktop'")
+      console.log('[DB] 迁移：添加 sessions.source 列')
+    }
+    if (!columns.includes('source_meta')) {
+      db.run('ALTER TABLE sessions ADD COLUMN source_meta TEXT')
+      console.log('[DB] 迁移：添加 sessions.source_meta 列')
+    }
   } catch (err) {
     console.warn('[DB] 迁移检查失败:', err)
   }
