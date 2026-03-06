@@ -20,15 +20,15 @@ if errorlevel 1 (
 )
 
 echo [2/5] Ensuring dependencies are installed...
-call :install_if_missing "%ROOT_DIR%" "-" --include=dev
+call :install_if_missing "%ROOT_DIR%" "-" "normal"
 if errorlevel 1 goto :fail
-call :install_if_missing "%ROOT_DIR%\shared" "-" --include=dev
+call :install_if_missing "%ROOT_DIR%\shared" "-" "normal"
 if errorlevel 1 goto :fail
-call :install_if_missing "%ROOT_DIR%\src-api" "node_modules\.bin\esbuild.cmd" --include=dev
+call :install_if_missing "%ROOT_DIR%\src-api" "node_modules\.bin\esbuild.cmd" "normal"
 if errorlevel 1 goto :fail
-call :install_if_missing "%ROOT_DIR%\agent-service" "node_modules\.bin\esbuild.cmd" --include=dev --ignore-scripts
+call :install_if_missing "%ROOT_DIR%\agent-service" "node_modules\.bin\esbuild.cmd" "agent"
 if errorlevel 1 goto :fail
-call :install_if_missing "%ROOT_DIR%\frontend" "node_modules\.bin\vite.cmd" --include=dev
+call :install_if_missing "%ROOT_DIR%\frontend" "node_modules\.bin\vite.cmd" "normal"
 if errorlevel 1 goto :fail
 
 echo [3/5] Building Windows app...
@@ -58,10 +58,7 @@ exit /b 0
 :install_if_missing
 set "TARGET_DIR=%~1"
 set "REQUIRED_MARKER=%~2"
-shift
-shift
-set "NPM_ARGS=%*"
-if "%NPM_ARGS%"=="" set "NPM_ARGS=--include=dev"
+set "INSTALL_MODE=%~3"
 
 if exist "%TARGET_DIR%\node_modules" (
   if /I not "%REQUIRED_MARKER%"=="-" (
@@ -78,9 +75,15 @@ if exist "%TARGET_DIR%\node_modules" (
   exit /b 0
 )
 
-echo [deps] Installing dependencies in "%TARGET_DIR%" with args: %NPM_ARGS%
+echo [deps] Installing dependencies in "%TARGET_DIR%"...
 pushd "%TARGET_DIR%"
-call npm install %NPM_ARGS%
+if /I "%INSTALL_MODE%"=="agent" (
+  echo [deps] npm install --include=dev --ignore-scripts
+  call npm install --include=dev --ignore-scripts
+) else (
+  echo [deps] npm install --include=dev
+  call npm install --include=dev
+)
 set "INSTALL_EXIT=%ERRORLEVEL%"
 popd
 
