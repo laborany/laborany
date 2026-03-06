@@ -7,6 +7,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import type { ModelOverride } from '../claude-cli.js'
+import { normalizeModelInterfaceType } from 'laborany-shared'
 
 function getSrcApiBaseUrl(): string {
   return (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
@@ -31,7 +32,7 @@ export async function resolveModelProfile(profileId?: string): Promise<ModelOver
     }
 
     const data = await res.json() as {
-      profile?: { apiKey?: string; baseUrl?: string; model?: string }
+      profile?: { apiKey?: string; baseUrl?: string; model?: string; interfaceType?: string }
     }
 
     if (!data.profile?.apiKey) {
@@ -43,6 +44,7 @@ export async function resolveModelProfile(profileId?: string): Promise<ModelOver
       apiKey: data.profile.apiKey,
       baseUrl: data.profile.baseUrl,
       model: data.profile.model,
+      interfaceType: normalizeModelInterfaceType(data.profile.interfaceType),
     }
   } catch (error) {
     console.warn(`[ModelProfile] Error resolving profile ${profileId}:`, error)

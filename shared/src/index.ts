@@ -33,3 +33,12 @@ export {
   removeEnvKeysCaseInsensitive,
   sanitizeClaudeEnv,
 } from './encoding.js'
+
+export {
+  normalizeModelInterfaceType,
+  encodeOpenAiBridgeApiKey,
+  decodeOpenAiBridgeApiKey,
+  isOpenAiBridgeApiKey,
+  type ModelInterfaceType,
+  type OpenAiBridgeCredential,
+} from './model-interface.js'

@@ -219,6 +219,21 @@ function toFileArtifact(
   }
 }
 
+function buildHistoryPreviewSelectionHint(session: SessionDetail | null): string {
+  if (!session) return ''
+
+  const userMessageHints = (session.messages || [])
+    .filter((message) => message.type === 'user' && typeof message.content === 'string')
+    .slice(-2)
+    .map((message) => (message.content || '').trim())
+    .filter(Boolean)
+
+  return [session.query, ...userMessageHints]
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
 function normalizeMessageContent(content: string): string {
   return content.replace(/\s+/g, ' ').trim()
 }
@@ -520,6 +535,10 @@ export function SessionDetailPage() {
     () => buildPendingQuestionFromHistory(session),
     [session],
   )
+  const previewSelectionHint = useMemo(
+    () => buildHistoryPreviewSelectionHint(session),
+    [session],
+  )
 
   // Live Preview hook
   const {
@@ -700,11 +719,13 @@ export function SessionDetailPage() {
     setIsRightSidebarVisible(true)
     hasAutoExpandedRef.current = true
 
-    const latestFile = findLatestPreviewableTaskFile(taskFiles)
+    const latestFile = findLatestPreviewableTaskFile(taskFiles, {
+      hintText: previewSelectionHint,
+    })
     if (!latestFile) return
 
     handleSelectArtifact(toFileArtifact(latestFile, getFileUrl, session?.work_dir || null))
-  }, [taskFiles, handleSelectArtifact, getFileUrl, session?.work_dir])
+  }, [taskFiles, handleSelectArtifact, getFileUrl, session?.work_dir, previewSelectionHint])
 
   useEffect(() => {
     if (taskFiles.length === 0) return
@@ -718,11 +739,13 @@ export function SessionDetailPage() {
       return
     }
 
-    const latestFile = findLatestPreviewableTaskFile(taskFiles)
+    const latestFile = findLatestPreviewableTaskFile(taskFiles, {
+      hintText: previewSelectionHint,
+    })
     if (latestFile) {
       setSelectedArtifact(toFileArtifact(latestFile, getFileUrl, session?.work_dir || null))
     }
-  }, [taskFiles, getFileUrl, session?.work_dir])
+  }, [taskFiles, getFileUrl, session?.work_dir, previewSelectionHint])
 
   const handleClosePreview = useCallback(() => {
     setIsPreviewVisible(false)

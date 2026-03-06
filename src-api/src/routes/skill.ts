@@ -155,6 +155,7 @@ function toModelOverride(profile: ModelProfile): ModelOverride | undefined {
     apiKey,
     baseUrl: (profile.baseUrl || '').trim() || undefined,
     model: (profile.model || '').trim() || undefined,
+    interfaceType: profile.interfaceType,
   }
 }
 

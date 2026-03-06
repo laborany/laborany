@@ -8,7 +8,7 @@
  * ║  4. 薄组件 —— 布局编排，不持有业务逻辑                                     ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type { AgentMessage, TaskFile } from '../../types'
 import type { FileArtifact } from '../preview'
 import { getExt, getCategory } from '../preview'
@@ -92,6 +92,15 @@ function toFileArtifact(
   }
 }
 
+function buildPreviewSelectionHint(messages: AgentMessage[]): string {
+  return messages
+    .filter((message) => message.type === 'user')
+    .slice(-2)
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           主组件                                          │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -122,6 +131,10 @@ export function ExecutionPanel({
   const [showLivePreview, setShowLivePreview] = useState(false)
   const hasAutoExpandedRef = useRef(false)
   const selectedPathRef = useRef<string | null>(null)
+  const previewSelectionHint = useMemo(
+    () => buildPreviewSelectionHint(messages),
+    [messages],
+  )
 
   /* ── 可拖拽面板 ── */
   const {
@@ -174,13 +187,13 @@ export function ExecutionPanel({
   /* ── 自动展开预览面板 ── */
   useAutoExpandPreview(
     taskFiles, messages, hasAutoExpandedRef,
-    setIsRightSidebarVisible, handleSelectArtifact, getFileUrl, workDir,
+    setIsRightSidebarVisible, handleSelectArtifact, getFileUrl, workDir, previewSelectionHint,
   )
 
   /* ── 文件更新时刷新预览 ── */
   useRefreshPreview(
     selectedArtifact, filesVersion, taskFiles, getFileUrl, workDir,
-    selectedPathRef, setSelectedArtifact,
+    selectedPathRef, setSelectedArtifact, previewSelectionHint,
   )
 
   const showResizeHandle = isPreviewVisible || isRightSidebarVisible
@@ -419,6 +432,7 @@ function useAutoExpandPreview(
   handleSelectArtifact: (a: FileArtifact) => void,
   getFileUrl: (path: string) => string,
   workDir: string | null,
+  previewSelectionHint: string,
 ) {
   useEffect(() => {
     if (hasAutoExpandedRef.current) return
@@ -435,11 +449,13 @@ function useAutoExpandPreview(
 
     if (taskFiles.length === 0) return
 
-    const latestFile = findLatestPreviewableTaskFile(taskFiles)
+    const latestFile = findLatestPreviewableTaskFile(taskFiles, {
+      hintText: previewSelectionHint,
+    })
     if (!latestFile) return
 
     handleSelectArtifact(toFileArtifact(latestFile, getFileUrl, workDir))
-  }, [taskFiles, messages, hasAutoExpandedRef, setIsRightSidebarVisible, handleSelectArtifact, getFileUrl, workDir])
+  }, [taskFiles, messages, hasAutoExpandedRef, setIsRightSidebarVisible, handleSelectArtifact, getFileUrl, workDir, previewSelectionHint])
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -453,6 +469,7 @@ function useRefreshPreview(
   workDir: string | null,
   selectedPathRef: React.MutableRefObject<string | null>,
   setSelectedArtifact: (a: FileArtifact) => void,
+  previewSelectionHint: string,
 ) {
   /* 记录当前选中的文件路径 */
   useEffect(() => {
@@ -472,9 +489,11 @@ function useRefreshPreview(
       return
     }
 
-    const latestFile = findLatestPreviewableTaskFile(taskFiles)
+    const latestFile = findLatestPreviewableTaskFile(taskFiles, {
+      hintText: previewSelectionHint,
+    })
     if (latestFile) {
       setSelectedArtifact(toFileArtifact(latestFile, getFileUrl, workDir))
     }
-  }, [filesVersion, taskFiles, getFileUrl, workDir, selectedPathRef, setSelectedArtifact])
+  }, [filesVersion, taskFiles, getFileUrl, workDir, selectedPathRef, setSelectedArtifact, previewSelectionHint])
 }

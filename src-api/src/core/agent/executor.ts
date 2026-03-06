@@ -15,6 +15,9 @@ import {
   wrapCmdForUtf8,
   withUtf8Env,
   sanitizeClaudeEnv,
+  encodeOpenAiBridgeApiKey,
+  normalizeModelInterfaceType,
+  type ModelInterfaceType,
   BUILTIN_SKILLS_DIR,
   USER_SKILLS_DIR,
   getUserDir,
@@ -41,6 +44,7 @@ export interface ModelOverride {
   apiKey: string
   baseUrl?: string
   model?: string
+  interfaceType?: ModelInterfaceType
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -548,6 +552,11 @@ function checkRuntimeDependencies(): RuntimeDependencyIssue | null {
   return null
 }
 
+function getLlmBridgeAnthropicBaseUrl(): string {
+  const port = (process.env.PORT || '3620').trim() || '3620'
+  return `http://127.0.0.1:${port}/api/llm-bridge/anthropic`
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       构建环境配置                                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -556,34 +565,49 @@ function buildEnvConfig(overrides?: ModelOverride): Record<string, string | unde
     withUtf8Env({ ...process.env }),
   )
 
-  /* ── 只传 ANTHROPIC_API_KEY，不要额外设置 ANTHROPIC_AUTH_TOKEN ──
-   * CLI SDK 对两者的处理不同：
-   *   ANTHROPIC_API_KEY   → X-Api-Key header
-   *   ANTHROPIC_AUTH_TOKEN → Authorization: Bearer header
-   * 第三方代理（如 xchai.xyz）可能只认 X-Api-Key，
-   * 同时发送两个 header 会导致 401 "Invalid API key format"。
-   * process.env 已经包含 ANTHROPIC_API_KEY，无需重复赋值。       */
+  const effectiveApiKey = (overrides?.apiKey || process.env.ANTHROPIC_API_KEY || '').trim()
+  const effectiveBaseUrl = overrides
+    ? ((overrides.baseUrl || '').trim() || undefined)
+    : ((process.env.ANTHROPIC_BASE_URL || '').trim() || undefined)
+  const effectiveModel = overrides
+    ? ((overrides.model || '').trim() || undefined)
+    : ((process.env.ANTHROPIC_MODEL || '').trim() || undefined)
+  const interfaceType = normalizeModelInterfaceType(
+    overrides?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,
+  )
 
-  if (overrides?.apiKey) {
-    env.ANTHROPIC_API_KEY = overrides.apiKey
-  } else if (process.env.ANTHROPIC_API_KEY) {
-    env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
-  }
-
-  if (overrides?.baseUrl) {
-    env.ANTHROPIC_BASE_URL = overrides.baseUrl
-  } else if (overrides && 'baseUrl' in overrides && !overrides.baseUrl) {
-    delete env.ANTHROPIC_BASE_URL
-  } else if (process.env.ANTHROPIC_BASE_URL) {
-    env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL
-  }
-
-  if (overrides?.model) {
-    env.ANTHROPIC_MODEL = overrides.model
-  } else if (overrides && 'model' in overrides && !overrides.model) {
-    delete env.ANTHROPIC_MODEL
-  } else if (process.env.ANTHROPIC_MODEL) {
-    env.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL
+  if (interfaceType === 'openai_compatible') {
+    if (effectiveApiKey) {
+      env.ANTHROPIC_API_KEY = encodeOpenAiBridgeApiKey({
+        apiKey: effectiveApiKey,
+        baseUrl: effectiveBaseUrl,
+        model: effectiveModel,
+      })
+    } else {
+      delete env.ANTHROPIC_API_KEY
+    }
+    env.ANTHROPIC_BASE_URL = getLlmBridgeAnthropicBaseUrl()
+    if (effectiveModel) {
+      env.ANTHROPIC_MODEL = effectiveModel
+    } else {
+      delete env.ANTHROPIC_MODEL
+    }
+  } else {
+    if (effectiveApiKey) {
+      env.ANTHROPIC_API_KEY = effectiveApiKey
+    } else {
+      delete env.ANTHROPIC_API_KEY
+    }
+    if (effectiveBaseUrl) {
+      env.ANTHROPIC_BASE_URL = effectiveBaseUrl
+    } else {
+      delete env.ANTHROPIC_BASE_URL
+    }
+    if (effectiveModel) {
+      env.ANTHROPIC_MODEL = effectiveModel
+    } else {
+      delete env.ANTHROPIC_MODEL
+    }
   }
 
   if (platform() === 'win32') {
@@ -764,6 +788,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const effectiveModel = modelOverride
     ? (modelOverride.model?.trim() || undefined)
     : process.env.ANTHROPIC_MODEL
+  const interfaceType = normalizeModelInterfaceType(modelOverride?.interfaceType)
 
   // 检查 API Key 配置
   if (!effectiveApiKey) {
@@ -779,7 +804,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
    * │  智谱 MCP 自动注入                                                      │
    * │  当使用智谱 API 时，自动将智谱 MCP 服务器配置注入 settings.json          │
    * └────────────────────────────────────────────────────────────────────────┘ */
-  if (isZhipuApi(effectiveBaseUrl)) {
+  if (interfaceType !== 'openai_compatible' && isZhipuApi(effectiveBaseUrl)) {
     const zhipuServers = buildZhipuMcpServers(effectiveApiKey)
     injectMcpServers(zhipuServers)
     console.log('[Agent] 检测到智谱 API，已注入 MCP 服务器配置')

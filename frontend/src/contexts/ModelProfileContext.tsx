@@ -2,12 +2,15 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import type { ReactNode } from 'react'
 import { API_BASE } from '../config/api'
 
+export type ModelInterfaceType = 'anthropic' | 'openai_compatible'
+
 export interface ModelProfile {
   id: string
   name: string
   apiKey: string
   baseUrl?: string
   model?: string
+  interfaceType: ModelInterfaceType
   createdAt: string
   updatedAt: string
 }
@@ -42,7 +45,17 @@ export function ModelProfileProvider({ children }: { children: ReactNode }) {
       const res = await fetch(`${API_BASE}/config/model-profiles`, { headers })
       if (!res.ok) return
       const data = await res.json() as { profiles?: ModelProfile[] }
-      const list = Array.isArray(data.profiles) ? data.profiles : []
+      const list = Array.isArray(data.profiles)
+        ? data.profiles.map((profile) => {
+          const interfaceType: ModelInterfaceType = profile.interfaceType === 'openai_compatible'
+            ? 'openai_compatible'
+            : 'anthropic'
+          return {
+            ...profile,
+            interfaceType,
+          }
+        })
+        : []
       setProfiles(list)
 
       // Validate activeProfileId — fall back to profiles[0] if stale

@@ -552,6 +552,7 @@ export default function SettingsPage() {
           baseUrl: profile.baseUrl,
           model: profile.model,
           profileId: profile.id,
+          interfaceType: profile.interfaceType,
         }),
       })
       const data = await res.json() as { success?: boolean; message?: string }
@@ -571,6 +572,7 @@ export default function SettingsPage() {
       id: crypto.randomUUID(),
       name: `配置 ${editProfiles.length + 1}`,
       apiKey: '',
+      interfaceType: 'anthropic',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -991,7 +993,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1">名称 *</label>
                     <input
@@ -1003,12 +1005,23 @@ export default function SettingsPage() {
                     />
                   </div>
                   <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">接口格式</label>
+                    <select
+                      value={profile.interfaceType}
+                      onChange={e => updateProfile(profile.id, 'interfaceType', e.target.value as ModelProfile['interfaceType'])}
+                      className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    >
+                      <option value="anthropic">Anthropic</option>
+                      <option value="openai_compatible">OpenAI-compatible</option>
+                    </select>
+                  </div>
+                  <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1">模型名称</label>
                     <input
                       type="text"
                       value={profile.model || ''}
                       onChange={e => updateProfile(profile.id, 'model', e.target.value)}
-                      placeholder="claude-sonnet-4-20250514"
+                      placeholder={profile.interfaceType === 'openai_compatible' ? 'gpt-4o-mini' : 'claude-sonnet-4-20250514'}
                       className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                     />
                   </div>
@@ -1023,7 +1036,7 @@ export default function SettingsPage() {
                       type={showProfileKeys[profile.id] ? 'text' : 'password'}
                       value={profile.apiKey}
                       onChange={e => updateProfile(profile.id, 'apiKey', e.target.value)}
-                      placeholder="sk-ant-api03-..."
+                      placeholder={profile.interfaceType === 'openai_compatible' ? 'sk-...' : 'sk-ant-api03-...'}
                       className="w-full rounded border border-border bg-background px-2 py-1.5 pr-14 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                     />
                     <button
@@ -1042,7 +1055,9 @@ export default function SettingsPage() {
                     type="text"
                     value={profile.baseUrl || ''}
                     onChange={e => updateProfile(profile.id, 'baseUrl', e.target.value)}
-                    placeholder="https://api.anthropic.com"
+                    placeholder={profile.interfaceType === 'openai_compatible'
+                      ? 'https://api.openai.com/v1'
+                      : 'https://api.anthropic.com'}
                     className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                   />
                 </div>

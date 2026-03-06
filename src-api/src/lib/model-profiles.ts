@@ -9,6 +9,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { v4 as uuid } from 'uuid'
+import { normalizeModelInterfaceType, type ModelInterfaceType } from 'laborany-shared'
 import { getConfigDir, readEnvConfig, writeEnvConfig } from './app-config.js'
 
 export interface ModelProfile {
@@ -17,12 +18,13 @@ export interface ModelProfile {
   apiKey: string
   baseUrl?: string
   model?: string
+  interfaceType: ModelInterfaceType
   createdAt: string
   updatedAt: string
 }
 
 export interface ModelProfilesStore {
-  version: 1
+  version: 2
   profiles: ModelProfile[]
 }
 
@@ -36,7 +38,7 @@ function getModelProfilesPath(): string {
 export function readModelProfiles(): ModelProfilesStore {
   const path = getModelProfilesPath()
   if (!existsSync(path)) {
-    return { version: 1, profiles: [] }
+    return { version: 2, profiles: [] }
   }
 
   try {
@@ -44,35 +46,36 @@ export function readModelProfiles(): ModelProfilesStore {
     const parsed = JSON.parse(raw) as Partial<ModelProfilesStore>
 
     if (!parsed || typeof parsed !== 'object') {
-      return { version: 1, profiles: [] }
+      return { version: 2, profiles: [] }
     }
 
     const profiles = Array.isArray(parsed.profiles)
       ? parsed.profiles
         .filter((item): item is ModelProfile => {
-          return (
-            item &&
-            typeof item === 'object' &&
-            typeof item.id === 'string' &&
-            typeof item.name === 'string' &&
-            typeof item.apiKey === 'string'
-          )
-        })
-        .map((item) => ({
-          id: item.id,
-          name: item.name,
-          apiKey: item.apiKey,
-          baseUrl: item.baseUrl,
-          model: item.model,
-          createdAt: item.createdAt || new Date().toISOString(),
-          updatedAt: item.updatedAt || new Date().toISOString(),
-        }))
-      : []
+      return (
+        item &&
+        typeof item === 'object' &&
+        typeof item.id === 'string' &&
+        typeof item.name === 'string' &&
+        typeof item.apiKey === 'string'
+      )
+    })
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      apiKey: item.apiKey,
+      baseUrl: item.baseUrl,
+      model: item.model,
+      interfaceType: normalizeModelInterfaceType((item as Partial<ModelProfile>).interfaceType),
+      createdAt: item.createdAt || new Date().toISOString(),
+      updatedAt: item.updatedAt || new Date().toISOString(),
+    }))
+  : []
 
-    return { version: 1, profiles }
+    return { version: 2, profiles }
   } catch (error) {
     console.error('[ModelProfiles] Failed to read model-profiles.json:', error)
-    return { version: 1, profiles: [] }
+    return { version: 2, profiles: [] }
   }
 }
 
@@ -130,12 +133,13 @@ export function migrateFromEnvIfNeeded(): void {
     apiKey,
     baseUrl: envConfig.ANTHROPIC_BASE_URL,
     model: envConfig.ANTHROPIC_MODEL,
+    interfaceType: 'anthropic',
     createdAt: now,
     updatedAt: now,
   }
 
   const store: ModelProfilesStore = {
-    version: 1,
+    version: 2,
     profiles: [defaultProfile],
   }
 
@@ -155,6 +159,7 @@ export function syncDefaultProfileToEnv(): void {
 
   const envConfig = readEnvConfig()
   envConfig.ANTHROPIC_API_KEY = defaultProfile.apiKey
+  envConfig.LABORANY_MODEL_INTERFACE = defaultProfile.interfaceType
 
   if (defaultProfile.baseUrl) {
     envConfig.ANTHROPIC_BASE_URL = defaultProfile.baseUrl
@@ -172,6 +177,7 @@ export function syncDefaultProfileToEnv(): void {
 
   // 同步到 process.env
   process.env.ANTHROPIC_API_KEY = defaultProfile.apiKey
+  process.env.LABORANY_MODEL_INTERFACE = defaultProfile.interfaceType
   if (defaultProfile.baseUrl) {
     process.env.ANTHROPIC_BASE_URL = defaultProfile.baseUrl
   } else {

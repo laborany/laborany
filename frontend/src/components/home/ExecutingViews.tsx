@@ -45,7 +45,7 @@ export function ExecutionHeader({ title, isRunning, isDone, onStop, onBack, onNe
   onNewTask: () => void
 }) {
   return (
-    <div className="flex items-center justify-between mb-4 shrink-0">
+    <div className="flex items-center justify-between mb-4 shrink-0 pr-24 sm:pr-28">
       <div className="flex items-center gap-4">
         <button
           onClick={onBack}

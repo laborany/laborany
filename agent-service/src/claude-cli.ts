@@ -2,7 +2,14 @@ import { execSync, spawnSync } from 'child_process'
 import { existsSync } from 'fs'
 import { homedir, platform } from 'os'
 import { dirname, join } from 'path'
-import { wrapCmdForUtf8, withUtf8Env, sanitizeClaudeEnv } from 'laborany-shared'
+import {
+  wrapCmdForUtf8,
+  withUtf8Env,
+  sanitizeClaudeEnv,
+  encodeOpenAiBridgeApiKey,
+  normalizeModelInterfaceType,
+  type ModelInterfaceType,
+} from 'laborany-shared'
 import { RESOURCES_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
 
@@ -269,6 +276,15 @@ export interface ModelOverride {
   apiKey: string
   baseUrl?: string
   model?: string
+  interfaceType?: ModelInterfaceType
+}
+
+function getSrcApiBaseUrl(): string {
+  return (process.env.SRC_API_BASE_URL || 'http://127.0.0.1:3620/api').replace(/\/+$/, '')
+}
+
+function getLlmBridgeAnthropicBaseUrl(): string {
+  return `${getSrcApiBaseUrl()}/llm-bridge/anthropic`
 }
 
 export function buildClaudeEnvConfig(overrides?: ModelOverride): Record<string, string | undefined> {
@@ -278,28 +294,51 @@ export function buildClaudeEnvConfig(overrides?: ModelOverride): Record<string, 
     withUtf8Env({ ...process.env }),
   )
 
-  // overrides > process.env, never mutate process.env itself
-  if (overrides?.apiKey) {
-    env.ANTHROPIC_API_KEY = overrides.apiKey
-  } else if (process.env.ANTHROPIC_API_KEY) {
-    env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
-  }
+  const effectiveApiKey = (overrides?.apiKey || process.env.ANTHROPIC_API_KEY || '').trim()
+  const effectiveBaseUrl = overrides
+    ? ((overrides.baseUrl || '').trim() || undefined)
+    : ((process.env.ANTHROPIC_BASE_URL || '').trim() || undefined)
+  const effectiveModel = overrides
+    ? ((overrides.model || '').trim() || undefined)
+    : ((process.env.ANTHROPIC_MODEL || '').trim() || undefined)
+  const interfaceType = normalizeModelInterfaceType(
+    overrides?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,
+  )
 
-  if (overrides?.baseUrl) {
-    env.ANTHROPIC_BASE_URL = overrides.baseUrl
-  } else if (overrides && 'baseUrl' in overrides && !overrides.baseUrl) {
-    // explicit undefined means clear it
-    delete env.ANTHROPIC_BASE_URL
-  } else if (process.env.ANTHROPIC_BASE_URL) {
-    env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL
-  }
+  if (interfaceType === 'openai_compatible') {
+    if (effectiveApiKey) {
+      env.ANTHROPIC_API_KEY = encodeOpenAiBridgeApiKey({
+        apiKey: effectiveApiKey,
+        baseUrl: effectiveBaseUrl,
+        model: effectiveModel,
+      })
+    } else {
+      delete env.ANTHROPIC_API_KEY
+    }
+    env.ANTHROPIC_BASE_URL = getLlmBridgeAnthropicBaseUrl()
+    if (effectiveModel) {
+      env.ANTHROPIC_MODEL = effectiveModel
+    } else {
+      delete env.ANTHROPIC_MODEL
+    }
+  } else {
+    if (effectiveApiKey) {
+      env.ANTHROPIC_API_KEY = effectiveApiKey
+    } else {
+      delete env.ANTHROPIC_API_KEY
+    }
 
-  if (overrides?.model) {
-    env.ANTHROPIC_MODEL = overrides.model
-  } else if (overrides && 'model' in overrides && !overrides.model) {
-    delete env.ANTHROPIC_MODEL
-  } else if (process.env.ANTHROPIC_MODEL) {
-    env.ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL
+    if (effectiveBaseUrl) {
+      env.ANTHROPIC_BASE_URL = effectiveBaseUrl
+    } else {
+      delete env.ANTHROPIC_BASE_URL
+    }
+
+    if (effectiveModel) {
+      env.ANTHROPIC_MODEL = effectiveModel
+    } else {
+      delete env.ANTHROPIC_MODEL
+    }
   }
 
   if (platform() === 'win32') {

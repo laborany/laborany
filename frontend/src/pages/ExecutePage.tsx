@@ -261,7 +261,7 @@ export default function ExecutePage() {
    * │                      顶部导航栏                                          │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   const header = (
-    <div className="flex items-center justify-between mb-4 shrink-0">
+    <div className="flex items-center justify-between mb-4 shrink-0 pr-24 sm:pr-28">
       <div className="flex items-center gap-4">
         <button
           type="button"

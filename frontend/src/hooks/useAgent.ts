@@ -54,8 +54,11 @@ interface AgentState {
 
 const EXECUTE_DEDUPE_WINDOW_MS = 1200
 const SSE_READER_POLL_INTERVAL_MS = 1200
-const SSE_STALL_AFTER_RESUME_MS = 90000
-const SSE_NO_PROGRESS_AFTER_RESUME_MS = 15000
+const SSE_STALL_AFTER_RESUME_MS = 600000
+const SSE_NO_PROGRESS_AFTER_RESUME_MS = 300000
+const SCREEN_RESUME_MIN_HIDDEN_MS = 120000
+const RESUME_SIGNAL_COOLDOWN_MS = 60000
+const RESUME_HINT_MIN_IDLE_MS = 60000
 const LAST_SESSION_KEY_PREFIX = 'lastSession_'
 const LAST_SESSION_LIST_KEY_PREFIX = 'lastSessions_'
 const MAX_TRACKED_SESSIONS_PER_SKILL = 12
@@ -304,6 +307,9 @@ function normalizeAgentQuestions(payload: Record<string, unknown>): AgentQuestio
 }
 
 export function useAgent(skillId: string) {
+  const initialVisibilityState: DocumentVisibilityState =
+    typeof document !== 'undefined' ? document.visibilityState : 'visible'
+
   const [state, setState] = useState<AgentState>({
     messages: [],
     isRunning: false,
@@ -333,6 +339,10 @@ export function useAgent(skillId: string) {
   const assistantIdRef = useRef<string>(crypto.randomUUID())
   const terminalEventRef = useRef(false)
   const resumeHintAtRef = useRef(0)
+  const hiddenAtRef = useRef<number>(initialVisibilityState === 'hidden' ? Date.now() : 0)
+  const lastVisibilityStateRef = useRef<DocumentVisibilityState>(initialVisibilityState)
+  const lastResumeSignalAtRef = useRef(0)
+  const lastSseActivityAtRef = useRef(0)
   const prevSkillIdRef = useRef(skillId)
   const textFlushRafRef = useRef<number | null>(null)
   const pendingTextFlushRef = useRef(false)
@@ -469,8 +479,30 @@ export function useAgent(skillId: string) {
 
   useEffect(() => {
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        resumeHintAtRef.current = Date.now()
+      const now = Date.now()
+      const currentVisibility = document.visibilityState
+      const previousVisibility = lastVisibilityStateRef.current
+      lastVisibilityStateRef.current = currentVisibility
+
+      if (currentVisibility === 'hidden') {
+        hiddenAtRef.current = now
+        return
+      }
+
+      if (currentVisibility === 'visible' && previousVisibility !== 'visible') {
+        const hiddenAt = hiddenAtRef.current
+        hiddenAtRef.current = 0
+        const hiddenDuration = hiddenAt > 0 ? now - hiddenAt : 0
+        const idleDuration = lastSseActivityAtRef.current > 0 ? now - lastSseActivityAtRef.current : Number.POSITIVE_INFINITY
+        const cooldownElapsed = now - lastResumeSignalAtRef.current >= RESUME_SIGNAL_COOLDOWN_MS
+        const shouldSignalResume = hiddenDuration >= SCREEN_RESUME_MIN_HIDDEN_MS
+          && idleDuration >= RESUME_HINT_MIN_IDLE_MS
+          && cooldownElapsed
+
+        if (!shouldSignalResume) return
+
+        resumeHintAtRef.current = now
+        lastResumeSignalAtRef.current = now
         if (sessionIdRef.current && !terminalEventRef.current) {
           setState((s) => (s.isRunning
             ? { ...s, connectionStatus: s.connectionStatus || 'Screen resumed, checking connection...' }
@@ -479,7 +511,12 @@ export function useAgent(skillId: string) {
       }
     }
     const onOnline = () => {
-      resumeHintAtRef.current = Date.now()
+      const now = Date.now()
+      if (now - lastResumeSignalAtRef.current < RESUME_SIGNAL_COOLDOWN_MS) return
+      const idleDuration = lastSseActivityAtRef.current > 0 ? now - lastSseActivityAtRef.current : Number.POSITIVE_INFINITY
+      if (idleDuration < RESUME_HINT_MIN_IDLE_MS) return
+      resumeHintAtRef.current = now
+      lastResumeSignalAtRef.current = now
       if (sessionIdRef.current && !terminalEventRef.current) {
         setState((s) => (s.isRunning
           ? { ...s, connectionStatus: s.connectionStatus || 'Network restored, checking connection...' }
@@ -813,6 +850,7 @@ export function useAgent(skillId: string) {
           const type = typeof event.type === 'string' ? event.type : eventType
           if (type && type !== 'session') {
             lastProgressAt = Date.now()
+            lastSseActivityAtRef.current = lastProgressAt
           }
           if (type === 'done' || type === 'stopped' || type === 'aborted') {
             shouldTerminate = true
@@ -866,6 +904,8 @@ export function useAgent(skillId: string) {
         pendingReadPromise = null
         const { done, value } = raceResult.result
         if (done) break
+
+        lastSseActivityAtRef.current = Date.now()
 
         buffer += decoder.decode(value, { stream: true })
         const blocks = buffer.split(/\r?\n\r?\n/)
