@@ -18,10 +18,15 @@ function usageAndExit() {
 }
 
 function run(command, args, cwd) {
-  const result = spawnSync(command, args, {
+  const useShell = process.platform === 'win32'
+  const commandForSpawn = useShell && /\s/.test(command)
+    ? `"${command}"`
+    : command
+
+  const result = spawnSync(commandForSpawn, args, {
     cwd,
     stdio: 'inherit',
-    shell: process.platform === 'win32',
+    shell: useShell,
   })
   if (result.status !== 0) {
     throw new Error(`Command failed: ${command} ${args.join(' ')}`)
