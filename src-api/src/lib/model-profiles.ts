@@ -114,11 +114,37 @@ export function getDefaultProfile(): ModelProfile | null {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export function migrateFromEnvIfNeeded(): void {
   const path = getModelProfilesPath()
+  const envConfig = readEnvConfig()
+  const envInterfaceType = normalizeModelInterfaceType(envConfig.LABORANY_MODEL_INTERFACE)
+
   if (existsSync(path)) {
+    // 修复历史版本：曾把 interfaceType 错误写死为 anthropic。
+    // 仅在单默认配置场景下按 .env 自愈，避免覆盖用户多配置手动设置。
+    try {
+      const store = readModelProfiles()
+      if (store.profiles.length === 1) {
+        const profile = store.profiles[0]
+        const shouldRepair = profile.name === 'Default'
+          && profile.interfaceType !== envInterfaceType
+          && profile.apiKey === (envConfig.ANTHROPIC_API_KEY || '').trim()
+        if (shouldRepair) {
+          const now = new Date().toISOString()
+          writeModelProfiles({
+            version: 2,
+            profiles: [{
+              ...profile,
+              interfaceType: envInterfaceType,
+              updatedAt: now,
+            }],
+          })
+          console.log(`[ModelProfiles] Repaired default interfaceType to ${envInterfaceType}`)
+        }
+      }
+    } catch (error) {
+      console.warn('[ModelProfiles] Failed to repair interfaceType from .env:', error)
+    }
     return
   }
-
-  const envConfig = readEnvConfig()
   const apiKey = (envConfig.ANTHROPIC_API_KEY || '').trim()
 
   if (!apiKey) {
@@ -133,7 +159,7 @@ export function migrateFromEnvIfNeeded(): void {
     apiKey,
     baseUrl: envConfig.ANTHROPIC_BASE_URL,
     model: envConfig.ANTHROPIC_MODEL,
-    interfaceType: 'anthropic',
+    interfaceType: envInterfaceType,
     createdAt: now,
     updatedAt: now,
   }
