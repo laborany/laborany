@@ -6,6 +6,7 @@ set "ROOT_DIR=%cd%"
 set "RELEASE_DIR=%ROOT_DIR%\release"
 set "OUTPUT_DIR=%ROOT_DIR%\output"
 set "NPM_CONFIG_PRODUCTION=false"
+set "NODE_ENV="
 
 echo [1/5] Checking Node.js and npm...
 where node >nul 2>nul
@@ -20,7 +21,7 @@ if errorlevel 1 (
 )
 
 echo [2/5] Ensuring dependencies are installed...
-call :install_if_missing "%ROOT_DIR%" "-" "normal"
+call :install_if_missing "%ROOT_DIR%" "node_modules\.bin\electron-builder.cmd" "normal"
 if errorlevel 1 goto :fail
 call :install_if_missing "%ROOT_DIR%\shared" "-" "normal"
 if errorlevel 1 goto :fail
