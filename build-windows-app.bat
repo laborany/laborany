@@ -5,6 +5,7 @@ cd /d "%~dp0"
 set "ROOT_DIR=%cd%"
 set "RELEASE_DIR=%ROOT_DIR%\release"
 set "OUTPUT_DIR=%ROOT_DIR%\output"
+set "NPM_CONFIG_PRODUCTION=false"
 
 echo [1/5] Checking Node.js and npm...
 where node >nul 2>nul
@@ -19,15 +20,15 @@ if errorlevel 1 (
 )
 
 echo [2/5] Ensuring dependencies are installed...
-call :install_if_missing "%ROOT_DIR%"
+call :install_if_missing "%ROOT_DIR%" "-" --include=dev
 if errorlevel 1 goto :fail
-call :install_if_missing "%ROOT_DIR%\shared"
+call :install_if_missing "%ROOT_DIR%\shared" "-" --include=dev
 if errorlevel 1 goto :fail
-call :install_if_missing "%ROOT_DIR%\src-api"
+call :install_if_missing "%ROOT_DIR%\src-api" "node_modules\.bin\esbuild.cmd" --include=dev
 if errorlevel 1 goto :fail
-call :install_if_missing "%ROOT_DIR%\agent-service"
+call :install_if_missing "%ROOT_DIR%\agent-service" "node_modules\.bin\esbuild.cmd" --include=dev --ignore-scripts
 if errorlevel 1 goto :fail
-call :install_if_missing "%ROOT_DIR%\frontend"
+call :install_if_missing "%ROOT_DIR%\frontend" "node_modules\.bin\vite.cmd" --include=dev
 if errorlevel 1 goto :fail
 
 echo [3/5] Building Windows app...
@@ -56,14 +57,30 @@ exit /b 0
 
 :install_if_missing
 set "TARGET_DIR=%~1"
+set "REQUIRED_MARKER=%~2"
+shift
+shift
+set "NPM_ARGS=%*"
+if "%NPM_ARGS%"=="" set "NPM_ARGS=--include=dev"
+
+if exist "%TARGET_DIR%\node_modules" (
+  if /I not "%REQUIRED_MARKER%"=="-" (
+    if not exist "%TARGET_DIR%\%REQUIRED_MARKER%" (
+      echo [deps] node_modules exists but marker missing: "%TARGET_DIR%\%REQUIRED_MARKER%"
+      echo [deps] Removing stale node_modules and reinstalling...
+      rmdir /s /q "%TARGET_DIR%\node_modules"
+    )
+  )
+)
+
 if exist "%TARGET_DIR%\node_modules" (
   echo [deps] node_modules exists: "%TARGET_DIR%"
   exit /b 0
 )
 
-echo [deps] Installing dependencies in "%TARGET_DIR%"...
+echo [deps] Installing dependencies in "%TARGET_DIR%" with args: %NPM_ARGS%
 pushd "%TARGET_DIR%"
-call npm install
+call npm install %NPM_ARGS%
 set "INSTALL_EXIT=%ERRORLEVEL%"
 popd
 
