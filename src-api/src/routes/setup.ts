@@ -10,7 +10,13 @@ import { existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { homedir, platform } from 'os'
 import { execSync, spawnSync } from 'child_process'
-import { wrapCmdForUtf8, sanitizeClaudeEnv } from 'laborany-shared'
+import {
+  wrapCmdForUtf8,
+  sanitizeClaudeEnv,
+  encodeOpenAiBridgeApiKey,
+  normalizeModelInterfaceType,
+  type ModelInterfaceType,
+} from 'laborany-shared'
 import {
   getConfigDir,
   getEnvPath,
@@ -284,6 +290,30 @@ function sanitizeModel(model?: string): string {
   return (model || '').trim() || 'claude-sonnet-4-20250514'
 }
 
+function sanitizeOpenAiModel(model?: string): string {
+  return (model || '').trim() || 'gpt-4o-mini'
+}
+
+function getApiBaseUrl(): string {
+  return `http://127.0.0.1:${process.env.PORT || '3620'}/api`
+}
+
+function extractAnthropicText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+
+  const chunks: string[] = []
+  for (const item of content) {
+    if (!item || typeof item !== 'object') continue
+    const block = item as Record<string, unknown>
+    if (block.type === 'text' && typeof block.text === 'string') {
+      chunks.push(block.text)
+    }
+  }
+
+  return chunks.join('\n').trim()
+}
+
 async function validateAnthropicConfig(params: {
   apiKey: string
   baseUrl?: string
@@ -294,7 +324,7 @@ async function validateAnthropicConfig(params: {
   const model = sanitizeModel(params.model)
 
   if (!apiKey) {
-    return { success: false, message: 'ANTHROPIC_API_KEY 不能为空' }
+    return { success: false, message: 'API_KEY 不能为空' }
   }
 
   const gitDependency = detectGitDependency()
@@ -384,6 +414,82 @@ async function validateAnthropicConfig(params: {
   }
 }
 
+async function validateOpenAiCompatibleConfig(params: {
+  apiKey: string
+  baseUrl?: string
+  model?: string
+}): Promise<{ success: boolean; message: string; diagnostic?: string }> {
+  const apiKey = params.apiKey.trim()
+  if (!apiKey) {
+    return { success: false, message: 'API_KEY 不能为空' }
+  }
+
+  const model = sanitizeOpenAiModel(params.model)
+  const bridgeKey = encodeOpenAiBridgeApiKey({
+    apiKey,
+    baseUrl: (params.baseUrl || '').trim() || undefined,
+    model,
+  })
+
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/llm-bridge/anthropic/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        'x-api-key': bridgeKey,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 64,
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Reply with exactly: OK' }],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(30_000),
+    })
+
+    const raw = await res.text()
+    let data: Record<string, unknown> = {}
+    try {
+      data = raw ? JSON.parse(raw) as Record<string, unknown> : {}
+    } catch {
+      data = {}
+    }
+
+    if (!res.ok) {
+      const errorMessage = (() => {
+        const err = data.error
+        if (err && typeof err === 'object' && typeof (err as Record<string, unknown>).message === 'string') {
+          return (err as Record<string, unknown>).message as string
+        }
+        if (typeof data.message === 'string') return data.message
+        return raw || `HTTP ${res.status}`
+      })()
+      return {
+        success: false,
+        message: 'OpenAI-compatible 配置验证失败',
+        diagnostic: errorMessage.slice(0, 600),
+      }
+    }
+
+    const text = extractAnthropicText(data.content)
+    return {
+      success: true,
+      message: `OpenAI-compatible 连接验证通过${text ? `（响应: ${text.slice(0, 60)}）` : ''}`,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown error'
+    return {
+      success: false,
+      message: `OpenAI-compatible 测试请求失败: ${message}`,
+    }
+  }
+}
+
 function computeSetupStatus() {
   const gitDependency = detectGitDependency()
   const bundled = getBundledClaudePath()
@@ -404,7 +510,7 @@ function computeSetupStatus() {
     errors.push(platform() === 'win32' ? '未检测到可用 Git Bash' : '未检测到 Git')
   }
   if (!apiConfigReady) {
-    errors.push('未配置 ANTHROPIC_API_KEY')
+    errors.push('未配置 API_KEY')
   }
   if (!profileReady) {
     errors.push('未设置用户名称')
@@ -449,13 +555,25 @@ setup.post('/validate-api', async (c) => {
     ANTHROPIC_API_KEY?: string
     ANTHROPIC_BASE_URL?: string
     ANTHROPIC_MODEL?: string
+    interfaceType?: ModelInterfaceType
+    LABORANY_MODEL_INTERFACE?: ModelInterfaceType
   }>()
 
-  const result = await validateAnthropicConfig({
-    apiKey: body.ANTHROPIC_API_KEY || '',
-    baseUrl: body.ANTHROPIC_BASE_URL,
-    model: body.ANTHROPIC_MODEL,
-  })
+  const interfaceType = normalizeModelInterfaceType(
+    body.interfaceType || body.LABORANY_MODEL_INTERFACE
+  )
+
+  const result = interfaceType === 'openai_compatible'
+    ? await validateOpenAiCompatibleConfig({
+      apiKey: body.ANTHROPIC_API_KEY || '',
+      baseUrl: body.ANTHROPIC_BASE_URL,
+      model: body.ANTHROPIC_MODEL,
+    })
+    : await validateAnthropicConfig({
+      apiKey: body.ANTHROPIC_API_KEY || '',
+      baseUrl: body.ANTHROPIC_BASE_URL,
+      model: body.ANTHROPIC_MODEL,
+    })
 
   if (!result.success) {
     return c.json(result, 400)
@@ -475,20 +593,27 @@ setup.post('/complete', async (c) => {
 
   const cfg = body.config || {}
   const name = (body.profile?.name || '').trim()
+  const interfaceType = normalizeModelInterfaceType(cfg.LABORANY_MODEL_INTERFACE)
 
   const apiKey = (cfg.ANTHROPIC_API_KEY || '').trim()
   if (!apiKey) {
-    return c.json({ success: false, error: 'ANTHROPIC_API_KEY 不能为空' }, 400)
+    return c.json({ success: false, error: 'API_KEY 不能为空' }, 400)
   }
   if (!name) {
     return c.json({ success: false, error: '用户名称不能为空' }, 400)
   }
 
-  const validation = await validateAnthropicConfig({
-    apiKey,
-    baseUrl: cfg.ANTHROPIC_BASE_URL,
-    model: cfg.ANTHROPIC_MODEL,
-  })
+  const validation = interfaceType === 'openai_compatible'
+    ? await validateOpenAiCompatibleConfig({
+      apiKey,
+      baseUrl: cfg.ANTHROPIC_BASE_URL,
+      model: cfg.ANTHROPIC_MODEL,
+    })
+    : await validateAnthropicConfig({
+      apiKey,
+      baseUrl: cfg.ANTHROPIC_BASE_URL,
+      model: cfg.ANTHROPIC_MODEL,
+    })
   if (!validation.success) {
     return c.json({
       success: false,
@@ -501,6 +626,7 @@ setup.post('/complete', async (c) => {
     ...readEnvConfig(),
     ...cfg,
     ANTHROPIC_API_KEY: apiKey,
+    LABORANY_MODEL_INTERFACE: interfaceType,
   }
 
   for (const key of Object.keys(merged)) {

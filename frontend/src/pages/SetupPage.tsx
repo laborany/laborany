@@ -39,6 +39,7 @@ interface ConfigPayload {
   ANTHROPIC_API_KEY: string
   ANTHROPIC_BASE_URL: string
   ANTHROPIC_MODEL: string
+  LABORANY_MODEL_INTERFACE: 'anthropic' | 'openai_compatible'
 }
 
 interface SetupPageProps {
@@ -59,6 +60,7 @@ export default function SetupPage({ onReady }: SetupPageProps) {
     ANTHROPIC_API_KEY: '',
     ANTHROPIC_BASE_URL: '',
     ANTHROPIC_MODEL: '',
+    LABORANY_MODEL_INTERFACE: 'anthropic',
   })
   const [displayName, setDisplayName] = useState('')
 
@@ -101,6 +103,9 @@ export default function SetupPage({ onReady }: SetupPageProps) {
           ANTHROPIC_API_KEY: envConfig.ANTHROPIC_API_KEY?.value || '',
           ANTHROPIC_BASE_URL: envConfig.ANTHROPIC_BASE_URL?.value || '',
           ANTHROPIC_MODEL: envConfig.ANTHROPIC_MODEL?.value || '',
+          LABORANY_MODEL_INTERFACE: envConfig.LABORANY_MODEL_INTERFACE?.value === 'openai_compatible'
+            ? 'openai_compatible'
+            : 'anthropic',
         })
         setDisplayName(configData.profile?.name || statusData.profile?.name || '')
       } else {
@@ -142,7 +147,7 @@ export default function SetupPage({ onReady }: SetupPageProps) {
     setValidationMsg(null)
 
     if (!config.ANTHROPIC_API_KEY.trim()) {
-      setError('请先填写 ANTHROPIC_API_KEY')
+      setError('请先填写 API Key')
       return
     }
 
@@ -151,7 +156,10 @@ export default function SetupPage({ onReady }: SetupPageProps) {
       const res = await fetch(`${API_BASE}/setup/validate-api`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify({
+          ...config,
+          interfaceType: config.LABORANY_MODEL_INTERFACE,
+        }),
       })
       const payload = await res.json() as { success?: boolean; message?: string; diagnostic?: string }
 
@@ -271,28 +279,57 @@ function renderEnvironmentStep() {
   }
 
   function renderApiStep() {
+    const isOpenAiCompatible = config.LABORANY_MODEL_INTERFACE === 'openai_compatible'
+
     return (
       <div className="space-y-4">
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-foreground">
+            接口格式
+          </label>
+          <select
+            value={config.LABORANY_MODEL_INTERFACE}
+            onChange={(event) => setConfig(prev => ({
+              ...prev,
+              LABORANY_MODEL_INTERFACE: event.target.value === 'openai_compatible'
+                ? 'openai_compatible'
+                : 'anthropic',
+            }))}
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+          >
+            <option value="anthropic">Anthropic</option>
+            <option value="openai_compatible">OpenAI-compatible</option>
+          </select>
+        </div>
+
         <InputRow
-          label="ANTHROPIC_API_KEY"
+          label="API_KEY"
           required
           value={config.ANTHROPIC_API_KEY}
           onChange={(value) => setConfig(prev => ({ ...prev, ANTHROPIC_API_KEY: value }))}
-          placeholder="sk-ant-api03-..."
+          placeholder={isOpenAiCompatible ? 'sk-...' : 'sk-ant-api03-...'}
           sensitive
         />
         <InputRow
-          label="ANTHROPIC_BASE_URL"
+          label="BASE_URL"
           value={config.ANTHROPIC_BASE_URL}
           onChange={(value) => setConfig(prev => ({ ...prev, ANTHROPIC_BASE_URL: value }))}
-          placeholder="https://api.anthropic.com（可选）"
+          placeholder={isOpenAiCompatible
+            ? 'https://api.openai.com/v1（可选）'
+            : 'https://api.anthropic.com（可选）'}
         />
         <InputRow
-          label="ANTHROPIC_MODEL"
+          label="MODEL"
           value={config.ANTHROPIC_MODEL}
           onChange={(value) => setConfig(prev => ({ ...prev, ANTHROPIC_MODEL: value }))}
-          placeholder="claude-sonnet-4-20250514（可选）"
+          placeholder={isOpenAiCompatible
+            ? 'gpt-4o-mini（可选）'
+            : 'claude-sonnet-4-20250514（可选）'}
         />
+
+        <p className="text-xs text-muted-foreground">
+          当前安装向导会统一写入 `ANTHROPIC_*` 变量，并通过 `LABORANY_MODEL_INTERFACE` 决定按 Anthropic 还是 OpenAI-compatible 流程调用。
+        </p>
 
         {validationMsg && (
           <div className="rounded-lg border border-green-500/20 bg-green-500/10 p-3 text-sm text-green-700">
