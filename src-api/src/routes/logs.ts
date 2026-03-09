@@ -176,9 +176,12 @@ logsRoute.get('/export', async (c) => {
       size: bundle.payload.length,
     })
 
-    c.header('Content-Type', 'application/zip')
-    c.header('Content-Disposition', `attachment; filename="${bundle.filename}"`)
-    return c.body(bundle.payload)
+    return new Response(bundle.payload, {
+      headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${bundle.filename}"`,
+      },
+    })
   } catch (error) {
     logError('logs_export_failed', 'Failed to export logs bundle', error)
     return c.json({ success: false, error: 'Failed to export logs' }, 500)

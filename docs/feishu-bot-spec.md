@@ -1,17 +1,18 @@
-# LaborAny 飞书 Bot 集成规范（v0.3.5）
+# LaborAny 飞书 Bot 集成规范（v0.3.6）
 
-> 更新时间：2026-02-23
-> 适用版本：LaborAny v0.3.5
+> 更新时间：2026-03-07
+> 适用版本：LaborAny v0.3.6
 
 ---
 
 ## 1. 概述
 
-飞书 Bot 是 LaborAny 的远程触发入口，允许用户通过飞书消息远程执行任务，并以流式卡片实时回传结果。
+飞书 Bot 是 LaborAny 的远程触发入口，允许用户通过飞书消息远程执行任务、创建定时任务，并以流式卡片实时回传结果。
 
 功能定位：
 
 - 与桌面端等价的任务执行能力（智能路由 + 技能执行）
+- 在飞书内直接创建 `cron / at / every` 三类定时任务
 - 飞书消息作为输入，流式卡片作为输出
 - 自动复用 session 入库、memory 收集、skill 体系等现有能力
 
@@ -117,10 +118,17 @@ agent-service/src/feishu/     # 5 个文件
 
 | 命令 | 功能 |
 |------|------|
-| `/new` | 重置会话（清除 converse + execute 状态） |
-| `/help` | 显示帮助信息 |
 | `/skill <id> [query]` | 跳过 converse，直接执行指定技能 |
 | `/skills` | 列出可用技能 |
+| `/cron help` | 查看定时任务命令帮助 |
+| `/cron create "<name>" "<cronExpr>" "<skillId>" "<query>" [tz]` | 创建 cron 定时任务 |
+| `/cron quick <daily9\|hourly\|weekday9> <skillId> "<query>" [name] [tz]` | 通过模板快速创建 cron |
+| `/cron once "<datetime>" <skillId> "<query>" [name]` | 创建一次性任务 |
+| `/cron every "<duration>" <skillId> "<query>" [name]` | 创建固定间隔任务 |
+| `/cron list` | 列出当前飞书用户创建的定时任务 |
+| `/cron delete <jobId>` | 删除当前飞书用户创建的定时任务 |
+| `/new` | 重置会话（清除 converse + execute 状态） |
+| `/help` | 显示帮助信息 |
 | `/stop` | 中止当前执行中的任务 |
 
 ### 5.3 Converse 多轮对话
@@ -136,7 +144,24 @@ agent-service/src/feishu/     # 5 个文件
 | `recommend_capability` | 自动执行推荐的 skill |
 | `execute_generic` | 用默认 skill 执行 |
 | `create_capability` | 提示用户在桌面端创建 |
-| `setup_schedule` | 提示用户在桌面端配置 |
+| `setup_schedule` | 校验调度参数，必要时自动创建 skill，并直接创建定时任务 |
+
+### 5.5 定时任务链路
+
+`setup_schedule` 和 `/cron` 命令最终都会落到同一条创建链路：
+
+1. 解析调度类型：`cron / at / every`
+2. 校验时间参数：`cronExpr`、未来时间 `atMs` 或正数间隔 `everyMs`
+3. 校验目标 skill；若 converse 尚未给出可用 skill，则先自动创建 skill
+4. 按 `openId + 调度指纹 + targetId + query` 做短时间去重，避免重复创建
+5. 写入 cron store，并立即重置 poll timer，确保新任务马上纳入调度
+6. 创建结果以飞书卡片/文本返回；后续执行结果默认主动推送到创建者私聊（`open_id`）
+
+说明：
+
+- 飞书中通过自然语言表达“每天/每周/定时/隔 2 小时执行”等意图时，converse 会输出 `setup_schedule`
+- 飞书创建的任务会记录 `source: feishu` 与 `sourceMeta.openId/chatId/stateKey`
+- 任务完成、失败或被中止时，通知模块会优先推送飞书摘要；若存在附件产物，再补发文件/图片消息
 
 ---
 

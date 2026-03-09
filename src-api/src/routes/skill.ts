@@ -114,7 +114,7 @@ function ensureRunningSession(
 
   dbHelper.run(
     `UPDATE sessions
-     SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?, source = ?, source_meta = ?
+     SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?, source = ?, source_meta = ?, updated_at = datetime('now')
      WHERE id = ?`,
     [
       'running',
@@ -496,7 +496,7 @@ skill.post('/execute', async (c) => {
         [sessionId, 'assistant', content]
       )
       dbHelper.run(
-        `UPDATE sessions SET status = ? WHERE id = ?`,
+        `UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?`,
         ['completed', sessionId]
       )
 
@@ -553,7 +553,7 @@ skill.post('/execute', async (c) => {
           [sessionId, 'assistant', assistantOutput]
         )
         dbHelper.run(
-          `UPDATE sessions SET status = ? WHERE id = ?`,
+          `UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?`,
           ['completed', sessionId]
         )
 
@@ -570,7 +570,7 @@ skill.post('/execute', async (c) => {
           [sessionId, 'assistant', assistantOutput ? `${assistantOutput}\n${message}` : message]
         )
         dbHelper.run(
-          `UPDATE sessions SET status = ? WHERE id = ?`,
+          `UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?`,
           ['failed', sessionId]
         )
 
@@ -826,7 +826,9 @@ skill.post('/:skillId/optimize', async (c) => {
   const abortController = new AbortController()
   sessionManager.register(sessionId, abortController)
 
-  const lastUserMessage = messages.filter((m: { role: string }) => m.role === 'user').pop()
+  const lastUserMessage = messages
+    .filter((m): m is { role: string; content?: string } => typeof m?.role === 'string' && m.role === 'user')
+    .pop()
   const query = `Please help optimize the skill at ${userSkillPath} named "${targetSkill.meta.name}".\n\nUser request: ${lastUserMessage?.content || ""}\n\nAnalyze current skill files, apply the requested changes, then summarize improvements.`
 
   return streamSSE(c, async (stream) => {

@@ -17,6 +17,7 @@ import {
   getJobRuns,
   triggerJob,
   getCronTimerStatus,
+  triggerPoll,
   validateCronExpr,
   describeSchedule,
   listNotifications,
@@ -47,6 +48,16 @@ function isSourceChannel(value: unknown): value is JobSourceChannel {
   return value === 'desktop' || value === 'feishu'
 }
 
+function formatNextWakeAt(nextWakeAt: number | null): string {
+  return nextWakeAt ? new Date(nextWakeAt).toLocaleString('zh-CN') : 'none'
+}
+
+function rearmCronTimer(reason: string): void {
+  triggerPoll()
+  const status = getCronTimerStatus()
+  console.log(`[Cron] timer rearmed: reason=${reason}, nextWakeAt=${formatNextWakeAt(status.nextWakeAt)}`)
+}
+
 function validateSource(source: JobSource | undefined): string | null {
   if (!source) return null
   if (!isSourceChannel(source.channel)) return 'source.channel 必须是 desktop 或 feishu'
@@ -72,6 +83,31 @@ function validateTarget(target: CreateJobRequest['target'] | UpdateJobRequest['t
   if (target.type !== 'skill') return 'target.type 当前仅支持 skill'
   const exists = loadCatalog().some(item => item.type === 'skill' && item.id === target.id)
   if (!exists) return `未找到目标技能: ${target.id}`
+  return null
+}
+
+function validateScheduleInput(schedule: Schedule | undefined): string | null {
+  if (!schedule) return null
+
+  if (schedule.kind === 'cron') {
+    const error = validateCronExpr(schedule.expr)
+    return error ? `无效的 Cron 表达式: ${error}` : null
+  }
+
+  if (schedule.kind === 'at') {
+    if (!Number.isFinite(schedule.atMs)) {
+      return 'schedule.atMs 必须是有效的毫秒时间戳'
+    }
+    if (schedule.atMs <= Date.now()) {
+      return '一次性任务的执行时间必须晚于当前时间'
+    }
+    return null
+  }
+
+  if (!Number.isFinite(schedule.everyMs) || schedule.everyMs <= 0) {
+    return 'schedule.everyMs 必须是大于 0 的毫秒间隔'
+  }
+
   return null
 }
 
@@ -121,12 +157,10 @@ router.post('/jobs', (req: Request, res: Response) => {
     return
   }
 
-  if (schedule.kind === 'cron') {
-    const error = validateCronExpr(schedule.expr)
-    if (error) {
-      res.status(400).json({ error: `无效的 Cron 表达式: ${error}` })
-      return
-    }
+  const scheduleError = validateScheduleInput(schedule)
+  if (scheduleError) {
+    res.status(400).json({ error: scheduleError })
+    return
   }
 
   const sourceError = validateSource(source)
@@ -149,6 +183,7 @@ router.post('/jobs', (req: Request, res: Response) => {
 
   try {
     const job = createJob({ name, description, schedule, target, enabled, modelProfileId, source, notify })
+    rearmCronTimer(`create:${job.id}`)
     res.json(job)
   } catch (error) {
     res.status(500).json({ error: withDetail('创建任务失败', error) })
@@ -162,12 +197,10 @@ router.patch('/jobs/:id', (req: Request, res: Response) => {
   const { id } = req.params
   const updates = req.body as UpdateJobRequest
 
-  if (updates.schedule?.kind === 'cron') {
-    const error = validateCronExpr(updates.schedule.expr)
-    if (error) {
-      res.status(400).json({ error: `无效的 Cron 表达式: ${error}` })
-      return
-    }
+  const scheduleError = validateScheduleInput(updates.schedule)
+  if (scheduleError) {
+    res.status(400).json({ error: scheduleError })
+    return
   }
 
   const notifyError = validateNotify(updates.notify)
@@ -188,6 +221,7 @@ router.patch('/jobs/:id', (req: Request, res: Response) => {
       res.status(404).json({ error: '任务不存在' })
       return
     }
+    rearmCronTimer(`update:${job.id}`)
     res.json(job)
   } catch (error) {
     res.status(500).json({ error: withDetail('更新任务失败', error) })
@@ -204,6 +238,7 @@ router.delete('/jobs/:id', (req: Request, res: Response) => {
     res.status(404).json({ error: '任务不存在' })
     return
   }
+  rearmCronTimer(`delete:${id}`)
   res.json({ success: true })
 })
 
@@ -214,7 +249,12 @@ router.post('/jobs/:id/run', async (req: Request, res: Response) => {
   const { id } = req.params
   const result = await triggerJob(id)
   if (!result.success) {
-    res.status(result.error === '任务不存在' ? 404 : 500).json({ error: result.error })
+    const statusCode = result.errorCode === 'NOT_FOUND'
+      ? 404
+      : result.errorCode === 'ALREADY_RUNNING'
+        ? 409
+        : 500
+    res.status(statusCode).json({ error: result.error, errorCode: result.errorCode, sessionId: result.sessionId })
     return
   }
   res.json({ success: true, sessionId: result.sessionId })

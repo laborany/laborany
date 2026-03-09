@@ -103,20 +103,21 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
 
 export async function notifyJobComplete(
   job: CronJob,
-  status: 'ok' | 'error',
+  status: 'ok' | 'error' | 'aborted',
   sessionId: string,
   error?: string,
   runStartedAtMs?: number,
 ): Promise<void> {
   const config = getNotifyConfig()
   const isSuccess = status === 'ok'
+  const isAborted = status === 'aborted'
 
   // 检查是否需要通知
   const shouldNotify = isSuccess ? config.notifyOnSuccess : config.notifyOnError
   if (!shouldNotify) return
 
-  const title = `${job.name} ${isSuccess ? '执行成功' : '执行失败'}`
-  const content = error || '任务已完成'
+  const title = `${job.name} ${isSuccess ? '执行成功' : isAborted ? '已中止' : '执行失败'}`
+  const content = error || (isAborted ? '任务已中止' : '任务已完成')
 
   if (job.notifyChannel === 'feishu_dm' && job.notifyFeishuOpenId) {
     const summary = buildFeishuSummaryText(job, status, sessionId, error)
@@ -133,10 +134,12 @@ export async function notifyJobComplete(
       return
     }
 
-    const artifacts = await sendArtifactsToOpenId(job.notifyFeishuOpenId, sessionId, runStartedAtMs)
-    if (artifacts.sent > 0 || artifacts.failed > 0 || artifacts.skipped > 0) {
-      const followup = `文件回传结果：成功 ${artifacts.sent}，失败 ${artifacts.failed}，跳过 ${artifacts.skipped}。`
-      await sendTextToOpenId(job.notifyFeishuOpenId, followup)
+    if (isSuccess) {
+      const artifacts = await sendArtifactsToOpenId(job.notifyFeishuOpenId, sessionId, runStartedAtMs)
+      if (artifacts.sent > 0 || artifacts.failed > 0 || artifacts.skipped > 0) {
+        const followup = `文件回传结果：成功 ${artifacts.sent}，失败 ${artifacts.failed}，跳过 ${artifacts.skipped}。`
+        await sendTextToOpenId(job.notifyFeishuOpenId, followup)
+      }
     }
     return
   }
@@ -265,13 +268,14 @@ export async function sendTestEmail(): Promise<{ success: boolean; error?: strin
 
 function buildEmailHtml(
   job: CronJob,
-  status: 'ok' | 'error',
+  status: 'ok' | 'error' | 'aborted',
   sessionId: string,
   error?: string
 ): string {
   const isSuccess = status === 'ok'
-  const statusColor = isSuccess ? '#22c55e' : '#ef4444'
-  const statusText = isSuccess ? '执行成功' : '执行失败'
+  const isAborted = status === 'aborted'
+  const statusColor = isSuccess ? '#22c55e' : isAborted ? '#f59e0b' : '#ef4444'
+  const statusText = isSuccess ? '执行成功' : isAborted ? '已中止' : '执行失败'
 
   return `
 <!DOCTYPE html>
@@ -330,12 +334,13 @@ function buildEmailHtml(
 
 function buildFeishuSummaryText(
   job: CronJob,
-  status: 'ok' | 'error',
+  status: 'ok' | 'error' | 'aborted',
   sessionId: string,
   error?: string,
 ): string {
-  const statusLabel = status === 'ok' ? '执行成功' : '执行失败'
-  const when = new Date().toLocaleString('zh-CN')
+  const statusLabel = status === 'ok' ? '执行成功' : status === 'aborted' ? '已中止' : '执行失败'
+  const now = new Date()
+  const when = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
   const lines = [
     `【LaborAny 定时任务】${statusLabel}`,
     `任务：${job.name}`,

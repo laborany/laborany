@@ -1,6 +1,6 @@
 [package]
 name = "laborany"
-version = "0.1.0"
+version = "0.3.7"
 description = "LaborAny Desktop Application"
 authors = ["LaborAny Team"]
 edition = "2021"

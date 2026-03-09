@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'crypto'
 import { Hono } from 'hono'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { decodeOpenAiBridgeApiKey } from 'laborany-shared'
 
 interface AnthropicRequestBody {
@@ -638,9 +639,10 @@ router.post('/anthropic/v1/messages', async (c) => {
 
   const rawBody = await upstreamResponse.text()
   if (!upstreamResponse.ok) {
+    const status = upstreamResponse.status as ContentfulStatusCode
     return c.json(
-      buildAnthropicError(upstreamResponse.status, parseErrorMessage(rawBody)),
-      upstreamResponse.status,
+      buildAnthropicError(status, parseErrorMessage(rawBody)),
+      status,
     )
   }
 

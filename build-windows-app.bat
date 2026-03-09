@@ -7,6 +7,9 @@ set "RELEASE_DIR=%ROOT_DIR%\release"
 set "OUTPUT_DIR=%ROOT_DIR%\output"
 set "NPM_CONFIG_PRODUCTION=false"
 set "NODE_ENV="
+if "%ELECTRON_SKIP_BINARY_DOWNLOAD%"=="" set "ELECTRON_SKIP_BINARY_DOWNLOAD=1"
+if "%ELECTRON_MIRROR%"=="" set "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/"
+if "%ELECTRON_BUILDER_BINARIES_MIRROR%"=="" set "ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/"
 
 echo [1/5] Checking Node.js and npm...
 where node >nul 2>nul
@@ -21,7 +24,7 @@ if errorlevel 1 (
 )
 
 echo [2/5] Ensuring dependencies are installed...
-call :install_if_missing "%ROOT_DIR%" "node_modules\.bin\electron-builder.cmd" "normal"
+call :install_if_missing "%ROOT_DIR%" "node_modules\.bin\electron-builder.cmd" "root"
 if errorlevel 1 goto :fail
 call :install_if_missing "%ROOT_DIR%\shared" "-" "normal"
 if errorlevel 1 goto :fail
@@ -82,8 +85,13 @@ if /I "%INSTALL_MODE%"=="agent" (
   echo [deps] npm install --include=dev --ignore-scripts
   call npm install --include=dev --ignore-scripts
 ) else (
-  echo [deps] npm install --include=dev
-  call npm install --include=dev
+  if /I "%INSTALL_MODE%"=="root" (
+    echo [deps] npm install --include=dev --ignore-scripts
+    call npm install --include=dev --ignore-scripts
+  ) else (
+    echo [deps] npm install --include=dev
+    call npm install --include=dev
+  )
 )
 set "INSTALL_EXIT=%ERRORLEVEL%"
 popd

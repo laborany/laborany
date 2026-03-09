@@ -10,6 +10,7 @@ import { loadCatalog, type CatalogItem } from './catalog.js'
 export interface ConverseRuntimeContext {
   channel?: string
   locale?: string
+  currentTime?: string
   capabilities?: {
     canSendFile?: boolean
     canSendImage?: boolean
@@ -26,6 +27,7 @@ function formatCatalog(items: CatalogItem[]): string {
 function buildRuntimeContextSection(context?: ConverseRuntimeContext): string {
   const channel = context?.channel?.trim() || 'default'
   const locale = context?.locale?.trim() || 'zh-CN'
+  const currentTime = context?.currentTime?.trim() || new Date().toISOString()
   const canSendFile = Boolean(context?.capabilities?.canSendFile)
   const canSendImage = Boolean(context?.capabilities?.canSendImage)
 
@@ -34,6 +36,7 @@ function buildRuntimeContextSection(context?: ConverseRuntimeContext): string {
     '',
     `- channel: ${channel}`,
     `- locale: ${locale}`,
+    `- currentTime: ${currentTime}`,
     `- canSendFile: ${canSendFile}`,
     `- canSendImage: ${canSendImage}`,
     '',
@@ -61,7 +64,7 @@ const BEHAVIOR_SECTION = `# laborany 首页总控助手
 3. 高置信度匹配（用户意图与 skill 描述高度吻合）→ 直接输出 LABORANY_ACTION，无需确认
 4. 低置信度匹配（存在歧义或多个候选）→ 先征求用户确认，再输出 LABORANY_ACTION
 5. 无匹配 → 询问用户选择"通用执行"还是"创建新 skill"
-6. 检测到定时任务意图（用户提到"定时"、"每天"、"每周"、"自动执行"、"定期"等）→ 必须输出 setup_schedule action。即使 cronExpr、tz 等字段不确定，也要输出，系统会自动引导用户补充。绝对不要在定时任务意图下输出 recommend_capability`
+6. 检测到定时任务意图（用户提到"定时"、"每天"、"每周"、"自动执行"、"定期"等）→ 必须输出 setup_schedule action。setup_schedule 支持三种调度：cron、at、every。即使 cronExpr、atMs、everyMs 等字段不确定，也要输出，系统会自动引导用户补充。绝对不要在定时任务意图下输出 recommend_capability`
 
 const QUESTION_PROTOCOL_SECTION = `## AskUserQuestion 协议
 
@@ -108,6 +111,10 @@ LABORANY_ACTION: {"action":"<type>", ...}
 - recommend_capability 的 matchType 为 exact 或 candidate。
 - recommend_capability 的 reason 为简短匹配说明。
 - send_file 的 filePaths 必须为绝对路径数组；当 canSendFile=false 时禁止输出该 action。
+- setup_schedule 的 scheduleKind 可为 cron / at / every。
+- 当 scheduleKind=cron 时尽量填写 cronExpr；tz 可选，缺省为 Asia/Shanghai。
+- 当 scheduleKind=at 时尽量填写 atMs（Unix 毫秒时间戳）；如无法精确换算，可先输出部分字段，由系统继续追问。
+- 当 scheduleKind=every 时尽量填写 everyMs（毫秒间隔）。
 - 当用户意图是"设置定时任务"时，必须输出 setup_schedule，禁止输出 recommend_capability。即使用户提到了某个已有 skill，只要意图是定时执行，action 就必须是 setup_schedule（在 targetId 中填写该 skill id）。
 - 再次强调：你只负责输出 LABORANY_ACTION 标记，不负责执行任何任务。`
 
@@ -142,7 +149,7 @@ LABORANY_ACTION: {"action":"execute_generic","query":"整理项目 README","plan
 用户：帮我把 stock-analyzer 设置为每天9点执行的定时任务
 助手：好的，我来为你创建定时任务。
 
-LABORANY_ACTION: {"action":"setup_schedule","cronExpr":"0 9 * * *","targetQuery":"执行股票分析","targetId":"stock-analyzer","tz":"Asia/Shanghai","name":"每日股票分析"}
+LABORANY_ACTION: {"action":"setup_schedule","scheduleKind":"cron","cronExpr":"0 9 * * *","targetQuery":"执行股票分析","targetId":"stock-analyzer","tz":"Asia/Shanghai","name":"每日股票分析"}
 
 ### 示例 5：定时任务 - 部分信息（系统会自动补充缺失字段）
 
@@ -150,6 +157,13 @@ LABORANY_ACTION: {"action":"setup_schedule","cronExpr":"0 9 * * *","targetQuery"
 助手：收到，我来帮你配置定时任务，稍后系统会引导你补充执行频率等细节。
 
 LABORANY_ACTION: {"action":"setup_schedule","targetQuery":"执行数据备份"}
+
+### 示例 6：一次性任务
+
+用户：明天早上 8 点帮我执行库存盘点
+助手：好的，我来配置一次性定时任务。
+
+LABORANY_ACTION: {"action":"setup_schedule","scheduleKind":"at","atMs":1772841600000,"targetQuery":"执行库存盘点"}
 
 ### 错误示例（绝对不要这样做）
 

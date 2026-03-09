@@ -369,6 +369,16 @@ export function markJobRunning(id: string, sessionId: string): boolean {
   return result.changes > 0
 }
 
+/** 释放任务运行锁（用于手动触发等不应影响调度状态的场景） */
+export function releaseJobRunning(id: string): void {
+  getDb().prepare(`
+    UPDATE cron_jobs
+    SET running_session_id = NULL,
+        updated_at = ?
+    WHERE id = ?
+  `).run(new Date().toISOString(), id)
+}
+
 /** 标记任务执行完成 */
 export function markJobCompleted(
   id: string,

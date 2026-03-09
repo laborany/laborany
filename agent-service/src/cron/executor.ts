@@ -3,6 +3,7 @@ import type { CronJob } from './types.js'
 import {
   markJobRunning,
   markJobCompleted,
+  releaseJobRunning,
   scheduleRetry,
   createRun,
   completeRun,
@@ -19,6 +20,25 @@ interface SkillExecuteEvent {
   content?: string
   message?: string
 }
+
+type SkillRunTerminalStatus = 'ok' | 'aborted' | 'stopped'
+
+interface SkillRunResult {
+  status: SkillRunTerminalStatus
+  message?: string
+}
+
+export type TriggerJobResult =
+  | {
+      success: true
+      sessionId: string
+    }
+  | {
+      success: false
+      errorCode: 'NOT_FOUND' | 'ALREADY_RUNNING' | 'EXECUTION_FAILED'
+      error: string
+      sessionId?: string
+    }
 
 function parseSseBlock(rawBlock: string): SkillExecuteEvent | null {
   const lines = rawBlock.split(/\r?\n/)
@@ -51,7 +71,21 @@ async function readErrorMessage(response: Response): Promise<string> {
   }
 }
 
-async function runSkillJob(job: CronJob, sessionId: string): Promise<void> {
+async function safeNotifyJobComplete(
+  job: CronJob,
+  status: 'ok' | 'error' | 'aborted',
+  sessionId: string,
+  error?: string,
+  runStartedAtMs?: number,
+): Promise<void> {
+  try {
+    await notifyJobComplete(job, status, sessionId, error, runStartedAtMs)
+  } catch (notifyError) {
+    console.error(`[Cron] notify failed: job=${job.id}`, notifyError)
+  }
+}
+
+async function runSkillJob(job: CronJob, sessionId: string): Promise<SkillRunResult> {
   const response = await fetch(`${getSrcApiBaseUrl()}/skill/execute`, {
     method: 'POST',
     headers: {
@@ -78,9 +112,9 @@ async function runSkillJob(job: CronJob, sessionId: string): Promise<void> {
   const decoder = new TextDecoder()
   const errors: string[] = []
   let buffer = ''
-  let completed = false
+  let terminalStatus: SkillRunTerminalStatus | null = null
 
-  while (!completed) {
+  while (!terminalStatus) {
     const { done, value } = await reader.read()
     if (done) break
 
@@ -101,22 +135,40 @@ async function runSkillJob(job: CronJob, sessionId: string): Promise<void> {
         if (message) errors.push(message)
       }
 
-      if (event.type === 'done' || event.type === 'stopped' || event.type === 'aborted') {
-        completed = true
+      if (event.type === 'done') {
+        terminalStatus = 'ok'
+        void reader.cancel()
+        break
+      }
+
+      if (event.type === 'stopped') {
+        terminalStatus = 'stopped'
+        void reader.cancel()
+        break
+      }
+
+      if (event.type === 'aborted') {
+        terminalStatus = 'aborted'
         void reader.cancel()
         break
       }
     }
   }
 
-  if (!completed && buffer.trim()) {
+  if (!terminalStatus && buffer.trim()) {
     const tailEvent = parseSseBlock(buffer.trim())
     if (tailEvent?.type === 'error') {
       const message = tailEvent.message || tailEvent.content
       if (message) errors.push(message)
     }
-    if (tailEvent?.type === 'done' || tailEvent?.type === 'stopped' || tailEvent?.type === 'aborted') {
-      completed = true
+    if (tailEvent?.type === 'done') {
+      terminalStatus = 'ok'
+    }
+    if (tailEvent?.type === 'stopped') {
+      terminalStatus = 'stopped'
+    }
+    if (tailEvent?.type === 'aborted') {
+      terminalStatus = 'aborted'
     }
   }
 
@@ -124,9 +176,19 @@ async function runSkillJob(job: CronJob, sessionId: string): Promise<void> {
     throw new Error(errors.join('; '))
   }
 
-  if (!completed) {
+  if (!terminalStatus) {
     throw new Error('Cron run ended without a terminal event')
   }
+
+  if (terminalStatus === 'aborted') {
+    return { status: 'aborted', message: '任务已中止' }
+  }
+
+  if (terminalStatus === 'stopped') {
+    return { status: 'stopped', message: '任务已停止' }
+  }
+
+  return { status: 'ok' }
 }
 
 export async function runJob(job: CronJob): Promise<void> {
@@ -143,14 +205,22 @@ export async function runJob(job: CronJob): Promise<void> {
   const runId = createRun(job.id, sessionId)
 
   try {
-    await runSkillJob(job, sessionId)
+    const result = await runSkillJob(job, sessionId)
 
     const durationMs = Date.now() - startTime
-    markJobCompleted(job.id, 'ok')
-    completeRun(runId, 'ok', undefined, durationMs)
-    console.log(`[Cron] job completed: ${job.name}, duration ${durationMs}ms`)
+    if (result.status === 'ok') {
+      markJobCompleted(job.id, 'ok')
+      completeRun(runId, 'ok', undefined, durationMs)
+      console.log(`[Cron] job completed: ${job.name}, duration ${durationMs}ms`)
+      await safeNotifyJobComplete(job, 'ok', sessionId, undefined, startTime)
+      return
+    }
 
-    await notifyJobComplete(job, 'ok', sessionId, undefined, startTime)
+    const terminalMessage = result.message || (result.status === 'aborted' ? '任务已中止' : '任务已停止')
+    markJobCompleted(job.id, 'error', terminalMessage)
+    completeRun(runId, 'error', terminalMessage, durationMs)
+    console.log(`[Cron] job ${result.status}: ${job.name}, duration ${durationMs}ms`)
+    await safeNotifyJobComplete(job, 'aborted', sessionId, terminalMessage, startTime)
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     const durationMs = Date.now() - startTime
@@ -166,40 +236,55 @@ export async function runJob(job: CronJob): Promise<void> {
       )
     } else {
       markJobCompleted(job.id, 'error', error)
-      await notifyJobComplete(job, 'error', sessionId, error, startTime)
+      await safeNotifyJobComplete(job, 'error', sessionId, error, startTime)
     }
   }
 }
 
-export async function triggerJob(jobId: string): Promise<{
-  success: boolean
-  sessionId?: string
-  error?: string
-}> {
+export async function triggerJob(jobId: string): Promise<TriggerJobResult> {
   const { getJob } = await import('./store.js')
 
   const job = getJob(jobId)
   if (!job) {
-    return { success: false, error: 'Job not found' }
+    return { success: false, errorCode: 'NOT_FOUND', error: '任务不存在' }
   }
 
   const sessionId = `cron-manual-${job.id}-${uuid().slice(0, 8)}`
+  const locked = markJobRunning(job.id, sessionId)
+  if (!locked) {
+    return { success: false, errorCode: 'ALREADY_RUNNING', error: '任务正在运行中', sessionId }
+  }
+
   const startTime = Date.now()
   const runId = createRun(job.id, sessionId)
 
   try {
-    await runSkillJob(job, sessionId)
+    const result = await runSkillJob(job, sessionId)
 
     const durationMs = Date.now() - startTime
-    completeRun(runId, 'ok', undefined, durationMs)
-    await notifyJobComplete(job, 'ok', sessionId, undefined, startTime)
+    if (result.status === 'ok') {
+      completeRun(runId, 'ok', undefined, durationMs)
+      await safeNotifyJobComplete(job, 'ok', sessionId, undefined, startTime)
+      return { success: true, sessionId }
+    }
 
-    return { success: true, sessionId }
+    const terminalMessage = result.message || (result.status === 'aborted' ? '任务已中止' : '任务已停止')
+    completeRun(runId, 'error', terminalMessage, durationMs)
+    await safeNotifyJobComplete(job, 'aborted', sessionId, terminalMessage, startTime)
+
+    return {
+      success: false,
+      errorCode: 'EXECUTION_FAILED',
+      error: terminalMessage,
+      sessionId,
+    }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     completeRun(runId, 'error', error, Date.now() - startTime)
-    await notifyJobComplete(job, 'error', sessionId, error, startTime)
+    await safeNotifyJobComplete(job, 'error', sessionId, error, startTime)
 
-    return { success: false, error, sessionId }
+    return { success: false, errorCode: 'EXECUTION_FAILED', error, sessionId }
+  } finally {
+    releaseJobRunning(job.id)
   }
 }

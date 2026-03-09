@@ -104,6 +104,7 @@ function createTables(db: Database): void {
       model_profile_id TEXT,
       model_profile_name TEXT,
       model_name TEXT,
+      updated_at TEXT DEFAULT (datetime('now')),
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
@@ -168,6 +169,10 @@ function migrateDatabase(db: Database): void {
       db.run('ALTER TABLE sessions ADD COLUMN model_name TEXT')
       console.log('[DB] 迁移：添加 sessions.model_name 列')
     }
+    if (!columns.includes('updated_at')) {
+      db.run('ALTER TABLE sessions ADD COLUMN updated_at TEXT')
+      console.log('[DB] 迁移：添加 sessions.updated_at 列')
+    }
     if (!columns.includes('source')) {
       db.run("ALTER TABLE sessions ADD COLUMN source TEXT DEFAULT 'desktop'")
       console.log('[DB] 迁移：添加 sessions.source 列')
@@ -176,6 +181,11 @@ function migrateDatabase(db: Database): void {
       db.run('ALTER TABLE sessions ADD COLUMN source_meta TEXT')
       console.log('[DB] 迁移：添加 sessions.source_meta 列')
     }
+    db.run(`
+      UPDATE sessions
+      SET updated_at = COALESCE(updated_at, created_at, datetime('now'))
+      WHERE updated_at IS NULL OR updated_at = ''
+    `)
   } catch (err) {
     console.warn('[DB] 迁移检查失败:', err)
   }

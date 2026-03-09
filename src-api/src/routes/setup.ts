@@ -622,7 +622,7 @@ setup.post('/complete', async (c) => {
     }, 400)
   }
 
-  const merged = {
+  const merged: Record<string, string> = {
     ...readEnvConfig(),
     ...cfg,
     ANTHROPIC_API_KEY: apiKey,

@@ -7,7 +7,7 @@
 
 import { Router } from 'express'
 import type { Request, Response } from 'express'
-import { isFeishuEnabled, isFeishuRunning, startFeishuBot, stopFeishuBot } from '../feishu/index.js'
+import { isFeishuEnabled, isFeishuRunning, restartFeishuBot, startFeishuBot, stopFeishuBot } from '../feishu/index.js'
 
 const router = Router()
 
@@ -28,6 +28,16 @@ router.post('/start', async (_req: Request, res: Response) => {
 router.post('/stop', (_req: Request, res: Response) => {
   stopFeishuBot()
   res.json({ ok: true })
+})
+
+router.post('/restart', async (_req: Request, res: Response) => {
+  try {
+    await restartFeishuBot('manual restart')
+    res.json({ ok: true })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
 })
 
 router.post('/test', async (_req: Request, res: Response) => {

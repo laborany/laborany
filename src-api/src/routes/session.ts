@@ -4,12 +4,17 @@ import { dbHelper } from '../core/database.js'
 import { getTaskDir, runtimeTaskManager } from '../core/agent/index.js'
 
 const session = new Hono()
-const ALLOWED_SESSION_STATUS = new Set(['running', 'completed', 'failed', 'stopped', 'aborted'])
+const ALLOWED_SESSION_STATUS = new Set(['running', 'waiting_input', 'completed', 'failed', 'stopped', 'aborted'])
 const ALLOWED_MESSAGE_TYPES = new Set(['user', 'assistant', 'tool_use', 'tool_result', 'error', 'system'])
+const CONVERSE_HEARTBEAT_STALE_MS = 90 * 1000
 
 type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu'
 
 function inferSessionSource(sessionId: string, skillId: string, dbSource?: string): SessionSource {
+  if (skillId === '__converse__' && (!dbSource || dbSource === 'desktop')) {
+    return 'converse'
+  }
+
   // 优先使用数据库中的 source 字段
   if (dbSource && ['desktop', 'feishu', 'cron', 'converse'].includes(dbSource)) {
     return dbSource as SessionSource
@@ -30,7 +35,83 @@ function getRunningSkillName(source: SessionSource, fallbackSkillName: string, s
   return fallbackSkillName || skillId
 }
 
+function toUtcMs(value?: string | null): number {
+  const text = (value || '').trim()
+  if (!text) return 0
+  if (/z$/i.test(text) || /[+-]\d{2}:\d{2}$/i.test(text)) {
+    return Date.parse(text) || 0
+  }
+  return Date.parse(text.replace(' ', 'T') + 'Z') || 0
+}
+
+function looksLikeWaitingInputMessage(content?: string | null): boolean {
+  const text = (content || '').trim()
+  if (!text) return false
+  if (/[？?]\s*$/.test(text)) return true
+  return /(请(补充|提供|确认|选择|输入|告诉|说明)|还缺少|需要补充|请再|执行时间|开始时间|结束时间|频率|时区|补充信息|告诉我)/.test(text)
+}
+
+function inferRecoveredConverseStatus(lastType?: string, lastContent?: string | null): string {
+  if (lastType === 'error') return 'failed'
+  if (lastType === 'assistant') {
+    return looksLikeWaitingInputMessage(lastContent) ? 'waiting_input' : 'completed'
+  }
+  return 'failed'
+}
+
+function reconcileStaleConverseSessions(sessionIds: string[] = []): void {
+  const filteredIds = sessionIds.map(id => id.trim()).filter(Boolean)
+  const params: string[] = []
+  const clauses = [`skill_id = '__converse__'`, `status = 'running'`]
+
+  if (filteredIds.length > 0) {
+    clauses.push(`id IN (${filteredIds.map(() => '?').join(', ')})`)
+    params.push(...filteredIds)
+  }
+
+  const candidates = dbHelper.query<{
+    id: string
+    created_at: string
+    updated_at?: string | null
+  }>(`
+    SELECT id, created_at, updated_at
+    FROM sessions
+    WHERE ${clauses.join(' AND ')}
+  `, params)
+
+  const now = Date.now()
+  for (const candidate of candidates) {
+    if (runtimeTaskManager.isRunning(candidate.id)) continue
+
+    const lastActiveAt = toUtcMs(candidate.updated_at) || toUtcMs(candidate.created_at)
+    if (lastActiveAt > 0 && now - lastActiveAt <= CONVERSE_HEARTBEAT_STALE_MS) {
+      continue
+    }
+
+    const latestMessage = dbHelper.get<{
+      type: string
+      content: string | null
+    }>(`
+      SELECT type, content
+      FROM messages
+      WHERE session_id = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `, [candidate.id])
+
+    const nextStatus = inferRecoveredConverseStatus(latestMessage?.type, latestMessage?.content)
+    dbHelper.run(
+      `UPDATE sessions
+       SET status = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+      [nextStatus, candidate.id],
+    )
+  }
+}
+
 session.get('/', (c) => {
+  reconcileStaleConverseSessions()
+
   const sessions = dbHelper.query<{
     id: string
     skill_id: string
@@ -55,18 +136,21 @@ session.get('/', (c) => {
 })
 
 session.get('/running-tasks', (c) => {
+  reconcileStaleConverseSessions()
+
   const runtimeTasks = runtimeTaskManager.getRunningTasks().map((task) => {
     const sessionMeta = dbHelper.get<{
       skill_id: string
       query: string
+      source?: string
     }>(`
-      SELECT skill_id, query
+      SELECT skill_id, query, source
       FROM sessions
       WHERE id = ?
     `, [task.sessionId])
 
     const effectiveSkillId = sessionMeta?.skill_id || task.skillId
-    const source = inferSessionSource(task.sessionId, effectiveSkillId)
+    const source = inferSessionSource(task.sessionId, effectiveSkillId, sessionMeta?.source)
 
     return {
       ...task,
@@ -81,8 +165,9 @@ session.get('/running-tasks', (c) => {
     id: string
     query: string
     created_at: string
+    source?: string
   }>(`
-    SELECT id, query, created_at
+    SELECT id, query, created_at, source
     FROM sessions
     WHERE status = 'running' AND skill_id = '__converse__'
     ORDER BY created_at DESC
@@ -90,7 +175,7 @@ session.get('/running-tasks', (c) => {
   `)
     .filter((item) => !runtimeSessionIds.has(item.id))
     .map((item) => {
-      const source = inferSessionSource(item.id, '__converse__')
+      const source = inferSessionSource(item.id, '__converse__', item.source)
       return {
         sessionId: item.id,
         skillId: '__converse__',
@@ -109,6 +194,7 @@ session.get('/running-tasks', (c) => {
 
 session.get('/:sessionId', (c) => {
   const sessionId = c.req.param('sessionId')
+  reconcileStaleConverseSessions([sessionId])
 
   const sessionData = dbHelper.get<{
     id: string
@@ -213,6 +299,7 @@ session.get('/:sessionId', (c) => {
 
 session.get('/:sessionId/live-status', (c) => {
   const sessionId = c.req.param('sessionId')
+  reconcileStaleConverseSessions([sessionId])
 
   const sessionData = dbHelper.get<{
     id: string
@@ -264,6 +351,10 @@ session.post('/external/upsert', async (c) => {
   const workDir = typeof body.workDir === 'string' && body.workDir.trim()
     ? body.workDir.trim()
     : null
+  const sourceRaw = typeof body.source === 'string' ? body.source.trim() : ''
+  const source = ['desktop', 'feishu', 'cron', 'converse'].includes(sourceRaw)
+    ? sourceRaw
+    : (skillId === '__converse__' ? 'converse' : 'desktop')
 
   if (!sessionId || !query) {
     return c.json({ error: '缺少 sessionId 或 query 参数' }, 400)
@@ -277,17 +368,17 @@ session.post('/external/upsert', async (c) => {
   if (existing) {
     dbHelper.run(
       `UPDATE sessions
-       SET skill_id = ?, query = ?, status = ?, work_dir = COALESCE(?, work_dir)
+       SET skill_id = ?, query = ?, status = ?, work_dir = COALESCE(?, work_dir), source = ?, updated_at = datetime('now')
        WHERE id = ?`,
-      [skillId, query, status, workDir, sessionId],
+      [skillId, query, status, workDir, source, sessionId],
     )
     return c.json({ success: true, created: false, sessionId })
   }
 
   dbHelper.run(
-    `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [sessionId, userId, skillId, query, status, workDir],
+    `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [sessionId, userId, skillId, query, status, workDir, source],
   )
 
   return c.json({ success: true, created: true, sessionId })
@@ -333,6 +424,10 @@ session.post('/external/message', async (c) => {
      VALUES (?, ?, ?, ?, ?, ?)`,
     [sessionId, type, content, toolName, toolInput, toolResult],
   )
+  dbHelper.run(
+    `UPDATE sessions SET updated_at = datetime('now') WHERE id = ?`,
+    [sessionId],
+  )
 
   return c.json({ success: true })
 })
@@ -362,7 +457,7 @@ session.post('/external/status', async (c) => {
   }
 
   dbHelper.run(
-    `UPDATE sessions SET status = ? WHERE id = ?`,
+    `UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?`,
     [status, sessionId],
   )
 

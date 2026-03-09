@@ -82,6 +82,7 @@ export default function HistoryPage() {
   function getStatusBadge(status: string) {
     const styles: Record<string, string> = {
       running: 'badge-primary',
+      waiting_input: 'badge-warning',
       completed: 'badge-success',
       failed: 'badge-error',
       stopped: 'bg-secondary text-secondary-foreground',
@@ -89,6 +90,7 @@ export default function HistoryPage() {
     }
     const labels: Record<string, string> = {
       running: '运行中',
+      waiting_input: '待补充',
       completed: '已完成',
       failed: '失败',
       stopped: '已中止',
@@ -658,6 +660,8 @@ export function SessionDetailPage() {
   const effectiveStatusBadgeClass =
     effectiveStatus === 'running'
       ? 'badge badge-primary'
+      : effectiveStatus === 'waiting_input'
+        ? 'badge badge-warning'
       : effectiveStatus === 'completed'
         ? 'badge badge-success'
         : effectiveStatus === 'failed'
@@ -667,6 +671,7 @@ export function SessionDetailPage() {
   function renderStatusLabel(status: string | undefined) {
     if (!status) return '--'
     if (status === 'running') return '运行中'
+    if (status === 'waiting_input') return '待补充'
     if (status === 'completed') return '已完成'
     if (status === 'failed') return '失败'
     if (status === 'stopped' || status === 'aborted') return '已中止'

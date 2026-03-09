@@ -63,10 +63,13 @@ interface SseEvent {
   message?: string
   toolName?: string
   action?: string
+  scheduleKind?: 'cron' | 'at' | 'every'
   targetId?: string
   query?: string
   targetQuery?: string
   cronExpr?: string
+  atMs?: number
+  everyMs?: number
   tz?: string
   name?: string
   seedQuery?: string
@@ -131,10 +134,24 @@ interface CronApiJob {
   sourceFeishuOpenId?: string
 }
 
-interface CreateFeishuCronInput {
+type FeishuScheduleInput =
+  | {
+      kind: 'cron'
+      expr: string
+      tz?: string
+    }
+  | {
+      kind: 'at'
+      atMs: number
+    }
+  | {
+      kind: 'every'
+      everyMs: number
+    }
+
+interface CreateFeishuJobInput {
   name?: string
-  cronExpr: string
-  tz?: string
+  schedule: FeishuScheduleInput
   targetId: string
   targetQuery: string
 }
@@ -155,6 +172,19 @@ const SCHEDULE_CREATE_DEDUPE_WINDOW_MS = 30 * 1000
 const processedMessageIds = new Map<string, number>()
 const userProcessingQueue = new Map<string, Promise<void>>()
 const recentScheduleCreateMap = new Map<string, number>()
+
+function padDateTimePart(value: number): string {
+  return String(value).padStart(2, '0')
+}
+
+function formatLocalDateTime(value: number | Date): string {
+  const date = value instanceof Date ? value : new Date(value)
+  return `${date.getFullYear()}-${padDateTimePart(date.getMonth() + 1)}-${padDateTimePart(date.getDate())} ${padDateTimePart(date.getHours())}:${padDateTimePart(date.getMinutes())}:${padDateTimePart(date.getSeconds())}`
+}
+
+function formatSkillLabel(skillId: string): string {
+  return skillId === '__generic__' ? '通用助手' : skillId
+}
 
 interface FeishuOutputSession {
   update(text: string): Promise<void>
@@ -908,6 +938,54 @@ function parseCommandArgs(text: string): string[] {
   return args.filter(Boolean)
 }
 
+function parseNumberLike(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return null
+  const parsed = Number.parseFloat(value.trim())
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function parseDurationToMs(value: string): number | null {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return null
+
+  const match = normalized.match(/^(\d+(?:\.\d+)?)\s*(ms|毫秒|s|sec|secs|second|seconds|秒|m|min|mins|minute|minutes|分钟|分|h|hr|hrs|hour|hours|小时|时|d|day|days|天)$/i)
+  if (!match) return null
+
+  const amount = Number.parseFloat(match[1])
+  if (!Number.isFinite(amount) || amount <= 0) return null
+
+  const unit = match[2].toLowerCase()
+  if (['ms', '毫秒'].includes(unit)) return Math.round(amount)
+  if (['s', 'sec', 'secs', 'second', 'seconds', '秒'].includes(unit)) return Math.round(amount * 1000)
+  if (['m', 'min', 'mins', 'minute', 'minutes', '分钟', '分'].includes(unit)) return Math.round(amount * 60_000)
+  if (['h', 'hr', 'hrs', 'hour', 'hours', '小时', '时'].includes(unit)) return Math.round(amount * 3_600_000)
+  if (['d', 'day', 'days', '天'].includes(unit)) return Math.round(amount * 86_400_000)
+  return null
+}
+
+function parseDateTimeToMs(value: string): number | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  const numeric = parseNumberLike(trimmed)
+  if (numeric !== null) {
+    if (numeric > 1_000_000_000_000) return Math.round(numeric)
+    if (numeric > 1_000_000_000) return Math.round(numeric * 1000)
+  }
+
+  const normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(:\d{2})?$/.test(trimmed)
+    ? trimmed.replace(' ', 'T')
+    : trimmed
+  const parsed = Date.parse(normalized)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function resolveScheduleKind(value: unknown, fallback: FeishuScheduleInput['kind'] = 'cron'): FeishuScheduleInput['kind'] {
+  if (value === 'cron' || value === 'at' || value === 'every') return value
+  return fallback
+}
+
 async function readJsonError(response: Response): Promise<string> {
   const text = await response.text().catch(() => '')
   if (!text) return `HTTP ${response.status}`
@@ -921,7 +999,7 @@ async function readJsonError(response: Response): Promise<string> {
 
 function formatCronScheduleLabel(job: CronApiJob): string {
   if (job.scheduleKind === 'at') {
-    return job.scheduleAtMs ? `一次性 @ ${new Date(job.scheduleAtMs).toLocaleString('zh-CN')}` : '一次性'
+    return job.scheduleAtMs ? `一次性 @ ${formatLocalDateTime(job.scheduleAtMs)}` : '一次性'
   }
   if (job.scheduleKind === 'every') {
     const ms = Number(job.scheduleEveryMs || 0)
@@ -935,20 +1013,40 @@ function formatCronScheduleLabel(job: CronApiJob): string {
   return `Cron ${job.scheduleCronExpr || ''} (${tz})`.trim()
 }
 
-async function createFeishuCronJob(
+function buildScheduleFingerprint(schedule: FeishuScheduleInput): string {
+  if (schedule.kind === 'cron') {
+    return ['cron', schedule.expr.trim(), (schedule.tz || FEISHU_DEFAULT_CRON_TZ).trim()].join('::')
+  }
+  if (schedule.kind === 'at') {
+    return ['at', String(schedule.atMs)].join('::')
+  }
+  return ['every', String(schedule.everyMs)].join('::')
+}
+
+async function createFeishuJob(
   openId: string,
   chatId: string,
-  input: CreateFeishuCronInput,
+  input: CreateFeishuJobInput,
 ): Promise<{ job?: CronApiJob; error?: string }> {
   const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
   const payload = {
     name: input.name?.trim() || input.targetQuery.trim().slice(0, 40) || '定时任务',
     description: input.targetQuery.trim(),
-    schedule: {
-      kind: 'cron',
-      expr: input.cronExpr.trim(),
-      tz: (input.tz || FEISHU_DEFAULT_CRON_TZ).trim(),
-    },
+    schedule: input.schedule.kind === 'cron'
+      ? {
+          kind: 'cron',
+          expr: input.schedule.expr.trim(),
+          tz: (input.schedule.tz || FEISHU_DEFAULT_CRON_TZ).trim(),
+        }
+      : input.schedule.kind === 'at'
+        ? {
+            kind: 'at',
+            atMs: input.schedule.atMs,
+          }
+        : {
+            kind: 'every',
+            everyMs: input.schedule.everyMs,
+          },
     target: {
       type: 'skill',
       id: input.targetId.trim(),
@@ -1124,6 +1222,7 @@ async function deleteCronJob(jobId: string): Promise<{ success: boolean; error?:
 
 async function executeSkill(
   client: Client,
+  openId: string,
   chatId: string,
   stateKey: string,
   skillId: string,
@@ -1150,8 +1249,9 @@ async function executeSkill(
         modelProfileId,
         source: 'feishu',
         sourceMeta: {
+          openId,
           chatId,
-          openId: stateKey,
+          stateKey,
           timestamp: new Date().toISOString(),
         },
       }),
@@ -1302,7 +1402,7 @@ async function dispatchAction(
       ? `匹配技能 ${targetId} 失败，已回退到 ${resolved.skillId} 执行。`
       : `已匹配技能 ${targetId}，任务已开始执行。`
     await card.update(`Matched capability ${resolved.skillId}, executing...`)
-    await executeSkill(client, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
+    await executeSkill(client, openId, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
     return
   }
 
@@ -1312,7 +1412,7 @@ async function dispatchAction(
     const hint = resolved.fallbackUsed && resolved.reason
       ? `已进入通用执行模式（${resolved.reason}）。`
       : '已进入通用执行模式，任务已开始。'
-    await executeSkill(client, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
+    await executeSkill(client, openId, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
     return
   }
 
@@ -1342,15 +1442,58 @@ async function dispatchAction(
   }
 
   if (actionType === 'setup_schedule') {
-    const cronExpr = (actionEvent as any)?.cronExpr || ''
-    const tz = (actionEvent as any)?.tz || FEISHU_DEFAULT_CRON_TZ
+    const rawScheduleKind = resolveScheduleKind(
+      (actionEvent as any)?.scheduleKind,
+      parseNumberLike((actionEvent as any)?.atMs) !== null
+        ? 'at'
+        : parseNumberLike((actionEvent as any)?.everyMs) !== null
+          ? 'every'
+          : 'cron',
+    )
+    const cronExpr = ((actionEvent as any)?.cronExpr || '').trim()
+    const tz = ((actionEvent as any)?.tz || FEISHU_DEFAULT_CRON_TZ).trim()
+    const atMs = parseNumberLike((actionEvent as any)?.atMs)
+    const everyMs = parseNumberLike((actionEvent as any)?.everyMs)
     const scheduleQuery = (actionEvent as any)?.targetQuery || query || ''
     let resolvedTargetId = targetId.trim()
 
-    if (!cronExpr || !scheduleQuery.trim()) {
+    if (!scheduleQuery.trim()) {
       const msg = '定时任务信息还不完整，请补充执行频率和执行内容。'
       await card.close(msg)
       return
+    }
+
+    let schedule: FeishuScheduleInput | null = null
+    if (rawScheduleKind === 'cron') {
+      if (!cronExpr) {
+        await card.close('定时任务信息还不完整，请补充执行频率。')
+        return
+      }
+      schedule = {
+        kind: 'cron',
+        expr: cronExpr,
+        tz,
+      }
+    } else if (rawScheduleKind === 'at') {
+      if (!Number.isFinite(atMs) || (atMs || 0) <= Date.now()) {
+        await card.close('一次性任务的执行时间无效或早于当前时间，请提供未来时间。')
+        return
+      }
+      const normalizedAtMs = Math.round(atMs!)
+      schedule = {
+        kind: 'at',
+        atMs: normalizedAtMs,
+      }
+    } else {
+      if (!Number.isFinite(everyMs) || (everyMs || 0) <= 0) {
+        await card.close('固定间隔任务的 everyMs 无效，请提供大于 0 的执行间隔。')
+        return
+      }
+      const normalizedEveryMs = Math.round(everyMs!)
+      schedule = {
+        kind: 'every',
+        everyMs: normalizedEveryMs,
+      }
     }
 
     if (resolvedTargetId) {
@@ -1363,6 +1506,15 @@ async function dispatchAction(
         const msg = `校验目标技能失败：${err instanceof Error ? err.message : String(err)}`
         await card.close(msg)
         return
+      }
+    }
+
+    let usedFallbackSkill = false
+    if (!resolvedTargetId) {
+      const fallback = await resolveExecutableSkillId(config.defaultSkillId, '__generic__')
+      if (fallback.skillId) {
+        resolvedTargetId = fallback.skillId
+        usedFallbackSkill = true
       }
     }
 
@@ -1379,8 +1531,7 @@ async function dispatchAction(
 
     const scheduleFingerprint = [
       openId,
-      cronExpr.trim(),
-      (tz || FEISHU_DEFAULT_CRON_TZ).trim(),
+      buildScheduleFingerprint(schedule),
       resolvedTargetId,
       scheduleQuery.trim(),
     ].join('::')
@@ -1391,10 +1542,9 @@ async function dispatchAction(
     }
 
     await card.update('正在创建定时任务...')
-    const result = await createFeishuCronJob(openId, chatId, {
+    const result = await createFeishuJob(openId, chatId, {
       name: (actionEvent as any)?.name,
-      cronExpr,
-      tz,
+      schedule,
       targetId: resolvedTargetId,
       targetQuery: scheduleQuery,
     })
@@ -1410,8 +1560,9 @@ async function dispatchAction(
       `任务名：${result.job.name}`,
       `任务 ID：${result.job.id}`,
       `调度：${formatCronScheduleLabel(result.job)}`,
-      `目标技能：${result.job.targetId}`,
-      result.job.nextRunAtMs ? `下次执行：${new Date(result.job.nextRunAtMs).toLocaleString('zh-CN')}` : '',
+      `目标技能：${formatSkillLabel(result.job.targetId)}`,
+      usedFallbackSkill ? '未指定具体技能，已自动回退到默认执行技能。' : '',
+      result.job.nextRunAtMs ? `下次执行：${formatLocalDateTime(result.job.nextRunAtMs)}` : '',
       '结果将通过飞书私聊主动通知你。',
     ].filter(Boolean).join('\n')
     await card.close(summary)
@@ -1420,7 +1571,7 @@ async function dispatchAction(
 
   const resolved = await resolveExecutableSkillId(config.defaultSkillId, '__generic__')
   await card.update('Executing...')
-  await executeSkill(client, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
+  await executeSkill(client, openId, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
 }
 
 async function runConverse(
@@ -1537,7 +1688,7 @@ async function handleCommand(
       '直接发送消息 -> 智能匹配技能并执行',
       '/skill <id> [query] -> 指定技能执行',
       '/skills -> 查看可用技能',
-      '/cron help -> 查看定时任务命令',
+      '/cron help -> 查看定时任务命令（支持 cron / once / every）',
       '/model [name|id] -> 查看或切换模型配置',
       '/new -> 重置会话',
       '/stop -> 中止当前任务',
@@ -1557,12 +1708,16 @@ async function handleCommand(
         '定时任务命令：',
         '/cron create "<name>" "<cronExpr>" "<skillId>" "<query>" [tz]',
         '/cron quick <daily9|hourly|weekday9> <skillId> "<query>" [name] [tz]',
+        '/cron once "<datetime>" <skillId> "<query>" [name]',
+        '/cron every "<duration>" <skillId> "<query>" [name]',
         '/cron list',
         '/cron delete <jobId>',
         '',
         '示例：',
         '/cron create "每日早报" "0 9 * * *" "news-digest" "抓取 AI 新闻并输出 300 字摘要" "Asia/Shanghai"',
         '/cron quick daily9 news-digest "抓取 AI 新闻并输出 300 字摘要" "每日早报"',
+        '/cron once "2026-03-08 08:00" stock-analyzer "执行库存盘点" "一次性盘点"',
+        '/cron every "2h" stock-analyzer "抓取库存状态"',
       ].join('\n'))
       return true
     }
@@ -1583,12 +1738,15 @@ async function handleCommand(
         await sendText(client, chatId, `❌ 校验技能失败：${err instanceof Error ? err.message : String(err)}`)
         return true
       }
-      const result = await createFeishuCronJob(openId, chatId, {
+      const result = await createFeishuJob(openId, chatId, {
         name,
-        cronExpr,
+        schedule: {
+          kind: 'cron',
+          expr: cronExpr,
+          tz: tz || FEISHU_DEFAULT_CRON_TZ,
+        },
         targetId,
         targetQuery,
-        tz: tz || FEISHU_DEFAULT_CRON_TZ,
       })
       if (!result.job) {
         await sendText(client, chatId, `❌ 创建失败：${result.error || '未知错误'}`)
@@ -1599,7 +1757,7 @@ async function handleCommand(
         `任务名：${result.job.name}`,
         `任务 ID：${result.job.id}`,
         `调度：${formatCronScheduleLabel(result.job)}`,
-        result.job.nextRunAtMs ? `下次执行：${new Date(result.job.nextRunAtMs).toLocaleString('zh-CN')}` : '',
+        result.job.nextRunAtMs ? `下次执行：${formatLocalDateTime(result.job.nextRunAtMs)}` : '',
         '结果将推送到你的飞书私聊。',
       ].filter(Boolean).join('\n'))
       return true
@@ -1626,12 +1784,15 @@ async function handleCommand(
         await sendText(client, chatId, `❌ 校验技能失败：${err instanceof Error ? err.message : String(err)}`)
         return true
       }
-      const result = await createFeishuCronJob(openId, chatId, {
+      const result = await createFeishuJob(openId, chatId, {
         name: customName || `${template.label} - ${targetQuery.slice(0, 20)}`,
-        cronExpr: template.expr,
+        schedule: {
+          kind: 'cron',
+          expr: template.expr,
+          tz: customTz || FEISHU_DEFAULT_CRON_TZ,
+        },
         targetId,
         targetQuery,
-        tz: customTz || FEISHU_DEFAULT_CRON_TZ,
       })
       if (!result.job) {
         await sendText(client, chatId, `❌ 创建失败：${result.error || '未知错误'}`)
@@ -1639,6 +1800,93 @@ async function handleCommand(
       }
       await sendText(client, chatId, [
         '✅ 快速定时任务已创建',
+        `任务名：${result.job.name}`,
+        `任务 ID：${result.job.id}`,
+        `调度：${formatCronScheduleLabel(result.job)}`,
+      ].join('\n'))
+      return true
+    }
+
+    if (sub === 'once') {
+      if (args.length < 5) {
+        await sendText(client, chatId, '参数不足。用法：/cron once "<datetime>" <skillId> "<query>" [name]')
+        return true
+      }
+      const [, , datetimeText, targetId, targetQuery, customName] = args
+      const atMs = parseDateTimeToMs(datetimeText)
+      if (!Number.isFinite(atMs) || (atMs || 0) <= Date.now()) {
+        await sendText(client, chatId, '❌ 时间格式无效，或早于当前时间。请使用如 2026-03-08 08:00 / 2026-03-08T08:00:00+08:00')
+        return true
+      }
+      try {
+        const exists = await skillExists(targetId)
+        if (!exists) {
+          await sendText(client, chatId, `❌ 未找到技能：${targetId}`)
+          return true
+        }
+      } catch (err) {
+        await sendText(client, chatId, `❌ 校验技能失败：${err instanceof Error ? err.message : String(err)}`)
+        return true
+      }
+      const result = await createFeishuJob(openId, chatId, {
+        name: customName || `一次性任务 - ${targetQuery.slice(0, 20)}`,
+        schedule: {
+          kind: 'at',
+          atMs: Math.round(atMs!),
+        },
+        targetId,
+        targetQuery,
+      })
+      if (!result.job) {
+        await sendText(client, chatId, `❌ 创建失败：${result.error || '未知错误'}`)
+        return true
+      }
+      await sendText(client, chatId, [
+        '✅ 一次性定时任务已创建',
+        `任务名：${result.job.name}`,
+        `任务 ID：${result.job.id}`,
+        `调度：${formatCronScheduleLabel(result.job)}`,
+        result.job.nextRunAtMs ? `执行时间：${formatLocalDateTime(result.job.nextRunAtMs)}` : '',
+      ].filter(Boolean).join('\n'))
+      return true
+    }
+
+    if (sub === 'every') {
+      if (args.length < 5) {
+        await sendText(client, chatId, '参数不足。用法：/cron every "<duration>" <skillId> "<query>" [name]')
+        return true
+      }
+      const [, , durationText, targetId, targetQuery, customName] = args
+      const everyMs = parseDurationToMs(durationText)
+      if (!Number.isFinite(everyMs) || (everyMs || 0) <= 0) {
+        await sendText(client, chatId, '❌ 间隔格式无效。请使用如 30m、2h、1d。')
+        return true
+      }
+      try {
+        const exists = await skillExists(targetId)
+        if (!exists) {
+          await sendText(client, chatId, `❌ 未找到技能：${targetId}`)
+          return true
+        }
+      } catch (err) {
+        await sendText(client, chatId, `❌ 校验技能失败：${err instanceof Error ? err.message : String(err)}`)
+        return true
+      }
+      const result = await createFeishuJob(openId, chatId, {
+        name: customName || `间隔任务 - ${targetQuery.slice(0, 20)}`,
+        schedule: {
+          kind: 'every',
+          everyMs: Math.round(everyMs!),
+        },
+        targetId,
+        targetQuery,
+      })
+      if (!result.job) {
+        await sendText(client, chatId, `❌ 创建失败：${result.error || '未知错误'}`)
+        return true
+      }
+      await sendText(client, chatId, [
+        '✅ 间隔定时任务已创建',
         `任务名：${result.job.name}`,
         `任务 ID：${result.job.id}`,
         `调度：${formatCronScheduleLabel(result.job)}`,
@@ -1655,7 +1903,7 @@ async function handleCommand(
         }
         const lines = jobs.slice(0, 20).map((job) => {
           const enabled = job.enabled ? '启用' : '禁用'
-          const nextRun = job.nextRunAtMs ? new Date(job.nextRunAtMs).toLocaleString('zh-CN') : '无'
+          const nextRun = job.nextRunAtMs ? formatLocalDateTime(job.nextRunAtMs) : '无'
           return `- ${job.id}\n  ${job.name} | ${enabled} | ${formatCronScheduleLabel(job)} | 下次：${nextRun}`
         })
         await sendText(client, chatId, ['你的飞书定时任务：', ...lines].join('\n'))
@@ -1806,7 +2054,7 @@ async function handleCommand(
     }
 
     try {
-      await executeSkill(client, chatId, stateKey, skillId, query, started ? card : null)
+      await executeSkill(client, openId, chatId, stateKey, skillId, query, started ? card : null)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (started) await card.close(`❌ ${msg}`)

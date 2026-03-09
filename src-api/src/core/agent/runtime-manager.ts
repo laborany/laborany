@@ -240,7 +240,7 @@ class RuntimeTaskManager {
     } else {
       dbHelper.run(
         `UPDATE sessions
-         SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?, source = ?, source_meta = ?
+         SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?, source = ?, source_meta = ?, updated_at = datetime('now')
          WHERE id = ?`,
         [
           'running',
@@ -712,7 +712,7 @@ class RuntimeTaskManager {
       task.completedAt = Date.now()
 
       dbHelper.run(
-        `UPDATE sessions SET status = ? WHERE id = ?`,
+        `UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?`,
         [finalStatus, task.sessionId],
       )
 
