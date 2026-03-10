@@ -457,18 +457,27 @@ skill.post('/execute', async (c) => {
     return c.json({ error: '当前会话任务仍在运行，请等待完成或先停止任务' }, 409)
   }
 
+  const installSourceQuery = (originQuery || query || '').trim() || query
   const directInstallSource = skillId === 'skill-creator'
-    ? detectInstallSourceFromQuery(query)
+    ? detectInstallSourceFromQuery(installSourceQuery)
     : null
   const installIntentWithoutSource = skillId === 'skill-creator'
-    && isSkillInstallIntent(query)
+    && isSkillInstallIntent(installSourceQuery)
     && !directInstallSource
 
   if (installIntentWithoutSource) {
     const sessionId = existingSessionId || uuid()
     const workDir = ensureTaskDir(sessionId)
 
-    ensureRunningSession(sessionId, skillId, query, workDir)
+    ensureRunningSession(
+      sessionId,
+      skillId,
+      query,
+      workDir,
+      modelSelection,
+      source,
+      sourceMeta,
+    )
 
     dbHelper.run(
       `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
@@ -508,7 +517,15 @@ skill.post('/execute', async (c) => {
     const sessionId = existingSessionId || uuid()
     const workDir = ensureTaskDir(sessionId)
 
-    ensureRunningSession(sessionId, skillId, query, workDir)
+    ensureRunningSession(
+      sessionId,
+      skillId,
+      query,
+      workDir,
+      modelSelection,
+      source,
+      sourceMeta,
+    )
 
     dbHelper.run(
       `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,

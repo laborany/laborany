@@ -62,6 +62,7 @@ interface SseEvent {
   content?: string
   message?: string
   toolName?: string
+  toolResult?: string
   action?: string
   scheduleKind?: 'cron' | 'at' | 'every'
   targetId?: string
@@ -74,6 +75,7 @@ interface SseEvent {
   name?: string
   seedQuery?: string
   capabilityId?: string
+  primary?: { id?: string }
   filePaths?: string[]
   questions?: unknown[]
 }
@@ -180,6 +182,10 @@ function padDateTimePart(value: number): string {
 function formatLocalDateTime(value: number | Date): string {
   const date = value instanceof Date ? value : new Date(value)
   return `${date.getFullYear()}-${padDateTimePart(date.getMonth() + 1)}-${padDateTimePart(date.getDate())} ${padDateTimePart(date.getHours())}:${padDateTimePart(date.getMinutes())}:${padDateTimePart(date.getSeconds())}`
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function formatSkillLabel(skillId: string): string {
@@ -866,30 +872,73 @@ async function detectNewSkillIdFromKnown(knownSkillIds: string[]): Promise<strin
 
   const knownSet = new Set(knownSkillIds)
 
-  try {
-    const res = await fetch(`${getSrcApiBaseUrl()}/skill/detect-new`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ knownIds: knownSkillIds }),
-    })
-    if (res.ok) {
-      const payload = await res.json() as { newSkills?: Array<{ id?: string }> }
-      const candidate = Array.isArray(payload.newSkills)
-        ? payload.newSkills.find(item => typeof item?.id === 'string' && !knownSet.has((item.id || '').trim()))
-        : undefined
-      const id = typeof candidate?.id === 'string' ? candidate.id.trim() : ''
-      if (id) return id
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${getSrcApiBaseUrl()}/skill/detect-new`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ knownIds: knownSkillIds }),
+      })
+      if (res.ok) {
+        const payload = await res.json() as { newSkills?: Array<{ id?: string }> }
+        const candidate = Array.isArray(payload.newSkills)
+          ? payload.newSkills.find(item => typeof item?.id === 'string' && !knownSet.has((item.id || '').trim()))
+          : undefined
+        const id = typeof candidate?.id === 'string' ? candidate.id.trim() : ''
+        if (id) return id
+      }
+    } catch {
     }
-  } catch {
+
+    try {
+      const current = await fetchSkillList()
+      const found = current.find(item => !knownSet.has(item.id))
+      if (found?.id) return found.id
+    } catch {
+    }
+
+    if (attempt < 2) {
+      await wait(400)
+    }
   }
 
-  try {
-    const current = await fetchSkillList()
-    const found = current.find(item => !knownSet.has(item.id))
-    if (found?.id) return found.id
-  } catch {
+  return undefined
+}
+
+function collectTranscriptSkillIdCandidates(transcript: string): string[] {
+  const candidates = new Set<string>()
+  if (!transcript.trim()) return []
+
+  const idPatterns = [
+    /(?:技能|skill|能力|capability)\s*id\s*[:：=]\s*["'`]?([A-Za-z0-9][A-Za-z0-9._-]*)["'`]?/gi,
+    /(?:capabilityId|skillId)\s*["'`\s:=]+\s*([A-Za-z0-9][A-Za-z0-9._-]*)/gi,
+  ]
+
+  for (const pattern of idPatterns) {
+    for (const match of transcript.matchAll(pattern)) {
+      const candidate = (match[1] || '').trim()
+      if (candidate) candidates.add(candidate)
+    }
   }
 
+  for (const match of transcript.matchAll(/skills[\\/]+([A-Za-z0-9][A-Za-z0-9._-]*)[\\/]+(?:SKILL\.md|skill\.yaml|agents[\\/]+openai\.ya?ml)/gi)) {
+    const candidate = (match[1] || '').trim()
+    if (candidate) candidates.add(candidate)
+  }
+
+  return Array.from(candidates)
+}
+
+async function inferCreatedSkillIdFromTranscript(transcript: string): Promise<string | undefined> {
+  const candidates = collectTranscriptSkillIdCandidates(transcript)
+  for (const candidate of candidates) {
+    try {
+      if (await skillExists(candidate)) {
+        return candidate
+      }
+    } catch {
+    }
+  }
   return undefined
 }
 
@@ -1028,7 +1077,6 @@ async function createFeishuJob(
   chatId: string,
   input: CreateFeishuJobInput,
 ): Promise<{ job?: CronApiJob; error?: string }> {
-  const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
   const payload = {
     name: input.name?.trim() || input.targetQuery.trim().slice(0, 40) || '定时任务',
     description: input.targetQuery.trim(),
@@ -1160,6 +1208,7 @@ async function createCapabilityFromSeed(
   let createdSkillId = ''
   let runtimeSessionId = sessionId
   let streamError = ''
+  let transcript = ''
   for await (const event of streamSse(response)) {
     if (event.type === 'session' && event.sessionId) {
       runtimeSessionId = event.sessionId
@@ -1170,6 +1219,12 @@ async function createCapabilityFromSeed(
         createdSkillId = id.trim()
       }
     }
+    if (event.type === 'text' && event.content) {
+      transcript += `${event.content}\n`
+    }
+    if (event.type === 'tool_result' && event.toolResult) {
+      transcript += `${event.toolResult}\n`
+    }
     if (event.type === 'error') {
       streamError = (event.message || event.content || '技能创建失败').trim()
       break
@@ -1178,6 +1233,11 @@ async function createCapabilityFromSeed(
 
   if (createdSkillId) {
     return { skillId: createdSkillId, sessionId: runtimeSessionId }
+  }
+
+  const transcriptSkillId = await inferCreatedSkillIdFromTranscript(transcript)
+  if (transcriptSkillId) {
+    return { skillId: transcriptSkillId, sessionId: runtimeSessionId }
   }
 
   const inferredSkillId = await detectNewSkillIdFromKnown(knownSkillIds)

@@ -1119,14 +1119,36 @@ function extractAction(text: string): ConverseActionPayload | null {
   return found
 }
 
+function hasRejectCreateIntent(text: string): boolean {
+  return /不想创建|不要创建|不创建|不需要创建|不要新技能|不用新技能|don't\s+create|do\s+not\s+create|no\s+new\s+skill/i.test(text)
+}
+
+function hasCreateCapabilityIntent(text: string): boolean {
+  if (/创建新技能|新建技能|创建一个技能|帮我创建|沉淀为技能|create\s+(a\s+)?new\s+skill|create_skill|create\s+capability/i.test(text)) {
+    return true
+  }
+
+  const createVerb = /(创建|新建|生成|沉淀(?:成|为)?|封装成|做成|build|make|create)/i
+  const capabilityNoun = /(skill|技能|能力|capability)/i
+  return createVerb.test(text) && capabilityNoun.test(text)
+}
+
+function hasExplicitGenericIntent(text: string): boolean {
+  if (/不要直接执行|别直接执行|不是直接执行|无需直接执行|不要通用助手|不要\s+generic|不用\s+generic|别走通用|不要走通用/i.test(text)) {
+    return false
+  }
+
+  return /直接做|直接执行|通用助手|generic|先直接做|先做一遍/i.test(text)
+}
+
 function inferFallbackAction(query: string, fullText: string): ConverseActionPayload | null {
   const combined = `${query}\n${fullText}`
   const deterministicSchedule = detectDeterministicScheduleAction(query)
   if (deterministicSchedule) return deterministicSchedule
 
-  const rejectCreate = /不想创建|不要创建|不创建|不需要创建|不要新技能|不用新技能|don't\s+create|do\s+not\s+create|no\s+new\s+skill/i.test(combined)
-  const acceptCreate = /创建新技能|新建技能|创建一个技能|帮我创建|沉淀为技能|create\s+(a\s+)?new\s+skill|create_skill|create\s+capability/i.test(combined)
-  const genericSignal = /直接做|直接执行|通用助手|generic/i.test(combined)
+  const rejectCreate = hasRejectCreateIntent(combined)
+  const acceptCreate = hasCreateCapabilityIntent(combined)
+  const genericSignal = hasExplicitGenericIntent(combined)
 
   if (acceptCreate && !rejectCreate) {
     return {
@@ -1156,9 +1178,9 @@ function detectDirectIntentAction(query: string): ConverseActionPayload | null {
     return deterministicSchedule
   }
 
-  const rejectCreate = /不想创建|不要创建|不创建|不需要创建|不要新技能|不用新技能|don't\s+create|do\s+not\s+create|no\s+new\s+skill/i.test(text)
-  const acceptCreate = /创建新技能|新建技能|创建一个技能|帮我创建|沉淀为技能|create\s+(a\s+)?new\s+skill|create_skill|create\s+capability/i.test(text)
-  const genericSignal = /直接做|直接执行|通用助手|generic/i.test(text)
+  const rejectCreate = hasRejectCreateIntent(text)
+  const acceptCreate = hasCreateCapabilityIntent(text)
+  const genericSignal = hasExplicitGenericIntent(text)
 
   if (acceptCreate && !rejectCreate) {
     return {
