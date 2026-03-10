@@ -9,6 +9,7 @@ import { createTransport, type Transporter } from 'nodemailer'
 import { createNotification } from './store.js'
 import type { CronJob } from './types.js'
 import { sendTextToOpenId, sendArtifactsToOpenId } from '../feishu/push.js'
+import { sendTextToTarget, sendArtifactsToTarget } from '../qq/push.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           配置读取                                        │
@@ -140,6 +141,29 @@ export async function notifyJobComplete(
         const followup = `文件回传结果：成功 ${artifacts.sent}，失败 ${artifacts.failed}，跳过 ${artifacts.skipped}。`
         await sendTextToOpenId(job.notifyFeishuOpenId, followup)
       }
+    }
+    return
+  }
+
+  if (job.notifyChannel === 'qq_dm' && job.notifyQqOpenId) {
+    const summary = buildQqSummaryText(job, status, sessionId, error)
+    const summarySent = await sendTextToTarget(job.notifyQqOpenId, 'c2c', summary)
+    if (!summarySent) {
+      console.warn(`[Notifier] QQ 摘要推送失败: job=${job.id}`)
+      createNotification({
+        type: isSuccess ? 'cron_success' : 'cron_error',
+        title: `${title}（QQ 推送失败）`,
+        content,
+        jobId: job.id,
+        sessionId,
+      })
+      return
+    }
+
+    const artifacts = await sendArtifactsToTarget(job.notifyQqOpenId, 'c2c', sessionId, runStartedAtMs)
+    if (artifacts.sent > 0 || artifacts.failed > 0 || artifacts.skipped > 0) {
+      const followup = `文件回传结果：成功 ${artifacts.sent}，失败 ${artifacts.failed}，跳过 ${artifacts.skipped}。`
+      await sendTextToTarget(job.notifyQqOpenId, 'c2c', followup)
     }
     return
   }
@@ -341,6 +365,24 @@ function buildFeishuSummaryText(
   const statusLabel = status === 'ok' ? '执行成功' : status === 'aborted' ? '已中止' : '执行失败'
   const now = new Date()
   const when = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+  const lines = [
+    `【LaborAny 定时任务】${statusLabel}`,
+    `任务：${job.name}`,
+    `时间：${when}`,
+    `会话：${sessionId}`,
+  ]
+  if (error) lines.push(`错误：${error}`)
+  return lines.join('\n')
+}
+
+function buildQqSummaryText(
+  job: CronJob,
+  status: 'ok' | 'error',
+  sessionId: string,
+  error?: string,
+): string {
+  const statusLabel = status === 'ok' ? '执行成功' : '执行失败'
+  const when = new Date().toLocaleString('zh-CN')
   const lines = [
     `【LaborAny 定时任务】${statusLabel}`,
     `任务：${job.name}`,

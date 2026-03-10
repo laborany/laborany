@@ -45,7 +45,7 @@ function withDetail(fallback: string, error: unknown): string {
 }
 
 function isSourceChannel(value: unknown): value is JobSourceChannel {
-  return value === 'desktop' || value === 'feishu'
+  return value === 'desktop' || value === 'feishu' || value === 'qq'
 }
 
 function formatNextWakeAt(nextWakeAt: number | null): string {
@@ -60,20 +60,26 @@ function rearmCronTimer(reason: string): void {
 
 function validateSource(source: JobSource | undefined): string | null {
   if (!source) return null
-  if (!isSourceChannel(source.channel)) return 'source.channel 必须是 desktop 或 feishu'
+  if (!isSourceChannel(source.channel)) return 'source.channel 必须是 desktop / feishu / qq'
   if (source.channel === 'feishu' && !source.feishuOpenId?.trim()) {
     return 'source.channel=feishu 时必须提供 source.feishuOpenId'
+  }
+  if (source.channel === 'qq' && !source.qqOpenId?.trim()) {
+    return 'source.channel=qq 时必须提供 source.qqOpenId'
   }
   return null
 }
 
 function validateNotify(notify: JobNotify | undefined): string | null {
   if (!notify) return null
-  if (notify.channel !== 'app' && notify.channel !== 'feishu_dm') {
-    return 'notify.channel 必须是 app 或 feishu_dm'
+  if (notify.channel !== 'app' && notify.channel !== 'feishu_dm' && notify.channel !== 'qq_dm') {
+    return 'notify.channel 必须是 app / feishu_dm / qq_dm'
   }
   if (notify.channel === 'feishu_dm' && !notify.feishuOpenId?.trim()) {
     return 'notify.channel=feishu_dm 时必须提供 notify.feishuOpenId'
+  }
+  if (notify.channel === 'qq_dm' && !notify.qqOpenId?.trim()) {
+    return 'notify.channel=qq_dm 时必须提供 notify.qqOpenId'
   }
   return null
 }
@@ -119,10 +125,10 @@ router.get('/jobs', (req: Request, res: Response) => {
     const sourceOpenId = typeof req.query.sourceOpenId === 'string' ? req.query.sourceOpenId.trim() : ''
     const sourceChannel = typeof req.query.sourceChannel === 'string' ? req.query.sourceChannel.trim() : ''
 
-    let jobs = sourceOpenId ? listJobsBySourceOpenId(sourceOpenId) : listJobs()
+    let jobs = sourceOpenId ? listJobsBySourceOpenId(sourceOpenId, sourceChannel || undefined) : listJobs()
     if (sourceChannel) {
       if (!isSourceChannel(sourceChannel)) {
-        res.status(400).json({ error: 'sourceChannel 必须是 desktop 或 feishu' })
+        res.status(400).json({ error: 'sourceChannel 必须是 desktop / feishu / qq' })
         return
       }
       jobs = jobs.filter(job => job.sourceChannel === sourceChannel)

@@ -8,6 +8,13 @@ import {
   startFeishuBot,
   stopFeishuBot,
 } from '../feishu/index.js'
+import {
+  isQQEnabled,
+  isQQRunning,
+  restartQQBot,
+  startQQBot,
+  stopQQBot,
+} from '../qq/index.js'
 import { resetNotifierTransport } from '../cron/index.js'
 
 interface ApplyConfigRequest {
@@ -26,6 +33,7 @@ function hasChangedPrefix(changedKeys: string[], prefixes: string[]): boolean {
 }
 
 const FEISHU_PREFIXES = ['FEISHU_']
+const QQ_PREFIXES = ['QQ_']
 const NOTIFY_PREFIXES = ['SMTP_', 'NOTIFICATION_', 'NOTIFY_']
 
 const router = Router()
@@ -61,6 +69,18 @@ router.post('/apply-config', async (req: Request, res: Response) => {
     attempted: false,
     changed: false,
   }
+  const qqResult: {
+    attempted: boolean
+    changed: boolean
+    before: 'running' | 'stopped'
+    after: 'running' | 'stopped'
+    error?: string
+  } = {
+    attempted: false,
+    changed: false,
+    before: isQQRunning() ? 'running' : 'stopped',
+    after: isQQRunning() ? 'running' : 'stopped',
+  }
 
   const warnings: string[] = []
 
@@ -88,6 +108,30 @@ router.post('/apply-config', async (req: Request, res: Response) => {
     }
   }
 
+  const shouldApplyQQ = applyAll || hasChangedPrefix(changedKeys, QQ_PREFIXES)
+  if (shouldApplyQQ) {
+    qqResult.attempted = true
+    const beforeRunning = isQQRunning()
+    try {
+      if (isQQEnabled()) {
+        if (beforeRunning) {
+          await restartQQBot('runtime config apply')
+          qqResult.changed = true
+        } else {
+          await startQQBot()
+          qqResult.changed = isQQRunning()
+        }
+      } else if (beforeRunning) {
+        stopQQBot()
+        qqResult.changed = true
+      }
+    } catch (error) {
+      qqResult.error = toErrorMessage(error)
+    } finally {
+      qqResult.after = isQQRunning() ? 'running' : 'stopped'
+    }
+  }
+
   const shouldApplyNotify = applyAll || hasChangedPrefix(changedKeys, NOTIFY_PREFIXES)
   if (shouldApplyNotify) {
     emailResult.attempted = true
@@ -99,11 +143,11 @@ router.post('/apply-config', async (req: Request, res: Response) => {
     }
   }
 
-  if (!shouldApplyFeishu && !shouldApplyNotify) {
+  if (!shouldApplyFeishu && !shouldApplyQQ && !shouldApplyNotify) {
     warnings.push('No runtime module matched changed keys; env values were refreshed only.')
   }
 
-  const success = !feishuResult.error && !emailResult.error
+  const success = !feishuResult.error && !qqResult.error && !emailResult.error
   const summary = success ? 'Runtime config applied' : 'Config saved but runtime apply had errors'
 
   res.json({
@@ -120,6 +164,7 @@ router.post('/apply-config', async (req: Request, res: Response) => {
         loadedFrom: runtimeSnapshot.loadedFrom,
       },
       feishu: feishuResult,
+      qq: qqResult,
       email: emailResult,
     },
   })

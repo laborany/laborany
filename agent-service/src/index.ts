@@ -23,9 +23,11 @@ import {
   converseRouter,
   smartRouter,
   feishuRouter,
+  qqRouter,
   runtimeRouter,
 } from './routes/index.js'
 import { isFeishuEnabled, startFeishuBot, stopFeishuBot } from './feishu/index.js'
+import { isQQEnabled, startQQBot, stopQQBot } from './qq/index.js'
 
 initAgentLogger({
   defaultSource: 'agent',
@@ -60,6 +62,7 @@ app.use(createSkillsRouter(sessionManager))
 app.use(createExecuteRouter(sessionManager, taskManager))
 app.use(createCapabilitiesRouter(sessionManager))
 app.use('/feishu', feishuRouter)
+app.use('/qq', qqRouter)
 app.use('/runtime', runtimeRouter)
 
 if (!existsSync(DATA_DIR)) {
@@ -75,6 +78,10 @@ app.listen(port, () => {
   if (isFeishuEnabled()) {
     startFeishuBot().catch(err => console.error('[Feishu] 启动失败:', err))
   }
+
+  if (isQQEnabled()) {
+    startQQBot().catch(err => console.error('[QQ] 启动失败:', err))
+  }
 })
 
 let shuttingDown = false
@@ -85,6 +92,7 @@ async function gracefulShutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
 
   try {
     stopFeishuBot()
+    stopQQBot()
     console.log(`[Agent Service] Received ${signal}, draining memory queue...`)
     const result = await memoryAsyncQueue.drain(5000)
     if (result.drained) {

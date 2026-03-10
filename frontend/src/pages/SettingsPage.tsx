@@ -9,7 +9,7 @@ interface ConfigItem {
   masked: string
 }
 
-type ConfigGroupId = 'model' | 'feishu' | 'email' | 'system' | 'advanced'
+type ConfigGroupId = 'model' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
 
 interface ConfigTemplate {
   label?: string
@@ -68,6 +68,9 @@ type BannerType = 'success' | 'error' | 'warning'
 const BOOLEAN_KEYS = new Set([
   'FEISHU_ENABLED',
   'FEISHU_REQUIRE_ALLOWLIST',
+  'QQ_ENABLED',
+  'QQ_SANDBOX',
+  'QQ_REQUIRE_ALLOWLIST',
   'NOTIFY_ON_SUCCESS',
   'NOTIFY_ON_ERROR',
 ])
@@ -82,6 +85,11 @@ const DEFAULT_GROUPS: TemplateGroup[] = [
     id: 'feishu',
     title: '飞书 Bot',
     description: '开启飞书会话接入与文件回传能力。',
+  },
+  {
+    id: 'qq',
+    title: 'QQ Bot',
+    description: '开启 QQ C2C 私聊接入能力。',
   },
   {
     id: 'email',
@@ -205,6 +213,9 @@ export default function SettingsPage() {
   const [testingFeishu, setTestingFeishu] = useState(false)
   const [feishuTestResult, setFeishuTestResult] = useState<{ success: boolean; message: string } | null>(null)
 
+  const [testingQQ, setTestingQQ] = useState(false)
+  const [qqTestResult, setQQTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
   useEffect(() => {
     void loadConfig()
     void loadTemplate()
@@ -267,6 +278,19 @@ export default function SettingsPage() {
       if (!(editValues.FEISHU_APP_SECRET || '').trim()) errors.push('飞书已启用，但缺少 FEISHU_APP_SECRET')
       if (normalizeBool(editValues.FEISHU_REQUIRE_ALLOWLIST) && !(editValues.FEISHU_ALLOW_USERS || '').trim()) {
         errors.push('飞书开启强制白名单时，FEISHU_ALLOW_USERS 不能为空')
+      }
+    }
+
+    const qqEnabled = normalizeBool(editValues.QQ_ENABLED)
+    if (qqEnabled) {
+      if (!(editValues.QQ_APP_ID || '').trim()) errors.push('QQ Bot 已启用，但缺少 QQ_APP_ID')
+      const hasToken = Boolean((editValues.QQ_BOT_TOKEN || '').trim())
+      const hasSecret = Boolean((editValues.QQ_APP_SECRET || '').trim())
+      if (!hasToken && !hasSecret) {
+        errors.push('QQ Bot 已启用，但 QQ_BOT_TOKEN 与 QQ_APP_SECRET 至少填写一项（推荐仅填 QQ_APP_SECRET）')
+      }
+      if (normalizeBool(editValues.QQ_REQUIRE_ALLOWLIST) && !(editValues.QQ_ALLOW_USERS || '').trim()) {
+        errors.push('QQ Bot 开启强制白名单时，QQ_ALLOW_USERS 不能为空')
       }
     }
 
@@ -661,6 +685,24 @@ export default function SettingsPage() {
     }
   }
 
+  async function testQQConfig() {
+    setTestingQQ(true)
+    setQQTestResult(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/qq/test`, { method: 'POST' })
+      const data = await res.json() as { success?: boolean; error?: string; message?: string }
+      if (data.success) {
+        setQQTestResult({ success: true, message: data.message || 'QQ Bot 连接成功' })
+      } else {
+        setQQTestResult({ success: false, message: data.error || '连接失败' })
+      }
+    } catch {
+      setQQTestResult({ success: false, message: '无法连接 Agent Service' })
+    } finally {
+      setTestingQQ(false)
+    }
+  }
+
   function handleChange(key: string, value: string) {
     setEditValues(prev => ({ ...prev, [key]: value }))
   }
@@ -677,6 +719,7 @@ export default function SettingsPage() {
     const buckets: Record<ConfigGroupId, string[]> = {
       model: [],
       feishu: [],
+      qq: [],
       email: [],
       system: [],
       advanced: [],
@@ -701,7 +744,7 @@ export default function SettingsPage() {
 
   const knownKeys = useMemo(() => {
     const set = new Set<string>()
-    for (const group of ['model', 'feishu', 'email', 'system'] as ConfigGroupId[]) {
+    for (const group of ['model', 'feishu', 'qq', 'email', 'system'] as ConfigGroupId[]) {
       for (const key of groupedKeys[group]) set.add(key)
     }
     return set
@@ -1106,6 +1149,36 @@ export default function SettingsPage() {
           {feishuTestResult && (
             <p className={`mt-3 text-xs ${feishuTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
               {feishuTestResult.message}
+            </p>
+          )}
+        </SettingsCard>
+
+        <SettingsCard
+          title={groups.find(g => g.id === 'qq')?.title || 'QQ Bot'}
+          description={groups.find(g => g.id === 'qq')?.description || 'QQ Bot 配置'}
+          action={
+            <button
+              onClick={testQQConfig}
+              disabled={testingQQ}
+              className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {testingQQ ? '连接中...' : '测试 QQ 连接'}
+            </button>
+          }
+        >
+          {renderFields(groupedKeys.qq)}
+          <GuideBlock title="QQ Bot 配置提示（可折叠）" tone="blue">
+            <p>基础配置：`QQ_ENABLED=true`、`QQ_APP_ID`，以及 `QQ_APP_SECRET`（推荐）。</p>
+            <p>`QQ_BOT_TOKEN` 改为可选；当填写 `QQ_APP_SECRET` 时，系统会自动换取访问令牌。</p>
+            <p>当前仅支持 C2C 私聊场景（用户与机器人一对一消息）。</p>
+            <p>需要在 QQ 开放平台申请 `GROUP_AND_C2C_EVENT` 相关权限。</p>
+            <p>沙箱模式：测试环境可设置 `QQ_SANDBOX=true`，正式环境设为 `false`。</p>
+            <p>白名单：可通过 `QQ_ALLOW_USERS` 限制允许的用户 ID（逗号分隔），`QQ_REQUIRE_ALLOWLIST=true` 强制白名单模式。</p>
+            <p>文件支持：C2C 私聊支持图片和文件上传（单文件上限 20MB）。</p>
+          </GuideBlock>
+          {qqTestResult && (
+            <p className={`mt-3 text-xs ${qqTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
+              {qqTestResult.message}
             </p>
           )}
         </SettingsCard>

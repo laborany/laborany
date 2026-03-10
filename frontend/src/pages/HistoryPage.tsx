@@ -109,13 +109,16 @@ export default function HistoryPage() {
         ? 'cron'
         : (sessionId.startsWith('feishu-') || sessionId.startsWith('feishu-conv-')
           ? 'feishu'
-          : (skillId === '__converse__' ? 'converse' : 'desktop')))
+          : (sessionId.startsWith('qq-') || sessionId.startsWith('qq-conv-')
+            ? 'qq'
+            : (skillId === '__converse__' ? 'converse' : 'desktop'))))
 
-    const sourceText: Record<'desktop' | 'converse' | 'cron' | 'feishu', string> = {
+    const sourceText: Record<'desktop' | 'converse' | 'cron' | 'feishu' | 'qq', string> = {
       desktop: '桌面',
       converse: '首页对话',
       cron: '定时任务',
       feishu: '飞书',
+      qq: 'QQ',
     }
 
     return (

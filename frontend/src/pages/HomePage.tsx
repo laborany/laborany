@@ -47,13 +47,14 @@ interface RunningTaskBrief {
   skillId: string
   skillName: string
   startedAt: string
-  source?: 'desktop' | 'converse' | 'cron' | 'feishu'
+  source?: 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq'
   query?: string
 }
 
 function getTaskSourceLabel(source?: RunningTaskBrief['source']): string {
   if (source === 'cron') return '定时任务'
   if (source === 'feishu') return '飞书'
+  if (source === 'qq') return 'QQ'
   if (source === 'converse') return '首页对话'
   return '桌面任务'
 }

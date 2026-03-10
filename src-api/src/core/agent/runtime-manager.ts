@@ -138,7 +138,7 @@ interface StartTaskOptions {
   modelName?: string
   originQuery?: string
   beforeSkillIds?: Set<string>
-  source?: 'desktop' | 'feishu' | 'cron' | 'converse'
+  source?: 'desktop' | 'feishu' | 'qq' | 'cron' | 'converse'
   sourceMeta?: Record<string, unknown>
 }
 

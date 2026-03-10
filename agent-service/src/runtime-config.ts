@@ -18,6 +18,7 @@ const RESETTABLE_KEYS = [
 
 const RUNTIME_OWNED_PREFIXES = [
   'FEISHU_',
+  'QQ_',
   'SMTP_',
   'NOTIFICATION_',
   'NOTIFY_',

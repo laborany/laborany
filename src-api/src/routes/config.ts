@@ -30,20 +30,20 @@ interface TemplateField {
   required: boolean
   placeholder: string
   sensitive: boolean
-  group: 'model' | 'feishu' | 'email' | 'system' | 'advanced'
+  group: 'model' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
   order: number
   dependsOnKey?: string
   dependsOnValue?: string
 }
 
 interface TemplateGroup {
-  id: 'model' | 'feishu' | 'email' | 'system' | 'advanced'
+  id: 'model' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
   title: string
   description: string
 }
 
 function buildTemplateGroups(): TemplateGroup[] {
-  return [
+  const groups: TemplateGroup[] = [
     {
       id: 'model',
       title: '模型服务',
@@ -53,6 +53,11 @@ function buildTemplateGroups(): TemplateGroup[] {
       id: 'feishu',
       title: '飞书 Bot',
       description: '用于将任务从飞书会话接入 LaborAny，并回传文本与文件结果',
+    },
+    {
+      id: 'qq',
+      title: 'QQ Bot',
+      description: '用于将任务从 QQ C2C 私聊接入 LaborAny',
     },
     {
       id: 'email',
@@ -70,6 +75,7 @@ function buildTemplateGroups(): TemplateGroup[] {
       description: '不常用或定制化环境变量',
     },
   ]
+  return groups
 }
 
 function isSensitiveKey(key: string): boolean {
@@ -352,6 +358,103 @@ function buildTemplate(): Record<string, TemplateField> {
       group: 'feishu',
       order: 80,
       dependsOnKey: 'FEISHU_ENABLED',
+      dependsOnValue: 'true',
+    },
+    QQ_ENABLED: {
+      label: '启用 QQ Bot',
+      description: '开启后，允许 QQ 消息触发任务（true/false）',
+      required: false,
+      placeholder: 'false',
+      sensitive: false,
+      group: 'qq',
+      order: 10,
+    },
+    QQ_APP_ID: {
+      label: 'QQ App ID',
+      description: 'QQ 开放平台应用的 App ID',
+      required: false,
+      placeholder: 'your-qq-app-id',
+      sensitive: false,
+      group: 'qq',
+      order: 20,
+      dependsOnKey: 'QQ_ENABLED',
+      dependsOnValue: 'true',
+    },
+    QQ_BOT_TOKEN: {
+      label: 'QQ Bot Token',
+      description: 'QQ Bot 访问令牌（可选；与 QQ_APP_SECRET 二选一，推荐使用 QQ_APP_SECRET）',
+      required: false,
+      placeholder: '',
+      sensitive: true,
+      group: 'qq',
+      order: 30,
+      dependsOnKey: 'QQ_ENABLED',
+      dependsOnValue: 'true',
+    },
+    QQ_APP_SECRET: {
+      label: 'QQ App Secret',
+      description: 'QQ 开放平台应用的 App Secret（推荐填写；可自动换取访问令牌）',
+      required: false,
+      placeholder: '',
+      sensitive: true,
+      group: 'qq',
+      order: 40,
+      dependsOnKey: 'QQ_ENABLED',
+      dependsOnValue: 'true',
+    },
+    QQ_SANDBOX: {
+      label: 'QQ 沙箱模式',
+      description: '测试环境使用沙箱模式（true/false）',
+      required: false,
+      placeholder: 'false',
+      sensitive: false,
+      group: 'qq',
+      order: 50,
+      dependsOnKey: 'QQ_ENABLED',
+      dependsOnValue: 'true',
+    },
+    QQ_ALLOW_USERS: {
+      label: '允许用户列表',
+      description: '允许访问的用户 ID，多个用逗号分隔',
+      required: false,
+      placeholder: 'user_id_1,user_id_2',
+      sensitive: false,
+      group: 'qq',
+      order: 60,
+      dependsOnKey: 'QQ_ENABLED',
+      dependsOnValue: 'true',
+    },
+    QQ_REQUIRE_ALLOWLIST: {
+      label: '强制白名单',
+      description: '是否要求允许用户列表不能为空（true/false）',
+      required: false,
+      placeholder: 'false',
+      sensitive: false,
+      group: 'qq',
+      order: 70,
+      dependsOnKey: 'QQ_ENABLED',
+      dependsOnValue: 'true',
+    },
+    QQ_BOT_NAME: {
+      label: 'Bot 显示名称',
+      description: 'QQ 消息中显示的名称',
+      required: false,
+      placeholder: 'LaborAny',
+      sensitive: false,
+      group: 'qq',
+      order: 80,
+      dependsOnKey: 'QQ_ENABLED',
+      dependsOnValue: 'true',
+    },
+    QQ_DEFAULT_SKILL: {
+      label: '默认执行技能',
+      description: '未匹配到具体技能时使用的默认技能 ID',
+      required: false,
+      placeholder: '__generic__',
+      sensitive: false,
+      group: 'qq',
+      order: 90,
+      dependsOnKey: 'QQ_ENABLED',
       dependsOnValue: 'true',
     },
   }

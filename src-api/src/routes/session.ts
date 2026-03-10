@@ -8,22 +8,20 @@ const ALLOWED_SESSION_STATUS = new Set(['running', 'waiting_input', 'completed',
 const ALLOWED_MESSAGE_TYPES = new Set(['user', 'assistant', 'tool_use', 'tool_result', 'error', 'system'])
 const CONVERSE_HEARTBEAT_STALE_MS = 90 * 1000
 
-type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu'
+type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq'
 
 function inferSessionSource(sessionId: string, skillId: string, dbSource?: string): SessionSource {
-  if (skillId === '__converse__' && (!dbSource || dbSource === 'desktop')) {
-    return 'converse'
-  }
-
-  // 优先使用数据库中的 source 字段
-  if (dbSource && ['desktop', 'feishu', 'cron', 'converse'].includes(dbSource)) {
-    return dbSource as SessionSource
-  }
-
-  // 向后兼容：根据 sessionId 推断
+  // 先根据 sessionId 推断，兼容历史数据中 source 被错误写成 desktop 的场景
   const sid = (sessionId || '').toLowerCase()
   if (sid.startsWith('cron-') || sid.startsWith('cron-manual-')) return 'cron'
   if (sid.startsWith('feishu-') || sid.startsWith('feishu-conv-')) return 'feishu'
+  if (sid.startsWith('qq-') || sid.startsWith('qq-conv-')) return 'qq'
+
+  // 其次使用数据库中的 source 字段
+  if (dbSource && ['desktop', 'feishu', 'qq', 'cron', 'converse'].includes(dbSource)) {
+    return dbSource as SessionSource
+  }
+
   if (skillId === '__converse__') return 'converse'
   return 'desktop'
 }
@@ -31,6 +29,7 @@ function inferSessionSource(sessionId: string, skillId: string, dbSource?: strin
 function getRunningSkillName(source: SessionSource, fallbackSkillName: string, skillId: string): string {
   if (source === 'cron') return '定时任务'
   if (source === 'feishu') return skillId === '__converse__' ? '飞书对话分派' : '飞书任务执行'
+  if (source === 'qq') return skillId === '__converse__' ? 'QQ 对话分派' : 'QQ 任务执行'
   if (source === 'converse') return '首页对话分派'
   return fallbackSkillName || skillId
 }
@@ -352,7 +351,7 @@ session.post('/external/upsert', async (c) => {
     ? body.workDir.trim()
     : null
   const sourceRaw = typeof body.source === 'string' ? body.source.trim() : ''
-  const source = ['desktop', 'feishu', 'cron', 'converse'].includes(sourceRaw)
+  const source = ['desktop', 'feishu', 'qq', 'cron', 'converse'].includes(sourceRaw)
     ? sourceRaw
     : (skillId === '__converse__' ? 'converse' : 'desktop')
 

@@ -681,7 +681,7 @@ skill.post('/execute', async (c) => {
     modelName: modelSelection.modelName,
     originQuery: skillId === 'skill-creator' ? (originQuery || query) : undefined,
     beforeSkillIds: skillId === 'skill-creator' ? beforeSkillIds : undefined,
-    source: source as 'desktop' | 'feishu' | 'cron' | 'converse',
+    source: source as 'desktop' | 'feishu' | 'qq' | 'cron' | 'converse',
     sourceMeta,
   })
 
