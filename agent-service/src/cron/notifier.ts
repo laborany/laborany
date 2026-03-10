@@ -377,11 +377,11 @@ function buildFeishuSummaryText(
 
 function buildQqSummaryText(
   job: CronJob,
-  status: 'ok' | 'error',
+  status: 'ok' | 'error' | 'aborted',
   sessionId: string,
   error?: string,
 ): string {
-  const statusLabel = status === 'ok' ? '执行成功' : '执行失败'
+  const statusLabel = status === 'ok' ? '执行成功' : status === 'aborted' ? '已中止' : '执行失败'
   const when = new Date().toLocaleString('zh-CN')
   const lines = [
     `【LaborAny 定时任务】${statusLabel}`,
