@@ -35,6 +35,7 @@ export interface AgentEvent {
   type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done' | 'status'
   content?: string
   toolName?: string
+  toolUseId?: string
   toolInput?: Record<string, unknown>
   toolResult?: string
   taskDir?: string

@@ -13,13 +13,17 @@ import { pipeline } from 'stream/promises'
 import { DATA_DIR } from '../paths.js'
 import type { QQConfig } from './config.js'
 import {
+  activateConverseOwner,
+  activateSkillOwner,
   appendConverseMessage,
   buildUserStateKey,
   clearExecuteSessionId,
+  getActiveMode,
   getUserState,
+  markSkillAwaitingInput,
+  markSkillRoundSettled,
   resetUser,
   setConverseSessionId,
-  setExecuteSessionId,
   setDefaultModelProfileId,
   getDefaultModelProfileId,
 } from './index.js'
@@ -149,6 +153,55 @@ interface FileSendResult {
   failedPaths: string[]
 }
 
+type ExecuteRoundPhase = 'running' | 'waiting_input' | 'completed' | 'failed' | 'aborted'
+const ASK_USER_QUESTION_CLEAN_RE = /AskU(?:ser|er)Question\(\s*[\s\S]*?\s*\)\s*/gi
+
+function buildExecuteSessionId(skillId: string, currentSkillId?: string, currentSessionId?: string): string {
+  if (currentSkillId === skillId && currentSessionId) {
+    return currentSessionId
+  }
+  return `qq-${randomUUID()}`
+}
+
+function shouldContinueActiveSkill(stateKey: string): boolean {
+  const state = getUserState(stateKey)
+  return getActiveMode(stateKey) === 'skill' && Boolean(state.activeSkillId)
+}
+
+function stripQuestionMarkers(text: string): string {
+  return text.replace(ASK_USER_QUESTION_CLEAN_RE, '').trim()
+}
+
+function isImmediateCommand(text: string): boolean {
+  return ['/stop', '/new', '/home', '/router'].includes(text.trim().split(/\s+/, 1)[0].toLowerCase())
+}
+
+function isCurrentSkillOwner(stateKey: string, skillId: string, sessionId: string): boolean {
+  const state = getUserState(stateKey)
+  if (getActiveMode(stateKey) !== 'skill') return false
+  if (state.activeSkillId !== skillId) return false
+  return state.executeSessionId === sessionId || state.activeSessionId === sessionId
+}
+
+function syncSkillOwnerSession(
+  stateKey: string,
+  skillId: string,
+  previousSessionId: string,
+  nextSessionId: string,
+): boolean {
+  if (!isCurrentSkillOwner(stateKey, skillId, previousSessionId)) return false
+  activateSkillOwner(stateKey, skillId, nextSessionId)
+  return true
+}
+
+async function stopExecuteSession(sessionId?: string): Promise<void> {
+  if (!sessionId) return
+  try {
+    await fetch(`${getSrcApiBaseUrl()}/skill/stop/${sessionId}`, { method: 'POST' })
+  } catch {
+  }
+}
+
 function parseSseBlock(rawBlock: string): SseEvent | null {
   const lines = rawBlock.split(/\r?\n/)
   let dataLine = ''
@@ -205,6 +258,29 @@ async function* streamSse(response: Response): AsyncGenerator<SseEvent> {
   } finally {
     reader.releaseLock()
   }
+}
+
+function extractQuestionText(event: SseEvent): string {
+  if (typeof event.content === 'string' && event.content.trim()) return event.content
+
+  const questions = (event as any).questions
+  if (Array.isArray(questions) && questions.length > 0) {
+    return questions
+      .map((question: any) => {
+        const header = question?.header ? `【${question.header}】` : ''
+        const prompt = typeof question?.question === 'string' ? question.question : ''
+        const options = Array.isArray(question?.options)
+          ? question.options
+            .map((option: any, index: number) => `  ${index + 1}. ${option?.label || ''}${option?.description ? ` - ${option.description}` : ''}`)
+            .join('\n')
+          : ''
+        return `${header}${prompt}\n${options}`.trim()
+      })
+      .filter(Boolean)
+      .join('\n\n')
+  }
+
+  return '请继续补充信息。'
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -732,7 +808,9 @@ async function handleCommand(
     .replace(/^\//, '')
 
   if (cmd === 'new') {
+    const executeSessionId = getUserState(stateKey).executeSessionId
     resetUser(stateKey)
+    await stopExecuteSession(executeSessionId)
     await sendTextWithContext(client, targetId, targetType, '✅ 会话已重置', replyCtx)
     return true
   }
@@ -744,6 +822,7 @@ async function handleCommand(
 • /new - 重置会话
 • /help - 显示此帮助
 • /skill <id> [query] - 执行指定技能
+• /home - 返回分发器
 • /skills - 列出可用技能
 • /cron help - 查看定时任务命令
 • /model [name|id] - 查看或切换模型配置
@@ -751,6 +830,14 @@ async function handleCommand(
 
 直接发送消息即可开始对话。`
     await sendTextWithContext(client, targetId, targetType, helpText, replyCtx)
+    return true
+  }
+
+  if (cmd === 'home' || cmd === 'router') {
+    const executeSessionId = getUserState(stateKey).executeSessionId
+    clearExecuteSessionId(stateKey)
+    await stopExecuteSession(executeSessionId)
+    await sendTextWithContext(client, targetId, targetType, '✅ 已返回分发模式。接下来我会先判断该走哪个技能。', replyCtx)
     return true
   }
 
@@ -990,8 +1077,8 @@ async function handleCommand(
       return true
     }
 
-    const sessionId = `qq-${randomUUID()}`
-    setExecuteSessionId(stateKey, sessionId)
+    const state = getUserState(stateKey)
+    const sessionId = buildExecuteSessionId(skillId, state.activeSkillId, state.executeSessionId)
 
     await executeSkill(
       client,
@@ -1011,8 +1098,14 @@ async function handleCommand(
   if (cmd === 'stop') {
     const state = getUserState(stateKey)
     if (state.executeSessionId) {
+      if (state.executeAwaitingInput) {
+        markSkillRoundSettled(stateKey, '⏹️ 已取消当前等待中的问题。你可以继续补充新要求，或发送 /home 返回分发器。')
+        await sendTextWithContext(client, targetId, targetType, '⏹️ 已取消当前等待中的问题。你可以继续补充新要求，或发送 /home 返回分发器。', replyCtx)
+        return true
+      }
       try {
         await fetch(`${getSrcApiBaseUrl()}/skill/stop/${state.executeSessionId}`, { method: 'POST' })
+        markSkillRoundSettled(stateKey, '⏹️ 当前执行回合已停止')
         await sendTextWithContext(client, targetId, targetType, '⏹️ 任务已中止', replyCtx)
       } catch (err) {
         await sendTextWithContext(client, targetId, targetType, '❌ 中止任务失败', replyCtx)
@@ -1046,6 +1139,7 @@ async function runConverse(
   if (!state.converseSessionId) {
     setConverseSessionId(stateKey, sessionId)
   }
+  activateConverseOwner(stateKey)
 
   appendConverseMessage(stateKey, 'user', userMessage)
 
@@ -1151,13 +1245,13 @@ async function dispatchAction(
 
   if (action === 'recommend_capability' && resolvedTargetId) {
     const resolved = await resolveExecutableSkillId(resolvedTargetId, config.defaultSkillId)
-    const sessionId = `qq-${randomUUID()}`
-    setExecuteSessionId(stateKey, sessionId)
+    const state = getUserState(stateKey)
+    const sessionId = buildExecuteSessionId(resolved.skillId, state.activeSkillId, state.executeSessionId)
     await executeSkill(client, null, targetType, targetId, stateKey, resolved.skillId, query || '请执行该技能', sessionId, config, replyCtx)
   } else if (action === 'execute_generic' && query) {
     const resolved = await resolveExecutableSkillId(config.defaultSkillId, '__generic__')
-    const sessionId = `qq-${randomUUID()}`
-    setExecuteSessionId(stateKey, sessionId)
+    const state = getUserState(stateKey)
+    const sessionId = buildExecuteSessionId(resolved.skillId, state.activeSkillId, state.executeSessionId)
     await executeSkill(client, null, targetType, targetId, stateKey, resolved.skillId, query, sessionId, config, replyCtx)
   } else if (action === 'create_capability') {
     const seedQuery = (event.seedQuery || query || '').trim()
@@ -1266,6 +1360,9 @@ async function executeSkill(
   await streamingSession.start(targetId, targetType, '执行中')
 
   const startTime = Date.now()
+  activateSkillOwner(stateKey, skillId, sessionId)
+  let roundPhase: ExecuteRoundPhase = 'running'
+  let pendingQuestionText = ''
 
   try {
     const response = await fetch(`${getSrcApiBaseUrl()}/skill/execute`, {
@@ -1282,44 +1379,101 @@ async function executeSkill(
 
     if (!response.ok) {
       await streamingSession.close('❌ 执行失败')
-      clearExecuteSessionId(stateKey)
+      markSkillRoundSettled(stateKey, '❌ 执行失败')
       return
     }
 
     let accumulatedText = ''
     for await (const event of streamSse(response)) {
+      if (event.type === 'session' && event.sessionId) {
+        syncSkillOwnerSession(stateKey, skillId, sessionId, event.sessionId)
+        sessionId = event.sessionId
+      }
+
+      if (event.type === 'state') {
+        const phase = typeof (event as any).phase === 'string' ? (event as any).phase : ''
+        if (phase === 'waiting_input') {
+          roundPhase = 'waiting_input'
+          if (isCurrentSkillOwner(stateKey, skillId, sessionId)) {
+            markSkillAwaitingInput(stateKey, pendingQuestionText || stripQuestionMarkers(accumulatedText))
+          }
+        } else if (phase === 'completed') {
+          roundPhase = 'completed'
+        } else if (phase === 'failed') {
+          roundPhase = 'failed'
+        } else if (phase === 'aborted') {
+          roundPhase = 'aborted'
+        }
+      }
+
       if (event.type === 'text' && event.content) {
         accumulatedText += event.content
-        await streamingSession.update(accumulatedText)
+        if (isCurrentSkillOwner(stateKey, skillId, sessionId)) {
+          await streamingSession.update(stripQuestionMarkers(accumulatedText))
+        }
+      }
+
+      if (event.type === 'question') {
+        pendingQuestionText = extractQuestionText(event)
+        if (pendingQuestionText) {
+          if (isCurrentSkillOwner(stateKey, skillId, sessionId)) {
+            markSkillAwaitingInput(stateKey, pendingQuestionText)
+          }
+          roundPhase = 'waiting_input'
+        }
       }
 
       if (event.type === 'tool_use' && event.toolName) {
-        await streamingSession.update(`${accumulatedText}\n\n🔧 ${event.toolName}...`)
+        if (isCurrentSkillOwner(stateKey, skillId, sessionId)) {
+          await streamingSession.update(`${stripQuestionMarkers(accumulatedText)}\n\n🔧 ${event.toolName}...`)
+        }
       }
 
       if (event.type === 'error') {
         const msg = event.message || event.content || '执行失败'
-        await streamingSession.close(`❌ ${msg}`)
-        clearExecuteSessionId(stateKey)
+        if (isCurrentSkillOwner(stateKey, skillId, sessionId)) {
+          await streamingSession.close(`❌ ${msg}`)
+          markSkillRoundSettled(stateKey, stripQuestionMarkers(accumulatedText) || msg)
+        }
         return
       }
 
       if (event.type === 'done' || event.type === 'stopped' || event.type === 'aborted') {
+        if (event.type === 'aborted') {
+          roundPhase = 'aborted'
+        }
         break
       }
     }
 
-    await streamingSession.close(accumulatedText || '✅ 执行完成')
+    const finalText = [stripQuestionMarkers(accumulatedText), pendingQuestionText.trim()]
+      .filter(Boolean)
+      .join('\n\n')
+      .trim() || stripQuestionMarkers(accumulatedText) || '✅ 执行完成'
+
+    if (!isCurrentSkillOwner(stateKey, skillId, sessionId)) {
+      await streamingSession.close('⏹️ 当前执行已取消')
+      return
+    }
+
+    if (roundPhase === 'waiting_input') {
+      markSkillAwaitingInput(stateKey, pendingQuestionText || finalText)
+      await streamingSession.close(finalText)
+      return
+    }
+
+    markSkillRoundSettled(stateKey, finalText)
+    await streamingSession.close(finalText)
 
     // 回传产物
-    const pushResult = await sendArtifactsToTarget(targetId, targetType, sessionId, startTime)
-    void pushResult
-
-    clearExecuteSessionId(stateKey)
+    if (roundPhase !== 'aborted') {
+      const pushResult = await sendArtifactsToTarget(targetId, targetType, sessionId, startTime)
+      void pushResult
+    }
   } catch (err) {
     console.error('[QQ] Execute error:', err)
     await streamingSession.close('❌ 执行失败')
-    clearExecuteSessionId(stateKey)
+    markSkillRoundSettled(stateKey, '❌ 执行失败')
   }
 }
 
@@ -1396,6 +1550,26 @@ export async function handleQQMessage(
       event.group_openid,
     )
 
+    const quickCommand = (event.content || '').trim()
+    if (quickCommand && isImmediateCommand(quickCommand)) {
+      const parts = quickCommand.split(/\s+/)
+      const command = parts[0]
+      const args = parts.slice(1)
+      await handleCommand(
+        client,
+        event,
+        messageType,
+        targetId,
+        stateKey,
+        command,
+        args,
+        config,
+        quickCommand,
+        replyCtx,
+      )
+      return
+    }
+
     // 串行处理队列
     const previousTask = userProcessingQueue.get(stateKey) || Promise.resolve()
     const currentTask = previousTask.then(async () => {
@@ -1426,6 +1600,28 @@ export async function handleQQMessage(
           )
 
           if (handled) return
+        }
+
+        const currentState = getUserState(stateKey)
+        if (shouldContinueActiveSkill(stateKey) && currentState.activeSkillId) {
+          const sessionId = buildExecuteSessionId(
+            currentState.activeSkillId,
+            currentState.activeSkillId,
+            currentState.executeSessionId,
+          )
+          await executeSkill(
+            client,
+            event,
+            messageType,
+            targetId,
+            stateKey,
+            currentState.activeSkillId,
+            text,
+            sessionId,
+            config,
+            replyCtx,
+          )
+          return
         }
 
         // 普通消息：进入 converse 流程

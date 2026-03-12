@@ -6,15 +6,22 @@ import { loadFeishuConfig } from './config.js'
 import type { FeishuConfig } from './config.js'
 import { handleFeishuMessage } from './handler.js'
 import { DATA_DIR } from '../paths.js'
+import {
+  type RemoteConversationOwnerMode,
+  type RemoteUserState,
+  activateRemoteConverse,
+  activateRemoteSkill,
+  appendRemoteConverseMessage,
+  clearRemoteExecuteSession,
+  createRemoteUserState,
+  markRemoteSkillAwaitingInput,
+  markRemoteSkillRoundSettled,
+  normalizeRemoteUserState,
+  setRemoteConverseSessionId,
+  setRemoteExecuteSessionId,
+} from '../remote-session-state.js'
 
-interface UserState {
-  converseSessionId?: string
-  executeSessionId?: string
-  converseMessages: Array<{ role: string; content: string }>
-  defaultModelProfileId?: string
-}
-
-const userStates = new Map<string, UserState>()
+const userStates = new Map<string, RemoteUserState>()
 const MAX_CONVERSE_MESSAGES = 40
 const STATE_FILE_PATH = join(DATA_DIR, 'feishu', 'user-states.json')
 
@@ -22,21 +29,9 @@ function loadPersistedStates(): void {
   try {
     if (!existsSync(STATE_FILE_PATH)) return
     const raw = readFileSync(STATE_FILE_PATH, 'utf-8')
-    const parsed = JSON.parse(raw) as Record<string, UserState>
+    const parsed = JSON.parse(raw) as Record<string, unknown>
     for (const [key, value] of Object.entries(parsed || {})) {
-      if (!value || typeof value !== 'object') continue
-      const converseMessages = Array.isArray(value.converseMessages)
-        ? value.converseMessages
-          .filter((item) => item && typeof item.role === 'string' && typeof item.content === 'string')
-          .slice(-MAX_CONVERSE_MESSAGES)
-        : []
-
-      userStates.set(key, {
-        converseSessionId: typeof value.converseSessionId === 'string' ? value.converseSessionId : undefined,
-        executeSessionId: typeof value.executeSessionId === 'string' ? value.executeSessionId : undefined,
-        defaultModelProfileId: typeof value.defaultModelProfileId === 'string' ? value.defaultModelProfileId : undefined,
-        converseMessages,
-      })
+      userStates.set(key, normalizeRemoteUserState(value, MAX_CONVERSE_MESSAGES))
     }
   } catch (error) {
     console.warn('[Feishu] failed to load persisted user states:', error)
@@ -46,12 +41,17 @@ function loadPersistedStates(): void {
 function persistStates(): void {
   try {
     mkdirSync(dirname(STATE_FILE_PATH), { recursive: true })
-    const plain: Record<string, UserState> = {}
+    const plain: Record<string, RemoteUserState> = {}
     for (const [key, value] of userStates.entries()) {
       plain[key] = {
         converseSessionId: value.converseSessionId,
         executeSessionId: value.executeSessionId,
         defaultModelProfileId: value.defaultModelProfileId,
+        activeMode: value.activeMode,
+        activeSkillId: value.activeSkillId,
+        activeSessionId: value.activeSessionId,
+        executeAwaitingInput: value.executeAwaitingInput,
+        executeLastPrompt: value.executeLastPrompt,
         converseMessages: value.converseMessages.slice(-MAX_CONVERSE_MESSAGES),
       }
     }
@@ -67,10 +67,10 @@ export function buildUserStateKey(openId: string, chatId: string): string {
   return `${openId.trim()}@@${chatId.trim()}`
 }
 
-export function getUserState(stateKey: string): UserState {
+export function getUserState(stateKey: string): RemoteUserState {
   let state = userStates.get(stateKey)
   if (!state) {
-    state = { converseMessages: [] }
+    state = createRemoteUserState()
     userStates.set(stateKey, state)
     persistStates()
   }
@@ -79,25 +79,22 @@ export function getUserState(stateKey: string): UserState {
 
 export function appendConverseMessage(stateKey: string, role: string, content: string): void {
   const state = getUserState(stateKey)
-  state.converseMessages.push({ role, content })
-  if (state.converseMessages.length > MAX_CONVERSE_MESSAGES) {
-    state.converseMessages.splice(0, state.converseMessages.length - MAX_CONVERSE_MESSAGES)
-  }
+  appendRemoteConverseMessage(state, role, content, MAX_CONVERSE_MESSAGES)
   persistStates()
 }
 
 export function setConverseSessionId(stateKey: string, sessionId: string): void {
-  getUserState(stateKey).converseSessionId = sessionId
+  setRemoteConverseSessionId(getUserState(stateKey), sessionId)
   persistStates()
 }
 
 export function setExecuteSessionId(stateKey: string, sessionId: string): void {
-  getUserState(stateKey).executeSessionId = sessionId
+  setRemoteExecuteSessionId(getUserState(stateKey), sessionId)
   persistStates()
 }
 
 export function clearExecuteSessionId(stateKey: string): void {
-  getUserState(stateKey).executeSessionId = undefined
+  clearRemoteExecuteSession(getUserState(stateKey))
   persistStates()
 }
 
@@ -113,6 +110,35 @@ export function setDefaultModelProfileId(stateKey: string, profileId: string | u
 
 export function getDefaultModelProfileId(stateKey: string): string | undefined {
   return getUserState(stateKey).defaultModelProfileId
+}
+
+export function activateConverseOwner(stateKey: string): void {
+  activateRemoteConverse(getUserState(stateKey))
+  persistStates()
+}
+
+export function activateSkillOwner(stateKey: string, skillId: string, sessionId: string): void {
+  activateRemoteSkill(getUserState(stateKey), skillId, sessionId)
+  persistStates()
+}
+
+export function markSkillAwaitingInput(stateKey: string, prompt?: string): void {
+  markRemoteSkillAwaitingInput(getUserState(stateKey), prompt)
+  persistStates()
+}
+
+export function markSkillRoundSettled(stateKey: string, prompt?: string): void {
+  markRemoteSkillRoundSettled(getUserState(stateKey), prompt)
+  persistStates()
+}
+
+export function clearExecuteSessionKeepingOwner(stateKey: string): void {
+  clearRemoteExecuteSession(getUserState(stateKey), { keepSkillOwner: true })
+  persistStates()
+}
+
+export function getActiveMode(stateKey: string): RemoteConversationOwnerMode {
+  return getUserState(stateKey).activeMode || 'idle'
 }
 
 let wsClient: Lark.WSClient | null = null

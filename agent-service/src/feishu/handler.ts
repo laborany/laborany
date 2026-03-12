@@ -7,13 +7,17 @@ import type { Client } from '@larksuiteoapi/node-sdk'
 import { DATA_DIR } from '../paths.js'
 import type { FeishuConfig } from './config.js'
 import {
+  activateConverseOwner,
+  activateSkillOwner,
   appendConverseMessage,
   buildUserStateKey,
   clearExecuteSessionId,
+  getActiveMode,
   getUserState,
   resetUser,
+  markSkillAwaitingInput,
+  markSkillRoundSettled,
   setConverseSessionId,
-  setExecuteSessionId,
   setDefaultModelProfileId,
   getDefaultModelProfileId,
 } from './index.js'
@@ -29,6 +33,55 @@ function getAgentServiceUrl(): string {
 
 function getFeishuHistorySkillId(): string {
   return process.env.FEISHU_HISTORY_SKILL_ID?.trim() || '__generic__'
+}
+
+type ExecuteRoundPhase = 'running' | 'waiting_input' | 'completed' | 'failed' | 'aborted'
+const ASK_USER_QUESTION_CLEAN_RE = /AskU(?:ser|er)Question\(\s*[\s\S]*?\s*\)\s*/gi
+
+function buildExecuteSessionId(skillId: string, currentSkillId?: string, currentSessionId?: string): string {
+  if (currentSkillId === skillId && currentSessionId) {
+    return currentSessionId
+  }
+  return `feishu-${randomUUID().slice(0, 12)}`
+}
+
+function shouldContinueActiveSkill(stateKey: string): boolean {
+  const state = getUserState(stateKey)
+  return getActiveMode(stateKey) === 'skill' && Boolean(state.activeSkillId)
+}
+
+function stripQuestionMarkers(text: string): string {
+  return text.replace(ASK_USER_QUESTION_CLEAN_RE, '').trim()
+}
+
+function isImmediateCommand(text: string): boolean {
+  return ['/stop', '/new', '/home', '/router'].includes(text.trim().split(/\s+/, 1)[0])
+}
+
+function isCurrentSkillOwner(stateKey: string, skillId: string, sessionId: string): boolean {
+  const state = getUserState(stateKey)
+  if (getActiveMode(stateKey) !== 'skill') return false
+  if (state.activeSkillId !== skillId) return false
+  return state.executeSessionId === sessionId || state.activeSessionId === sessionId
+}
+
+function syncSkillOwnerSession(
+  stateKey: string,
+  skillId: string,
+  previousSessionId: string,
+  nextSessionId: string,
+): boolean {
+  if (!isCurrentSkillOwner(stateKey, skillId, previousSessionId)) return false
+  activateSkillOwner(stateKey, skillId, nextSessionId)
+  return true
+}
+
+async function stopExecuteSession(sessionId?: string): Promise<void> {
+  if (!sessionId) return
+  try {
+    await fetch(`${getSrcApiBaseUrl()}/skill/stop/${sessionId}`, { method: 'POST' })
+  } catch {
+  }
 }
 
 interface FeishuRawEvent {
@@ -1289,14 +1342,17 @@ async function executeSkill(
   query: string,
   card: FeishuOutputSession | null,
   oneTimeModelProfileId?: string,
+  sessionIdOverride?: string,
 ): Promise<void> {
   const state = getUserState(stateKey)
   const modelProfileId = oneTimeModelProfileId ?? state.defaultModelProfileId
-  const executeSessionId = state.executeSessionId || `feishu-${randomUUID().slice(0, 12)}`
-  setExecuteSessionId(stateKey, executeSessionId)
+  const executeSessionId = sessionIdOverride || buildExecuteSessionId(skillId, state.activeSkillId, state.executeSessionId)
+  activateSkillOwner(stateKey, skillId, executeSessionId)
   let runtimeSessionId = executeSessionId
   let baselineSessionId = executeSessionId
   let baselineMap = buildSnapshotMap(await fetchTaskFiles(executeSessionId))
+  let roundPhase: ExecuteRoundPhase = 'running'
+  let pendingQuestionText = ''
 
   try {
     const response = await fetch(`${getSrcApiBaseUrl()}/skill/execute`, {
@@ -1326,42 +1382,106 @@ async function executeSkill(
     for await (const event of streamSse(response)) {
       if (event.type === 'session' && event.sessionId) {
         runtimeSessionId = event.sessionId
-        setExecuteSessionId(stateKey, event.sessionId)
+        syncSkillOwnerSession(stateKey, skillId, baselineSessionId, event.sessionId)
         if (event.sessionId !== baselineSessionId) {
           baselineSessionId = event.sessionId
           baselineMap = buildSnapshotMap(await fetchTaskFiles(event.sessionId))
         }
       }
 
+      if (event.type === 'state') {
+        const phase = typeof (event as any).phase === 'string' ? (event as any).phase : ''
+        if (phase === 'waiting_input') {
+          roundPhase = 'waiting_input'
+          if (isCurrentSkillOwner(stateKey, skillId, runtimeSessionId)) {
+            markSkillAwaitingInput(stateKey, pendingQuestionText || stripQuestionMarkers(accumulated))
+          }
+        } else if (phase === 'completed') {
+          roundPhase = 'completed'
+        } else if (phase === 'failed') {
+          roundPhase = 'failed'
+        } else if (phase === 'aborted') {
+          roundPhase = 'aborted'
+        }
+      }
+
       if (event.type === 'text' && event.content) {
         accumulated += event.content
-        if (card) await card.update(accumulated)
+        if (card && isCurrentSkillOwner(stateKey, skillId, runtimeSessionId)) {
+          await card.update(stripQuestionMarkers(accumulated))
+        }
+      }
+
+      if (event.type === 'question') {
+        pendingQuestionText = extractQuestionText(event)
+        if (pendingQuestionText) {
+          if (isCurrentSkillOwner(stateKey, skillId, runtimeSessionId)) {
+            markSkillAwaitingInput(stateKey, pendingQuestionText)
+          }
+          roundPhase = 'waiting_input'
+        }
       }
 
       if (event.type === 'tool_use' && event.toolName && card) {
-        await card.update(`${accumulated}\n\n🔧 ${event.toolName}...`)
+        if (isCurrentSkillOwner(stateKey, skillId, runtimeSessionId)) {
+          await card.update(`${stripQuestionMarkers(accumulated)}\n\n🔧 ${event.toolName}...`)
+        }
       }
 
       if (event.type === 'error') {
         const msg = event.message || event.content || 'Execution error'
-        if (card) await card.close(accumulated || msg)
-        else await sendText(client, chatId, `❌ ${msg}`)
-        throw new Error(msg)
+        if (isCurrentSkillOwner(stateKey, skillId, runtimeSessionId)) {
+          const displayText = stripQuestionMarkers(accumulated) || msg
+          if (card) await card.close(displayText)
+          else await sendText(client, chatId, `❌ ${msg}`)
+          markSkillRoundSettled(stateKey, displayText)
+        } else if (card) {
+          await card.close('⏹️ 当前执行已取消')
+        }
+        return
       }
 
       if (event.type === 'done' || event.type === 'stopped' || event.type === 'aborted') {
+        if (event.type === 'aborted') {
+          roundPhase = 'aborted'
+        }
         break
       }
     }
 
-    if (card) {
-      await card.close(accumulated || '✅ Execution completed')
-    } else {
-      await sendText(client, chatId, accumulated || '✅ Execution completed')
+    const finalText = [stripQuestionMarkers(accumulated), pendingQuestionText.trim()]
+      .filter(Boolean)
+      .join('\n\n')
+      .trim() || stripQuestionMarkers(accumulated) || '✅ Execution completed'
+
+    if (!isCurrentSkillOwner(stateKey, skillId, runtimeSessionId)) {
+      if (card) {
+        await card.close('⏹️ 当前执行已取消')
+      }
+      return
     }
-    await sendArtifactsFromSession(client, chatId, runtimeSessionId, baselineMap)
-  } finally {
-    // session 仅在 /new (resetUser) 或 /stop (clearExecuteSessionId) 时清除
+
+    if (roundPhase === 'waiting_input') {
+      markSkillAwaitingInput(stateKey, pendingQuestionText || finalText)
+      if (card) {
+        await card.close(finalText)
+      } else {
+        await sendText(client, chatId, finalText)
+      }
+      return
+    }
+
+    markSkillRoundSettled(stateKey, finalText)
+    if (card) {
+      await card.close(finalText)
+    } else {
+      await sendText(client, chatId, finalText)
+    }
+    if (roundPhase !== 'aborted') {
+      await sendArtifactsFromSession(client, chatId, runtimeSessionId, baselineMap)
+    }
+  } catch (error) {
+    throw error
   }
 }
 
@@ -1648,6 +1768,7 @@ async function runConverse(
   const state = getUserState(stateKey)
   const converseSessionId = state.converseSessionId || `feishu-conv-${randomUUID().slice(0, 12)}`
   setConverseSessionId(stateKey, converseSessionId)
+  activateConverseOwner(stateKey)
 
   appendConverseMessage(stateKey, 'user', text)
   const latestState = getUserState(stateKey)
@@ -1736,7 +1857,9 @@ async function handleCommand(
   const trimmed = text.trim()
 
   if (trimmed === '/new') {
+    const executeSessionId = getUserState(stateKey).executeSessionId
     resetUser(stateKey)
+    await stopExecuteSession(executeSessionId)
     await sendText(client, chatId, '✅ 会话已重置。')
     return true
   }
@@ -1747,6 +1870,7 @@ async function handleCommand(
       '',
       '直接发送消息 -> 智能匹配技能并执行',
       '/skill <id> [query] -> 指定技能执行',
+      '/home -> 返回分发器',
       '/skills -> 查看可用技能',
       '/cron help -> 查看定时任务命令（支持 cron / once / every）',
       '/model [name|id] -> 查看或切换模型配置',
@@ -1756,6 +1880,14 @@ async function handleCommand(
       '',
       '提示：消息前加 #model=<name 或 id> 可临时使用指定模型',
     ].join('\n'))
+    return true
+  }
+
+  if (trimmed === '/home' || trimmed === '/router') {
+    const executeSessionId = getUserState(stateKey).executeSessionId
+    clearExecuteSessionId(stateKey)
+    await stopExecuteSession(executeSessionId)
+    await sendText(client, chatId, '✅ 已返回分发模式。接下来我会先帮你判断该走哪个技能。')
     return true
   }
 
@@ -2025,11 +2157,17 @@ async function handleCommand(
       return true
     }
 
+    if (state.executeAwaitingInput) {
+      markSkillRoundSettled(stateKey, '⏹️ 已取消当前等待中的问题。你可以继续补充新要求，或发送 /home 返回分发器。')
+      await sendText(client, chatId, '⏹️ 已取消当前等待中的问题。你可以继续补充新要求，或发送 /home 返回分发器。')
+      return true
+    }
+
     try {
       const res = await fetch(`${getSrcApiBaseUrl()}/skill/stop/${state.executeSessionId}`, { method: 'POST' })
       const payload: any = await res.json().catch(() => ({}))
       if (res.ok && payload?.success) {
-        clearExecuteSessionId(stateKey)
+        markSkillRoundSettled(stateKey, '⏹️ 当前执行回合已停止')
         await sendText(client, chatId, '⏹️ 已发送中止请求')
       } else {
         await sendText(client, chatId, '中止失败：任务可能已结束')
@@ -2089,7 +2227,6 @@ async function handleCommand(
   if (skillMatch) {
     const skillId = skillMatch[1]
     const query = skillMatch[2]?.trim() || '请执行该技能'
-    const commandText = `/skill ${skillId}${query ? ` ${query}` : ''}`
 
     try {
       const exists = await skillExists(skillId)
@@ -2114,7 +2251,8 @@ async function handleCommand(
     }
 
     try {
-      await executeSkill(client, openId, chatId, stateKey, skillId, query, started ? card : null)
+      const nextSessionId = buildExecuteSessionId(skillId, getUserState(stateKey).activeSkillId, getUserState(stateKey).executeSessionId)
+      await executeSkill(client, openId, chatId, stateKey, skillId, query, started ? card : null, undefined, nextSessionId)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (started) await card.close(`❌ ${msg}`)
@@ -2157,7 +2295,7 @@ export async function handleFeishuMessage(
 
   // 快速通道：避免串行队列阻塞 /stop，保证中止命令能及时生效
   const quickCommand = tryExtractQuickTextCommand(normalized)
-  if (quickCommand === '/stop') {
+  if (quickCommand && isImmediateCommand(quickCommand)) {
     await handleCommand(larkClient, config, openId, chatId, stateKey, quickCommand)
     return
   }
@@ -2214,9 +2352,31 @@ export async function handleFeishuMessage(
     if (!started) {
       await sendText(larkClient, chatId, '⚠️ 流式卡片不可用，已切换文本回复模式。')
     }
-    await outputSession.update('正在分析你的需求...')
 
     try {
+      const latestState = getUserState(stateKey)
+      if (shouldContinueActiveSkill(stateKey) && latestState.activeSkillId) {
+        await outputSession.update(`继续技能「${latestState.activeSkillId}」...`)
+        const sessionId = buildExecuteSessionId(
+          latestState.activeSkillId,
+          latestState.activeSkillId,
+          latestState.executeSessionId,
+        )
+        await executeSkill(
+          larkClient,
+          openId,
+          chatId,
+          stateKey,
+          latestState.activeSkillId,
+          text,
+          outputSession,
+          oneTimeModelProfileId,
+          sessionId,
+        )
+        return
+      }
+
+      await outputSession.update('正在分析你的需求...')
       await runConverse(
         larkClient,
         config,

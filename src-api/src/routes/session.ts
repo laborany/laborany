@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { existsSync } from 'fs'
 import { dbHelper } from '../core/database.js'
 import { getTaskDir, runtimeTaskManager } from '../core/agent/index.js'
+import { looksLikeWaitingInputMessage } from '../lib/skill-interaction.js'
 
 const session = new Hono()
 const ALLOWED_SESSION_STATUS = new Set(['running', 'waiting_input', 'completed', 'failed', 'stopped', 'aborted'])
@@ -41,13 +42,6 @@ function toUtcMs(value?: string | null): number {
     return Date.parse(text) || 0
   }
   return Date.parse(text.replace(' ', 'T') + 'Z') || 0
-}
-
-function looksLikeWaitingInputMessage(content?: string | null): boolean {
-  const text = (content || '').trim()
-  if (!text) return false
-  if (/[？?]\s*$/.test(text)) return true
-  return /(请(补充|提供|确认|选择|输入|告诉|说明)|还缺少|需要补充|请再|执行时间|开始时间|结束时间|频率|时区|补充信息|告诉我)/.test(text)
 }
 
 function inferRecoveredConverseStatus(lastType?: string, lastContent?: string | null): string {
@@ -168,7 +162,7 @@ session.get('/running-tasks', (c) => {
   }>(`
     SELECT id, query, created_at, source
     FROM sessions
-    WHERE status = 'running' AND skill_id = '__converse__'
+    WHERE status IN ('running', 'waiting_input') AND skill_id = '__converse__'
     ORDER BY created_at DESC
     LIMIT 50
   `)

@@ -11,8 +11,16 @@ import { executeAgent, ensureTaskDir, type AgentEvent, type ModelOverride } from
 import { sessionManager } from './session-manager.js'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'path'
 import { existsSync } from 'fs'
+import {
+  buildSkillQuestionSummary,
+  looksLikeWaitingInputMessage,
+  normalizeSkillQuestionPayload,
+  parseQuestionCallFromText,
+  stripQuestionCallMarkers,
+  type SkillQuestionPayload,
+} from '../../lib/skill-interaction.js'
 
-type RuntimeTaskStatus = 'running' | 'completed' | 'failed' | 'aborted'
+type RuntimeTaskStatus = 'running' | 'waiting_input' | 'completed' | 'failed' | 'aborted'
 
 const EXTERNAL_SYNC_DIR = '_external'
 const TOOL_PATH_KEYS = new Set([
@@ -40,6 +48,8 @@ export type RuntimeEvent =
   | AgentEvent
   | { type: 'session'; sessionId: string }
   | { type: 'aborted' }
+  | { type: 'state'; phase: RuntimeTaskStatus }
+  | ({ type: 'question' } & SkillQuestionPayload)
   | {
       type: 'pipeline_start'
       totalSteps: number
@@ -118,6 +128,7 @@ interface RuntimeTask {
   lastEventAt?: string
   stopRequested: boolean
   hasError: boolean
+  awaitingInput: boolean
   assistantContent: string
   controller: AbortController
   events: RuntimeEvent[]
@@ -192,6 +203,7 @@ class RuntimeTaskManager {
       startedAt: Date.now(),
       stopRequested: false,
       hasError: false,
+      awaitingInput: false,
       assistantContent: '',
       controller: new AbortController(),
       events: [],
@@ -203,6 +215,7 @@ class RuntimeTaskManager {
 
     this.tasks.set(task.sessionId, task)
     this.ensureSessionRecord(task, options.source, options.sourceMeta)
+    this.emitEvent(task, { type: 'state', phase: 'running' })
     this.runTask(task, options)
     return task
   }
@@ -352,7 +365,7 @@ class RuntimeTaskManager {
       completedAt: task.completedAt ? new Date(task.completedAt).toISOString() : undefined,
       lastEventAt: task.lastEventAt,
       eventCount: task.events.length,
-      isRunning: task.status === 'running',
+      isRunning: task.status === 'running' || task.status === 'waiting_input',
     }
   }
 
@@ -377,13 +390,13 @@ class RuntimeTaskManager {
       startedAt: new Date(task.startedAt).toISOString(),
       lastEventAt: task.lastEventAt,
       assistantContent: task.assistantContent,
-      isRunning: task.status === 'running',
+      isRunning: task.status === 'running' || task.status === 'waiting_input',
     }
   }
 
   isRunning(sessionId: string): boolean {
     const task = this.tasks.get(sessionId)
-    return task?.status === 'running'
+    return task?.status === 'running' || task?.status === 'waiting_input'
   }
 
   getRunningTasks(): Array<{
@@ -400,7 +413,7 @@ class RuntimeTaskManager {
     }> = []
 
     for (const task of this.tasks.values()) {
-      if (task.status !== 'running') {
+      if (task.status !== 'running' && task.status !== 'waiting_input') {
         continue
       }
 
@@ -424,7 +437,7 @@ class RuntimeTaskManager {
     let cleaned = 0
 
     for (const [sessionId, task] of this.tasks.entries()) {
-      if (task.status === 'running') {
+      if (task.status === 'running' || task.status === 'waiting_input') {
         continue
       }
 
@@ -678,6 +691,16 @@ class RuntimeTaskManager {
     } finally {
       sessionManager.unregister(task.sessionId)
 
+      const trailingQuestion = !task.awaitingInput
+        ? parseQuestionCallFromText(task.assistantContent)
+        : null
+      if (trailingQuestion) {
+        this.markTaskWaitingInput(task, trailingQuestion)
+      } else if (!task.awaitingInput && !task.hasError && looksLikeWaitingInputMessage(task.assistantContent)) {
+        task.awaitingInput = true
+      }
+      task.assistantContent = stripQuestionCallMarkers(task.assistantContent)
+
       const syncedExternalArtifacts = await this.syncExternalArtifacts(task)
       if (syncedExternalArtifacts.length > 0) {
         this.emitEvent(task, {
@@ -686,9 +709,16 @@ class RuntimeTaskManager {
         })
       }
 
-      if (!task.events.some((event) => event.type === 'done')) {
-        this.emitEvent(task, { type: 'done' })
+      let finalStatus: RuntimeTaskStatus = 'completed'
+      if (task.stopRequested) {
+        finalStatus = 'aborted'
+      } else if (task.awaitingInput) {
+        finalStatus = 'waiting_input'
+      } else if (task.hasError) {
+        finalStatus = 'failed'
       }
+
+      this.emitEvent(task, { type: 'state', phase: finalStatus })
 
       if (task.assistantContent) {
         dbHelper.run(
@@ -697,15 +727,10 @@ class RuntimeTaskManager {
         )
       }
 
-      let finalStatus: RuntimeTaskStatus = 'completed'
-      if (task.stopRequested) {
-        finalStatus = 'aborted'
-      } else if (task.hasError) {
-        finalStatus = 'failed'
-      }
-
       if (finalStatus === 'aborted') {
         this.emitEvent(task, { type: 'aborted' })
+      } else if (!task.events.some((event) => event.type === 'done')) {
+        this.emitEvent(task, { type: 'done' })
       }
 
       task.status = finalStatus
@@ -875,10 +900,23 @@ class RuntimeTaskManager {
     ].join('\n')
   }
 
+  private markTaskWaitingInput(task: RuntimeTask, payload: SkillQuestionPayload): void {
+    if (task.awaitingInput) return
+    task.awaitingInput = true
+    const summary = buildSkillQuestionSummary(payload)
+    if (summary) {
+      task.assistantContent = [task.assistantContent.trim(), summary]
+        .filter(Boolean)
+        .join('\n')
+    }
+    this.emitEvent(task, { type: 'question', ...payload })
+    this.emitEvent(task, { type: 'state', phase: 'waiting_input' })
+  }
+
   private handleAgentEvent(task: RuntimeTask, event: AgentEvent): void {
     if (
       event.type === 'error' &&
-      task.stopRequested &&
+      (task.stopRequested || task.awaitingInput) &&
       (event.content || '').toLowerCase().includes('abort')
     ) {
       return
@@ -886,10 +924,29 @@ class RuntimeTaskManager {
 
     if (
       event.type === 'error' &&
-      task.stopRequested &&
+      (task.stopRequested || task.awaitingInput) &&
       (event.content || '').includes('中止')
     ) {
       return
+    }
+
+    if (
+      event.type === 'tool_use' &&
+      /^AskU(?:ser|er)Question$/i.test(event.toolName || '') &&
+      event.toolInput &&
+      typeof event.toolInput === 'object'
+    ) {
+      const payload = normalizeSkillQuestionPayload(
+        event.toolInput as Record<string, unknown>,
+        event.toolUseId,
+      )
+      if (payload) {
+        this.markTaskWaitingInput(task, payload)
+        if (!task.controller.signal.aborted) {
+          task.controller.abort()
+        }
+        return
+      }
     }
 
     if (event.type === 'text' && event.content) {
