@@ -41,9 +41,7 @@ function main() {
   const agentDir = join(rootDir, 'agent-service')
   const fixNativeScript = join(rootDir, 'scripts', 'fix-native-modules.js')
   const patchPkgFetchScript = join(rootDir, 'scripts', 'patch-pkg-fetch.js')
-  const pkgBin = process.platform === 'win32'
-    ? join(agentDir, 'node_modules', '.bin', 'pkg.cmd')
-    : join(agentDir, 'node_modules', '.bin', 'pkg')
+  const runLocalBinScript = join(rootDir, 'scripts', 'run-local-bin.js')
   const nativeBinaryPath = join(
     agentDir,
     'node_modules',
@@ -67,7 +65,7 @@ function main() {
     run(process.execPath, [patchPkgFetchScript, 'agent-service'], rootDir)
     run(process.execPath, [fixNativeScript, platform, arch], rootDir)
     run('npm', ['run', 'build:bundle'], agentDir)
-    run(pkgBin, ['dist/bundle.cjs', '--targets', target, '--output', output, '--config', 'pkg.json'], agentDir)
+    run(process.execPath, [runLocalBinScript, 'pkg', 'dist/bundle.cjs', '--targets', target, '--output', output, '--config', 'pkg.json'], agentDir)
 
     if (existsSync(nativeBinaryPath)) {
       const resolvedOutput = join(agentDir, output)
