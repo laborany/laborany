@@ -65,8 +65,8 @@ function main() {
     run(process.execPath, [fixNativeScript, platform, arch], rootDir)
     run('npm', ['run', 'build:bundle'], agentDir)
     run(
-      'npx',
-      ['@yao-pkg/pkg', 'dist/bundle.cjs', '--targets', target, '--output', output, '--config', 'pkg.json'],
+      'npm',
+      ['exec', '--', 'pkg', 'dist/bundle.cjs', '--targets', target, '--output', output, '--config', 'pkg.json'],
       agentDir,
     )
 
