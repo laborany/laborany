@@ -1543,12 +1543,7 @@ export async function handleQQMessage(
     const targetId = event.author.id
 
     // 构建状态 key
-    const stateKey = buildUserStateKey(
-      event.author.id,
-      event.guild_id,
-      event.channel_id,
-      event.group_openid,
-    )
+    const stateKey = buildUserStateKey(event.author.id)
 
     const quickCommand = (event.content || '').trim()
     if (quickCommand && isImmediateCommand(quickCommand)) {

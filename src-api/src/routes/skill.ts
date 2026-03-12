@@ -28,6 +28,7 @@ import {
   readModelProfiles,
   type ModelProfile,
 } from '../lib/model-profiles.js'
+import { isExistingSkillSessionBusy } from '../lib/skill-session-guard.js'
 
 interface SessionModelMeta {
   modelProfileId?: string
@@ -453,8 +454,11 @@ skill.post('/execute', async (c) => {
     return c.json({ error: '缺少 skillId 或 query 参数' }, 400)
   }
 
-  if (existingSessionId && runtimeTaskManager.isRunning(existingSessionId)) {
-    return c.json({ error: '当前会话任务仍在运行，请等待完成或先停止任务' }, 409)
+  const existingRuntimeStatus = existingSessionId
+    ? runtimeTaskManager.getStatus(existingSessionId)
+    : null
+  if (isExistingSkillSessionBusy(existingRuntimeStatus?.status)) {
+    return c.json({ error: '当前会话任务仍在执行，请等待本轮结束或先停止任务' }, 409)
   }
 
   const installSourceQuery = (originQuery || query || '').trim() || query

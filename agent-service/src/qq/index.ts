@@ -36,13 +36,20 @@ const userStates = new Map<string, RemoteUserState>()
 const MAX_CONVERSE_MESSAGES = 40
 const STATE_FILE_PATH = join(DATA_DIR, 'qq', 'user-states.json')
 
+function normalizeQqStateKey(rawKey: string): string {
+  return rawKey.split('@@', 1)[0]?.trim() || rawKey.trim()
+}
+
 function loadPersistedStates(): void {
   try {
     if (!existsSync(STATE_FILE_PATH)) return
     const raw = readFileSync(STATE_FILE_PATH, 'utf-8')
     const parsed = JSON.parse(raw) as Record<string, unknown>
     for (const [key, value] of Object.entries(parsed || {})) {
-      userStates.set(key, normalizeRemoteUserState(value, MAX_CONVERSE_MESSAGES))
+      userStates.set(
+        normalizeQqStateKey(key),
+        normalizeRemoteUserState(value, MAX_CONVERSE_MESSAGES),
+      )
     }
   } catch (error) {
     console.warn('[QQ] failed to load persisted user states:', error)
@@ -76,15 +83,11 @@ loadPersistedStates()
 
 /**
  * 构建用户状态 key
- * 当前仅使用 C2C 私聊：userId
- * 为兼容历史数据，仍保留可选参数拼接逻辑。
+ * 当前仅支持 C2C 私聊，必须按 userId 维度稳定建 key；
+ * 否则 channel_id / guild_id 漂移时会把同一用户拆成多个上下文。
  */
-export function buildUserStateKey(userId: string, guildId?: string, channelId?: string, groupId?: string): string {
-  const parts = [userId.trim()]
-  if (guildId) parts.push(guildId.trim())
-  if (channelId) parts.push(channelId.trim())
-  if (groupId) parts.push(groupId.trim())
-  return parts.join('@@')
+export function buildUserStateKey(userId: string, _guildId?: string, _channelId?: string, _groupId?: string): string {
+  return normalizeQqStateKey(userId)
 }
 
 export function getUserState(stateKey: string): RemoteUserState {
