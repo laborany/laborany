@@ -10,7 +10,13 @@ for (const dir of packageDirs) {
   const cwd = path.resolve(__dirname, '..', dir)
   const hasLockfile = existsSync(path.join(cwd, 'package-lock.json'))
   const command = installMode === 'ci' && hasLockfile ? 'ci' : 'install'
-  const args = [command, '--no-audit', '--no-fund']
+  const args = [
+    command,
+    '--include=dev',
+    '--include=optional',
+    '--no-audit',
+    '--no-fund',
+  ]
 
   console.log(`\n[install-all] ${dir} -> npm ${args.join(' ')}`)
 
