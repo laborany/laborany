@@ -83,7 +83,9 @@ jobs:
       - name: Build API and CLI bundle
         run: |
           npm run bundle:all:win
-          npm run build
+          npm run build:api:win
+          npm run build:agent:win
+          npm run build:frontend
 
       - name: Verify bundled Git Bash
         shell: pwsh
