@@ -7,6 +7,12 @@ const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const packageDirs = ['.', 'shared', 'src-api', 'agent-service', 'frontend']
 const rootDir = path.resolve(__dirname, '..')
 
+console.log('[install-all] Starting installation...')
+console.log('[install-all] Mode:', installMode)
+console.log('[install-all] Platform:', process.platform)
+console.log('[install-all] Root dir:', rootDir)
+console.log('[install-all] Package dirs:', packageDirs)
+
 function createChildEnv() {
   const nextEnv = { ...process.env }
   const blockedPatterns = [
@@ -20,13 +26,19 @@ function createChildEnv() {
     /^npm_config_(fund|audit)$/i,
   ]
 
+  const blockedKeys = []
   for (const key of Object.keys(nextEnv)) {
     if (blockedPatterns.some(pattern => pattern.test(key))) {
+      blockedKeys.push(key)
       delete nextEnv[key]
     }
   }
 
-  // 约束子进程 npm 行为，避免 CI 环境变量导致“成功但不落地安装”。
+  if (blockedKeys.length > 0) {
+    console.log('[install-all] Blocked env vars:', blockedKeys.slice(0, 10).join(', '))
+  }
+
+  // 约束子进程 npm 行为，避免 CI 环境变量导致”成功但不落地安装”。
   nextEnv.npm_config_global = 'false'
   nextEnv.npm_config_dry_run = 'false'
   nextEnv.npm_config_bin_links = 'true'
@@ -68,7 +80,24 @@ function verifyInstall(dir, cwd) {
 
 for (const dir of packageDirs) {
   const cwd = path.resolve(rootDir, dir)
+
+  console.log(`\n[install-all] ========== Processing: ${dir} ==========`)
+  console.log(`[install-all] CWD: ${cwd}`)
+
+  if (!existsSync(cwd)) {
+    console.error(`[install-all] ERROR: Directory does not exist: ${cwd}`)
+    process.exit(1)
+  }
+
+  const pkgJsonPath = path.join(cwd, 'package.json')
+  if (!existsSync(pkgJsonPath)) {
+    console.error(`[install-all] ERROR: package.json not found: ${pkgJsonPath}`)
+    process.exit(1)
+  }
+
   const hasLockfile = existsSync(path.join(cwd, 'package-lock.json'))
+  console.log(`[install-all] Has lockfile: ${hasLockfile}`)
+
   const command = installMode === 'ci' && hasLockfile ? 'ci' : 'install'
   const args = [
     command,
@@ -79,7 +108,7 @@ for (const dir of packageDirs) {
     '--no-fund',
   ]
 
-  console.log(`\n[install-all] ${dir} -> npm ${args.join(' ')}`)
+  console.log(`[install-all] Running: ${npmCommand} ${args.join(' ')}`)
 
   const result = spawnSync(npmCommand, args, {
     cwd,
