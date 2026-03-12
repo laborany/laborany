@@ -58,6 +58,7 @@ for (const dir of packageDirs) {
     command,
     '--include=dev',
     '--include=optional',
+    '--bin-links=true',
     '--no-audit',
     '--no-fund',
   ]

@@ -18,6 +18,8 @@ jobs:
   # ╚══════════════════════════════════════════════════════════════════════════╝
   build-windows:
     runs-on: windows-latest
+    env:
+      RUN_LOCAL_BIN_DEBUG: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -80,12 +82,81 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      - name: Build API and CLI bundle
+      - name: Diagnose Windows npm/bin state
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
+          function Show-BinState([string]$dir, [string[]]$expectedBins) {
+            Write-Host ""
+            Write-Host "=== ${dir} ==="
+            $nodeModules = Join-Path $dir "node_modules"
+            $binDir = Join-Path $nodeModules ".bin"
+            Write-Host "node_modules exists: $(Test-Path $nodeModules)"
+            Write-Host ".bin exists: $(Test-Path $binDir)"
+
+            if (Test-Path $binDir) {
+              Write-Host "Top .bin entries:"
+              Get-ChildItem -Path $binDir -Name | Sort-Object | Select-Object -First 50 | ForEach-Object {
+                Write-Host "  - $_"
+              }
+            }
+
+            foreach ($bin in $expectedBins) {
+              $target = Join-Path $binDir $bin
+              Write-Host ("check {0}: {1}" -f $bin, (Test-Path $target))
+            }
+          }
+
+          Write-Host "Node: $(node -v)"
+          Write-Host "npm: $(npm -v)"
+          Write-Host "RUN_LOCAL_BIN_DEBUG=$env:RUN_LOCAL_BIN_DEBUG"
+          Write-Host "npm config bin-links: $(npm config get bin-links)"
+          Write-Host "npm config ignore-scripts: $(npm config get ignore-scripts)"
+          Write-Host "npm config omit: $(npm config get omit)"
+          Write-Host "workspace: $PWD"
+          where.exe node
+          where.exe npm
+
+          Show-BinState "." @("electron-builder.cmd")
+          Show-BinState "src-api" @("esbuild.cmd", "pkg.cmd", "tsc.cmd")
+          Show-BinState "agent-service" @("esbuild.cmd", "pkg.cmd", "tsc.cmd")
+          Show-BinState "frontend" @("tsc.cmd", "vite.cmd", "esbuild.cmd")
+
+          Push-Location src-api
+          node ../scripts/run-local-bin.js esbuild --version
+          Pop-Location
+
+          Push-Location agent-service
+          node ../scripts/run-local-bin.js esbuild --version
+          Pop-Location
+
+          Push-Location frontend
+          node ../scripts/run-local-bin.js tsc -v
+          node ../scripts/run-local-bin.js vite --version
+          Pop-Location
+
+      - name: Build API and CLI bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Write-Host "RUN_LOCAL_BIN_DEBUG=$env:RUN_LOCAL_BIN_DEBUG"
+
+          Write-Host ">>> npm run bundle:all:win"
           npm run bundle:all:win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Write-Host ">>> npm run build:api:win"
           npm run build:api:win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Write-Host ">>> npm run build:agent:win"
           npm run build:agent:win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Write-Host ">>> npm run build:frontend"
           npm run build:frontend
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify bundled Git Bash
         shell: pwsh
@@ -110,6 +181,43 @@ jobs:
             Start-Sleep -Seconds 10
           }
           if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Write-Host "=== Failure Diagnostics ==="
+          Write-Host "Node: $(node -v)"
+          Write-Host "npm: $(npm -v)"
+          Write-Host "RUN_LOCAL_BIN_DEBUG=$env:RUN_LOCAL_BIN_DEBUG"
+
+          git status --short
+
+          $dirs = @(".", "src-api", "agent-service", "frontend")
+          foreach ($dir in $dirs) {
+            Write-Host ""
+            Write-Host "=== ${dir} node_modules/.bin ==="
+            $binDir = Join-Path $dir "node_modules/.bin"
+            if (Test-Path $binDir) {
+              Get-ChildItem -Path $binDir -Name | Sort-Object | Select-Object -First 80 | ForEach-Object {
+                Write-Host "  - $_"
+              }
+            } else {
+              Write-Host "  (missing)"
+            }
+          }
+
+          Write-Host ""
+          Write-Host "=== Dist directory snapshots ==="
+          foreach ($dir in @("src-api/dist", "agent-service/dist", "frontend/dist", "release")) {
+            Write-Host "-- $dir"
+            if (Test-Path $dir) {
+              Get-ChildItem -Path $dir -File -Recurse | Select-Object -First 30 FullName, Length
+            } else {
+              Write-Host "  (missing)"
+            }
+          }
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
