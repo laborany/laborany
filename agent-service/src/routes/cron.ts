@@ -317,6 +317,7 @@ notifRouter.get('/', (req: Request, res: Response) => {
     const notifications = listNotifications(limit)
     res.json({ notifications })
   } catch (error) {
+    console.error('[Notifications] list failed:', error)
     res.status(500).json({ error: '获取通知列表失败' })
   }
 })
@@ -329,6 +330,7 @@ notifRouter.get('/unread-count', (_req: Request, res: Response) => {
     const count = getUnreadCount()
     res.json({ count })
   } catch (error) {
+    console.error('[Notifications] unread-count failed:', error)
     res.status(500).json({ error: '获取未读数量失败' })
   }
 })

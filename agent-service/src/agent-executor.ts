@@ -12,6 +12,7 @@ import { join } from 'path'
 import type { Skill } from 'laborany-shared'
 import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR, getUserDir } from 'laborany-shared'
 import { memoryFileManager, memoryOrchestrator, memoryAsyncQueue } from './memory/index.js'
+import { communicationPreferenceManager } from './memory/communication-preferences.js'
 import { buildClaudeEnvConfig, checkRuntimeDependencies, resolveClaudeCliLaunch, type ModelOverride } from './claude-cli.js'
 import { APP_HOME_DIR, DATA_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
@@ -285,6 +286,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   if (effectiveModel) {
     args.push('--model', effectiveModel)
   }
+
+  communicationPreferenceManager.applyFromUserText(userQuery, userQuery)
 
   // 每轮都构建并写入系统提示词（确保记忆实时生效）
   const retrieved = memoryOrchestrator.retrieve({

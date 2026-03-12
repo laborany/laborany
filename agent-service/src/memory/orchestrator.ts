@@ -6,6 +6,16 @@ import { memoryConsolidator } from './consolidator.js'
 import { memCellStorage, type MemCell, type ExtractedFact } from './memcell/index.js'
 import { episodeStorage } from './episode/index.js'
 import { memoryCliExtractor } from './io.js'
+import { addressingCliExtractor } from './addressing-extractor.js'
+import {
+  addressingManager,
+  buildAddressingPolicySection,
+  hasAddressingIntentCue,
+  isAddressingDescription,
+  isAddressingNoiseText,
+} from './addressing-manager.js'
+import { communicationPreferenceManager } from './communication-preferences.js'
+import { normalizeCommunicationStylePreference } from './communication-style-normalizer.js'
 import { memoryTraceLogger, readTrace } from './types.js'
 import type { InjectedMemorySection, MemoryScene } from './types.js'
 
@@ -147,10 +157,31 @@ const USER_CENTRIC_PATTERNS = [
   /用户(喜欢|偏好|习惯|希望|需要|常用|正在|是|要求|倾向)/,
   /我(喜欢|偏好|习惯|希望|需要|常用|正在|是|要求|倾向)/,
   /请叫我|称呼我|叫我|对我使用|回复风格|沟通风格|项目名称|工作目录|目标分支|提交的文件|技术栈/,
+  /偏好|习惯|默认|长期|以后|后续|优先|尽量|常用|惯用|先给结论|简洁|详细|中文|英文/,
 ]
 
 const GLOBAL_STABLE_PATTERNS = [
   /偏好|习惯|默认|必须|不要|请使用|沟通风格|称呼/,
+]
+
+const EPHEMERAL_TASK_PATTERNS = [
+  /(?:请|帮我|需要|想要|希望|让我).{0,18}(?:调研|分析|生成|编写|写|制作|整理|修复|排查|对比|实现|测试|review|研究|设计|看看|看一下|汇总|总结)/,
+  /(?:用户|我).{0,10}(?:需要|想要|希望).{0,18}(?:调研|分析|生成|编写|写|制作|整理|修复|排查|对比|实现|测试|review|研究|设计|汇总|总结)/,
+  /(?:返回|输出).{0,10}(?:特定字符串|固定文本)/,
+  /只回复/,
+  /(?:source|参数).{0,8}测试/i,
+  /(?:e2e|回归|联调|验收|冒烟)测试/i,
+]
+
+const STABLE_PREFERENCE_PATTERNS = [
+  /以后|后续|默认|长期|一直|平时|通常|总是|尽量|优先|请叫我|称呼我|叫我/,
+  /偏好|习惯|惯用|常用|沟通风格|回复风格|先给结论|简洁|详细|中文|英文/,
+]
+
+const STABLE_PERSONAL_INFO_PATTERNS = [
+  /我叫|名字是|英文名|角色是|职业是|职位是|公司是|团队是/,
+  /技术栈|常用(?:语言|框架|工具)|习惯用(?:语言|框架|工具)|主要使用/,
+  /工作目录|默认目录|目标分支|默认分支|项目名称|仓库地址/,
 ]
 
 const STRUCTURED_NOISE_PATTERNS = [
@@ -232,6 +263,50 @@ function includesAny(text: string, patterns: RegExp[]): boolean {
   return patterns.some(pattern => pattern.test(text))
 }
 
+function tokenizeForSimilarity(text: string): string[] {
+  const segments = text
+    .toLowerCase()
+    .replace(/[^\u4e00-\u9fa5a-z0-9\s]/gi, ' ')
+    .split(/\s+/)
+    .map(item => item.trim())
+    .filter(item => item.length >= 2)
+
+  const tokens = new Set<string>()
+  for (const segment of segments) {
+    if (/^[\u4e00-\u9fa5]+$/.test(segment)) {
+      if (segment.length === 2) {
+        tokens.add(segment)
+        continue
+      }
+      for (let index = 0; index < segment.length - 1; index += 1) {
+        tokens.add(segment.slice(index, index + 2))
+      }
+      continue
+    }
+    tokens.add(segment)
+  }
+
+  return [...tokens]
+}
+
+function textSimilarity(a: string, b: string): number {
+  const na = canonicalizeFact(a)
+  const nb = canonicalizeFact(b)
+  if (!na || !nb) return 0
+  if (na === nb) return 1
+  if (na.includes(nb) || nb.includes(na)) return 0.86
+
+  const as = new Set(tokenizeForSimilarity(a))
+  const bs = new Set(tokenizeForSimilarity(b))
+  if (as.size === 0 || bs.size === 0) return 0
+
+  let intersect = 0
+  for (const token of as) {
+    if (bs.has(token)) intersect += 1
+  }
+  return intersect / new Set([...as, ...bs]).size
+}
+
 function pickScene(_query: string, scene?: MemoryScene): MemoryScene {
   if (scene) return scene
   return 'general_qa'
@@ -300,15 +375,42 @@ export class MemoryOrchestrator {
     return clip(base, 320)
   }
 
+  private isAddressingPreferenceFact(content: string): boolean {
+    if (isAddressingDescription(content)) return true
+    if (!hasAddressingIntentCue(content)) return false
+    return !this.isAddressingNoise(content)
+  }
+
   private isUserCentricFact(content: string): boolean {
+    if (this.isAddressingPreferenceFact(content)) return true
     return includesAny(content, USER_CENTRIC_PATTERNS)
   }
 
   private isAddressingNoise(content: string): boolean {
-    return includesAny(content, META_ADDRESSING_NOISE_PATTERNS) || includesAny(content, ADDRESSING_ONLY_PATTERNS)
+    if (isAddressingDescription(content)) return false
+    return isAddressingNoiseText(content)
+      || includesAny(content, META_ADDRESSING_NOISE_PATTERNS)
+      || includesAny(content, ADDRESSING_ONLY_PATTERNS)
+  }
+
+  private isEphemeralTaskFact(content: string): boolean {
+    if (this.isAddressingPreferenceFact(content)) return false
+    return includesAny(content, EPHEMERAL_TASK_PATTERNS)
+  }
+
+  private isStablePreferenceFact(content: string): boolean {
+    if (this.isAddressingPreferenceFact(content)) return true
+    if (this.isEphemeralTaskFact(content)) return false
+    return includesAny(content, STABLE_PREFERENCE_PATTERNS)
+  }
+
+  private isStablePersonalInfoFact(content: string): boolean {
+    if (this.isEphemeralTaskFact(content)) return false
+    return includesAny(content, STABLE_PERSONAL_INFO_PATTERNS)
   }
 
   private isStableFact(content: string): boolean {
+    if (this.isAddressingPreferenceFact(content)) return true
     if (includesAny(content, PIPELINE_NOISE_PATTERNS)) return false
     if (includesAny(content, TRANSIENT_FACT_PATTERNS)) return false
     if (includesAny(content, ASSISTANT_NOISE_PATTERNS)) return false
@@ -320,10 +422,48 @@ export class MemoryOrchestrator {
   }
 
   private normalizeFactSource(fact: ExtractedFact): ExtractedFact['source'] {
+    if (this.isAddressingPreferenceFact(fact.content)) return 'user'
     if (this.isAddressingNoise(fact.content)) return 'assistant'
     if (includesAny(fact.content, ASSISTANT_TONE_PATTERNS)) return 'assistant'
     if (this.isUserCentricFact(fact.content)) return 'user'
     return fact.source || 'user'
+  }
+
+  private shouldCreateProfilePatch(fact: ExtractedFact): boolean {
+    const content = normalizeWhitespace(fact.content)
+    if (!content) return false
+    if (fact.source !== 'user') return false
+    if (!this.isStableFact(content)) return false
+    if (!this.isUserCentricFact(content)) return false
+    if (this.isEphemeralTaskFact(content)) return false
+
+    if (this.isAddressingPreferenceFact(content)) return true
+    if (fact.intent === 'response_style') return true
+    if (fact.type === 'preference' || fact.type === 'correction') return true
+    if (fact.type === 'fact') return this.isStablePersonalInfoFact(content) || this.isStablePreferenceFact(content)
+    if (fact.type === 'context') return this.isStablePreferenceFact(content) || this.isStablePersonalInfoFact(content)
+    return false
+  }
+
+  private findSimilarProfileField<T extends { key: string; description: string }>(
+    fields: T[],
+    value: string,
+  ): T | undefined {
+    const normalizedValue = normalizeWhitespace(value)
+    if (!normalizedValue) return undefined
+
+    let best: T | undefined
+    let bestScore = 0
+
+    for (const field of fields) {
+      const score = textSimilarity(field.description, normalizedValue)
+      if (score > bestScore) {
+        bestScore = score
+        best = field
+      }
+    }
+
+    return bestScore >= 0.78 ? best : undefined
   }
 
   private filterFacts(facts: ExtractedFact[]): ExtractedFact[] {
@@ -362,6 +502,10 @@ export class MemoryOrchestrator {
   private classifyProfileSection(fact: ExtractedFact): string {
     const content = fact.content
 
+    if (this.isAddressingPreferenceFact(content)) {
+      return '沟通风格'
+    }
+
     if (/(回复|语气|沟通表达|中文|英文|称呼|简洁|详细)/.test(content)) {
       return '沟通风格'
     }
@@ -377,6 +521,17 @@ export class MemoryOrchestrator {
     return '工作偏好'
   }
 
+  private shouldUseLLMProfileClassifier(fact: ExtractedFact, section: string): boolean {
+    if (!profileLLMClassifier.isAvailable()) return false
+    if (this.isAddressingPreferenceFact(fact.content)) return false
+    if (this.isEphemeralTaskFact(fact.content)) return true
+    if (!this.isUserCentricFact(fact.content)) return false
+    if (section === '工作偏好' || section === '技术栈' || section === '个人信息') {
+      return fact.content.trim().length >= 6
+    }
+    return fact.content.trim().length >= 10
+  }
+
   private shouldAppendGlobalDaily(facts: ExtractedFact[]): boolean {
     return facts.some(fact =>
       fact.confidence >= 0.9
@@ -388,6 +543,7 @@ export class MemoryOrchestrator {
 
   private shouldPromoteToLongTerm(description: string): boolean {
     if (!this.isStableFact(description)) return false
+    if (this.isEphemeralTaskFact(description)) return false
     if (/今天|今日|本次|当前|刚刚|稍后|202\d-\d{2}-\d{2}/.test(description)) return false
     return true
   }
@@ -406,6 +562,13 @@ export class MemoryOrchestrator {
     return true
   }
 
+  private shouldQueueSkillLongTerm(description: string, confidence: number, evidenceCount: number): boolean {
+    if (!this.shouldPromoteToLongTerm(description)) return false
+    if (confidence < 0.72 && evidenceCount < 2) return false
+    if (description.length > 220) return false
+    return true
+  }
+
   private shouldAutoWriteGlobalLongTerm(
     section: string,
     description: string,
@@ -415,6 +578,35 @@ export class MemoryOrchestrator {
     if (!this.shouldPromoteToGlobal(section, description)) return false
     if (confidence < 0.9) return false
     if (evidenceCount < 3) return false
+    if (description.length > 200) return false
+    return true
+  }
+
+  private shouldFastTrackGlobalLongTerm(
+    patch: MemoryPatch,
+    description: string,
+    confidence: number,
+    evidenceCount: number,
+    skillLongTermWritten: boolean,
+  ): boolean {
+    if (!skillLongTermWritten) return false
+    if (!this.shouldPromoteToGlobal(patch.section, description)) return false
+    if (patch.section !== '沟通风格') return false
+    if (patch.intent !== 'response_style' && !this.isAddressingPreferenceFact(description)) return false
+    if (confidence < 0.9) return false
+    if (evidenceCount < 2) return false
+    if (description.length > 200) return false
+    return true
+  }
+
+  private shouldQueueGlobalLongTerm(
+    section: string,
+    description: string,
+    confidence: number,
+    evidenceCount: number,
+  ): boolean {
+    if (!this.shouldPromoteToGlobal(section, description)) return false
+    if (confidence < 0.78 && evidenceCount < 2) return false
     if (description.length > 200) return false
     return true
   }
@@ -445,6 +637,40 @@ export class MemoryOrchestrator {
 
   private buildFixedSections(skillId: string): InjectedMemorySection[] {
     const sections: InjectedMemorySection[] = []
+
+    const addressingPolicy = buildAddressingPolicySection()
+    sections.push({
+      title: addressingPolicy.title,
+      content: addressingPolicy.content,
+      source: 'memory/policy/addressing',
+      category: 'fixed',
+      score: sectionScore('fixed'),
+      tokens: estimateTokens(addressingPolicy.content),
+    })
+
+    const addressing = addressingManager.buildPromptSection()
+    if (addressing) {
+      sections.push({
+        title: addressing.title,
+        content: addressing.content,
+        source: 'memory/profiles/addressing.json',
+        category: 'fixed',
+        score: sectionScore('fixed'),
+        tokens: estimateTokens(addressing.content),
+      })
+    }
+
+    const communicationPreferences = communicationPreferenceManager.buildPromptSection()
+    if (communicationPreferences) {
+      sections.push({
+        title: communicationPreferences.title,
+        content: communicationPreferences.content,
+        source: 'memory/profiles/communication-preferences.json',
+        category: 'fixed',
+        score: sectionScore('fixed'),
+        tokens: estimateTokens(communicationPreferences.content),
+      })
+    }
 
     const bossMd = memoryFileManager.readBossMd()
     if (bossMd) {
@@ -674,16 +900,27 @@ export class MemoryOrchestrator {
     let value = fact.content
     let confidence = fact.confidence
 
-    try {
-      const classified = await profileLLMClassifier.classify(fact)
-      section = classified.section || section
-      key = classified.key || key
-      value = classified.description || value
-      if (!classified.shouldUpdate) {
-        confidence = Math.min(confidence, 0.59)
+    if (this.shouldUseLLMProfileClassifier(fact, section)) {
+      try {
+        const classified = await profileLLMClassifier.classify(fact)
+        section = classified.section || section
+        key = classified.key || key
+        value = classified.description || value
+        if (!classified.shouldUpdate) {
+          confidence = Math.min(confidence, 0.59)
+        }
+      } catch (error) {
+        console.warn('[Memory] Profile classify failed, using fallback', error)
       }
-    } catch (error) {
-      console.warn('[Memory] Profile classify failed, using fallback', error)
+    }
+
+    const normalizedCommunicationStyle = normalizeCommunicationStylePreference(fact.content)
+      || normalizeCommunicationStylePreference(value)
+    if (normalizedCommunicationStyle) {
+      section = '沟通风格'
+      key = normalizedCommunicationStyle.key
+      value = normalizedCommunicationStyle.description
+      confidence = Math.max(confidence, Math.min(0.96, fact.confidence))
     }
 
     return {
@@ -710,16 +947,40 @@ export class MemoryOrchestrator {
 
     for (const patch of patches) {
       const section = patch.section || '工作偏好'
+      const managedResult = communicationPreferenceManager.applyProfilePatch({
+        section,
+        key: patch.key,
+        value: patch.value,
+        evidence: patch.evidence,
+        confidence: patch.confidence,
+      })
+      if (managedResult.handled) {
+        if (managedResult.conflict) {
+          conflicts.push({
+            target: 'profile',
+            key: patch.key,
+            strategy: managedResult.conflict.strategy,
+            oldValue: managedResult.conflict.oldValue,
+            newValue: managedResult.conflict.newValue,
+            reason: managedResult.conflict.reason,
+          })
+        }
+        continue
+      }
+
       const existingFields = profileManager.getSection(section)
-      const existing = existingFields.find(field => field.key === patch.key)
+      const matchedField = existingFields.find(field => field.key === patch.key)
+        || this.findSimilarProfileField(existingFields, patch.value)
+      const resolvedKey = matchedField?.key || patch.key
+      const existing = matchedField
 
       if (!existing) {
-        profileManager.updateField(section, patch.key, patch.value, patch.evidence, patch.confidence)
+        profileManager.updateField(section, resolvedKey, patch.value, patch.evidence, patch.confidence)
         continue
       }
 
       if (existing.description === patch.value) {
-        profileManager.updateField(section, patch.key, patch.value, patch.evidence, patch.confidence)
+        profileManager.updateField(section, resolvedKey, patch.value, patch.evidence, patch.confidence)
         continue
       }
 
@@ -733,10 +994,10 @@ export class MemoryOrchestrator {
           )
 
           if (resolved.resolution === 'keep_old') {
-            profileManager.updateField(section, patch.key, existing.description, patch.evidence, patch.confidence)
+            profileManager.updateField(section, resolvedKey, existing.description, patch.evidence, patch.confidence)
             conflicts.push({
               target: 'profile',
-              key: patch.key,
+              key: resolvedKey,
               strategy: 'keep_old',
               oldValue: existing.description,
               newValue: patch.value,
@@ -747,10 +1008,10 @@ export class MemoryOrchestrator {
 
           if (resolved.resolution === 'merge') {
             const mergedValue = (resolved.mergedValue || `${existing.description} / ${patch.value}`).trim()
-            profileManager.updateField(section, patch.key, mergedValue, patch.evidence, patch.confidence)
+            profileManager.updateField(section, resolvedKey, mergedValue, patch.evidence, patch.confidence)
             conflicts.push({
               target: 'profile',
-              key: patch.key,
+              key: resolvedKey,
               strategy: 'merge',
               oldValue: existing.description,
               newValue: patch.value,
@@ -760,10 +1021,10 @@ export class MemoryOrchestrator {
             continue
           }
 
-          profileManager.updateField(section, patch.key, patch.value, patch.evidence, patch.confidence)
+          profileManager.updateField(section, resolvedKey, patch.value, patch.evidence, patch.confidence)
           conflicts.push({
             target: 'profile',
-            key: patch.key,
+            key: resolvedKey,
             strategy: 'use_new',
             oldValue: existing.description,
             newValue: patch.value,
@@ -779,10 +1040,10 @@ export class MemoryOrchestrator {
       const newScore = this.scoreProfileConflict(existing, patch.confidence)
 
       if (newScore > oldScore + 0.08) {
-        profileManager.updateField(section, patch.key, patch.value, patch.evidence, patch.confidence)
+        profileManager.updateField(section, resolvedKey, patch.value, patch.evidence, patch.confidence)
         conflicts.push({
           target: 'profile',
-          key: patch.key,
+          key: resolvedKey,
           strategy: 'use_new',
           oldValue: existing.description,
           newValue: patch.value,
@@ -790,10 +1051,10 @@ export class MemoryOrchestrator {
         })
       } else if (Math.abs(newScore - oldScore) <= 0.08) {
         const merged = `${existing.description} / ${patch.value}`
-        profileManager.updateField(section, patch.key, merged, patch.evidence, patch.confidence)
+        profileManager.updateField(section, resolvedKey, merged, patch.evidence, patch.confidence)
         conflicts.push({
           target: 'profile',
-          key: patch.key,
+          key: resolvedKey,
           strategy: 'merge',
           oldValue: existing.description,
           newValue: patch.value,
@@ -801,10 +1062,10 @@ export class MemoryOrchestrator {
           reason: '新旧证据评分接近，执行合并',
         })
       } else {
-        profileManager.updateField(section, patch.key, existing.description, patch.evidence, patch.confidence)
+        profileManager.updateField(section, resolvedKey, existing.description, patch.evidence, patch.confidence)
         conflicts.push({
           target: 'profile',
-          key: patch.key,
+          key: resolvedKey,
           strategy: 'keep_old',
           oldValue: existing.description,
           newValue: patch.value,
@@ -853,22 +1114,24 @@ export class MemoryOrchestrator {
     for (const patch of qualified) {
       const sectionFields = profileManager.getSection(patch.section)
       const latestField = sectionFields.find(field => field.key === patch.key)
+        || this.findSimilarProfileField(sectionFields, patch.value)
       if (!latestField) continue
-      if (latestField.evidences.length < 2) continue
       if (!this.shouldPromoteToLongTerm(latestField.description)) continue
 
+      const evidenceCount = latestField.evidences.length
+      let skillLongTermWritten = false
       const skillScore = this.computeLongTermScore({
         section: patch.section,
         description: latestField.description,
         confidence: patch.confidence,
-        evidenceCount: latestField.evidences.length,
+        evidenceCount,
         isGlobal: false,
       })
 
       if (skillScore >= 0.82 && this.shouldAutoWriteSkillLongTerm(
         latestField.description,
         patch.confidence,
-        latestField.evidences.length,
+        evidenceCount,
       )) {
         const writeResult = memoryConsolidator.autoUpsertLongTerm({
           scope: 'skill',
@@ -876,12 +1139,19 @@ export class MemoryOrchestrator {
           category: patch.section,
           statement: latestField.description,
           confidence: Math.max(patch.confidence, skillScore),
-          evidenceCount: latestField.evidences.length,
+          evidenceCount,
           sourceRefs: latestField.evidences,
           policyVersion: this.policyVersion,
         })
-        if (writeResult.written) autoWritten += 1
-      } else if (skillScore >= 0.72) {
+        if (writeResult.written) {
+          autoWritten += 1
+          skillLongTermWritten = true
+        }
+      } else if (skillScore >= 0.68 && this.shouldQueueSkillLongTerm(
+        latestField.description,
+        patch.confidence,
+        evidenceCount,
+      )) {
         try {
           const skillCandidate = memoryConsolidator.enqueueCandidate({
             scope: 'skill',
@@ -889,7 +1159,7 @@ export class MemoryOrchestrator {
             category: patch.section,
             content: latestField.description,
             source: latestField.evidences,
-            confidence: patch.confidence,
+            confidence: Math.max(patch.confidence, skillScore),
           })
           if (skillCandidate.isNew) candidateQueued++
         } catch (error) {
@@ -909,34 +1179,47 @@ export class MemoryOrchestrator {
           section: patch.section,
           description: latestField.description,
           confidence: patch.confidence,
-          evidenceCount: latestField.evidences.length,
+          evidenceCount,
           isGlobal: true,
         })
 
-        if (globalScore >= 0.88 && this.shouldAutoWriteGlobalLongTerm(
+        const shouldFastTrackGlobal = this.shouldFastTrackGlobalLongTerm(
+          patch,
+          latestField.description,
+          patch.confidence,
+          evidenceCount,
+          skillLongTermWritten,
+        )
+
+        if ((globalScore >= 0.88 && this.shouldAutoWriteGlobalLongTerm(
           patch.section,
           latestField.description,
           patch.confidence,
-          latestField.evidences.length,
-        )) {
+          evidenceCount,
+        )) || (shouldFastTrackGlobal && globalScore >= 0.82)) {
           const writeResult = memoryConsolidator.autoUpsertLongTerm({
             scope: 'global',
             category: patch.section,
             statement: latestField.description,
             confidence: Math.max(patch.confidence, globalScore),
-            evidenceCount: latestField.evidences.length,
+            evidenceCount,
             sourceRefs: latestField.evidences,
             policyVersion: this.policyVersion,
           })
           if (writeResult.written) autoWritten += 1
-        } else if (globalScore >= 0.78) {
+        } else if (globalScore >= 0.76 && this.shouldQueueGlobalLongTerm(
+          patch.section,
+          latestField.description,
+          patch.confidence,
+          evidenceCount,
+        )) {
           try {
             const globalCandidate = memoryConsolidator.enqueueCandidate({
               scope: 'global',
               category: patch.section,
               content: latestField.description,
               source: latestField.evidences,
-              confidence: patch.confidence,
+              confidence: Math.max(patch.confidence, globalScore),
             })
             if (globalCandidate.isNew) candidateQueued++
           } catch (error) {
@@ -960,13 +1243,39 @@ export class MemoryOrchestrator {
     const { sessionId, skillId, userQuery, assistantResponse } = params
     const memoryUserQuery = this.sanitizeUserQueryForMemory(userQuery)
     const memoryAssistantResponse = this.sanitizeAssistantResponseForMemory(assistantResponse)
+
+    communicationPreferenceManager.applyFromUserText(memoryUserQuery, memoryUserQuery)
+
     const extraction = await memoryCliExtractor.extract({
       userQuery: memoryUserQuery,
       assistantResponse: memoryAssistantResponse,
     })
+    const addressingUpdate = (
+      extraction.extractionMethod === 'regex'
+      && hasAddressingIntentCue(memoryUserQuery)
+    )
+      ? await addressingCliExtractor.extract({
+          userText: memoryUserQuery,
+          currentPreferredName: addressingManager.get().preferredName,
+        })
+      : extraction.addressingUpdate
 
     const timestamp = new Date()
-    const evidence = `${timestamp.toISOString().split('T')[0]}|${sessionId}`
+    const evidence = `${timestamp.toISOString()}|${sessionId}`
+    let addressingApplied = false
+    if (addressingUpdate.shouldUpdate && addressingUpdate.preferredName) {
+      try {
+        addressingManager.setPreferredName(
+          addressingUpdate.preferredName,
+          'auto',
+          `${memoryUserQuery.slice(0, 100)} | ${addressingUpdate.reason}`
+        )
+        addressingApplied = true
+      } catch (error) {
+        console.warn('[Memory] Skip invalid addressing update', error)
+      }
+    }
+
     const filteredFacts = this.filterFacts(extraction.facts)
     const summary = this.sanitizeSummary(extraction.summary, memoryUserQuery) || clip(memoryUserQuery, 260)
 
@@ -1011,9 +1320,12 @@ export class MemoryOrchestrator {
     const profilePatches: MemoryPatch[] = []
     for (const item of filteredFacts) {
       if (item.confidence < 0.65 || item.source !== 'user') continue
+      if (!this.shouldCreateProfilePatch(item)) continue
+      if (addressingApplied && this.isAddressingPreferenceFact(item.content)) continue
       const patch = await this.classifyFactPatch(item, evidence)
       if (patch.confidence < 0.6) continue
       if (this.isAddressingNoise(patch.value)) continue
+      if (this.isEphemeralTaskFact(patch.value)) continue
       profilePatches.push(patch)
     }
 

@@ -240,8 +240,35 @@ export class MemoryConsolidator {
       if ((item.skillId || '') !== (skillId || '')) continue
       if (item.category !== category) continue
       if (this.normalizeText(item.content) === normalized) return item
+      if (this.similarity(item.content, content) >= 0.78) return item
     }
     return undefined
+  }
+
+  private clearResolvedCandidates(params: {
+    scope: 'global' | 'skill'
+    skillId?: string
+    category: string
+    content: string
+  }): number {
+    const { scope, skillId, category, content } = params
+    let removed = 0
+
+    for (const [candidateId, candidate] of this.candidates.entries()) {
+      if (candidate.scope !== scope) continue
+      if ((candidate.skillId || '') !== (skillId || '')) continue
+      if (candidate.category !== category) continue
+
+      const isSameContent = this.normalizeText(candidate.content) === this.normalizeText(content)
+        || this.similarity(candidate.content, content) >= 0.78
+      if (!isSameContent) continue
+
+      this.candidates.delete(candidateId)
+      removed += 1
+    }
+
+    if (removed > 0) this.saveCandidates()
+    return removed
   }
 
   private normalizeStatement(statement: string): string {
@@ -249,13 +276,29 @@ export class MemoryConsolidator {
   }
 
   private tokenize(text: string): string[] {
-    const words = text
+    const segments = text
       .toLowerCase()
       .replace(/[^\u4e00-\u9fa5a-zA-Z0-9\s]/g, ' ')
       .split(/\s+/)
       .map(word => word.trim())
       .filter(word => word.length >= 2 && !STOPWORDS.has(word))
-    return [...new Set(words)]
+
+    const tokens = new Set<string>()
+    for (const segment of segments) {
+      if (/^[\u4e00-\u9fa5]+$/.test(segment)) {
+        if (segment.length === 2) {
+          tokens.add(segment)
+          continue
+        }
+        for (let index = 0; index < segment.length - 1; index += 1) {
+          tokens.add(segment.slice(index, index + 2))
+        }
+        continue
+      }
+      tokens.add(segment)
+    }
+
+    return [...tokens]
   }
 
   private similarity(a: string, b: string): number {
@@ -456,6 +499,7 @@ export class MemoryConsolidator {
       duplicate.updatedAt = nowIso()
       this.saveIndex(scope, skillId, index)
       this.renderMarkdown(scope, skillId)
+      this.clearResolvedCandidates({ scope, skillId, category, content: statement })
       this.writeDecision({
         scope,
         skillId,
@@ -511,6 +555,7 @@ export class MemoryConsolidator {
       index.entries.push(entry)
       this.saveIndex(scope, skillId, index)
       this.renderMarkdown(scope, skillId)
+      this.clearResolvedCandidates({ scope, skillId, category, content: statement })
       this.writeDecision({
         scope,
         skillId,
@@ -546,6 +591,7 @@ export class MemoryConsolidator {
     index.entries.push(entry)
     this.saveIndex(scope, skillId, index)
     this.renderMarkdown(scope, skillId)
+    this.clearResolvedCandidates({ scope, skillId, category, content: statement })
     this.writeDecision({
       scope,
       skillId,
@@ -626,7 +672,7 @@ export class MemoryConsolidator {
             at?: string
             stage?: string
             sessionId?: string
-            payload?: { written?: { longTerm?: number }; candidateQueued?: number }
+            payload?: { written?: { longTerm?: number; profile?: number }; candidateQueued?: number }
           }
           if (event.stage !== 'upsert') continue
           scannedEvents += 1
@@ -635,6 +681,7 @@ export class MemoryConsolidator {
             : 'unknown-session'
           const at = typeof event.at === 'string' ? event.at : nowIso()
           const longTermWrites = Math.max(0, Math.floor(Number(event.payload?.written?.longTerm || 0)))
+          const profilePatchCount = Math.max(0, Math.floor(Number(event.payload?.written?.profile || 0)))
           const candidateQueued = Math.max(0, Math.floor(Number(event.payload?.candidateQueued || 0)))
 
           for (let ordinal = 0; ordinal < longTermWrites; ordinal += 1) {
@@ -657,6 +704,25 @@ export class MemoryConsolidator {
             existingKeys.add(key)
             insertedLogs += 1
             if (!dryRun) this.appendAudit(this.createBackfillLog({ at, sessionId, action: 'skipped', key }))
+          }
+
+          if (longTermWrites === 0 && candidateQueued === 0) {
+            const key = `${sessionId}|no_decision`
+            if (existingKeys.has(key)) {
+              skippedDuplicates += 1
+            } else {
+              existingKeys.add(key)
+              insertedLogs += 1
+              if (!dryRun) {
+                this.appendAudit(this.createBackfillNoDecisionLog({
+                  at,
+                  sessionId,
+                  key,
+                  profilePatchCount,
+                  candidateQueued,
+                }))
+              }
+            }
           }
         } catch {
           continue
@@ -775,6 +841,33 @@ export class MemoryConsolidator {
       confidence: 0.5,
       evidenceCount: 1,
       policyVersion: LEGACY_BACKFILL_POLICY_VERSION,
+    }
+  }
+
+  private createBackfillNoDecisionLog(params: {
+    at: string
+    sessionId: string
+    key: string
+    profilePatchCount: number
+    candidateQueued: number
+  }): LongTermDecisionLog {
+    return {
+      id: `ltlog_bf_${this.hashForBackfill(params.key)}`,
+      at: Number.isFinite(Date.parse(params.at)) ? params.at : nowIso(),
+      scope: 'global',
+      action: 'no_decision_summary',
+      reason: `legacy_backfill:${params.key}`,
+      reasonSummary: 'legacy trace 回填：当时未触发长期记忆写入或候选入队',
+      category: 'legacy_backfill',
+      statement: `legacy from trace session ${params.sessionId} 未触发长期记忆决策`,
+      confidence: 0,
+      evidenceCount: Math.max(1, params.profilePatchCount),
+      policyVersion: LEGACY_BACKFILL_POLICY_VERSION,
+      profilePatchCount: params.profilePatchCount,
+      candidateQueued: params.candidateQueued,
+      reasonCounts: {
+        no_longterm_decision: 1,
+      },
     }
   }
 
@@ -981,6 +1074,36 @@ export class MemoryConsolidator {
 
   getCandidate(id: string): ConsolidationCandidate | undefined {
     return this.candidates.get(id)
+  }
+
+  private listAllLongTermEntries(): LongTermEntry[] {
+    const entries: LongTermEntry[] = []
+    entries.push(...this.loadIndex('global').entries)
+
+    if (existsSync(LONGTERM_SKILLS_INDEX_DIR)) {
+      const files = readdirSync(LONGTERM_SKILLS_INDEX_DIR).filter(name => name.endsWith('.json'))
+      for (const file of files) {
+        const skillId = file.replace(/\.json$/, '')
+        entries.push(...this.loadIndex('skill', skillId).entries)
+      }
+    }
+
+    return entries
+  }
+
+  getOverviewStats(): {
+    active: number
+    stale: number
+    superseded: number
+    candidates: number
+  } {
+    const entries = this.listAllLongTermEntries()
+    return {
+      active: entries.filter(entry => entry.status === 'active').length,
+      stale: entries.filter(entry => entry.status === 'stale').length,
+      superseded: entries.filter(entry => entry.status === 'superseded').length,
+      candidates: this.candidates.size,
+    }
   }
 
   consolidateCandidates(params: ConsolidateParams): { success: boolean; consolidated: number } {

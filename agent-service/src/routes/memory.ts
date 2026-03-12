@@ -27,6 +27,11 @@ import {
   episodeStorage,
   PROFILES_DIR,
   PROFILE_PATH,
+  addressingManager,
+  addressingCliExtractor,
+  ADDRESSING_PATH,
+  communicationPreferenceManager,
+  COMMUNICATION_PREFERENCES_PATH,
 } from '../memory/index.js'
 
 const router = Router()
@@ -113,6 +118,85 @@ router.put('/boss', (req: Request, res: Response) => {
   }
 })
 
+router.get('/addressing', (_req: Request, res: Response) => {
+  try {
+    const settings = addressingManager.get()
+    res.json(settings)
+  } catch (error) {
+    res.status(500).json({ error: '读取默认称呼失败' })
+  }
+})
+
+router.put('/addressing', (req: Request, res: Response) => {
+  const { preferredName } = req.body || {}
+  if (typeof preferredName !== 'string') {
+    res.status(400).json({ error: '缺少 preferredName 参数' })
+    return
+  }
+
+  try {
+    const settings = addressingManager.setPreferredName(preferredName, 'manual')
+    res.json({ success: true, ...settings })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '更新默认称呼失败'
+    res.status(400).json({ error: message })
+  }
+})
+
+router.delete('/addressing', (_req: Request, res: Response) => {
+  try {
+    const settings = addressingManager.clear()
+    res.json({ success: true, ...settings })
+  } catch (error) {
+    res.status(500).json({ error: '恢复默认称呼失败' })
+  }
+})
+
+router.get('/communication-preferences', (_req: Request, res: Response) => {
+  try {
+    const settings = communicationPreferenceManager.get()
+    res.json(settings)
+  } catch (error) {
+    res.status(500).json({ error: '读取默认回复偏好失败' })
+  }
+})
+
+router.put('/communication-preferences', (req: Request, res: Response) => {
+  const { replyLanguage, replyStyle } = req.body || {}
+  if (replyLanguage !== undefined && typeof replyLanguage !== 'string') {
+    res.status(400).json({ error: 'replyLanguage 参数无效' })
+    return
+  }
+  if (replyStyle !== undefined && typeof replyStyle !== 'string') {
+    res.status(400).json({ error: 'replyStyle 参数无效' })
+    return
+  }
+  if (replyLanguage === undefined && replyStyle === undefined) {
+    res.status(400).json({ error: '缺少需要更新的偏好参数' })
+    return
+  }
+
+  try {
+    const settings = communicationPreferenceManager.setManualPreferences({
+      replyLanguage,
+      replyStyle,
+    })
+    res.json({ success: true, ...settings })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '更新默认回复偏好失败'
+    res.status(400).json({ error: message })
+  }
+})
+
+router.delete('/communication-preferences', (_req: Request, res: Response) => {
+  try {
+    const settings = communicationPreferenceManager.clear()
+    res.json({ success: true, ...settings })
+  } catch (error) {
+    res.status(500).json({ error: '恢复默认回复偏好失败' })
+  }
+})
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       获取 MEMORY.md 内容                                 │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -150,13 +234,20 @@ router.put('/global-memory', (req: Request, res: Response) => {
  * │                       获取完整 Memory 上下文                               │
  * │  供 src-api 调用，用于注入到 Agent 的系统提示词                            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-router.get('/memory-context/:skillId', (req: Request, res: Response) => {
+router.get('/memory-context/:skillId', async (req: Request, res: Response) => {
   try {
     const { skillId } = req.params
     const { query } = req.query
+    const queryText = (query as string) || ''
+    communicationPreferenceManager.applyFromUserText(queryText, queryText)
+    addressingCliExtractor.schedulePersistIfNeeded({
+      userText: queryText,
+      currentPreferredName: addressingManager.get().preferredName,
+      evidenceText: queryText,
+    })
     const retrieved = memoryOrchestrator.retrieve({
       skillId,
-      query: (query as string) || '',
+      query: queryText,
       sessionId: String(req.query.sessionId || 'api-context'),
     })
     res.json({ context: retrieved.context, sections: retrieved.sections, usedTokens: retrieved.usedTokens })
@@ -176,6 +267,8 @@ router.post('/memory/record-task', async (req: Request, res: Response) => {
       res.status(400).json({ error: '缺少必要参数' })
       return
     }
+
+    communicationPreferenceManager.applyFromUserText(userQuery, userQuery)
 
     const memoryParams = {
       sessionId: sessionId || `api_${Date.now()}`,
@@ -637,7 +730,14 @@ router.get('/profile', (_req: Request, res: Response) => {
 router.get('/memory/stats', (_req: Request, res: Response) => {
   try {
     const stats = memoryProcessor.getStats()
-    res.json(stats)
+    const longTerm = memoryConsolidator.getOverviewStats()
+    res.json({
+      ...stats,
+      longTermActive: longTerm.active,
+      longTermCandidates: longTerm.candidates,
+      longTermStale: longTerm.stale,
+      longTermSuperseded: longTerm.superseded,
+    })
   } catch (error) {
     res.status(500).json({ error: '获取统计失败' })
   }
@@ -848,6 +948,8 @@ router.get('/memory/profile/export.md', (_req: Request, res: Response) => {
 router.post('/memory/profile/reset', (_req: Request, res: Response) => {
   try {
     const profile = profileManager.reset()
+    addressingManager.clear()
+    communicationPreferenceManager.clear()
     res.json({ success: true, profile })
   } catch (error) {
     res.status(500).json({ error: '重置画像失败' })
@@ -868,6 +970,8 @@ router.post('/memory/reset-all', (_req: Request, res: Response) => {
       join(memoryRoot, 'index', 'longterm-global.json'),
       join(memoryRoot, 'index', 'longterm-skills'),
       join(memoryRoot, 'cleanup-backups'),
+      ADDRESSING_PATH,
+      COMMUNICATION_PREFERENCES_PATH,
       PROFILE_PATH,
       PROFILES_DIR,
       join(memoryRoot, 'consolidation-candidates.json'),
@@ -897,6 +1001,8 @@ router.post('/memory/reset-all', (_req: Request, res: Response) => {
     }
 
     profileManager.reset()
+    addressingManager.clear()
+    communicationPreferenceManager.clear()
     if (!existsSync(join(DATA_DIR, 'MEMORY.md'))) {
       writeFileSync(join(DATA_DIR, 'MEMORY.md'), '# 全局长期记忆\n\n', 'utf-8')
     }

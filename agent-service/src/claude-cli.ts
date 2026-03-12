@@ -41,14 +41,18 @@ function getBundledDirNames(): string[] {
 function getBundledSearchBases(): string[] {
   const exeDir = dirname(process.execPath)
   const parentDir = dirname(exeDir)
+  const grandParentDir = dirname(parentDir)
 
   const rawBases = [
     RESOURCES_DIR,
     exeDir,
     parentDir,
+    grandParentDir,
     join(exeDir, 'resources'),
     join(parentDir, 'resources'),
+    join(grandParentDir, 'resources'),
     process.cwd(),
+    dirname(process.cwd()),
   ]
 
   return Array.from(new Set(rawBases.map(base => base.replace(/[\\/]+$/, ''))))

@@ -16,9 +16,31 @@ export interface ClaudePromptResult {
   reason?: string
 }
 
+const PLACEHOLDER_API_KEYS = new Set([
+  'your-api-key-here',
+  'your-api-key',
+  'sk-ant-test-key',
+  'test-key',
+  'placeholder',
+])
+
+function isPlaceholderApiKey(rawValue: string): boolean {
+  const normalized = rawValue.trim().toLowerCase()
+  if (!normalized) return true
+  if (PLACEHOLDER_API_KEYS.has(normalized)) return true
+  return normalized.includes('your-api-key')
+    || normalized.includes('placeholder')
+    || normalized.endsWith('-test-key')
+}
+
+export function hasUsableClaudeCredentials(): boolean {
+  const apiKey = (process.env.ANTHROPIC_API_KEY || '').trim()
+  return Boolean(apiKey) && !isPlaceholderApiKey(apiKey)
+}
+
 export function isClaudeCliAvailable(): boolean {
   const cli = resolveClaudeCliLaunch()
-  return Boolean(cli && !checkRuntimeDependencies() && (process.env.ANTHROPIC_API_KEY || '').trim())
+  return Boolean(cli && !checkRuntimeDependencies() && hasUsableClaudeCredentials())
 }
 
 export async function runClaudePrompt(options: ClaudePromptOptions): Promise<ClaudePromptResult> {
@@ -30,6 +52,17 @@ export async function runClaudePrompt(options: ClaudePromptOptions): Promise<Cla
       stderr: '',
       exitCode: null,
       reason: 'Claude CLI not found',
+    }
+  }
+
+  if (!hasUsableClaudeCredentials()) {
+    return {
+      ok: false,
+      stdout: '',
+      stderr: '',
+      exitCode: null,
+      source: cli.source,
+      reason: 'Claude API key missing or placeholder',
     }
   }
 

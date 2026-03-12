@@ -14,6 +14,18 @@ import { basename, dirname, extname, join } from 'path'
 import { executeAgent } from '../agent-executor.js'
 import { buildConverseSystemPrompt, type ConverseRuntimeContext } from '../converse-prompt.js'
 import { memoryInjector } from '../memory/io.js'
+import { memoryAsyncQueue } from '../memory/index.js'
+import {
+  addressingManager,
+  extractStrongPreferredName,
+  isAddressingMetaQueryText,
+} from '../memory/addressing-manager.js'
+import { addressingCliExtractor } from '../memory/addressing-extractor.js'
+import {
+  communicationPreferenceManager,
+  extractStrongCommunicationPreferencePatches,
+} from '../memory/communication-preferences.js'
+import { normalizeCommunicationStylePreference } from '../memory/communication-style-normalizer.js'
 import { loadCatalog } from '../catalog.js'
 import { DATA_DIR } from '../paths.js'
 import { resolveModelProfile } from '../lib/resolve-model-profile.js'
@@ -71,6 +83,70 @@ function summarizeAction(action: ConverseActionPayload): string {
     return '已识别为定时任务，进入创建流程。'
   }
   return `准备发送文件：${action.filePaths.join(', ')}`
+}
+
+const ADDRESSING_TASK_INTENT_PATTERNS = [
+  /帮我|帮忙|看下|看看|处理|分析|执行|生成|创建|修复|写|做|安排|搜索|查询|翻译|总结|解释|排查|报错|问题/i,
+]
+
+function hasNonAddressingTaskIntent(text: string): boolean {
+  return ADDRESSING_TASK_INTENT_PATTERNS.some(pattern => pattern.test(text))
+}
+
+function buildCommunicationPreferenceReply(descriptions: string[]): string {
+  const parts = descriptions.map((description) => {
+    if (description === '默认使用中文回复') return '默认用中文回复你'
+    if (description === '默认使用英文回复') return '默认用英文回复你'
+    if (description === '偏好简洁回复') return '尽量简洁回复'
+    if (description === '偏好详细回复') return '尽量详细回复'
+    return description
+  })
+
+  if (parts.length === 1) {
+    return `好的，后续我会${parts[0]}。`
+  }
+
+  const [first, ...rest] = parts
+  return `好的，后续我会${first}，并${rest.join('，')}。`
+}
+
+function buildDirectMetaReply(userText: string): string | null {
+  const strongPreferredName = extractStrongPreferredName(userText)
+  const currentPreferredName = strongPreferredName || addressingManager.get().preferredName
+  const isMetaQuery = isAddressingMetaQueryText(userText)
+  const communicationPatches = extractStrongCommunicationPreferencePatches(userText)
+  const communicationStructurePreference = normalizeCommunicationStylePreference(userText)
+  const hasTaskIntent = hasNonAddressingTaskIntent(userText)
+
+  if (isMetaQuery && currentPreferredName) {
+    return `${currentPreferredName}。`
+  }
+
+  if (isMetaQuery) {
+    return '你还没有设置专属称呼，我目前会先按默认方式称呼你。'
+  }
+
+  if (hasTaskIntent) {
+    return null
+  }
+
+  if (strongPreferredName && communicationPatches.length > 0) {
+    return `${currentPreferredName}，${buildCommunicationPreferenceReply(communicationPatches.map(patch => patch.description)).replace(/^好的，/, '')}`
+  }
+
+  if (strongPreferredName && communicationStructurePreference) {
+    return `好的，${strongPreferredName}。`
+  }
+
+  if (strongPreferredName) {
+    return `好的，${strongPreferredName}。`
+  }
+
+  if (communicationPatches.length > 0) {
+    return buildCommunicationPreferenceReply(communicationPatches.map(patch => patch.description))
+  }
+
+  return null
 }
 
 async function upsertExternalSession(
@@ -1240,9 +1316,42 @@ router.post('/', async (req: Request, res: Response) => {
   const extracted = extractFileIdsFromQuery(rawQuery)
   const baseQuery = extracted.query || rawQuery.trim()
   const persistUserQuery = baseQuery || rawQuery.trim() || '用户发起了对话分派请求'
+  communicationPreferenceManager.applyFromUserText(baseQuery, persistUserQuery)
+  addressingCliExtractor.schedulePersistIfNeeded({
+    userText: baseQuery,
+    currentPreferredName: addressingManager.get().preferredName,
+    evidenceText: persistUserQuery,
+  })
 
   await upsertExternalSession(sessionId, persistUserQuery, 'running')
   await appendExternalMessage(sessionId, 'user', persistUserQuery)
+
+  const directMetaReply = buildDirectMetaReply(baseQuery)
+  if (directMetaReply) {
+    sseWrite(res, 'text', { content: directMetaReply })
+    await appendExternalMessage(sessionId, 'assistant', directMetaReply)
+    const shouldQueueDirectMemory = (
+      extractStrongCommunicationPreferencePatches(baseQuery).length > 0
+      || Boolean(normalizeCommunicationStylePreference(baseQuery))
+    )
+    if (shouldQueueDirectMemory) {
+      const memoryParams = {
+        sessionId,
+        skillId: '__converse__',
+        userQuery: persistUserQuery,
+        assistantResponse: directMetaReply,
+      }
+      if (memoryAsyncQueue.isEnabled()) {
+        memoryAsyncQueue.enqueue(memoryParams)
+      } else {
+        await memoryAsyncQueue.runSync(memoryParams)
+      }
+    }
+    await updateExternalSessionStatus(sessionId, 'completed')
+    sseWrite(res, 'done', {})
+    res.end()
+    return
+  }
 
   const directAction = detectDirectIntentAction(baseQuery)
   if (directAction) {

@@ -251,6 +251,7 @@ export default function ChatInput({
         disabled={isRunning}
         rows={variant === 'home' ? 2 : 1}
         wrap="soft"
+        data-testid="chat-input-textarea"
         className={textareaStyles}
       />
       <div className="flex justify-between items-center px-4 py-2 border-t border-border">
@@ -348,13 +349,14 @@ export default function ChatInput({
         </div>
 
         {isRunning ? (
-          <button onClick={onStop} className="btn-destructive px-4 py-1.5 text-sm">
+          <button onClick={onStop} data-testid="chat-stop-button" className="btn-destructive px-4 py-1.5 text-sm">
             停止
           </button>
         ) : (
           <button
             onClick={handleSubmit}
             disabled={!value.trim() && validAttachments.length === 0}
+            data-testid="chat-send-button"
             className="btn-primary px-4 py-1.5 text-sm"
           >
             发送

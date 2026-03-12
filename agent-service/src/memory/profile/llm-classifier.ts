@@ -1,5 +1,7 @@
 import type { ExtractedFact } from '../memcell/index.js'
 import { isClaudeCliAvailable, runClaudePrompt } from '../cli-runner.js'
+import { isAddressingNoiseText } from '../addressing-manager.js'
+import { normalizeCommunicationStylePreference } from '../communication-style-normalizer.js'
 
 interface ClassifyResult {
   section: string
@@ -32,6 +34,8 @@ const CLASSIFY_PROMPT = `请把一条记忆事实归类到画像分区中。
 
 规则：
 - 对“老板/您好/收到”等低价值称呼礼貌语，返回 shouldUpdate=false。
+- 对“用户需要调研 XXX / 帮我生成 XXX / 返回特定字符串 / 做一轮测试”这类一次性任务请求或测试指令，返回 shouldUpdate=false。
+- 对“先给结论再给步骤 / 先说结论再展开细节 / 结论先行”这类表达，尽量归一为同一条稳定偏好。
 - description 必须是简洁、可复用的事实记忆，长度 <= 180 字。
 - key 要简短，长度 <= 20 字。
 - 输出内容优先使用中文（保留必要专有名词/术语）。
@@ -103,16 +107,7 @@ function normalizeSection(section: string, fallback: string): string {
 function isAddressingNoise(content: string): boolean {
   const value = normalizeWhitespace(content)
   if (!value) return true
-
-  const patterns = [
-    /^\u8001\u677f(?:\u597d|\u60a8\u597d)?$/,
-    /^(?:\u597d\u7684|\u6536\u5230)\u8001\u677f$/,
-    /(?:\u79f0\u547c|\u53eb).{0,8}(?:\u8001\u677f|boss|sir|bro)/i,
-    /(?:\u7528\u6237|user).{0,8}(?:\u79f0\u547c|\u53eb).{0,8}(?:\u8001\u677f|boss|sir)/i,
-    /^(?:hi|hello)\s*(?:boss|sir|bro)$/i,
-  ]
-
-  return patterns.some(pattern => pattern.test(value))
+  return isAddressingNoiseText(value)
 }
 
 export class ProfileLLMClassifier {
@@ -149,16 +144,25 @@ export class ProfileLLMClassifier {
     if (!payload) return fallback
 
     const description = normalizeWhitespace(payload.description || fallback.description)
-    const key = normalizeWhitespace(payload.key || fallback.key) || fallback.key
-    const section = normalizeSection(payload.section || fallback.section, fallback.section)
+    let key = normalizeWhitespace(payload.key || fallback.key) || fallback.key
+    let section = normalizeSection(payload.section || fallback.section, fallback.section)
     const shouldUpdate = typeof payload.shouldUpdate === 'boolean'
       ? payload.shouldUpdate
       : fallback.shouldUpdate
+    let normalizedDescription = description
+
+    const normalizedCommunicationStyle = normalizeCommunicationStylePreference(fact.content)
+      || normalizeCommunicationStylePreference(description)
+    if (normalizedCommunicationStyle) {
+      section = SECTION_COMMUNICATION_STYLE
+      key = normalizedCommunicationStyle.key
+      normalizedDescription = normalizedCommunicationStyle.description
+    }
 
     return {
       section,
       key: clip(key, 20),
-      description: clip(description, 180),
+      description: clip(normalizedDescription, 180),
       shouldUpdate,
       reason: clip(normalizeWhitespace(payload.reason || 'CLI 分类结果'), 120),
     }
@@ -233,6 +237,7 @@ export class ProfileLLMClassifier {
 
   private shouldUpdateDefault(fact: ExtractedFact): boolean {
     if (isAddressingNoise(fact.content)) return false
+    if (fact.type === 'context') return false
     return fact.confidence >= 0.6
   }
 
@@ -257,6 +262,17 @@ export class ProfileLLMClassifier {
   }
 
   private defaultClassify(fact: ExtractedFact): ClassifyResult {
+    const normalizedCommunicationStyle = normalizeCommunicationStylePreference(fact.content)
+    if (normalizedCommunicationStyle) {
+      return {
+        section: SECTION_COMMUNICATION_STYLE,
+        key: normalizedCommunicationStyle.key,
+        description: normalizedCommunicationStyle.description,
+        shouldUpdate: this.shouldUpdateDefault(fact),
+        reason: this.defaultReason(fact),
+      }
+    }
+
     const section = this.defaultSection(fact)
     return {
       section,

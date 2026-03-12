@@ -41,15 +41,16 @@ export {
   deleteJob,
   getJobRuns,
   getDueJobs,
-  // 通知相关
+} from './store.js'
+export {
   createNotification,
   listNotifications,
   getUnreadCount,
   markNotificationRead,
-  markAllNotificationsRead
-} from './store.js'
+  markAllNotificationsRead,
+} from './notification-store.js'
 
-export type { Notification, CreateNotificationRequest } from './store.js'
+export type { Notification, CreateNotificationRequest } from './notification-store.js'
 
 // 定时器管理
 export {

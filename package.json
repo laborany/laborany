@@ -1,6 +1,6 @@
 {
   "name": "laborany",
-  "version": "0.3.7",
+  "version": "0.4.0",
   "description": "LaborAny - AI-powered desktop assistant with Claude Code integration",
   "author": {
     "name": "FunAmiAI",
@@ -54,6 +54,8 @@
     "bundle:all:mac-universal": "npm run bundle:cli:mac-universal && npm run bundle:uv:mac-universal",
     "bundle:all:linux": "npm run bundle:cli:linux && npm run bundle:uv:linux",
     "memory:clean": "node scripts/clean-memory.js",
+    "verify:memory-fastpaths": "node scripts/verify-memory-fastpaths.js",
+    "verify:memory-ui-real": "node scripts/verify-memory-ui-real.js",
     "test:dispatch": "concurrently -k -s first -n AGENT,API,E2E -c yellow,blue,green \"tmp-debug\\run-agent-e2e.cmd\" \"tmp-debug\\run-api-e2e.cmd\" \"tmp-debug\\run-e2e-dispatch.cmd\"",
     "build:electron": "npm run bundle:all:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && npm run fix:native:win && electron-builder --win --publish never",
     "build:electron:mac": "npm run bundle:all:mac-universal && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && npm run fix:native:mac && electron-builder --mac --publish never",

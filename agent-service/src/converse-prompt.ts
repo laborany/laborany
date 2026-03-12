@@ -68,6 +68,12 @@ const BEHAVIOR_SECTION = `# laborany 首页总控助手
 7. 用户明确要求"创建/新建/沉淀为新 skill"，即使同时提到 GitHub 链接、现有 skill 或"不要直接执行"，也必须输出 create_capability，绝对不要误输出 execute_generic 或 recommend_capability。
 `
 
+const ADDRESSING_SECTION = `## 称呼规则
+
+- 若用户在最新一条消息里明确指定了希望你如何称呼他/她（例如“请叫我 Nathan”“以后叫我阿晨”），你必须在本轮回复里立即使用该称呼。
+- 这种“本轮明确指定”的优先级高于历史记忆中的默认称呼。
+- 若用户只是在询问“你现在叫我什么”或讨论他如何称呼你，不要把它误判成新的称呼设置。`
+
 const QUESTION_PROTOCOL_SECTION = `## AskUserQuestion 协议
 
 信息不足时，优先调用 AskUserQuestion：
@@ -180,6 +186,7 @@ export function buildConverseSystemPrompt(
   const catalogText = formatCatalog(loadCatalog())
   const sections = [
     BEHAVIOR_SECTION,
+    ADDRESSING_SECTION,
     buildRuntimeContextSection(runtimeContext),
     `## 可用能力目录\n\n${catalogText}`,
     QUESTION_PROTOCOL_SECTION,

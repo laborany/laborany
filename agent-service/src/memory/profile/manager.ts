@@ -237,6 +237,20 @@ export class ProfileManager {
     this.save()
   }
 
+  removeField(sectionName: string, key: string): boolean {
+    if (!this.profile) this.load()
+
+    const section = this.profile!.sections.find(item => item.name === sectionName)
+    if (!section) return false
+
+    const nextFields = section.fields.filter(field => field.key !== key)
+    if (nextFields.length === section.fields.length) return false
+
+    section.fields = nextFields
+    this.save()
+    return true
+  }
+
   /* ────────────────────────────────────────────────────────────────────────
    *  获取指定章节的所有字段
    * ──────────────────────────────────────────────────────────────────────── */

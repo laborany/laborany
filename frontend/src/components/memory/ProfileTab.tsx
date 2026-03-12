@@ -9,6 +9,8 @@ interface MemoryStats {
   cellCount: number
   episodeCount: number
   profileFieldCount: number
+  longTermActiveCount: number
+  longTermCandidateCount: number
 }
 
 type Message = {
@@ -45,6 +47,8 @@ export function ProfileTab() {
         cellCount: statsData.cells || 0,
         episodeCount: statsData.episodes || 0,
         profileFieldCount: statsData.profileFields || 0,
+        longTermActiveCount: statsData.longTermActive || 0,
+        longTermCandidateCount: statsData.longTermCandidates || 0,
       })
     } catch {
       setMessage({ type: 'error', text: '加载记忆统计失败' })
@@ -206,16 +210,21 @@ function StatsCards({ stats, onCardClick, activePanel }: {
     { label: '原子记忆', value: stats?.cellCount ?? 0, color: 'text-blue-500', panel: 'cells' as const },
     { label: '情节记忆', value: stats?.episodeCount ?? 0, color: 'text-green-500', panel: 'episodes' as const },
     { label: '画像字段', value: stats?.profileFieldCount ?? 0, color: 'text-purple-500', panel: 'profile' as const },
+    { label: '长期记忆', value: stats?.longTermActiveCount ?? 0, color: 'text-amber-500', panel: null },
+    { label: '待确认候选', value: stats?.longTermCandidateCount ?? 0, color: 'text-orange-500', panel: null },
   ]
 
   return (
-    <div className="grid grid-cols-3 gap-4">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
       {items.map((item) => (
         <div
           key={item.label}
-          onClick={() => onCardClick(activePanel === item.panel ? null : item.panel)}
-          className={`rounded-lg border bg-card p-4 text-center transition-colors cursor-pointer hover:bg-accent ${
-            activePanel === item.panel ? 'border-primary' : 'border-border'
+          data-testid={`profile-stat-${item.label}`}
+          onClick={() => item.panel !== null && onCardClick(activePanel === item.panel ? null : item.panel)}
+          className={`rounded-lg border bg-card p-4 text-center transition-colors ${
+            item.panel !== null ? 'cursor-pointer hover:bg-accent' : ''
+          } ${
+            item.panel !== null && activePanel === item.panel ? 'border-primary' : 'border-border'
           }`}
         >
           <div className={`text-2xl font-bold ${item.color}`}>{item.value}</div>

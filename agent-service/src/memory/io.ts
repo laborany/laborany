@@ -8,6 +8,18 @@ import { spawn } from 'child_process'
 import { memoryFileManager } from './file-manager.js'
 import { memorySearch } from './search.js'
 import { profileManager } from './profile/index.js'
+import {
+  addressingManager,
+  buildAddressingPolicySection,
+  extractStrongPreferredName,
+  isAddressingNoiseText,
+} from './addressing-manager.js'
+import {
+  communicationPreferenceManager,
+  extractStrongCommunicationPreferencePatches,
+} from './communication-preferences.js'
+import { normalizeCommunicationStylePreference } from './communication-style-normalizer.js'
+import { isClaudeCliAvailable } from './cli-runner.js'
 import { buildClaudeEnvConfig, resolveClaudeCliLaunch } from '../claude-cli.js'
 import type { ExtractedFact } from './memcell/index.js'
 import { refreshRuntimeConfig } from '../runtime-config.js'
@@ -36,6 +48,29 @@ function estimateTokens(text: string): number {
 export class MemoryInjector {
   private collectSections(skillId: string): MemorySection[] {
     const sections: MemorySection[] = []
+
+    const addressingPolicy = buildAddressingPolicySection()
+    sections.push({
+      title: addressingPolicy.title,
+      content: addressingPolicy.content,
+      priority: 0,
+      tokens: estimateTokens(addressingPolicy.content),
+    })
+
+    const addressing = addressingManager.buildPromptSection()
+    if (addressing) {
+      sections.push({ title: addressing.title, content: addressing.content, priority: 0, tokens: estimateTokens(addressing.content) })
+    }
+
+    const communicationPreferences = communicationPreferenceManager.buildPromptSection()
+    if (communicationPreferences) {
+      sections.push({
+        title: communicationPreferences.title,
+        content: communicationPreferences.content,
+        priority: 0,
+        tokens: estimateTokens(communicationPreferences.content),
+      })
+    }
 
     const bossMd = memoryFileManager.readBossMd()
     if (bossMd) {
@@ -98,7 +133,7 @@ export class MemoryInjector {
     const maxPerItem = Math.floor(tokenBudget * 0.4)
 
     for (const section of sections) {
-      if (section.priority === 1) {
+      if (section.priority <= 1) {
         if (section.tokens > maxPerItem) {
           section.content = section.content.slice(0, Math.floor(maxPerItem * 2.5))
           section.tokens = maxPerItem
@@ -132,6 +167,12 @@ export interface CliExtractResult {
   facts: ExtractedFact[]
   keywords: string[]
   sentiment: 'positive' | 'neutral' | 'negative'
+  addressingUpdate: {
+    shouldUpdate: boolean
+    preferredName?: string
+    confidence: number
+    reason: string
+  }
   extractionMethod: 'cli' | 'regex'
 }
 
@@ -147,6 +188,12 @@ const EXTRACTION_PROMPT = `你是一个记忆抽取助手。
 输出 Schema：
 {
   "summary": "简短摘要，使用中文",
+  "addressingUpdate": {
+    "shouldUpdate": false,
+    "preferredName": "",
+    "confidence": 0.0,
+    "reason": "判断原因"
+  },
   "facts": [
     {
       "type": "preference|fact|correction|context",
@@ -167,8 +214,10 @@ const EXTRACTION_PROMPT = `你是一个记忆抽取助手。
 4) 用户提出的偏好/要求应标记 source="user"。
 5) 助手建议不应直接转成用户偏好。
 6) 一次性事件通常标记为 context/event，不应写成长期偏好。
-7) 不要把“老板/boss/sir”等称呼礼貌语当作用户记忆。
-8) 输出语言默认使用中文（保留必要英文术语或专有名词）。`
+7) addressingUpdate 只在“用户明确指定或强烈暗示以后怎么称呼他/她”时返回 shouldUpdate=true。
+8) 像“你现在叫我什么”“你一般怎么称呼我”“好的老板”这类问句/礼貌语，addressingUpdate 必须为 shouldUpdate=false。
+9) 不要把“老板/boss/sir”等纯礼貌语当作用户记忆；但“请叫我 Nathan”这类明确称呼偏好可以保留。
+10) 输出语言默认使用中文（保留必要英文术语或专有名词）。`
 
 const HARD_NEGATIVE_FEW_SHOTS = `
 困难负例（必须遵循）：
@@ -196,6 +245,16 @@ const HARD_NEGATIVE_FEW_SHOTS = `
 助手：好的老板，我看一下。
 错误：{"type":"fact","content":"用户称呼助手为老板","source":"user"}
 正确：{"type":"context","content":"助手使用了礼貌称呼","source":"assistant","intent":"context"}
+
+示例 E
+用户：以后叫我 Nathan。
+助手：好的。
+正确：{"type":"preference","content":"请称呼我为 Nathan","source":"user","intent":"response_style"}
+
+示例 F
+用户：你现在叫我什么？
+助手：……
+正确：{"addressingUpdate":{"shouldUpdate":false,"preferredName":"","confidence":0.05,"reason":"用户在询问当前称呼，不是在设置新称呼"}}
 `
 
 const FACT_NOISE_PATTERNS = [
@@ -294,7 +353,9 @@ function sanitizeFacts(rawFacts: unknown): ExtractedFact[] {
     if (!candidate.content || typeof candidate.content !== 'string') return null
     const content = candidate.content.trim()
     if (!content) return null
-    if (FACT_NOISE_PATTERNS.some(pattern => pattern.test(content))) return null
+    if (isAddressingNoiseText(content) || FACT_NOISE_PATTERNS.some(pattern => pattern.test(content))) {
+      return null
+    }
 
     const parsedConfidence = typeof candidate.confidence === 'number' ? candidate.confidence : 0.6
     const confidence = Math.max(0.5, Math.min(1, parsedConfidence))
@@ -307,15 +368,121 @@ function sanitizeFacts(rawFacts: unknown): ExtractedFact[] {
   return sanitized.filter((item): item is ExtractedFact => item !== null)
 }
 
+function sanitizeAddressingUpdate(rawUpdate: unknown): CliExtractResult['addressingUpdate'] {
+  if (!rawUpdate || typeof rawUpdate !== 'object') {
+    return {
+      shouldUpdate: false,
+      confidence: 0,
+      reason: '未返回称呼更新',
+    }
+  }
+
+  const candidate = rawUpdate as Partial<CliExtractResult['addressingUpdate']>
+  const shouldUpdate = candidate.shouldUpdate === true
+  const preferredName = typeof candidate.preferredName === 'string'
+    ? candidate.preferredName.trim()
+    : ''
+  const confidence = typeof candidate.confidence === 'number'
+    ? Math.max(0, Math.min(1, candidate.confidence))
+    : (shouldUpdate ? 0.8 : 0.2)
+  const reason = typeof candidate.reason === 'string' && candidate.reason.trim()
+    ? candidate.reason.trim().slice(0, 120)
+    : '未提供判断原因'
+
+  if (!shouldUpdate) {
+    return { shouldUpdate: false, confidence, reason }
+  }
+
+  if (!preferredName) {
+    return {
+      shouldUpdate: false,
+      confidence: Math.min(confidence, 0.2),
+      reason: '未返回可用称呼',
+    }
+  }
+
+  return { shouldUpdate: true, preferredName, confidence, reason }
+}
+
 export class MemoryCliExtractor {
   private readonly timeoutMs = 15_000
+
+  private resolveTimeoutMs(override?: number): number {
+    if (typeof override === 'number' && Number.isFinite(override) && override > 0) {
+      return override
+    }
+
+    const configured = Number.parseInt(process.env.MEMORY_CLI_TIMEOUT_MS || '', 10)
+    if (Number.isFinite(configured) && configured > 0) {
+      return configured
+    }
+
+    return this.timeoutMs
+  }
+
+  private resolveMemoryModel(): string | undefined {
+    return (
+      process.env.ANTHROPIC_MEMORY_MODEL
+      || process.env.ANTHROPIC_CLASSIFY_MODEL
+      || process.env.ANTHROPIC_MODEL
+      || ''
+    ).trim() || undefined
+  }
 
   private buildConversation(userQuery: string, assistantResponse: string): string {
     return `User: ${userQuery}\n\nAssistant: ${assistantResponse}`
   }
 
-  private fallback(_params: ExtractParams): CliExtractResult {
-    return { summary: '', facts: [], keywords: [], sentiment: 'neutral', extractionMethod: 'regex' }
+  private buildFallbackFacts(userQuery: string): ExtractedFact[] {
+    const facts: ExtractedFact[] = []
+    const normalizedCommunicationStyle = normalizeCommunicationStylePreference(userQuery)
+    if (normalizedCommunicationStyle) {
+      facts.push({
+        type: 'preference',
+        content: normalizedCommunicationStyle.description,
+        confidence: 0.94,
+        source: 'user',
+        intent: 'response_style',
+      })
+    }
+
+    for (const patch of extractStrongCommunicationPreferencePatches(userQuery)) {
+      facts.push({
+        type: 'preference',
+        content: patch.description,
+        confidence: patch.confidence,
+        source: 'user',
+        intent: 'response_style',
+      })
+    }
+
+    const dedup = new Map<string, ExtractedFact>()
+    for (const fact of facts) {
+      const key = `${fact.type}\u0000${fact.intent}\u0000${fact.content}`
+      if (!dedup.has(key)) {
+        dedup.set(key, fact)
+      }
+    }
+
+    return Array.from(dedup.values())
+  }
+
+  private fallback(params: ExtractParams): CliExtractResult {
+    const preferredName = extractStrongPreferredName(params.userQuery)
+    const facts = this.buildFallbackFacts(params.userQuery)
+    return {
+      summary: '',
+      facts,
+      keywords: [],
+      sentiment: 'neutral',
+      addressingUpdate: {
+        shouldUpdate: Boolean(preferredName),
+        preferredName: preferredName || undefined,
+        confidence: preferredName ? 0.99 : 0,
+        reason: preferredName ? '命中明确称呼指定快路径' : 'CLI 不可用，跳过称呼更新',
+      },
+      extractionMethod: 'regex',
+    }
   }
 
   private buildCliErrorLog(params: {
@@ -351,7 +518,34 @@ export class MemoryCliExtractor {
     return `[MemoryCLI] ${details.join(' | ')}`
   }
 
+  private parseCliSuccessPayload(outputText: string): CliExtractResult {
+    const parsed = parseJSON<{
+      summary?: string
+      addressingUpdate?: unknown
+      facts?: unknown
+      keywords?: unknown
+      sentiment?: unknown
+    }>(outputText)
+
+    const summary = (parsed.summary || '').trim()
+    const addressingUpdate = sanitizeAddressingUpdate(parsed.addressingUpdate)
+    const facts = sanitizeFacts(parsed.facts)
+    const keywords = Array.isArray(parsed.keywords)
+      ? parsed.keywords.filter(item => typeof item === 'string').map(item => item.trim()).slice(0, 8)
+      : []
+    const sentiment = parsed.sentiment === 'positive' || parsed.sentiment === 'negative'
+      ? parsed.sentiment : 'neutral'
+
+    if (!summary) throw new Error('CLI extraction result is missing summary')
+
+    return { summary, facts, keywords, sentiment, addressingUpdate, extractionMethod: 'cli' }
+  }
+
   async extract(params: ExtractParams): Promise<CliExtractResult> {
+    if (!isClaudeCliAvailable()) {
+      return this.fallback(params)
+    }
+
     refreshRuntimeConfig()
 
     const cliLaunch = resolveClaudeCliLaunch()
@@ -363,12 +557,13 @@ export class MemoryCliExtractor {
     const basePrompt = `${EXTRACTION_PROMPT}\n${HARD_NEGATIVE_FEW_SHOTS}\n${this.buildConversation(params.userQuery, params.assistantResponse)}`
     const strictJsonSuffix = '\n\n重要：只返回一个合法 JSON 对象，不要包含 markdown 代码块或任何额外文本。'
     const args = ['--print', '--dangerously-skip-permissions']
-    if (process.env.ANTHROPIC_MODEL) {
-      args.push('--model', process.env.ANTHROPIC_MODEL)
+    const memoryModel = this.resolveMemoryModel()
+    if (memoryModel) {
+      args.push('--model', memoryModel)
     }
     const spawnArgs = [...cliLaunch.argsPrefix, ...args]
 
-    const timeout = params.timeoutMs ?? this.timeoutMs
+    const timeout = this.resolveTimeoutMs(params.timeoutMs)
 
     const runOnce = async (strictJsonOnly = false): Promise<CliExtractResult> => {
       const proc = spawn(cliLaunch.command, spawnArgs, {
@@ -386,7 +581,11 @@ export class MemoryCliExtractor {
       proc.stdin.write(prompt, 'utf-8')
       proc.stdin.end()
 
-      const timer = setTimeout(() => { proc.kill('SIGTERM') }, timeout)
+      let timedOut = false
+      const timer = setTimeout(() => {
+        timedOut = true
+        proc.kill('SIGTERM')
+      }, timeout)
 
       const exitCode = await new Promise<number>((resolve, reject) => {
         proc.on('close', code => resolve(code ?? 1))
@@ -395,6 +594,25 @@ export class MemoryCliExtractor {
       clearTimeout(timer)
 
       if (exitCode !== 0) {
+        const outputText = stdout.trim()
+        if (outputText) {
+          try {
+            const salvaged = this.parseCliSuccessPayload(outputText)
+            console.warn(this.buildCliErrorLog({
+              stage: timedOut ? 'timeout-salvaged' : 'nonzero-salvaged',
+              source: cliLaunch.source,
+              command: cliLaunch.command,
+              args: spawnArgs,
+              exitCode,
+              stderr,
+              stdout: outputText,
+            }))
+            return salvaged
+          } catch {
+            // fall through to regular error handling
+          }
+        }
+
         console.warn(this.buildCliErrorLog({
           stage: 'spawn',
           source: cliLaunch.source,
@@ -408,19 +626,8 @@ export class MemoryCliExtractor {
       }
 
       const outputText = stdout.trim()
-      let parsed: {
-        summary?: string
-        facts?: unknown
-        keywords?: unknown
-        sentiment?: unknown
-      }
       try {
-        parsed = parseJSON<{
-          summary?: string
-          facts?: unknown
-          keywords?: unknown
-          sentiment?: unknown
-        }>(outputText)
+        return this.parseCliSuccessPayload(outputText)
       } catch (error) {
         console.warn(this.buildCliErrorLog({
           stage: 'parse',
@@ -433,18 +640,6 @@ export class MemoryCliExtractor {
         }))
         throw error
       }
-
-      const summary = (parsed.summary || '').trim()
-      const facts = sanitizeFacts(parsed.facts)
-      const keywords = Array.isArray(parsed.keywords)
-        ? parsed.keywords.filter(item => typeof item === 'string').map(item => item.trim()).slice(0, 8)
-        : []
-      const sentiment = parsed.sentiment === 'positive' || parsed.sentiment === 'negative'
-        ? parsed.sentiment : 'neutral'
-
-      if (!summary) throw new Error('CLI extraction result is missing summary')
-
-      return { summary, facts, keywords, sentiment, extractionMethod: 'cli' }
     }
 
     try {

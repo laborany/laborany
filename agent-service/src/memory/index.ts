@@ -85,6 +85,33 @@ export {
   type ProfileField,
 } from './profile/index.js'
 
+export {
+  addressingManager,
+  AddressingManager,
+  ADDRESSING_PATH,
+  buildAddressingPolicySection,
+  buildAddressingDescription,
+  hasAddressingIntentCue,
+  isAddressingDescription,
+  isAddressingNoiseText,
+  type AddressingSettings,
+  type AddressingSource,
+} from './addressing-manager.js'
+export { addressingCliExtractor, AddressingCliExtractor, type AddressingExtractResult } from './addressing-extractor.js'
+export {
+  communicationPreferenceManager,
+  CommunicationPreferenceManager,
+  COMMUNICATION_PREFERENCES_PATH,
+  extractStrongCommunicationPreferencePatches,
+  isManagedCommunicationProfileField,
+  type CommunicationPreferencePatch,
+  type CommunicationPreferenceSettings,
+  type CommunicationPreferenceSource,
+  type ReplyLanguage,
+  type ReplyStyle,
+  type ApplyCommunicationPreferenceResult,
+} from './communication-preferences.js'
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     记忆处理器（协调三级结构）                              │
  * └──────────────────────────────────────────────────────────────────────────┘ */

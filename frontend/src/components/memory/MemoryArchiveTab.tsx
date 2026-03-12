@@ -59,6 +59,18 @@ interface LongTermAuditLog {
   candidateQueued?: number
 }
 
+interface ConsolidationCandidate {
+  id: string
+  createdAt: string
+  scope: 'global' | 'skill'
+  skillId?: string
+  skillName?: string
+  category: string
+  content: string
+  source: string[]
+  confidence: number
+}
+
 interface Skill {
   id: string
   name: string
@@ -101,8 +113,10 @@ export function MemoryArchiveTab() {
 function LongTermOverviewSection() {
   const [stats, setStats] = useState<LongTermStats | null>(null)
   const [logs, setLogs] = useState<LongTermAuditLog[]>([])
+  const [candidates, setCandidates] = useState<ConsolidationCandidate[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [acting, setActing] = useState(false)
 
   useEffect(() => {
     void loadData()
@@ -112,13 +126,15 @@ function LongTermOverviewSection() {
     setLoading(true)
     setError('')
     try {
-      const [statsRes, logsRes] = await Promise.all([
+      const [statsRes, logsRes, candidatesRes] = await Promise.all([
         fetch(`${AGENT_API_BASE}/memory/longterm/stats?days=7`),
         fetch(`${AGENT_API_BASE}/memory/longterm/audit?limit=8`),
+        fetch(`${AGENT_API_BASE}/memory/consolidation-candidates?analyze=false`),
       ])
 
       const statsData = await statsRes.json()
       const logsData = await logsRes.json()
+      const candidatesData = await candidatesRes.json()
 
       if (!statsRes.ok) {
         throw new Error(statsData?.error || '加载长期记忆统计失败')
@@ -126,28 +142,113 @@ function LongTermOverviewSection() {
       if (!logsRes.ok) {
         throw new Error(logsData?.error || '加载长期记忆审计失败')
       }
+      if (!candidatesRes.ok) {
+        throw new Error(candidatesData?.error || '加载长期记忆候选失败')
+      }
 
       setStats(statsData as LongTermStats)
       setLogs(Array.isArray(logsData?.logs) ? logsData.logs : [])
+      setCandidates(Array.isArray(candidatesData?.candidates) ? candidatesData.candidates : [])
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载长期记忆信息失败')
       setStats(null)
       setLogs([])
+      setCandidates([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function applyCandidateAction(action: 'accept' | 'reject', candidateIds: string[]) {
+    if (candidateIds.length === 0) return
+
+    setActing(true)
+    setError('')
+    try {
+      if (action === 'reject') {
+        const res = await fetch(`${AGENT_API_BASE}/memory/reject-candidates`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candidateIds }),
+        })
+        const data = await res.json()
+        if (!res.ok) {
+          throw new Error(data?.error || '处理长期记忆候选失败')
+        }
+      } else {
+        const selected = candidates.filter(item => candidateIds.includes(item.id))
+        const grouped = new Map<string, { scope: 'global' | 'skill'; skillId?: string; ids: string[] }>()
+
+        for (const item of selected) {
+          const key = `${item.scope}:${item.skillId || ''}`
+          const current = grouped.get(key)
+          if (current) {
+            current.ids.push(item.id)
+          } else {
+            grouped.set(key, {
+              scope: item.scope,
+              skillId: item.skillId,
+              ids: [item.id],
+            })
+          }
+        }
+
+        for (const group of grouped.values()) {
+          const res = await fetch(`${AGENT_API_BASE}/memory/consolidate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              candidateIds: group.ids,
+              scope: group.scope,
+              skillId: group.skillId,
+            }),
+          })
+          const data = await res.json()
+          if (!res.ok) {
+            throw new Error(data?.error || '处理长期记忆候选失败')
+          }
+        }
+      }
+
+      await loadData()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '处理长期记忆候选失败')
+    } finally {
+      setActing(false)
+    }
+  }
+
+  async function backfillAudit() {
+    setActing(true)
+    setError('')
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/memory/longterm/audit/backfill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data?.error || '回填历史审计失败')
+      }
+      await loadData()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '回填历史审计失败')
+    } finally {
+      setActing(false)
     }
   }
 
   return (
     <CollapsibleSection
       title="长期记忆状态"
-      defaultExpanded={false}
+      defaultExpanded={true}
       icon={<MemoryIcon />}
     >
       {loading ? (
         <LoadingSpinner />
       ) : (
-        <div className="space-y-4 pt-2">
+        <div data-testid="longterm-overview-panel" className="space-y-4 pt-2">
           {error && <MessageBox type="error" text={error} />}
           {stats && (
             <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -158,6 +259,12 @@ function LongTermOverviewSection() {
               <MetricCard label="总决策数" value={stats.total} />
             </div>
           )}
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <MetricCard label="待确认候选" value={candidates.length} />
+            <MetricCard label="最近 7 天写入" value={stats?.accepted || 0} />
+            <MetricCard label="最近 7 天无决策" value={stats?.noDecision || 0} />
+          </div>
 
           {stats?.allTime && (
             <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -179,15 +286,24 @@ function LongTermOverviewSection() {
             </div>
           )}
 
-          <div className="rounded-lg border border-border bg-card">
+          <div data-testid="longterm-audit-panel" className="rounded-lg border border-border bg-card">
             <div className="flex items-center justify-between border-b border-border px-3 py-2">
               <span className="text-sm font-medium text-foreground">最近决策日志</span>
-              <button
-                onClick={loadData}
-                className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
-              >
-                刷新
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={backfillAudit}
+                  disabled={acting}
+                  className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
+                >
+                  回填历史审计
+                </button>
+                <button
+                  onClick={loadData}
+                  className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
+                >
+                  刷新
+                </button>
+              </div>
             </div>
             <div className="max-h-[220px] overflow-y-auto px-3 py-2">
               {logs.length === 0 ? (
@@ -211,6 +327,76 @@ function LongTermOverviewSection() {
                         method={log.extractionMethod || 'unknown'}, facts={log.factCount ?? 0}, patches={log.profilePatchCount ?? 0}, queued={log.candidateQueued ?? 0}
                       </div>
                     )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div data-testid="longterm-candidates-panel" className="rounded-lg border border-border bg-card">
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <span className="text-sm font-medium text-foreground">待确认候选</span>
+              <div className="flex items-center gap-2">
+                <button
+                  data-testid="longterm-candidates-accept-all"
+                  onClick={() => applyCandidateAction('accept', candidates.map(item => item.id))}
+                  disabled={acting || candidates.length === 0}
+                  className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
+                >
+                  全部确认
+                </button>
+                <button
+                  data-testid="longterm-candidates-reject-all"
+                  onClick={() => applyCandidateAction('reject', candidates.map(item => item.id))}
+                  disabled={acting || candidates.length === 0}
+                  className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
+                >
+                  全部忽略
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[260px] overflow-y-auto px-3 py-2">
+              {candidates.length === 0 ? (
+                <div data-testid="longterm-candidates-empty" className="py-2 text-sm text-muted-foreground">暂无长期记忆候选</div>
+              ) : (
+                candidates.map(candidate => (
+                  <div
+                    key={candidate.id}
+                    data-testid="longterm-candidate-item"
+                    className="mb-3 rounded-lg border border-border/60 p-3 last:mb-0"
+                  >
+                    <div className="mb-2 flex items-center gap-2">
+                      <ScopeTag scope={candidate.scope} />
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(candidate.createdAt).toLocaleString()}
+                      </span>
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                        conf={candidate.confidence.toFixed(2)}
+                      </span>
+                    </div>
+                    <div data-testid="longterm-candidate-content" className="text-sm text-foreground">{candidate.content}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {candidate.category}
+                      {candidate.skillName ? ` · ${candidate.skillName}` : ''}
+                    </div>
+                    <div className="mt-2 flex justify-end gap-2">
+                      <button
+                        data-testid="longterm-candidate-reject"
+                        onClick={() => applyCandidateAction('reject', [candidate.id])}
+                        disabled={acting}
+                        className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
+                      >
+                        忽略
+                      </button>
+                      <button
+                        data-testid="longterm-candidate-accept"
+                        onClick={() => applyCandidateAction('accept', [candidate.id])}
+                        disabled={acting}
+                        className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                      >
+                        确认写入
+                      </button>
+                    </div>
                   </div>
                 ))
               )}

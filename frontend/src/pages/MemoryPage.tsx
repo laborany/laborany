@@ -14,6 +14,27 @@ import { MemoryArchiveTab } from '../components/memory/MemoryArchiveTab'
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 type TabType = 'boss' | 'profile' | 'archive'
+type PreferenceSource = 'manual' | 'auto' | 'none'
+type ReplyLanguageValue = '' | 'zh' | 'en'
+type ReplyStyleValue = '' | 'brief' | 'detailed'
+
+interface AddressingSettingsData {
+  preferredName: string
+  fallbackMode: 'boss'
+  source: PreferenceSource
+  updatedAt: string | null
+}
+
+interface CommunicationPreferenceFieldData<T extends string> {
+  value: T | ''
+  source: PreferenceSource
+  updatedAt: string | null
+}
+
+interface CommunicationPreferenceSettingsData {
+  replyLanguage: CommunicationPreferenceFieldData<'zh' | 'en'>
+  replyStyle: CommunicationPreferenceFieldData<'brief' | 'detailed'>
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           主组件                                          │
@@ -37,18 +58,21 @@ export default function MemoryPage() {
               onClick={() => setActiveTab('boss')}
               label="工作手册"
               icon={<BookIcon />}
+              testId="memory-tab-boss"
             />
             <TabButton
               active={activeTab === 'profile'}
               onClick={() => setActiveTab('profile')}
               label="我的画像"
               icon={<BrainIcon />}
+              testId="memory-tab-profile"
             />
             <TabButton
               active={activeTab === 'archive'}
               onClick={() => setActiveTab('archive')}
               label="记忆档案"
               icon={<ArchiveIcon />}
+              testId="memory-tab-archive"
             />
           </nav>
         </div>
@@ -72,15 +96,18 @@ function TabButton({
   onClick,
   label,
   icon,
+  testId,
 }: {
   active: boolean
   onClick: () => void
   label: string
   icon: React.ReactNode
+  testId?: string
 }) {
   return (
     <button
       onClick={onClick}
+      data-testid={testId}
       className={`flex items-center gap-2 border-b-2 py-3 transition-colors ${
         active
           ? 'border-primary text-primary'
@@ -90,6 +117,321 @@ function TabButton({
       {icon}
       <span className="text-sm font-medium">{label}</span>
     </button>
+  )
+}
+
+function getSourceLabel(source: PreferenceSource): string {
+  if (source === 'manual') return '手动设置'
+  if (source === 'auto') return '对话自动学习'
+  return '默认'
+}
+
+function formatMetaLine(source: PreferenceSource, updatedAt: string | null): string {
+  if (!updatedAt) return `当前来源：${getSourceLabel(source)}`
+  return `当前来源：${getSourceLabel(source)} · 更新时间：${new Date(updatedAt).toLocaleString()}`
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                         默认称呼设置                                      │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function AddressingSettingsCard() {
+  const [preferredName, setPreferredName] = useState('')
+  const [meta, setMeta] = useState<AddressingSettingsData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    void loadAddressing()
+  }, [])
+
+  async function loadAddressing() {
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/addressing`)
+      if (!res.ok) {
+        setMessage({ type: 'error', text: '加载默认称呼失败' })
+        return
+      }
+
+      const data = await res.json() as AddressingSettingsData
+      setMeta(data)
+      setPreferredName(data.preferredName || '')
+    } catch {
+      setMessage({ type: 'error', text: '加载默认称呼失败' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function saveAddressing() {
+    setSaving(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/addressing`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preferredName }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setMessage({ type: 'error', text: data.error || '保存默认称呼失败' })
+        return
+      }
+
+      setMeta(data)
+      setPreferredName(data.preferredName || '')
+      setMessage({ type: 'success', text: '后续对话会优先使用这个称呼' })
+    } catch {
+      setMessage({ type: 'error', text: '保存默认称呼失败' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function resetAddressing() {
+    setSaving(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/addressing`, {
+        method: 'DELETE',
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setMessage({ type: 'error', text: data.error || '恢复默认称呼失败' })
+        return
+      }
+
+      setMeta(data)
+      setPreferredName('')
+      setMessage({ type: 'success', text: '已恢复默认称呼“老板”' })
+    } catch {
+      setMessage({ type: 'error', text: '恢复默认称呼失败' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) return <LoadingSpinner />
+
+  return (
+    <div data-testid="addressing-settings-card" className="space-y-4 rounded-lg border border-border bg-card p-5">
+      <div className="space-y-1">
+        <h2 className="text-base font-semibold text-foreground">默认称呼</h2>
+        <p className="text-sm text-muted-foreground">
+          设置后，后续对话会优先按这个名字称呼你；如果还没设置，默认回退为“老板”。
+        </p>
+        <p className="text-xs text-muted-foreground">
+          你也可以在对话里直接说“请叫我 Nathan”或“我叫 Nathan”，系统会自动学习。
+        </p>
+      </div>
+
+      {message && <MessageBox type={message.type} text={message.text} />}
+
+      <div className="space-y-2">
+        <label htmlFor="preferred-name" className="text-sm font-medium text-foreground">
+          默认怎么称呼我
+        </label>
+        <input
+          id="preferred-name"
+          value={preferredName}
+          onChange={(e) => setPreferredName(e.target.value)}
+          placeholder="例如：Nathan"
+          data-testid="preferred-name-input"
+          className="w-full rounded-lg border border-border bg-background px-4 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+        />
+      </div>
+
+      {meta?.updatedAt && (
+        <p className="text-xs text-muted-foreground">
+          {formatMetaLine(meta.source, meta.updatedAt)}
+        </p>
+      )}
+
+      <div className="flex justify-end gap-3">
+        <button
+          onClick={resetAddressing}
+          disabled={saving}
+          data-testid="addressing-reset-button"
+          className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          恢复默认
+        </button>
+        <button
+          onClick={saveAddressing}
+          disabled={saving}
+          data-testid="addressing-save-button"
+          className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {saving && <LoadingIcon />}
+          保存称呼
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                         默认回复偏好设置                                  │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+function CommunicationPreferenceSettingsCard() {
+  const [replyLanguage, setReplyLanguage] = useState<ReplyLanguageValue>('')
+  const [replyStyle, setReplyStyle] = useState<ReplyStyleValue>('')
+  const [meta, setMeta] = useState<CommunicationPreferenceSettingsData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    void loadPreferences()
+  }, [])
+
+  async function loadPreferences() {
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/communication-preferences`)
+      if (!res.ok) {
+        setMessage({ type: 'error', text: '加载默认回复偏好失败' })
+        return
+      }
+
+      const data = await res.json() as CommunicationPreferenceSettingsData
+      setMeta(data)
+      setReplyLanguage(data.replyLanguage?.value || '')
+      setReplyStyle(data.replyStyle?.value || '')
+    } catch {
+      setMessage({ type: 'error', text: '加载默认回复偏好失败' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function savePreferences() {
+    setSaving(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/communication-preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ replyLanguage, replyStyle }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setMessage({ type: 'error', text: data.error || '保存默认回复偏好失败' })
+        return
+      }
+
+      setMeta(data)
+      setReplyLanguage(data.replyLanguage?.value || '')
+      setReplyStyle(data.replyStyle?.value || '')
+      setMessage({ type: 'success', text: '后续对话会优先按这个默认回复偏好处理' })
+    } catch {
+      setMessage({ type: 'error', text: '保存默认回复偏好失败' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function resetPreferences() {
+    setSaving(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/communication-preferences`, {
+        method: 'DELETE',
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setMessage({ type: 'error', text: data.error || '恢复默认回复偏好失败' })
+        return
+      }
+
+      setMeta(data)
+      setReplyLanguage('')
+      setReplyStyle('')
+      setMessage({ type: 'success', text: '已恢复默认回复偏好' })
+    } catch {
+      setMessage({ type: 'error', text: '恢复默认回复偏好失败' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) return <LoadingSpinner />
+
+  return (
+    <div data-testid="communication-preferences-card" className="space-y-4 rounded-lg border border-border bg-card p-5">
+      <div className="space-y-1">
+        <h2 className="text-base font-semibold text-foreground">默认回复偏好</h2>
+        <p className="text-sm text-muted-foreground">
+          这里设置的是全局默认值：没特殊说明时，LaborAny 会优先按这里的语言和风格回复你。
+        </p>
+        <p className="text-xs text-muted-foreground">
+          你也可以在对话里直接说“以后都用中文回复我”或“后续尽量简洁一点”，系统会自动同步更新。
+        </p>
+      </div>
+
+      {message && <MessageBox type={message.type} text={message.text} />}
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <label htmlFor="reply-language" className="text-sm font-medium text-foreground">
+            默认回复语言
+          </label>
+          <select
+            id="reply-language"
+            value={replyLanguage}
+            onChange={(e) => setReplyLanguage(e.target.value as ReplyLanguageValue)}
+            data-testid="reply-language-select"
+            className="w-full rounded-lg border border-border bg-background px-4 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+          >
+            <option value="">默认跟随任务上下文</option>
+            <option value="zh">优先中文</option>
+            <option value="en">优先英文</option>
+          </select>
+          <p className="text-xs text-muted-foreground">
+            {formatMetaLine(meta?.replyLanguage.source || 'none', meta?.replyLanguage.updatedAt || null)}
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="reply-style" className="text-sm font-medium text-foreground">
+            默认回复风格
+          </label>
+          <select
+            id="reply-style"
+            value={replyStyle}
+            onChange={(e) => setReplyStyle(e.target.value as ReplyStyleValue)}
+            data-testid="reply-style-select"
+            className="w-full rounded-lg border border-border bg-background px-4 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+          >
+            <option value="">默认按任务需要展开</option>
+            <option value="brief">尽量简洁</option>
+            <option value="detailed">尽量详细</option>
+          </select>
+          <p className="text-xs text-muted-foreground">
+            {formatMetaLine(meta?.replyStyle.source || 'none', meta?.replyStyle.updatedAt || null)}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-3">
+        <button
+          onClick={resetPreferences}
+          disabled={saving}
+          data-testid="communication-preferences-reset-button"
+          className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          恢复默认
+        </button>
+        <button
+          onClick={savePreferences}
+          disabled={saving}
+          data-testid="communication-preferences-save-button"
+          className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {saving && <LoadingIcon />}
+          保存偏好
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -151,9 +493,12 @@ function BossEditor() {
 
   return (
     <div className="space-y-4">
+      <AddressingSettingsCard />
+      <CommunicationPreferenceSettingsCard />
+
       <div className="rounded-lg bg-muted/50 p-4">
         <p className="text-sm text-muted-foreground">
-          BOSS.md 是全局工作手册，所有 Labor 都会遵守这里的规范。
+          BOSS.md 是全局工作手册，所有 Labor 都会遵守这里的规范；具体称呼和默认回复方式优先参考上面的设置。
         </p>
       </div>
 

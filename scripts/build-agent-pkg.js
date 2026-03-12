@@ -7,8 +7,8 @@
  * ║  2) 构建后恢复开发环境当前的 better-sqlite3，避免污染本地 dev             ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-const { copyFileSync, existsSync, unlinkSync } = require('fs')
-const { join, resolve } = require('path')
+const { copyFileSync, existsSync, unlinkSync, mkdirSync } = require('fs')
+const { dirname, join, resolve } = require('path')
 const { tmpdir } = require('os')
 const { spawnSync } = require('child_process')
 
@@ -69,6 +69,13 @@ function main() {
       ['@yao-pkg/pkg', 'dist/bundle.cjs', '--targets', target, '--output', output, '--config', 'pkg.json'],
       agentDir,
     )
+
+    if (existsSync(nativeBinaryPath)) {
+      const resolvedOutput = join(agentDir, output)
+      const sidecarPath = join(dirname(resolvedOutput), 'better_sqlite3.node')
+      mkdirSync(dirname(sidecarPath), { recursive: true })
+      copyFileSync(nativeBinaryPath, sidecarPath)
+    }
   } finally {
     if (hasNativeBinary && existsSync(backupPath)) {
       copyFileSync(backupPath, nativeBinaryPath)

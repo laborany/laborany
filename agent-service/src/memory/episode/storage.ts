@@ -139,6 +139,7 @@ export class EpisodeStorage {
    *  保存 Episode
    * ──────────────────────────────────────────────────────────────────────── */
   save(ep: Episode): string {
+    ensureDir(EPISODES_DIR)
     const filePath = join(EPISODES_DIR, `${ep.id}.md`)
     const content = this.toMarkdown(ep)
     writeFileSync(filePath, content, 'utf-8')
