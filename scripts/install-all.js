@@ -79,6 +79,7 @@ for (const dir of packageDirs) {
     cwd,
     stdio: 'inherit',
     env: childEnv,
+    shell: true,
   })
 
   if (typeof result.status === 'number' && result.status !== 0) {
@@ -94,6 +95,7 @@ for (const dir of packageDirs) {
     stdio: 'pipe',
     encoding: 'utf-8',
     env: childEnv,
+    shell: true,
   })
   if (npmRoot.status === 0) {
     console.log(`[install-all] ${dir} npm root: ${String(npmRoot.stdout || '').trim()}`)
