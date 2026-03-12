@@ -68,13 +68,14 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           npm cache clean --force
           npm config set fetch-retries 5
           npm config set fetch-retry-mintimeout 20000
           npm config set fetch-retry-maxtimeout 120000
           for ($i = 1; $i -le 3; $i++) {
             Write-Host "Attempt $i of 3..."
-            npm run install:all:ci
+            node scripts/install-all.js ci
             if ($LASTEXITCODE -eq 0) { break }
             Write-Host "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
             npm cache clean --force
