@@ -13,44 +13,9 @@ console.log('[install-all] Platform:', process.platform)
 console.log('[install-all] Root dir:', rootDir)
 console.log('[install-all] Package dirs:', packageDirs)
 
-function createChildEnv() {
-  const nextEnv = { ...process.env }
-  const blockedPatterns = [
-    /^INIT_CWD$/i,
-    /^npm_(command|execpath|node_execpath)$/i,
-    /^npm_package_/i,
-    /^npm_lifecycle_/i,
-    /^npm_config_(local_prefix|global_prefix|prefix)$/i,
-    /^npm_config_(global|location|workspace|workspaces)$/i,
-    /^npm_config_(omit|production|only|dry-run)$/i,
-    /^npm_config_(fund|audit)$/i,
-  ]
-
-  const blockedKeys = []
-  for (const key of Object.keys(nextEnv)) {
-    if (blockedPatterns.some(pattern => pattern.test(key))) {
-      blockedKeys.push(key)
-      delete nextEnv[key]
-    }
-  }
-
-  if (blockedKeys.length > 0) {
-    console.log('[install-all] Blocked env vars:', blockedKeys.slice(0, 10).join(', '))
-  }
-
-  // 约束子进程 npm 行为，避免 CI 环境变量导致”成功但不落地安装”。
-  nextEnv.npm_config_global = 'false'
-  nextEnv.npm_config_dry_run = 'false'
-  nextEnv.npm_config_bin_links = 'true'
-  nextEnv.npm_config_ignore_scripts = 'false'
-  nextEnv.npm_config_audit = 'false'
-  nextEnv.npm_config_fund = 'false'
-  nextEnv.npm_config_omit = ''
-
-  return nextEnv
-}
-
-const childEnv = createChildEnv()
+// 直接使用 process.env，不做任何过滤
+// 之前的 createChildEnv() 会删除 npm_execpath 等关键变量，导致 Windows 上 npm.cmd 无法运行
+const childEnv = process.env
 
 const requiredArtifacts = {
   '.': ['node_modules/electron-builder/package.json'],
