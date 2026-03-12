@@ -29,13 +29,32 @@ function createChildEnv() {
 
 const childEnv = createChildEnv()
 
+const requiredArtifacts = {
+  '.': ['node_modules/electron-builder/package.json'],
+  'src-api': ['node_modules/esbuild/package.json', 'node_modules/dotenv/package.json'],
+  'agent-service': ['node_modules/esbuild/package.json', 'node_modules/cors/package.json'],
+  'frontend': ['node_modules/typescript/package.json', 'node_modules/vite/package.json'],
+}
+
+function verifyInstall(dir, cwd) {
+  const required = requiredArtifacts[dir]
+  if (!required) return
+
+  const missing = required.filter(rel => !existsSync(path.join(cwd, rel)))
+  if (missing.length === 0) return
+
+  console.error(`[install-all] ${dir} missing required packages:`)
+  for (const rel of missing) {
+    console.error(`  - ${rel}`)
+  }
+  process.exit(1)
+}
+
 for (const dir of packageDirs) {
   const cwd = path.resolve(rootDir, dir)
   const hasLockfile = existsSync(path.join(cwd, 'package-lock.json'))
   const command = installMode === 'ci' && hasLockfile ? 'ci' : 'install'
   const args = [
-    '--prefix',
-    cwd,
     command,
     '--include=dev',
     '--include=optional',
@@ -46,7 +65,7 @@ for (const dir of packageDirs) {
   console.log(`\n[install-all] ${dir} -> npm ${args.join(' ')}`)
 
   const result = spawnSync(npmCommand, args, {
-    cwd: rootDir,
+    cwd,
     stdio: 'inherit',
     env: childEnv,
   })
@@ -58,4 +77,6 @@ for (const dir of packageDirs) {
   if (result.error) {
     throw result.error
   }
+
+  verifyInstall(dir, cwd)
 }

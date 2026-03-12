@@ -104,7 +104,7 @@ jobs:
           # 重试机制：最多尝试 3 次
           for ($i = 1; $i -le 3; $i++) {
             Write-Host "Attempt $i of 3..."
-            npm exec -- electron-builder --win --publish never
+            .\node_modules\.bin\electron-builder.cmd --win --publish never
             if ($LASTEXITCODE -eq 0) { break }
             Write-Host "Attempt $i failed, retrying in 10 seconds..."
             Start-Sleep -Seconds 10
@@ -192,7 +192,7 @@ jobs:
           # 重试机制：最多尝试 3 次
           for i in 1 2 3; do
             echo "Attempt $i of 3..."
-            npm exec -- electron-builder --mac --x64 --publish never && break
+            ./node_modules/.bin/electron-builder --mac --x64 --publish never && break
             echo "Attempt $i failed, retrying in 10 seconds..."
             sleep 10
           done
@@ -273,7 +273,7 @@ jobs:
           # 重试机制：最多尝试 3 次
           for i in 1 2 3; do
             echo "Attempt $i of 3..."
-            npm exec -- electron-builder --mac --arm64 --publish never && break
+            ./node_modules/.bin/electron-builder --mac --arm64 --publish never && break
             echo "Attempt $i failed, retrying in 10 seconds..."
             sleep 10
           done
@@ -354,7 +354,7 @@ jobs:
           # 重试机制：最多尝试 3 次
           for i in 1 2 3; do
             echo "Attempt $i of 3..."
-            npm exec -- electron-builder --linux --publish never && break
+            ./node_modules/.bin/electron-builder --linux --publish never && break
             echo "Attempt $i failed, retrying in 10 seconds..."
             sleep 10
           done
