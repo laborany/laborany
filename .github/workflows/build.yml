@@ -24,7 +24,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            shared/package-lock.json
+            src-api/package-lock.json
+            agent-service/package-lock.json
+            frontend/package-lock.json
+            cli-bundle-x64/package-lock.json
+            cli-bundle-arm64/package-lock.json
 
       - name: Update version from tag
         shell: pwsh
@@ -55,7 +64,21 @@ jobs:
           $tauri | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
 
       - name: Install dependencies
-        run: npm run install:all
+        shell: pwsh
+        run: |
+          npm cache clean --force
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 20000
+          npm config set fetch-retry-maxtimeout 120000
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "Attempt $i of 3..."
+            npm run install:all:ci
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
+            npm cache clean --force
+            Start-Sleep -Seconds 10
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Build API and CLI bundle
         run: |
@@ -104,7 +127,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            shared/package-lock.json
+            src-api/package-lock.json
+            agent-service/package-lock.json
+            frontend/package-lock.json
+            cli-bundle-x64/package-lock.json
+            cli-bundle-arm64/package-lock.json
 
       - name: Update version from tag
         run: |
@@ -129,7 +161,10 @@ jobs:
           # 重试机制：最多尝试 3 次
           for i in 1 2 3; do
             echo "Attempt $i of 3..."
-            npm run install:all && break
+            npm config set fetch-retries 5
+            npm config set fetch-retry-mintimeout 20000
+            npm config set fetch-retry-maxtimeout 120000
+            npm run install:all:ci && break
             echo "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
             npm cache clean --force
             sleep 10
@@ -178,7 +213,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            shared/package-lock.json
+            src-api/package-lock.json
+            agent-service/package-lock.json
+            frontend/package-lock.json
+            cli-bundle-x64/package-lock.json
+            cli-bundle-arm64/package-lock.json
 
       - name: Update version from tag
         run: |
@@ -198,7 +242,10 @@ jobs:
           # 重试机制：最多尝试 3 次
           for i in 1 2 3; do
             echo "Attempt $i of 3..."
-            npm run install:all && break
+            npm config set fetch-retries 5
+            npm config set fetch-retry-mintimeout 20000
+            npm config set fetch-retry-maxtimeout 120000
+            npm run install:all:ci && break
             echo "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
             npm cache clean --force
             sleep 10
@@ -247,7 +294,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            shared/package-lock.json
+            src-api/package-lock.json
+            agent-service/package-lock.json
+            frontend/package-lock.json
+            cli-bundle-x64/package-lock.json
+            cli-bundle-arm64/package-lock.json
 
       - name: Update version from tag
         run: |
@@ -267,7 +323,10 @@ jobs:
           # 重试机制：最多尝试 3 次
           for i in 1 2 3; do
             echo "Attempt $i of 3..."
-            npm run install:all && break
+            npm config set fetch-retries 5
+            npm config set fetch-retry-mintimeout 20000
+            npm config set fetch-retry-maxtimeout 120000
+            npm run install:all:ci && break
             echo "Attempt $i failed, cleaning cache and retrying in 10 seconds..."
             npm cache clean --force
             sleep 10
