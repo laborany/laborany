@@ -162,7 +162,7 @@ session.get('/running-tasks', (c) => {
   }>(`
     SELECT id, query, created_at, source
     FROM sessions
-    WHERE status IN ('running', 'waiting_input') AND skill_id = '__converse__'
+    WHERE status = 'running' AND skill_id = '__converse__'
     ORDER BY created_at DESC
     LIMIT 50
   `)
@@ -310,11 +310,13 @@ session.get('/:sessionId/live-status', (c) => {
 
   const runtimeStatus = runtimeTaskManager.getStatus(sessionId)
   const isRunning = runtimeStatus?.isRunning === true
+  const needsInput = runtimeStatus?.requiresInput === true || sessionData.status === 'waiting_input'
 
   return c.json({
     sessionId,
     dbStatus: sessionData.status,
     isRunning,
+    needsInput,
     source: runtimeStatus ? 'runtime' : 'database',
     startedAt: runtimeStatus?.startedAt || sessionData.created_at,
     lastEventAt: runtimeStatus?.lastEventAt,

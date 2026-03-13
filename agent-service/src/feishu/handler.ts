@@ -2158,6 +2158,7 @@ async function handleCommand(
     }
 
     if (state.executeAwaitingInput) {
+      await stopExecuteSession(state.executeSessionId)
       markSkillRoundSettled(stateKey, '⏹️ 已取消当前等待中的问题。你可以继续补充新要求，或发送 /home 返回分发器。')
       await sendText(client, chatId, '⏹️ 已取消当前等待中的问题。你可以继续补充新要求，或发送 /home 返回分发器。')
       return true

@@ -89,10 +89,13 @@ interface SseEvent {
   content?: string
   message?: string
   action?: string
+  scheduleKind?: 'cron' | 'at' | 'every'
   targetId?: string
   query?: string
   targetQuery?: string
   cronExpr?: string
+  atMs?: number
+  everyMs?: number
   tz?: string
   name?: string
   seedQuery?: string
@@ -136,10 +139,24 @@ interface CronApiJob {
   sourceQqOpenId?: string
 }
 
-interface CreateQQCronInput {
+type QQScheduleInput =
+  | {
+      kind: 'cron'
+      expr: string
+      tz?: string
+    }
+  | {
+      kind: 'at'
+      atMs: number
+    }
+  | {
+      kind: 'every'
+      everyMs: number
+    }
+
+interface CreateQQJobInput {
   name?: string
-  cronExpr: string
-  tz?: string
+  schedule: QQScheduleInput
   targetId: string
   targetQuery: string
 }
@@ -497,19 +514,91 @@ function formatCronScheduleLabel(job: CronApiJob): string {
   return `Cron ${job.scheduleCronExpr || ''} (${tz})`.trim()
 }
 
-async function createQQCronJob(
+function formatSkillLabel(skillId: string): string {
+  return skillId === '__generic__' ? '通用助手' : skillId
+}
+
+function buildScheduleFingerprint(schedule: QQScheduleInput): string {
+  if (schedule.kind === 'cron') {
+    return ['cron', schedule.expr.trim(), (schedule.tz || QQ_DEFAULT_CRON_TZ).trim()].join('::')
+  }
+  if (schedule.kind === 'at') {
+    return ['at', String(schedule.atMs)].join('::')
+  }
+  return ['every', String(schedule.everyMs)].join('::')
+}
+
+function parseNumberLike(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return null
+  const parsed = Number.parseFloat(value.trim())
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function parseDurationToMs(value: string): number | null {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return null
+
+  const match = normalized.match(/^(\d+(?:\.\d+)?)\s*(ms|毫秒|s|sec|secs|second|seconds|秒|m|min|mins|minute|minutes|分钟|分|h|hr|hrs|hour|hours|小时|时|d|day|days|天)$/i)
+  if (!match) return null
+
+  const amount = Number.parseFloat(match[1])
+  if (!Number.isFinite(amount) || amount <= 0) return null
+
+  const unit = match[2].toLowerCase()
+  if (['ms', '毫秒'].includes(unit)) return Math.round(amount)
+  if (['s', 'sec', 'secs', 'second', 'seconds', '秒'].includes(unit)) return Math.round(amount * 1000)
+  if (['m', 'min', 'mins', 'minute', 'minutes', '分钟', '分'].includes(unit)) return Math.round(amount * 60_000)
+  if (['h', 'hr', 'hrs', 'hour', 'hours', '小时', '时'].includes(unit)) return Math.round(amount * 3_600_000)
+  if (['d', 'day', 'days', '天'].includes(unit)) return Math.round(amount * 86_400_000)
+  return null
+}
+
+function parseDateTimeToMs(value: string): number | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  const numeric = parseNumberLike(trimmed)
+  if (numeric !== null) {
+    if (numeric > 1_000_000_000_000) return Math.round(numeric)
+    if (numeric > 1_000_000_000) return Math.round(numeric * 1000)
+  }
+
+  const normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(:\d{2})?$/.test(trimmed)
+    ? trimmed.replace(' ', 'T')
+    : trimmed
+  const parsed = Date.parse(normalized)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function resolveScheduleKind(value: unknown, fallback: QQScheduleInput['kind'] = 'cron'): QQScheduleInput['kind'] {
+  if (value === 'cron' || value === 'at' || value === 'every') return value
+  return fallback
+}
+
+async function createQQJob(
   qqOpenId: string,
-  input: CreateQQCronInput,
+  input: CreateQQJobInput,
 ): Promise<{ job?: CronApiJob; error?: string }> {
   const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
   const payload = {
     name: input.name?.trim() || input.targetQuery.trim().slice(0, 40) || '定时任务',
     description: input.targetQuery.trim(),
-    schedule: {
-      kind: 'cron',
-      expr: input.cronExpr.trim(),
-      tz: (input.tz || QQ_DEFAULT_CRON_TZ).trim(),
-    },
+    schedule: input.schedule.kind === 'cron'
+      ? {
+          kind: 'cron',
+          expr: input.schedule.expr.trim(),
+          tz: (input.schedule.tz || QQ_DEFAULT_CRON_TZ).trim(),
+        }
+      : input.schedule.kind === 'at'
+        ? {
+            kind: 'at',
+            atMs: input.schedule.atMs,
+          }
+        : {
+            kind: 'every',
+            everyMs: input.schedule.everyMs,
+          },
     target: {
       type: 'skill',
       id: input.targetId.trim(),
@@ -870,6 +959,8 @@ async function handleCommand(
         '定时任务命令：',
         '/cron create "<name>" "<cronExpr>" "<skillId>" "<query>" [tz]',
         '/cron quick <daily9|hourly|weekday9> <skillId> "<query>" [name] [tz]',
+        '/cron once "<datetime>" <skillId> "<query>" [name]',
+        '/cron every "<duration>" <skillId> "<query>" [name]',
         '/cron list',
         '/cron delete <jobId>',
       ].join('\n'), replyCtx)
@@ -893,12 +984,15 @@ async function handleCommand(
         return true
       }
 
-      const result = await createQQCronJob(event.author.id, {
+      const result = await createQQJob(event.author.id, {
         name,
-        cronExpr,
+        schedule: {
+          kind: 'cron',
+          expr: cronExpr,
+          tz: tz || QQ_DEFAULT_CRON_TZ,
+        },
         targetId: skillId,
         targetQuery,
-        tz: tz || QQ_DEFAULT_CRON_TZ,
       })
       if (!result.job) {
         await sendTextWithContext(client, targetId, targetType, `❌ 创建失败：${result.error || '未知错误'}`, replyCtx)
@@ -938,12 +1032,15 @@ async function handleCommand(
         return true
       }
 
-      const result = await createQQCronJob(event.author.id, {
+      const result = await createQQJob(event.author.id, {
         name: customName || `${template.label} - ${targetQuery.slice(0, 20)}`,
-        cronExpr: template.expr,
+        schedule: {
+          kind: 'cron',
+          expr: template.expr,
+          tz: customTz || QQ_DEFAULT_CRON_TZ,
+        },
         targetId: skillId,
         targetQuery,
-        tz: customTz || QQ_DEFAULT_CRON_TZ,
       })
       if (!result.job) {
         await sendTextWithContext(client, targetId, targetType, `❌ 创建失败：${result.error || '未知错误'}`, replyCtx)
@@ -951,6 +1048,97 @@ async function handleCommand(
       }
       await sendTextWithContext(client, targetId, targetType, [
         '✅ 快速定时任务已创建',
+        `任务名：${result.job.name}`,
+        `任务 ID：${result.job.id}`,
+        `调度：${formatCronScheduleLabel(result.job)}`,
+      ].join('\n'), replyCtx)
+      return true
+    }
+
+    if (sub === 'once') {
+      if (parsed.length < 5) {
+        await sendTextWithContext(client, targetId, targetType, '参数不足。用法：/cron once "<datetime>" <skillId> "<query>" [name]', replyCtx)
+        return true
+      }
+      const [, , datetimeText, skillId, targetQuery, customName] = parsed
+      const atMs = parseDateTimeToMs(datetimeText)
+      if (!Number.isFinite(atMs) || (atMs || 0) <= Date.now()) {
+        await sendTextWithContext(client, targetId, targetType, '❌ 时间格式无效，或早于当前时间。请使用如 2026-03-08 08:00 / 2026-03-08T08:00:00+08:00', replyCtx)
+        return true
+      }
+      try {
+        const exists = await skillExists(skillId)
+        if (!exists) {
+          await sendTextWithContext(client, targetId, targetType, `❌ 未找到技能：${skillId}`, replyCtx)
+          return true
+        }
+      } catch (err) {
+        await sendTextWithContext(client, targetId, targetType, `❌ 校验技能失败：${err instanceof Error ? err.message : String(err)}`, replyCtx)
+        return true
+      }
+
+      const result = await createQQJob(event.author.id, {
+        name: customName || `一次性任务 - ${targetQuery.slice(0, 20)}`,
+        schedule: {
+          kind: 'at',
+          atMs: Math.round(atMs!),
+        },
+        targetId: skillId,
+        targetQuery,
+      })
+      if (!result.job) {
+        await sendTextWithContext(client, targetId, targetType, `❌ 创建失败：${result.error || '未知错误'}`, replyCtx)
+        return true
+      }
+
+      await sendTextWithContext(client, targetId, targetType, [
+        '✅ 一次性定时任务已创建',
+        `任务名：${result.job.name}`,
+        `任务 ID：${result.job.id}`,
+        `调度：${formatCronScheduleLabel(result.job)}`,
+        result.job.nextRunAtMs ? `执行时间：${new Date(result.job.nextRunAtMs).toLocaleString('zh-CN')}` : '',
+      ].filter(Boolean).join('\n'), replyCtx)
+      return true
+    }
+
+    if (sub === 'every') {
+      if (parsed.length < 5) {
+        await sendTextWithContext(client, targetId, targetType, '参数不足。用法：/cron every "<duration>" <skillId> "<query>" [name]', replyCtx)
+        return true
+      }
+      const [, , durationText, skillId, targetQuery, customName] = parsed
+      const everyMs = parseDurationToMs(durationText)
+      if (!Number.isFinite(everyMs) || (everyMs || 0) <= 0) {
+        await sendTextWithContext(client, targetId, targetType, '❌ 间隔格式无效。请使用如 30m、2h、1d。', replyCtx)
+        return true
+      }
+      try {
+        const exists = await skillExists(skillId)
+        if (!exists) {
+          await sendTextWithContext(client, targetId, targetType, `❌ 未找到技能：${skillId}`, replyCtx)
+          return true
+        }
+      } catch (err) {
+        await sendTextWithContext(client, targetId, targetType, `❌ 校验技能失败：${err instanceof Error ? err.message : String(err)}`, replyCtx)
+        return true
+      }
+
+      const result = await createQQJob(event.author.id, {
+        name: customName || `间隔任务 - ${targetQuery.slice(0, 20)}`,
+        schedule: {
+          kind: 'every',
+          everyMs: Math.round(everyMs!),
+        },
+        targetId: skillId,
+        targetQuery,
+      })
+      if (!result.job) {
+        await sendTextWithContext(client, targetId, targetType, `❌ 创建失败：${result.error || '未知错误'}`, replyCtx)
+        return true
+      }
+
+      await sendTextWithContext(client, targetId, targetType, [
+        '✅ 间隔定时任务已创建',
         `任务名：${result.job.name}`,
         `任务 ID：${result.job.id}`,
         `调度：${formatCronScheduleLabel(result.job)}`,
@@ -1099,6 +1287,7 @@ async function handleCommand(
     const state = getUserState(stateKey)
     if (state.executeSessionId) {
       if (state.executeAwaitingInput) {
+        await stopExecuteSession(state.executeSessionId)
         markSkillRoundSettled(stateKey, '⏹️ 已取消当前等待中的问题。你可以继续补充新要求，或发送 /home 返回分发器。')
         await sendTextWithContext(client, targetId, targetType, '⏹️ 已取消当前等待中的问题。你可以继续补充新要求，或发送 /home 返回分发器。', replyCtx)
         return true
@@ -1271,14 +1460,55 @@ async function dispatchAction(
       '你现在可以直接 /skill <id> 执行，或继续使用 /cron 创建定时任务。',
     ].join('\n'), replyCtx)
   } else if (action === 'setup_schedule') {
+    const rawScheduleKind = resolveScheduleKind(
+      event.scheduleKind,
+      parseNumberLike(event.atMs) !== null
+        ? 'at'
+        : parseNumberLike(event.everyMs) !== null
+          ? 'every'
+          : 'cron',
+    )
     const cronExpr = (event.cronExpr || '').trim()
     const tz = (event.tz || QQ_DEFAULT_CRON_TZ).trim()
+    const atMs = parseNumberLike(event.atMs)
+    const everyMs = parseNumberLike(event.everyMs)
     const scheduleQuery = (event.targetQuery || query || '').trim()
     let scheduleTargetId = resolvedTargetId
 
-    if (!cronExpr || !scheduleQuery) {
+    if (!scheduleQuery) {
       await sendTextWithContext(client, targetId, targetType, '定时任务信息还不完整，请补充执行频率和执行内容。', replyCtx)
       return
+    }
+
+    let schedule: QQScheduleInput | null = null
+    if (rawScheduleKind === 'cron') {
+      if (!cronExpr) {
+        await sendTextWithContext(client, targetId, targetType, '定时任务信息还不完整，请补充执行频率。', replyCtx)
+        return
+      }
+      schedule = {
+        kind: 'cron',
+        expr: cronExpr,
+        tz,
+      }
+    } else if (rawScheduleKind === 'at') {
+      if (!Number.isFinite(atMs) || (atMs || 0) <= Date.now()) {
+        await sendTextWithContext(client, targetId, targetType, '一次性任务的执行时间无效或早于当前时间，请提供未来时间。', replyCtx)
+        return
+      }
+      schedule = {
+        kind: 'at',
+        atMs: Math.round(atMs!),
+      }
+    } else {
+      if (!Number.isFinite(everyMs) || (everyMs || 0) <= 0) {
+        await sendTextWithContext(client, targetId, targetType, '固定间隔任务的 everyMs 无效，请提供大于 0 的执行间隔。', replyCtx)
+        return
+      }
+      schedule = {
+        kind: 'every',
+        everyMs: Math.round(everyMs!),
+      }
     }
 
     if (scheduleTargetId) {
@@ -1287,6 +1517,18 @@ async function dispatchAction(
         if (!exists) scheduleTargetId = ''
       } catch {
         scheduleTargetId = ''
+      }
+    }
+
+    let usedFallbackSkill = false
+    if (!scheduleTargetId) {
+      try {
+        const fallback = await resolveExecutableSkillId(config.defaultSkillId, '__generic__')
+        if (fallback.skillId) {
+          scheduleTargetId = fallback.skillId
+          usedFallbackSkill = true
+        }
+      } catch {
       }
     }
 
@@ -1302,8 +1544,7 @@ async function dispatchAction(
 
     const scheduleFingerprint = [
       targetId,
-      cronExpr,
-      tz,
+      buildScheduleFingerprint(schedule),
       scheduleTargetId,
       scheduleQuery,
     ].join('::')
@@ -1313,10 +1554,9 @@ async function dispatchAction(
     }
 
     await sendTextWithContext(client, targetId, targetType, '正在创建定时任务...', replyCtx)
-    const result = await createQQCronJob(targetId, {
+    const result = await createQQJob(targetId, {
       name: (event.name || '').trim() || undefined,
-      cronExpr,
-      tz,
+      schedule,
       targetId: scheduleTargetId,
       targetQuery: scheduleQuery,
     })
@@ -1330,7 +1570,8 @@ async function dispatchAction(
       `任务名：${result.job.name}`,
       `任务 ID：${result.job.id}`,
       `调度：${formatCronScheduleLabel(result.job)}`,
-      `目标技能：${result.job.targetId}`,
+      `目标技能：${formatSkillLabel(result.job.targetId)}`,
+      usedFallbackSkill ? '未指定具体技能，已自动回退到默认执行技能。' : '',
       result.job.nextRunAtMs ? `下次执行：${new Date(result.job.nextRunAtMs).toLocaleString('zh-CN')}` : '',
       '结果将通过 QQ 私聊主动通知你。',
     ].filter(Boolean).join('\n')

@@ -221,6 +221,8 @@ async function run(): Promise<void> {
   const { client: feishuClient, sentTexts: feishuReplies } = createFeishuClient()
   const { client: qqClient, sentTexts: qqReplies } = createQQClient()
 
+  assert.equal(feishuState.buildUserStateKey('feishu-user', 'chat-1'), 'feishu-user')
+  assert.equal(feishuState.buildUserStateKey('feishu-user', 'chat-2'), 'feishu-user')
   const feishuStateKey = feishuState.buildUserStateKey('feishu-user', 'chat-1')
   feishuState.resetUser(feishuStateKey)
 
@@ -248,7 +250,7 @@ async function run(): Promise<void> {
     {
       sender: { sender_id: { open_id: 'feishu-user' } },
       message: {
-        chat_id: 'chat-1',
+        chat_id: 'chat-2',
         message_id: 'feishu-msg-2',
         message_type: 'text',
         content: JSON.stringify({ text: '方向4' }),

@@ -90,7 +90,7 @@ export default function HistoryPage() {
     }
     const labels: Record<string, string> = {
       running: '运行中',
-      waiting_input: '待补充',
+      waiting_input: '待回复',
       completed: '已完成',
       failed: '失败',
       stopped: '已中止',
@@ -329,6 +329,7 @@ function mergeTimelineMessages(
 
 function buildPendingQuestionFromHistory(session: SessionDetail | null): PendingQuestion | null {
   if (!session?.messages?.length) return null
+  if (session.status !== 'waiting_input') return null
 
   let lastAskIndex = -1
   for (let index = session.messages.length - 1; index >= 0; index--) {
@@ -659,7 +660,11 @@ export function SessionDetailPage() {
     await converse.resumeSession(sessionId)
   }, [sessionId, fetchSessionDetail, converse.resumeSession])
 
-  const effectiveStatus = liveStatus?.isRunning ? 'running' : session?.status
+  const effectiveStatus = liveStatus?.isRunning
+    ? 'running'
+    : liveStatus?.needsInput
+      ? 'waiting_input'
+      : session?.status
   const effectiveStatusBadgeClass =
     effectiveStatus === 'running'
       ? 'badge badge-primary'
@@ -674,7 +679,7 @@ export function SessionDetailPage() {
   function renderStatusLabel(status: string | undefined) {
     if (!status) return '--'
     if (status === 'running') return '运行中'
-    if (status === 'waiting_input') return '待补充'
+    if (status === 'waiting_input') return '待回复'
     if (status === 'completed') return '已完成'
     if (status === 'failed') return '失败'
     if (status === 'stopped' || status === 'aborted') return '已中止'

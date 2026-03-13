@@ -21,6 +21,7 @@ import {
 } from '../../lib/skill-interaction.js'
 
 type RuntimeTaskStatus = 'running' | 'waiting_input' | 'completed' | 'failed' | 'aborted'
+type RuntimeTaskSource = 'desktop' | 'feishu' | 'qq' | 'cron' | 'converse'
 
 const EXTERNAL_SYNC_DIR = '_external'
 const TOOL_PATH_KEYS = new Set([
@@ -119,6 +120,7 @@ interface RuntimeTask {
   skillName: string
   query: string
   workDir: string
+  source: RuntimeTaskSource
   modelProfileId?: string
   modelProfileName?: string
   modelName?: string
@@ -196,6 +198,7 @@ class RuntimeTaskManager {
       skillName: options.skill.meta.name || options.skillId,
       query: options.query,
       workDir,
+      source: options.source || 'desktop',
       modelProfileId: options.modelProfileId,
       modelProfileName: options.modelProfileName,
       modelName: options.modelName,
@@ -328,7 +331,25 @@ class RuntimeTaskManager {
 
   stop(sessionId: string): boolean {
     const task = this.tasks.get(sessionId)
-    if (!task || task.status !== 'running') {
+    if (!task) {
+      return false
+    }
+
+    if (task.status === 'waiting_input') {
+      task.stopRequested = true
+      task.awaitingInput = false
+      task.status = 'aborted'
+      task.completedAt = Date.now()
+      this.emitEvent(task, { type: 'state', phase: 'aborted' })
+      this.emitEvent(task, { type: 'aborted' })
+      dbHelper.run(
+        `UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?`,
+        ['aborted', task.sessionId],
+      )
+      return true
+    }
+
+    if (task.status !== 'running') {
       return false
     }
 
@@ -350,6 +371,7 @@ class RuntimeTaskManager {
     lastEventAt?: string
     eventCount: number
     isRunning: boolean
+    requiresInput: boolean
   } | null {
     const task = this.tasks.get(sessionId)
     if (!task) {
@@ -365,7 +387,8 @@ class RuntimeTaskManager {
       completedAt: task.completedAt ? new Date(task.completedAt).toISOString() : undefined,
       lastEventAt: task.lastEventAt,
       eventCount: task.events.length,
-      isRunning: task.status === 'running' || task.status === 'waiting_input',
+      isRunning: task.status === 'running',
+      requiresInput: task.status === 'waiting_input',
     }
   }
 
@@ -377,6 +400,7 @@ class RuntimeTaskManager {
     lastEventAt?: string
     assistantContent: string
     isRunning: boolean
+    requiresInput: boolean
   } | null {
     const task = this.tasks.get(sessionId)
     if (!task) {
@@ -390,13 +414,14 @@ class RuntimeTaskManager {
       startedAt: new Date(task.startedAt).toISOString(),
       lastEventAt: task.lastEventAt,
       assistantContent: task.assistantContent,
-      isRunning: task.status === 'running' || task.status === 'waiting_input',
+      isRunning: task.status === 'running',
+      requiresInput: task.status === 'waiting_input',
     }
   }
 
   isRunning(sessionId: string): boolean {
     const task = this.tasks.get(sessionId)
-    return task?.status === 'running' || task?.status === 'waiting_input'
+    return task?.status === 'running'
   }
 
   getRunningTasks(): Array<{
@@ -413,7 +438,7 @@ class RuntimeTaskManager {
     }> = []
 
     for (const task of this.tasks.values()) {
-      if (task.status !== 'running' && task.status !== 'waiting_input') {
+      if (task.status !== 'running') {
         continue
       }
 
@@ -432,16 +457,23 @@ class RuntimeTaskManager {
     return this.tasks.has(sessionId)
   }
 
-  cleanup(maxAgeMs = 30 * 60 * 1000): number {
+  cleanup(maxAgeMs = 30 * 60 * 1000, waitingInputMaxAgeMs = 30 * 60 * 1000): number {
     const now = Date.now()
     let cleaned = 0
 
     for (const [sessionId, task] of this.tasks.entries()) {
-      if (task.status === 'running' || task.status === 'waiting_input') {
+      if (task.status === 'running') {
         continue
       }
 
       const age = now - (task.completedAt || task.startedAt)
+      if (task.status === 'waiting_input') {
+        if (age <= waitingInputMaxAgeMs) continue
+        this.tasks.delete(sessionId)
+        cleaned++
+        continue
+      }
+
       if (age > maxAgeMs) {
         this.tasks.delete(sessionId)
         cleaned++
@@ -710,12 +742,26 @@ class RuntimeTaskManager {
       }
 
       let finalStatus: RuntimeTaskStatus = 'completed'
+      let nonInteractiveFailureMessage = ''
       if (task.stopRequested) {
         finalStatus = 'aborted'
       } else if (task.awaitingInput) {
-        finalStatus = 'waiting_input'
+        if (task.source === 'cron') {
+          finalStatus = 'failed'
+          nonInteractiveFailureMessage = '当前定时任务执行过程中请求用户输入，已自动终止。请将该技能改造成无需人工补充即可执行。'
+        } else {
+          finalStatus = 'waiting_input'
+        }
       } else if (task.hasError) {
         finalStatus = 'failed'
+      }
+
+      if (nonInteractiveFailureMessage) {
+        this.emitEvent(task, { type: 'error', content: nonInteractiveFailureMessage })
+        dbHelper.run(
+          `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
+          [task.sessionId, 'error', nonInteractiveFailureMessage],
+        )
       }
 
       this.emitEvent(task, { type: 'state', phase: finalStatus })
@@ -910,7 +956,9 @@ class RuntimeTaskManager {
         .join('\n')
     }
     this.emitEvent(task, { type: 'question', ...payload })
-    this.emitEvent(task, { type: 'state', phase: 'waiting_input' })
+    if (task.source !== 'cron') {
+      this.emitEvent(task, { type: 'state', phase: 'waiting_input' })
+    }
   }
 
   private handleAgentEvent(task: RuntimeTask, event: AgentEvent): void {

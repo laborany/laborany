@@ -124,6 +124,7 @@ LABORANY_ACTION: {"action":"<type>", ...}
 - 当 scheduleKind=at 时尽量填写 atMs（Unix 毫秒时间戳）；如无法精确换算，可先输出部分字段，由系统继续追问。
 - 当 scheduleKind=every 时尽量填写 everyMs（毫秒间隔）。
 - 当用户意图是"设置定时任务"时，必须输出 setup_schedule，禁止输出 recommend_capability。即使用户提到了某个已有 skill，只要意图是定时执行，action 就必须是 setup_schedule（在 targetId 中填写该 skill id）。
+- 如果用户明确说了“用目标技能 X / 用技能 X”，必须优先保留这个约束：能匹配目录中的 skill name / id 时就把真实 skill id 写入 targetId；不能确定时先 AskUserQuestion 澄清，绝对不要擅自回退到通用技能。
 - 再次强调：你只负责输出 LABORANY_ACTION 标记，不负责执行任何任务。`
 
 const FEW_SHOT_SECTION = `## 示例

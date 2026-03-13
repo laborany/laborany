@@ -302,8 +302,17 @@ interface DeterministicScheduleDetection {
   atMs?: number
   everyMs?: number
   tz?: string
+  targetId?: string
   targetQuery: string
   matchedText: string
+  targetMatchedText?: string
+}
+
+interface CapabilityReference {
+  explicit: boolean
+  targetId?: string
+  targetLabel?: string
+  matchedText?: string
 }
 
 interface ScheduleActionPayload {
@@ -543,20 +552,83 @@ function normalizeWeekdayToCron(value: string): string | null {
   return null
 }
 
-function extractScheduleTargetQuery(text: string, matchedText: string): string {
+function normalizeCapabilityAlias(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[「」【】《》“”"'`]/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function resolveCapabilityByAlias(alias: string): { id: string; name: string } | null {
+  const normalizedAlias = normalizeCapabilityAlias(alias)
+  if (!normalizedAlias) return null
+
+  const catalog = loadCatalog()
+  for (const item of catalog) {
+    if (item.type !== 'skill') continue
+    if (normalizeCapabilityAlias(item.id) === normalizedAlias) {
+      return { id: item.id, name: item.name }
+    }
+    if (normalizeCapabilityAlias(item.name) === normalizedAlias) {
+      return { id: item.id, name: item.name }
+    }
+  }
+  return null
+}
+
+function extractReferencedCapability(text: string): CapabilityReference {
+  const patterns = [
+    /((?:用|使用|通过|调用)\s*(?:目标)?技能\s*[「」【】《》“”"'`]?(.+?)[」】》“”"'`]?(?=\s*(?:[，,。；;：:\n]|设立|设置|创建|安排|建立|新增|添加|每天|每日|每周|每月|每隔|在|于|来|去|并|然后|$)))/i,
+    /((?:目标技能|技能)\s*(?:是|为|设为|设成)?\s*[「」【】《》“”"'`]?(.+?)[」】》“”"'`]?(?=\s*(?:[，,。；;：:\n]|设立|设置|创建|安排|建立|新增|添加|每天|每日|每周|每月|每隔|在|于|来|去|并|然后|$)))/i,
+    /((?:用|使用|通过|调用)\s*[「」【】《》“”"'`]?(.+?)[」】》“”"'`]?\s*(?:这个|该)?技能)/i,
+  ]
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    const alias = match?.[2]?.trim()
+    if (!alias) continue
+    const resolved = resolveCapabilityByAlias(alias)
+    return {
+      explicit: true,
+      targetId: resolved?.id,
+      targetLabel: alias,
+      matchedText: match?.[1] || alias,
+    }
+  }
+
+  return { explicit: false }
+}
+
+function extractScheduleTargetQuery(
+  text: string,
+  matchedText: string,
+  capabilityMatchText?: string,
+): string {
   const colonMatch = text.match(/(?:：|:(?!\d{2}\b))\s*(.+)$/s)
   if (colonMatch?.[1]) {
     const candidate = colonMatch[1].trim()
     if (candidate) return candidate
   }
 
-  const remainder = text
-    .replace(matchedText, ' ')
+  let remainder = text.replace(matchedText, ' ')
+  if (capabilityMatchText) {
+    remainder = remainder.replace(capabilityMatchText, ' ')
+  }
+
+  remainder = remainder
+    .replace(/(?:用|使用|通过|调用)\s*(?:目标)?技能\s*[「」【】《》“”"'`]?[^，,。；;：:\n]+[」】》“”"'`]?\s*/gi, ' ')
+    .replace(/(?:目标技能|技能)\s*(?:是|为|设为|设成)?\s*[「」【】《》“”"'`]?[^，,。；;：:\n]+[」】》“”"'`]?\s*/gi, ' ')
     .replace(/^[，,。.\s]+/, '')
     .replace(/^(请|帮我|麻烦|定时|自动|安排|设置|创建|生成)+/g, '')
     .replace(/^(在|于)\s*/g, '')
     .replace(/^(点|时|分|分钟|秒|秒钟|半)\s*/g, '')
     .replace(/^(执行|运行|提醒|通知|发送|推送)(一次)?/g, '')
+    .replace(/^(设立|设置|创建|安排|建立|新增|添加)(一个|一条|个)?/g, '')
+    .replace(/^(的)?定时任务/g, '')
+    .replace(/^[，,。.\s:：-]+/, '')
+    .replace(/[，,。.\s:：-]+(?:设立|设置|创建|安排|建立|新增|添加)(一个|一条|个)?/g, ' ')
+    .replace(/[，,。.\s:：-]+(?:的)?定时任务/g, ' ')
     .replace(/^[，,。.\s:：-]+/, '')
     .trim()
 
@@ -566,6 +638,7 @@ function extractScheduleTargetQuery(text: string, matchedText: string): string {
 function detectDeterministicScheduleAction(query: string): ScheduleActionPayload | null {
   const text = query.trim()
   if (!text) return null
+  const capabilityRef = extractReferencedCapability(text)
 
   const explicitAtPatterns = [
     /((?:\d{4}[年/-]\d{1,2}[月/-]\d{1,2}日?\s*(?:早上|上午|中午|下午|晚上|凌晨)?\s*\d{1,2}(?:[:：点时]\d{1,2})?(?:[:：分]\d{1,2})?)|(?:今天|明天|后天)\s*(?:早上|上午|中午|下午|晚上|凌晨)?\s*\d{1,2}(?:[:：点时]\d{1,2})?(?:[:：分]\d{1,2})?)(?=\s*(?:执行|运行|提醒|通知|发送|推送|开始|触发))/,
@@ -584,7 +657,8 @@ function detectDeterministicScheduleAction(query: string): ScheduleActionPayload
       scheduleKind: 'at',
       atMs,
       targetType: 'skill',
-      targetQuery: extractScheduleTargetQuery(text, matchedText),
+      targetId: capabilityRef.targetId,
+      targetQuery: extractScheduleTargetQuery(text, matchedText, capabilityRef.matchedText),
     }
   }
 
@@ -604,7 +678,8 @@ function detectDeterministicScheduleAction(query: string): ScheduleActionPayload
         scheduleKind: 'every',
         everyMs,
         targetType: 'skill',
-        targetQuery: extractScheduleTargetQuery(text, intervalMatch[0]),
+        targetId: capabilityRef.targetId,
+        targetQuery: extractScheduleTargetQuery(text, intervalMatch[0], capabilityRef.matchedText),
       }
     }
   }
@@ -621,7 +696,8 @@ function detectDeterministicScheduleAction(query: string): ScheduleActionPayload
       cronExpr: `${minute} ${hour} * * *`,
       tz: 'Asia/Shanghai',
       targetType: 'skill',
-      targetQuery: extractScheduleTargetQuery(text, dailyMatch[0]),
+      targetId: capabilityRef.targetId,
+      targetQuery: extractScheduleTargetQuery(text, dailyMatch[0], capabilityRef.matchedText),
     }
   }
 
@@ -637,7 +713,8 @@ function detectDeterministicScheduleAction(query: string): ScheduleActionPayload
       cronExpr: `${minute} ${hour} * * 1-5`,
       tz: 'Asia/Shanghai',
       targetType: 'skill',
-      targetQuery: extractScheduleTargetQuery(text, workdayMatch[0]),
+      targetId: capabilityRef.targetId,
+      targetQuery: extractScheduleTargetQuery(text, workdayMatch[0], capabilityRef.matchedText),
     }
   }
 
@@ -655,7 +732,8 @@ function detectDeterministicScheduleAction(query: string): ScheduleActionPayload
         cronExpr: `${minute} ${hour} * * ${weekday}`,
         tz: 'Asia/Shanghai',
         targetType: 'skill',
-        targetQuery: extractScheduleTargetQuery(text, weeklyMatch[0]),
+        targetId: capabilityRef.targetId,
+        targetQuery: extractScheduleTargetQuery(text, weeklyMatch[0], capabilityRef.matchedText),
       }
     }
   }
@@ -674,7 +752,8 @@ function detectDeterministicScheduleAction(query: string): ScheduleActionPayload
         cronExpr: `${minute} ${hour} ${dayOfMonth} * *`,
         tz: 'Asia/Shanghai',
         targetType: 'skill',
-        targetQuery: extractScheduleTargetQuery(text, monthlyMatch[0]),
+        targetId: capabilityRef.targetId,
+        targetQuery: extractScheduleTargetQuery(text, monthlyMatch[0], capabilityRef.matchedText),
       }
     }
   }
@@ -696,7 +775,54 @@ function stabilizeScheduleAction(
     atMs: detected.atMs ?? action.atMs,
     everyMs: detected.everyMs ?? action.everyMs,
     tz: detected.tz ?? action.tz,
+    targetId: detected.targetId ?? action.targetId,
     targetQuery: detected.targetQuery || action.targetQuery,
+  }
+}
+
+function buildExplicitScheduleTargetQuestion(targetLabel: string): ConverseQuestionPayload {
+  return toQuestionPayload([
+    {
+      header: '目标技能',
+      question: `我没有找到你明确指定的技能「${targetLabel}」。请回复正确的技能 ID，或直接说“改为自动选择技能/创建新技能”。`,
+      multiSelect: false,
+      options: [
+        { label: '回复正确技能 ID', description: '继续沿用你指定的目标技能' },
+        { label: '改为自动选择技能', description: '让我按任务内容自动匹配' },
+        { label: '改为创建新技能', description: '先把这个任务沉淀成 skill' },
+      ],
+    },
+  ], { questionContext: 'schedule' })
+}
+
+function applyExplicitScheduleTarget(
+  action: ScheduleActionPayload,
+  sourceQuery: string,
+): {
+  action: ScheduleActionPayload
+  question?: ConverseQuestionPayload
+  validationErrors?: string[]
+} {
+  const reference = extractReferencedCapability(sourceQuery)
+  if (!reference.explicit) {
+    return { action }
+  }
+
+  if (reference.targetId) {
+    return {
+      action: {
+        ...action,
+        targetType: 'skill',
+        targetId: reference.targetId,
+      },
+    }
+  }
+
+  const targetLabel = reference.targetLabel || '未识别技能'
+  return {
+    action,
+    question: buildExplicitScheduleTargetQuestion(targetLabel),
+    validationErrors: [`未找到用户明确指定的技能: ${targetLabel}`],
   }
 }
 
@@ -913,7 +1039,11 @@ interface GuardResult {
   approvalRequired: boolean
 }
 
-function guardAction(action: ConverseActionPayload, runtimeContext?: ConverseRuntimeContext): GuardResult {
+function guardAction(
+  action: ConverseActionPayload,
+  runtimeContext?: ConverseRuntimeContext,
+  sourceQuery = '',
+): GuardResult {
   const catalog = loadCatalog()
   const findCapability = (type: ActionTargetType, id: string) =>
     catalog.some(item => item.type === type && item.id === id)
@@ -946,6 +1076,18 @@ function guardAction(action: ConverseActionPayload, runtimeContext?: ConverseRun
   }
 
   if (action.action === 'setup_schedule') {
+    const explicitTarget = applyExplicitScheduleTarget(action, sourceQuery)
+    action = explicitTarget.action
+    if (explicitTarget.question) {
+      return {
+        ok: false,
+        question: explicitTarget.question,
+        validationErrors: explicitTarget.validationErrors,
+        phase: 'schedule_wizard',
+        approvalRequired: false,
+      }
+    }
+
     const missing: string[] = []
     action.scheduleKind = inferScheduleKind(action)
     if (!action.targetType) {
@@ -1058,7 +1200,10 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
 
   if (action === 'recommend_capability') {
     const targetType = asTargetType(raw.targetType)
-    const targetId = asString(raw.targetId)
+    const rawTargetId = asString(raw.targetId)
+    const targetId = rawTargetId
+      ? (resolveCapabilityByAlias(rawTargetId)?.id || rawTargetId)
+      : ''
     const query = asString(raw.query)
     if (!targetType || !targetId || !query) return null
     const confidence = typeof raw.confidence === 'number' ? raw.confidence : undefined
@@ -1103,6 +1248,10 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
     const targetQuery = asString(raw.targetQuery) || asString(raw.query)
     const scheduleKind = asScheduleKind(raw.scheduleKind)
       || (parsedAtMs !== undefined ? 'at' : parsedEveryMs !== undefined ? 'every' : 'cron')
+    const rawTargetId = asString(raw.targetId)
+    const targetId = rawTargetId
+      ? (resolveCapabilityByAlias(rawTargetId)?.id || rawTargetId)
+      : undefined
     return {
       action: 'setup_schedule',
       scheduleKind,
@@ -1111,7 +1260,7 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
       everyMs: parsedEveryMs,
       tz: asString(raw.tz) || undefined,
       targetType: 'skill',
-      targetId: asString(raw.targetId) || undefined,
+      targetId,
       targetQuery,
       name: asString(raw.name) || undefined,
     }
@@ -1249,11 +1398,6 @@ function detectDirectIntentAction(query: string): ConverseActionPayload | null {
   const text = query.trim()
   if (!text) return null
 
-  const deterministicSchedule = detectDeterministicScheduleAction(text)
-  if (deterministicSchedule) {
-    return deterministicSchedule
-  }
-
   const rejectCreate = hasRejectCreateIntent(text)
   const acceptCreate = hasCreateCapabilityIntent(text)
   const genericSignal = hasExplicitGenericIntent(text)
@@ -1355,7 +1499,7 @@ router.post('/', async (req: Request, res: Response) => {
 
   const directAction = detectDirectIntentAction(baseQuery)
   if (directAction) {
-    const guard = guardAction(directAction, runtimeContext)
+    const guard = guardAction(directAction, runtimeContext, baseQuery)
     const state = setSessionState(sessionId, {
       phase: guard.phase,
       approvalRequired: guard.approvalRequired,
@@ -1532,7 +1676,7 @@ router.post('/', async (req: Request, res: Response) => {
             ? stabilizeScheduleAction(rawAction, query)
             : rawAction
           if (action) {
-            const guard = guardAction(action, runtimeContext)
+            const guard = guardAction(action, runtimeContext, query)
 
             const state = setSessionState(sessionId, {
               phase: guard.phase,

@@ -19,9 +19,10 @@ interface SkillExecuteEvent {
   sessionId?: string
   content?: string
   message?: string
+  phase?: string
 }
 
-type SkillRunTerminalStatus = 'ok' | 'aborted' | 'stopped'
+type SkillRunTerminalStatus = 'ok' | 'aborted' | 'stopped' | 'needs_input'
 
 interface SkillRunResult {
   status: SkillRunTerminalStatus
@@ -113,6 +114,9 @@ async function runSkillJob(job: CronJob, sessionId: string): Promise<SkillRunRes
   const errors: string[] = []
   let buffer = ''
   let terminalStatus: SkillRunTerminalStatus | null = null
+  let lastStatePhase = ''
+  let pendingQuestionText = ''
+  let needsInputDetected = false
 
   while (!terminalStatus) {
     const { done, value } = await reader.read()
@@ -135,8 +139,24 @@ async function runSkillJob(job: CronJob, sessionId: string): Promise<SkillRunRes
         if (message) errors.push(message)
       }
 
+      if (event.type === 'question') {
+        needsInputDetected = true
+        const questionText = event.message || event.content
+        if (questionText) {
+          pendingQuestionText = questionText
+        }
+      }
+
+      if (event.type === 'state' && event.phase) {
+        lastStatePhase = event.phase
+      }
+
       if (event.type === 'done') {
-        terminalStatus = 'ok'
+        if (needsInputDetected || lastStatePhase === 'waiting_input') {
+          terminalStatus = 'needs_input'
+        } else {
+          terminalStatus = 'ok'
+        }
         void reader.cancel()
         break
       }
@@ -161,14 +181,28 @@ async function runSkillJob(job: CronJob, sessionId: string): Promise<SkillRunRes
       const message = tailEvent.message || tailEvent.content
       if (message) errors.push(message)
     }
+    if (tailEvent?.type === 'question') {
+      needsInputDetected = true
+      pendingQuestionText = tailEvent.message || tailEvent.content || pendingQuestionText
+    }
+    if (tailEvent?.type === 'state' && tailEvent.phase) {
+      lastStatePhase = tailEvent.phase
+    }
     if (tailEvent?.type === 'done') {
-      terminalStatus = 'ok'
+      terminalStatus = needsInputDetected || lastStatePhase === 'waiting_input' ? 'needs_input' : 'ok'
     }
     if (tailEvent?.type === 'stopped') {
       terminalStatus = 'stopped'
     }
     if (tailEvent?.type === 'aborted') {
       terminalStatus = 'aborted'
+    }
+  }
+
+  if (needsInputDetected) {
+    return {
+      status: 'needs_input',
+      message: pendingQuestionText || errors.join('; ') || '任务执行需要用户输入',
     }
   }
 
@@ -186,6 +220,13 @@ async function runSkillJob(job: CronJob, sessionId: string): Promise<SkillRunRes
 
   if (terminalStatus === 'stopped') {
     return { status: 'stopped', message: '任务已停止' }
+  }
+
+  if (terminalStatus === 'needs_input') {
+    return {
+      status: 'needs_input',
+      message: pendingQuestionText || '任务执行需要用户输入',
+    }
   }
 
   return { status: 'ok' }
@@ -213,6 +254,15 @@ export async function runJob(job: CronJob): Promise<void> {
       completeRun(runId, 'ok', undefined, durationMs)
       console.log(`[Cron] job completed: ${job.name}, duration ${durationMs}ms`)
       await safeNotifyJobComplete(job, 'ok', sessionId, undefined, startTime)
+      return
+    }
+
+    if (result.status === 'needs_input') {
+      const terminalMessage = result.message || '任务执行需要用户输入'
+      markJobCompleted(job.id, 'error', terminalMessage)
+      completeRun(runId, 'error', terminalMessage, durationMs)
+      console.log(`[Cron] job needs input: ${job.name}, duration ${durationMs}ms`)
+      await safeNotifyJobComplete(job, 'error', sessionId, terminalMessage, startTime)
       return
     }
 

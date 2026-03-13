@@ -40,6 +40,7 @@ export interface SessionLiveStatus {
   sessionId: string
   dbStatus: string
   isRunning: boolean
+  needsInput?: boolean
   source: 'runtime' | 'database'
   startedAt: string
   lastEventAt?: string

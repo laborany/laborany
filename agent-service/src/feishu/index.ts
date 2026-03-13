@@ -25,13 +25,20 @@ const userStates = new Map<string, RemoteUserState>()
 const MAX_CONVERSE_MESSAGES = 40
 const STATE_FILE_PATH = join(DATA_DIR, 'feishu', 'user-states.json')
 
+function normalizeFeishuStateKey(rawKey: string): string {
+  return rawKey.split('@@', 1)[0]?.trim() || rawKey.trim()
+}
+
 function loadPersistedStates(): void {
   try {
     if (!existsSync(STATE_FILE_PATH)) return
     const raw = readFileSync(STATE_FILE_PATH, 'utf-8')
     const parsed = JSON.parse(raw) as Record<string, unknown>
     for (const [key, value] of Object.entries(parsed || {})) {
-      userStates.set(key, normalizeRemoteUserState(value, MAX_CONVERSE_MESSAGES))
+      userStates.set(
+        normalizeFeishuStateKey(key),
+        normalizeRemoteUserState(value, MAX_CONVERSE_MESSAGES),
+      )
     }
   } catch (error) {
     console.warn('[Feishu] failed to load persisted user states:', error)
@@ -64,7 +71,8 @@ function persistStates(): void {
 loadPersistedStates()
 
 export function buildUserStateKey(openId: string, chatId: string): string {
-  return `${openId.trim()}@@${chatId.trim()}`
+  void chatId
+  return normalizeFeishuStateKey(openId)
 }
 
 export function getUserState(stateKey: string): RemoteUserState {
