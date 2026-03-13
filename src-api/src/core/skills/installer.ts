@@ -1,36 +1,22 @@
 import JSZip from 'jszip'
-import { existsSync } from 'fs'
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'fs/promises'
-import { basename, dirname, extname, join, posix } from 'path'
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import { mkdir, rm, writeFile } from 'fs/promises'
+import { basename, dirname, join, posix } from 'path'
 import { Readable } from 'stream'
 import { gunzipSync } from 'zlib'
 import * as tarStream from 'tar-stream'
+import { loadSkill } from 'laborany-shared'
 import {
-  loadSkill,
-  generateCapabilityId,
-  normalizeCapabilityDisplayName,
-  pickUniqueCapabilityId,
-} from 'laborany-shared'
+  parseRemoteInstallSource,
+  type NormalizedRemoteInstallSource,
+} from './remote-install-source.js'
+import {
+  DEFAULT_SKILL_CATEGORY,
+  DEFAULT_SKILL_ICON,
+  materializeStagedSkillDirectory,
+  normalizeSkillDisplayName,
+} from './materializer.js'
 
 const MAX_ARCHIVE_SIZE = 100 * 1024 * 1024
-const DEFAULT_ICON = '🧩'
-const DEFAULT_CATEGORY = '工具'
-
-const CATEGORY_RULES: Array<{
-  category: string
-  icon: string
-  keywords: string[]
-}> = [
-  { category: '开发', icon: '🛠️', keywords: ['开发', 'code', 'coding', 'program', 'api', 'automation', 'browser', 'web'] },
-  { category: '写作', icon: '✍️', keywords: ['写作', 'writer', 'copywriting', 'content', 'blog', '文案'] },
-  { category: '金融', icon: '📈', keywords: ['金融', '股票', '投资', 'finance', 'stock', 'trading'] },
-  { category: '学术', icon: '📚', keywords: ['学术', '论文', 'research', 'paper', 'journal'] },
-  { category: '设计', icon: '🎨', keywords: ['设计', 'design', 'ui', 'ux', 'figma'] },
-  { category: '办公', icon: '📄', keywords: ['办公', 'word', 'excel', 'ppt', 'document', 'report', 'pdf'] },
-  { category: '数据', icon: '📊', keywords: ['数据', '分析', 'analysis', 'analytics', 'dashboard', 'monitor'] },
-  { category: '运营', icon: '📣', keywords: ['运营', 'marketing', '社媒', 'social', '增长'] },
-]
 
 type ArchiveFormat = 'zip' | 'tar' | 'tar.gz'
 
@@ -76,36 +62,6 @@ export class SkillInstallError extends Error {
   }
 }
 
-interface GithubSource {
-  source: string
-  owner: string
-  repo: string
-  ref?: string
-  treePath?: string
-}
-
-interface ParsedSkillMetadata {
-  name: string
-  description: string
-  icon?: string
-  category?: string
-}
-
-interface NormalizedInstallSource {
-  type: 'github_repo' | 'archive_url'
-  source: string
-  github?: GithubSource
-  archiveUrl?: string
-  sourceNameHint: string
-}
-
-function normalizeSegments(value: string): string[] {
-  return value
-    .split('/')
-    .map(item => item.trim())
-    .filter(Boolean)
-}
-
 function normalizeTreePath(input?: string): string | undefined {
   if (!input) return undefined
   const normalized = posix.normalize(input.replace(/\\/g, '/').trim()).replace(/^\/+/, '')
@@ -116,260 +72,12 @@ function normalizeTreePath(input?: string): string | undefined {
   return normalized
 }
 
-function validateOwnerRepo(value: string, field: 'owner' | 'repo'): string {
-  const normalized = value.replace(/\.git$/i, '').trim()
-  if (!/^[A-Za-z0-9_.-]+$/.test(normalized)) {
-    throw new SkillInstallError(`GitHub ${field} 不合法`, 400, 'INVALID_GITHUB_SOURCE')
-  }
-  return normalized
-}
-
-function tryParseGithubRepoSource(inputSource: string): GithubSource | null {
-  const source = inputSource.trim()
-  if (!source) return null
-
-  const normalizedInput = source
-    .replace(/^git\+/, '')
-    .replace(/^github\.com\//i, 'https://github.com/')
-
-  if (!/^https?:\/\//i.test(normalizedInput)) {
-    const scpLike = normalizedInput.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/i)
-    if (scpLike) {
-      return {
-        source,
-        owner: validateOwnerRepo(scpLike[1], 'owner'),
-        repo: validateOwnerRepo(scpLike[2], 'repo'),
-      }
-    }
-
-    const segments = normalizeSegments(normalizedInput)
-    if (segments.length < 2) return null
-    const owner = validateOwnerRepo(decodeURIComponent(segments[0]), 'owner')
-    const repo = validateOwnerRepo(decodeURIComponent(segments[1]), 'repo')
-
-    if (segments[2] === 'tree' && segments[3]) {
-      return {
-        source,
-        owner,
-        repo,
-        ref: decodeURIComponent(segments[3]),
-        treePath: normalizeTreePath(segments.slice(4).map(decodeURIComponent).join('/')),
-      }
-    }
-
-    return {
-      source,
-      owner,
-      repo,
-      treePath: normalizeTreePath(segments.slice(2).map(decodeURIComponent).join('/')),
-    }
-  }
-
-  let url: URL
-  try {
-    url = new URL(normalizedInput)
-  } catch {
-    return null
-  }
-
-  if (!/(^|\.)github\.com$/i.test(url.hostname)) return null
-
-  const segments = normalizeSegments(url.pathname).map(item => decodeURIComponent(item))
-  if (segments.length < 2) return null
-  if (segments.includes('archive') || /\.(zip|tar|tar\.gz|tgz)$/i.test(url.pathname)) return null
-
-  const owner = validateOwnerRepo(segments[0], 'owner')
-  const repo = validateOwnerRepo(segments[1], 'repo')
-
-  if (segments[2] === 'tree' && segments[3]) {
-    return {
-      source,
-      owner,
-      repo,
-      ref: segments[3],
-      treePath: normalizeTreePath(segments.slice(4).join('/')),
-    }
-  }
-
-  return {
-    source,
-    owner,
-    repo,
-    treePath: normalizeTreePath(segments.slice(2).join('/')),
-  }
-}
-
-function stripArchiveExt(fileName: string): string {
-  return fileName
-    .replace(/\.(tar\.gz|tgz|zip|tar)$/i, '')
-    .trim() || fileName
-}
-
-function normalizeInstallSource(inputSource: string): NormalizedInstallSource {
-  const source = inputSource.trim()
-  if (!source) {
-    throw new SkillInstallError('source 不能为空', 400, 'EMPTY_SOURCE')
-  }
-
-  const githubSource = tryParseGithubRepoSource(source)
-  if (githubSource) {
-    return {
-      type: 'github_repo',
-      source,
-      github: githubSource,
-      sourceNameHint: githubSource.repo,
-    }
-  }
-
-  if (!/^https?:\/\//i.test(source)) {
-    throw new SkillInstallError('仅支持 GitHub 地址或可下载 archive 链接', 400, 'UNSUPPORTED_SOURCE')
-  }
-
-  let url: URL
-  try {
-    url = new URL(source)
-  } catch {
-    throw new SkillInstallError('下载地址格式错误', 400, 'INVALID_SOURCE_URL')
-  }
-
-  if (!/^https?:$/i.test(url.protocol)) {
-    throw new SkillInstallError('仅支持 http/https 下载地址', 400, 'UNSUPPORTED_PROTOCOL')
-  }
-
-  const fileName = basename(url.pathname)
-  const sourceNameHint = stripArchiveExt(basename(fileName, extname(fileName))) || 'imported-skill'
-
-  return {
-    type: 'archive_url',
-    source,
-    archiveUrl: source,
-    sourceNameHint,
-  }
-}
-
-function parseFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string } | null {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n[\s\S]*)?$/)
-  if (!match) return null
-
-  try {
-    const frontmatter = parseYaml(match[1]) as Record<string, unknown>
-    return { frontmatter: frontmatter || {}, body: match[2] || '\n' }
-  } catch {
-    return null
-  }
-}
-
 function sanitizeRelativePath(input: string): string | null {
   const normalized = posix.normalize(input.replace(/\\/g, '/')).replace(/^\/+/, '')
   if (!normalized || normalized === '.') return null
   if (normalized.startsWith('../') || normalized === '..') return null
   if (normalized.split('/').some(segment => segment === '..' || !segment)) return null
   return normalized
-}
-
-function inferMetadata(rawText: string): { icon: string; category: string } {
-  const text = rawText.toLowerCase()
-  for (const rule of CATEGORY_RULES) {
-    if (rule.keywords.some(keyword => text.includes(keyword.toLowerCase()))) {
-      return { icon: rule.icon, category: rule.category }
-    }
-  }
-  return { icon: DEFAULT_ICON, category: DEFAULT_CATEGORY }
-}
-
-function normalizeDisplayName(name: string): string {
-  return String(name || '')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function fallbackSkillId(name: string): string {
-  const normalized = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return normalized || `skill-${Date.now()}`
-}
-
-function deriveDescriptionFromText(text: string, fallback = '导入自外部来源的 LaborAny 技能'): string {
-  const cleaned = text
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/[#>*`[\]\-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!cleaned) return fallback
-  return cleaned.slice(0, 180)
-}
-
-function ensureSkillInstallIntent(query: string): boolean {
-  const text = query.toLowerCase()
-  const installLike = /(安装|安裝|install|添加|加入|导入|接入|引入|下载|下載|clone|克隆|装)/
-  const createLike = /(创建|建立|生成|新建|create|make)/
-  const skillLike = /(skill|技能|能力|worker|助手)/
-  const sourceHintLike = /(仓库|repo|repository|链接|連結|地址|来源|來源|url|网址|網址|路径|路徑|目录|目錄|源码|源碼)/
-  const githubSourceHintLike = /(?:从|從|from)\s*github|github\s*(仓库|倉庫|repo|repository|链接|連結|地址|路径|路徑|目录|目錄|来源|來源)/
-  const hasSourceHint = sourceHintLike.test(text) || githubSourceHintLike.test(text) || Boolean(extractInstallSourceCandidate(query))
-  return (
-    installLike.test(text) && (skillLike.test(text) || hasSourceHint)
-  ) || (
-    createLike.test(text) && skillLike.test(text) && hasSourceHint
-  )
-}
-
-export function isSkillInstallIntent(query: string): boolean {
-  return ensureSkillInstallIntent(query)
-}
-
-function extractHttpUrl(text: string): string | null {
-  const match = text.match(/https?:\/\/[^\s)\]}]+/i)
-  return match ? match[0].replace(/[),.;，。；]+$/, '') : null
-}
-
-function isLikelyArchiveUrl(value: string): boolean {
-  try {
-    const url = new URL(value)
-    const pathname = url.pathname.toLowerCase()
-    return pathname.endsWith('.zip')
-      || pathname.endsWith('.tar')
-      || pathname.endsWith('.tar.gz')
-      || pathname.endsWith('.tgz')
-  } catch {
-    return false
-  }
-}
-
-function extractInstallSourceCandidate(query: string): string | null {
-  const url = extractHttpUrl(query)
-  if (url) {
-    if (tryParseGithubRepoSource(url)) return url
-    if (isLikelyArchiveUrl(url)) return url
-    return null
-  }
-
-  const shortSource = query.match(/\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\/(?:tree\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.\-\/]+|[A-Za-z0-9_.\-\/]+))?)\b/)
-  const candidate = shortSource?.[1] || ''
-  return candidate && tryParseGithubRepoSource(candidate) ? candidate : null
-}
-
-export function detectInstallSourceFromQuery(query: string): string | null {
-  const source = extractInstallSourceCandidate(query)
-  if (!source) return null
-
-  const trimmed = query.trim()
-  if (trimmed === source) return source
-
-  const text = query.toLowerCase()
-  const installLike = /(安装|安裝|install|添加|加入|导入|接入|引入|下载|下載|clone|克隆|装)/
-  const createLike = /(创建|建立|生成|新建|create|make)/
-  const skillLike = /(skill|技能|能力|worker|助手)/
-  const sourceHintLike = /(github|仓库|倉庫|repo|repository|链接|連結|地址|来源|來源|url|网址|網址|路径|路徑|目录|目錄|源码|源碼)/
-
-  if (installLike.test(text)) return source
-  if (sourceHintLike.test(text) && skillLike.test(text)) return source
-  if (createLike.test(text) && skillLike.test(text)) return source
-
-  return null
 }
 
 async function fetchDefaultBranch(owner: string, repo: string): Promise<string> {
@@ -675,195 +383,6 @@ async function writeSelectedSkill(params: {
   }
 }
 
-async function findReadmePath(stagingDir: string): Promise<string | null> {
-  const directCandidates = ['README.md', 'readme.md', 'README.MD']
-  for (const candidate of directCandidates) {
-    const fullPath = join(stagingDir, candidate)
-    if (existsSync(fullPath)) return fullPath
-  }
-
-  try {
-    const entries = await readdir(stagingDir, { withFileTypes: true })
-    const nestedReadmeDir = entries.find(entry => entry.isDirectory() && /^docs?$/i.test(entry.name))
-    if (!nestedReadmeDir) return null
-    const nestedPath = join(stagingDir, nestedReadmeDir.name, 'README.md')
-    return existsSync(nestedPath) ? nestedPath : null
-  } catch {
-    return null
-  }
-}
-
-async function ensureSkillTemplateForLaborAny(stagingDir: string, fallbackName: string): Promise<boolean> {
-  const skillMdPath = join(stagingDir, 'SKILL.md')
-  if (existsSync(skillMdPath)) return false
-
-  const readmePath = await findReadmePath(stagingDir)
-  const readmeText = readmePath ? await readFile(readmePath, 'utf-8').catch(() => '') : ''
-
-  const candidateName = normalizeDisplayName(fallbackName || basename(stagingDir) || 'Imported Skill')
-  const name = candidateName || 'Imported Skill'
-  const description = deriveDescriptionFromText(readmeText, `${name}（外部来源）自动改造为 LaborAny 可安装技能`)
-  const inferred = inferMetadata(`${name}\n${description}`)
-
-  const frontmatter = stringifyYaml({
-    name,
-    description,
-    icon: inferred.icon,
-    category: inferred.category,
-  }).trimEnd()
-
-  const body = [
-    '# Skill Overview',
-    '',
-    'This skill is auto-converted from an external source to match LaborAny skill format.',
-    '',
-    readmePath
-      ? `Primary reference is kept at \`${basename(readmePath)}\`.`
-      : 'No README was found in source package; please refine instructions as needed.',
-    '',
-    '## Usage',
-    '',
-    '- Read bundled references/scripts in this skill directory when needed.',
-    '- Adjust this SKILL.md for your own workflow and execution constraints.',
-    '',
-  ].join('\n')
-
-  await writeFile(skillMdPath, `---\n${frontmatter}\n---\n\n${body}`, 'utf-8')
-  return true
-}
-
-async function patchSkillMetadata(stagingDir: string, fallbackName: string): Promise<{
-  meta: ParsedSkillMetadata
-  metadataPatched: { icon: boolean; category: boolean }
-}> {
-  const skillMdPath = join(stagingDir, 'SKILL.md')
-  const skillYamlPath = join(stagingDir, 'skill.yaml')
-
-  if (!existsSync(skillMdPath)) {
-    throw new SkillInstallError('skill 目录缺少 SKILL.md', 422, 'SKILL_MD_MISSING')
-  }
-
-  const skillMdRaw = await readFile(skillMdPath, 'utf-8')
-  const frontmatterParsed = parseFrontmatter(skillMdRaw)
-
-  if (frontmatterParsed) {
-    const frontmatter = frontmatterParsed.frontmatter
-    const body = frontmatterParsed.body
-    const bodyDescription = deriveDescriptionFromText(body, '')
-    const name = (typeof frontmatter.name === 'string' && frontmatter.name.trim()) || normalizeDisplayName(fallbackName)
-    const description = (typeof frontmatter.description === 'string' && frontmatter.description.trim()) || bodyDescription || `${name} for LaborAny`
-    const existedIcon = typeof frontmatter.icon === 'string' ? frontmatter.icon.trim() : ''
-    const existedCategory = typeof frontmatter.category === 'string' ? frontmatter.category.trim() : ''
-
-    const inferred = inferMetadata(`${name}\n${description}`)
-    const finalIcon = existedIcon || inferred.icon
-    const finalCategory = existedCategory || inferred.category
-
-    const metadataPatched = {
-      icon: !existedIcon,
-      category: !existedCategory,
-    }
-
-    const shouldRewrite = metadataPatched.icon
-      || metadataPatched.category
-      || !(typeof frontmatter.name === 'string' && frontmatter.name.trim())
-      || !(typeof frontmatter.description === 'string' && frontmatter.description.trim())
-
-    if (shouldRewrite) {
-      const nextFrontmatter: Record<string, unknown> = {
-        ...frontmatter,
-        name,
-        description,
-        icon: finalIcon,
-        category: finalCategory,
-      }
-      const yamlBody = stringifyYaml(nextFrontmatter).trimEnd()
-      const nextSkillMd = `---\n${yamlBody}\n---${body.startsWith('\n') ? body : `\n${body}`}`
-      await writeFile(skillMdPath, nextSkillMd, 'utf-8')
-    }
-
-    return {
-      meta: {
-        name,
-        description,
-        icon: finalIcon,
-        category: finalCategory,
-      },
-      metadataPatched,
-    }
-  }
-
-  if (!existsSync(skillYamlPath)) {
-    const name = normalizeDisplayName(fallbackName || 'Imported Skill')
-    const description = deriveDescriptionFromText(skillMdRaw, `${name} for LaborAny`)
-    const inferred = inferMetadata(`${name}\n${description}`)
-    const yamlBody = stringifyYaml({
-      name,
-      description,
-      icon: inferred.icon,
-      category: inferred.category,
-    }).trimEnd()
-    await writeFile(skillMdPath, `---\n${yamlBody}\n---\n\n${skillMdRaw}`, 'utf-8')
-    return {
-      meta: {
-        name,
-        description,
-        icon: inferred.icon,
-        category: inferred.category,
-      },
-      metadataPatched: {
-        icon: true,
-        category: true,
-      },
-    }
-  }
-
-  const yamlRaw = await readFile(skillYamlPath, 'utf-8')
-  const yamlObject = parseYaml(yamlRaw) as Record<string, unknown> || {}
-  const name = (typeof yamlObject.name === 'string' && yamlObject.name.trim()) || normalizeDisplayName(fallbackName)
-  const description = (typeof yamlObject.description === 'string' && yamlObject.description.trim()) || deriveDescriptionFromText(skillMdRaw, `${name} for LaborAny`)
-  const existedIcon = typeof yamlObject.icon === 'string' ? yamlObject.icon.trim() : ''
-  const existedCategory = typeof yamlObject.category === 'string' ? yamlObject.category.trim() : ''
-
-  const inferred = inferMetadata(`${name}\n${description}`)
-  const finalIcon = existedIcon || inferred.icon
-  const finalCategory = existedCategory || inferred.category
-
-  const metadataPatched = {
-    icon: !existedIcon,
-    category: !existedCategory,
-  }
-
-  if (metadataPatched.icon || metadataPatched.category || !(typeof yamlObject.description === 'string' && yamlObject.description.trim())) {
-    const nextYaml: Record<string, unknown> = {
-      ...yamlObject,
-      name,
-      description,
-      icon: finalIcon,
-      category: finalCategory,
-    }
-    await writeFile(skillYamlPath, stringifyYaml(nextYaml), 'utf-8')
-  }
-
-  return {
-    meta: {
-      name,
-      description,
-      icon: finalIcon,
-      category: finalCategory,
-    },
-    metadataPatched,
-  }
-}
-
-async function createUniqueSkillId(displayName: string): Promise<string> {
-  const normalizedName = normalizeCapabilityDisplayName(displayName || 'Imported Skill')
-  const baseId = generateCapabilityId(normalizedName, 'skill') || fallbackSkillId(normalizedName)
-  const existing = await loadSkill.listAll()
-  const idSet = new Set(existing.map(item => item.id))
-  return pickUniqueCapabilityId(baseId, idSet)
-}
-
 async function safeCleanup(path: string): Promise<void> {
   await rm(path, { recursive: true, force: true }).catch(() => {})
 }
@@ -880,12 +399,32 @@ export async function installSkillFromSource(params: {
   source: string
   onProgress?: (event: InstallProgressEvent) => void | Promise<void>
 }): Promise<SkillInstallResult> {
+  const parsed = parseRemoteInstallSource(params.source)
+  if (!parsed.ok) {
+    throw new SkillInstallError(
+      parsed.error.message,
+      parsed.error.status,
+      parsed.error.code,
+      parsed.error.detail,
+    )
+  }
+
+  return installSkillFromNormalizedSource({
+    source: parsed.value,
+    onProgress: params.onProgress,
+  })
+}
+
+export async function installSkillFromNormalizedSource(params: {
+  source: NormalizedRemoteInstallSource
+  onProgress?: (event: InstallProgressEvent) => void | Promise<void>
+}): Promise<SkillInstallResult> {
   await emitProgress(params.onProgress, {
     stage: 'validate_source',
     message: '开始解析安装来源...',
   })
 
-  const normalized = normalizeInstallSource(params.source)
+  const normalized = params.source
   let zip: JSZip
   let treePath: string | undefined
 
@@ -951,50 +490,38 @@ export async function installSkillFromSource(params: {
       stagingDir,
     })
 
-    if (sourceAdapted) {
-      await ensureSkillTemplateForLaborAny(
-        stagingDir,
-        normalizeDisplayName(basename(selectedDir) || normalized.sourceNameHint || 'Imported Skill'),
-      )
-    }
-
     await emitProgress(params.onProgress, {
       stage: 'patch_metadata',
       message: '按 LaborAny 规范检查并补全 icon/category...',
     })
 
-    const defaultName = normalizeDisplayName(basename(selectedDir) || normalized.sourceNameHint || 'Imported Skill')
-    const patched = await patchSkillMetadata(stagingDir, defaultName)
-    const finalSkillId = await createUniqueSkillId(patched.meta.name)
-    const installedPath = join(userSkillsDir, finalSkillId)
+    const defaultName = normalizeSkillDisplayName(basename(selectedDir) || normalized.sourceNameHint || 'Imported Skill')
+    const materialized = await materializeStagedSkillDirectory({
+      stagingDir,
+      fallbackName: defaultName,
+      userSkillsDir,
+    })
 
     await emitProgress(params.onProgress, {
       stage: 'finalize',
-      message: `复制到用户目录: ${installedPath}`,
+      message: `复制到用户目录: ${materialized.installedPath}`,
     })
 
-    if (existsSync(installedPath)) {
-      throw new SkillInstallError('目标技能目录已存在，请重试', 409, 'SKILL_ID_CONFLICT')
-    }
-
-    await rename(stagingDir, installedPath)
-    loadSkill.clearCache()
-
-    const summaryBase = `已安装为「${patched.meta.name}」(ID: ${finalSkillId})，位置：${installedPath}`
-    const summary = sourceAdapted
+    const summaryBase = `已安装为「${materialized.metadata.name}」(ID: ${materialized.skillId})，位置：${materialized.installedPath}`
+    const summary = sourceAdapted || materialized.sourceAdapted
       ? `${summaryBase}。来源已自动改造为 LaborAny 兼容模板。`
       : summaryBase
 
     return {
-      skillId: finalSkillId,
-      name: patched.meta.name,
-      installedPath,
+      skillId: materialized.skillId,
+      name: materialized.metadata.name,
+      installedPath: materialized.installedPath,
       source: normalized.source,
       sourceType: normalized.type,
-      metadataPatched: patched.metadataPatched,
+      metadataPatched: materialized.metadataPatched,
       metadata: {
-        icon: patched.meta.icon || DEFAULT_ICON,
-        category: patched.meta.category || DEFAULT_CATEGORY,
+        icon: materialized.metadata.icon || DEFAULT_SKILL_ICON,
+        category: materialized.metadata.category || DEFAULT_SKILL_CATEGORY,
       },
       summary,
     }

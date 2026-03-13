@@ -1,0 +1,2 @@
+请帮我安装这个 skill：
+https://github.com/example-org/example-repo/tree/main/skills/agent-browser

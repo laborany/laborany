@@ -2,15 +2,14 @@ import { copyFile, mkdir, readdir, rename, stat } from 'fs/promises'
 import type { Skill, CompositeStep } from 'laborany-shared'
 import {
   loadSkill,
-  generateCapabilityId,
   normalizeCapabilityDisplayName,
-  pickUniqueCapabilityId,
 } from 'laborany-shared'
 import { dbHelper } from '../database.js'
 import { executeAgent, ensureTaskDir, type AgentEvent, type ModelOverride } from './executor.js'
 import { sessionManager } from './session-manager.js'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'path'
 import { existsSync } from 'fs'
+import { materializeExistingSkillDirectory } from '../skills/materializer.js'
 import {
   buildSkillQuestionSummary,
   looksLikeWaitingInputMessage,
@@ -1125,36 +1124,13 @@ class RuntimeTaskManager {
 
   private async normalizeCreatedSkillId(skillId: string): Promise<string> {
     const skill = await loadSkill.byId(skillId)
-    const normalizedName = normalizeCapabilityDisplayName(skill?.meta?.name || skillId)
-    const expectedBaseId = generateCapabilityId(normalizedName, 'skill')
-
-    if (expectedBaseId === skillId) {
-      return skillId
-    }
 
     try {
-      const userSkillsDir = loadSkill.getUserSkillsDir()
-      const fromPath = join(userSkillsDir, skillId)
-      if (!existsSync(fromPath)) {
-        return skillId
-      }
-
-      const dirs = await readdir(userSkillsDir, { withFileTypes: true })
-      const allSkillIds = dirs.filter((d) => d.isDirectory()).map((d) => d.name)
-      const newId = pickUniqueCapabilityId(expectedBaseId, allSkillIds)
-
-      if (newId === skillId) {
-        return skillId
-      }
-
-      const toPath = join(userSkillsDir, newId)
-      if (existsSync(toPath)) {
-        return skillId
-      }
-
-      await rename(fromPath, toPath)
-      loadSkill.clearCache()
-      return newId
+      const materialized = await materializeExistingSkillDirectory({
+        existingSkillId: skillId,
+        fallbackName: normalizeCapabilityDisplayName(skill?.meta?.name || skillId),
+      })
+      return materialized.skillId
     } catch {
       return skillId
     }

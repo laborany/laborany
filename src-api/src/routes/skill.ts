@@ -18,11 +18,13 @@ import {
 import { dbHelper } from '../core/database.js'
 import { getUploadsDir } from './file.js'
 import {
+  installSkillFromNormalizedSource,
   installSkillFromSource,
   SkillInstallError,
-  detectInstallSourceFromQuery,
-  isSkillInstallIntent,
 } from '../core/skills/installer.js'
+import { buildSkillCreatorTaskQuery } from '../core/skills/provision-query-builder.js'
+import { resolveSkillProvision } from '../core/skills/provision-resolver.js'
+import { parseRemoteInstallSource } from '../core/skills/remote-install-source.js'
 import {
   migrateFromEnvIfNeeded,
   readModelProfiles,
@@ -262,7 +264,24 @@ skill.post('/install', async (c) => {
   }
 
   try {
-    const result = await installSkillFromSource({ source })
+    const resolution = resolveSkillProvision(source)
+    if (resolution.status !== 'resolved' || resolution.intent.mode !== 'remote_install') {
+      return c.json({
+        error: '该接口仅支持 GitHub 地址或可下载 archive 链接',
+        code: 'UNSUPPORTED_SOURCE',
+      }, { status: 400 })
+    }
+
+    const parsed = parseRemoteInstallSource(resolution.intent.source)
+    if (!parsed.ok) {
+      return c.json({
+        error: parsed.error.message,
+        detail: parsed.error.detail,
+        code: parsed.error.code,
+      }, { status: parsed.error.status as any })
+    }
+
+    const result = await installSkillFromNormalizedSource({ source: parsed.value })
     return c.json({
       success: true,
       skillId: result.skillId,
@@ -462,12 +481,14 @@ skill.post('/execute', async (c) => {
   }
 
   const installSourceQuery = (originQuery || query || '').trim() || query
-  const directInstallSource = skillId === 'skill-creator'
-    ? detectInstallSourceFromQuery(installSourceQuery)
+  const provisionResolution = skillId === 'skill-creator'
+    ? resolveSkillProvision(installSourceQuery)
     : null
-  const installIntentWithoutSource = skillId === 'skill-creator'
-    && isSkillInstallIntent(installSourceQuery)
-    && !directInstallSource
+  const directInstallSource = provisionResolution?.status === 'resolved'
+    && provisionResolution.intent.mode === 'remote_install'
+    ? provisionResolution.intent.source
+    : null
+  const installIntentWithoutSource = provisionResolution?.status === 'missing_source'
 
   if (installIntentWithoutSource) {
     const sessionId = existingSessionId || uuid()
@@ -669,9 +690,16 @@ skill.post('/execute', async (c) => {
   }
 
   let finalQuery = query
+  if (skillId === 'skill-creator' && provisionResolution?.status === 'resolved' && provisionResolution.intent.mode === 'inline_spec') {
+    finalQuery = buildSkillCreatorTaskQuery({
+      intent: provisionResolution.intent,
+      userSkillsDir: loadSkill.getUserSkillsDir(),
+    })
+  }
+
   if (uploadedFileNames.length > 0) {
     const fileList = uploadedFileNames.map(name => `- ${name}`).join('\n')
-    finalQuery = `${query}\n\n[Uploaded files in current task directory]\n${fileList}\n\n这些文件都在当前任务工作目录下，请先读取这些文件，再处理用户请求。`
+    finalQuery = `${finalQuery}\n\n[Uploaded files in current task directory]\n${fileList}\n\n这些文件都在当前任务工作目录下，请先读取这些文件，再处理用户请求。`
   }
 
   const beforeSkillIds = new Set<string>()
