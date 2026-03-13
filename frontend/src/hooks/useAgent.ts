@@ -3,6 +3,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import type { AgentMessage, TaskFile } from '../types'
 import { API_BASE } from '../config/api'
 import { useModelProfile } from '../contexts/ModelProfileContext'
+import { mergeAttachmentIds, uploadAttachments } from '../lib/attachments'
 
 export type { AgentMessage, TaskFile }
 
@@ -999,7 +1000,7 @@ export function useAgent(skillId: string) {
   )
 
   const execute = useCallback(
-    async (query: string, files?: File[], options?: { originQuery?: string }) => {
+    async (query: string, files?: File[], options?: { originQuery?: string; attachmentIds?: string[] }) => {
       if (executeInFlightRef.current) {
         console.warn('[useAgent] 忽略重复执行：已有请求在进行中')
         return
@@ -1010,6 +1011,7 @@ export function useAgent(skillId: string) {
         sessionId: sessionIdRef.current || '',
         files: (files || []).map((file) => `${file.name}:${file.size}:${file.lastModified}`).join('|'),
         originQuery: options?.originQuery || '',
+        attachmentIds: (options?.attachmentIds || []).join('|'),
       })
       const now = Date.now()
       const lastExecute = lastExecuteFingerprintRef.current
@@ -1076,22 +1078,21 @@ export function useAgent(skillId: string) {
 
         const currentSessionId = sessionIdRef.current
 
-        let fileIds: string[] = []
+        let fileIds = options?.attachmentIds || []
         if (files && files.length > 0) {
           console.log('[useAgent] 上传文件:', files.map(f => f.name))
-          fileIds = await uploadFiles(files, token || undefined)
-        }
-
-        let finalQuery = query
-        if (fileIds.length > 0) {
-          finalQuery = `${query}\n\n[LABORANY_FILE_IDS: ${fileIds.join(', ')}]`
+          fileIds = mergeAttachmentIds(
+            options?.attachmentIds || [],
+            await uploadAttachments(files, token || undefined),
+          )
         }
 
         headers['Content-Type'] = 'application/json'
         body = JSON.stringify({
           skill_id: executionSkillId,
-          query: finalQuery,
+          query,
           originQuery: options?.originQuery,
+          attachmentIds: fileIds,
           sessionId: currentSessionId,
           modelProfileId: activeProfileId || undefined,
         })
@@ -1425,53 +1426,4 @@ export function useAgent(skillId: string) {
 function createAuthHeaders(token: string | null | undefined): Record<string, string> | undefined {
   if (!token) return undefined
   return { Authorization: `Bearer ${token}` }
-}
-
-async function uploadFiles(files: File[], token?: string): Promise<string[]> {
-  const fileIds: string[] = []
-  const maxRetries = 3
-
-  for (const file of files) {
-    let uploaded = false
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const formData = new FormData()
-        formData.append('file', file)
-
-        const res = await fetch(`${API_BASE}/files/upload`, {
-          method: 'POST',
-          headers: createAuthHeaders(token),
-          body: formData,
-        })
-
-        if (res.ok) {
-          const data = await res.json()
-          fileIds.push(data.id)
-          uploaded = true
-          break
-        }
-
-        if (res.status === 400 && attempt < maxRetries) {
-          await sleep(300 * attempt)
-          continue
-        }
-
-        console.error('[useAgent] file upload failed:', file.name, res.status)
-        break
-      } catch (err) {
-        if (attempt >= maxRetries) {
-          console.error('[useAgent] 文件上传异常:', file.name, err)
-          break
-        }
-        await sleep(300 * attempt)
-      }
-    }
-
-    if (!uploaded) {
-      console.warn('[useAgent] 文件未上传成功，继续执行（未附带该文件）:', file.name)
-    }
-  }
-
-  return fileIds
 }

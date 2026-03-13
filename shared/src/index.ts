@@ -17,6 +17,27 @@ export {
 } from './paths.js'
 
 export {
+  getRuntimeHomeDir,
+  getRuntimeDataDir,
+  getRuntimeUploadsDir,
+  getRuntimeTasksDir,
+} from './runtime-paths.js'
+
+export {
+  normalizeAttachmentIds,
+  stripAttachmentMarkers,
+  extractAttachmentIdsFromText,
+} from './attachment-ids.js'
+
+export {
+  sanitizeTaskFileName,
+  ensureUniqueTaskFileName,
+  resolveUploadedAttachmentPath,
+  hydrateAttachmentsToTaskDir,
+  type HydrateTaskAttachmentsOptions,
+} from './task-attachments.js'
+
+export {
   CAPABILITY_ID_MAX_LENGTH,
   normalizeCapabilityDisplayName,
   normalizeCapabilityId,

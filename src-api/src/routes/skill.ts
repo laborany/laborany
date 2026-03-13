@@ -2,19 +2,25 @@
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { v4 as uuid } from 'uuid'
-import { readFile, readdir, writeFile, mkdir, rm, copyFile } from 'fs/promises'
-import { join, extname } from 'path'
-import { existsSync, readdirSync } from 'fs'
+import { readFile, readdir, writeFile, mkdir, rm } from 'fs/promises'
+import { join } from 'path'
+import { existsSync } from 'fs'
 import { stat } from 'fs/promises'
 import {
   loadSkill,
   executeAgent,
-  sessionManager,
   ensureTaskDir,
+  sessionManager,
   runtimeTaskManager,
   type RuntimeEvent,
   type ModelOverride,
 } from '../core/agent/index.js'
+import {
+  ensureUniqueTaskFileName,
+  extractAttachmentIdsFromText,
+  hydrateAttachmentsToTaskDir,
+  normalizeAttachmentIds,
+} from 'laborany-shared'
 import { dbHelper } from '../core/database.js'
 import { getUploadsDir } from './file.js'
 import {
@@ -41,39 +47,6 @@ interface SessionModelMeta {
 interface ResolvedModelSelection extends SessionModelMeta {
   modelOverride?: ModelOverride
   warning?: string
-}
-
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │  将前端上传的文件 ID 解析为绝对路径                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-function resolveUploadedFileId(fileId: string): string | null {
-  const uploadsDir = getUploadsDir()
-  if (!existsSync(uploadsDir)) return null
-  const files = readdirSync(uploadsDir)
-  const matched = files.find(f => f.startsWith(fileId))
-  return matched ? join(uploadsDir, matched) : null
-}
-
-function sanitizeFileName(fileName: string): string {
-  const normalized = (fileName || '').replace(/\\/g, '/').split('/').pop()?.trim() || ''
-  const safe = normalized.replace(/[<>:"|?*\x00-\x1f]/g, '_')
-  return safe || `upload-${Date.now()}`
-}
-
-function ensureUniqueTaskFileName(taskDir: string, preferredName: string): string {
-  const safeName = sanitizeFileName(preferredName)
-  const extension = extname(safeName)
-  const baseName = safeName.slice(0, safeName.length - extension.length) || 'upload'
-
-  let counter = 0
-  while (true) {
-    const suffix = counter === 0 ? '' : `-${counter}`
-    const candidateName = `${baseName}${suffix}${extension}`
-    if (!existsSync(join(taskDir, candidateName))) {
-      return candidateName
-    }
-    counter += 1
-  }
 }
 
 const skill = new Hono()
@@ -422,6 +395,7 @@ skill.post('/execute', async (c) => {
   let modelProfileIdRaw: string | undefined
   let sourceRaw: string | undefined
   let sourceMeta: Record<string, unknown> | undefined
+  let attachmentIdsRaw: unknown
   const files: File[] = []
 
   const contentType = c.req.header('Content-Type') || ''
@@ -434,6 +408,7 @@ skill.post('/execute', async (c) => {
     existingSessionId = (body['sessionId'] as string) || (body['session_id'] as string)
     modelProfileIdRaw = (body['modelProfileId'] as string) || (body['model_profile_id'] as string)
     sourceRaw = body['source'] as string
+    attachmentIdsRaw = body['attachmentIds']
     const sourceMetaStr = body['sourceMeta'] as string
     if (sourceMetaStr) {
       try {
@@ -461,6 +436,7 @@ skill.post('/execute', async (c) => {
     existingSessionId = body.sessionId || body.session_id
     modelProfileIdRaw = body.modelProfileId || body.model_profile_id
     sourceRaw = body.source
+    attachmentIdsRaw = body.attachmentIds
     sourceMeta = body.sourceMeta
   }
 
@@ -468,6 +444,7 @@ skill.post('/execute', async (c) => {
   const requestedModelProfileId = (modelProfileIdRaw || '').trim() || undefined
   const modelSelection = resolveModelSelection(requestedModelProfileId)
   const source = (sourceRaw || '').trim() || 'desktop'
+  const requestAttachmentIds = normalizeAttachmentIds(attachmentIdsRaw)
 
   if (!skillId || !query) {
     return c.json({ error: '缺少 skillId 或 query 参数' }, 400)
@@ -480,7 +457,15 @@ skill.post('/execute', async (c) => {
     return c.json({ error: '当前会话任务仍在执行，请等待本轮结束或先停止任务' }, 409)
   }
 
-  const installSourceQuery = (originQuery || query || '').trim() || query
+  const extractedAttachments = extractAttachmentIdsFromText(query)
+  const cleanQuery = extractedAttachments.text || query.trim()
+  query = cleanQuery
+  const attachmentIds = Array.from(new Set([
+    ...requestAttachmentIds,
+    ...extractedAttachments.attachmentIds,
+  ]))
+
+  const installSourceQuery = (originQuery || cleanQuery).trim() || cleanQuery
   const provisionResolution = skillId === 'skill-creator'
     ? resolveSkillProvision(installSourceQuery)
     : null
@@ -497,7 +482,7 @@ skill.post('/execute', async (c) => {
     ensureRunningSession(
       sessionId,
       skillId,
-      query,
+      cleanQuery,
       workDir,
       modelSelection,
       source,
@@ -506,7 +491,7 @@ skill.post('/execute', async (c) => {
 
     dbHelper.run(
       `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-      [sessionId, 'user', query]
+      [sessionId, 'user', cleanQuery]
     )
 
     return streamSSE(c, async (stream) => {
@@ -545,7 +530,7 @@ skill.post('/execute', async (c) => {
     ensureRunningSession(
       sessionId,
       skillId,
-      query,
+      cleanQuery,
       workDir,
       modelSelection,
       source,
@@ -554,7 +539,7 @@ skill.post('/execute', async (c) => {
 
     dbHelper.run(
       `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-      [sessionId, 'user', query]
+      [sessionId, 'user', cleanQuery]
     )
 
     return streamSSE(c, async (stream) => {
@@ -658,38 +643,22 @@ skill.post('/execute', async (c) => {
    * │  前端上传文件后 query 包含 [已上传文件 ID: uuid1, uuid2]                  │
    * │  需要将 ID 解析为 agent 可访问的绝对路径                                  │
    * └──────────────────────────────────────────────────────────────────────────┘ */
-  const fileIdPattern = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
-  const fileIdMatches = [...query.matchAll(fileIdPattern)]
-
-  if (fileIdMatches.length > 0) {
-    for (const match of fileIdMatches) {
-      const ids = (match[1] || '')
-        .split(',')
-        .map(item => item.trim())
-        .filter(Boolean)
-
-      for (const id of ids) {
-        const resolvedPath = resolveUploadedFileId(id)
-        if (!resolvedPath) {
-          console.warn(`[Skill] 无法解析文件 ID: ${id}`)
-          continue
-        }
-
-        try {
-          const sourceFileName = resolvedPath.split(/[\\/]/).pop() || `${id}.bin`
-          const safeName = ensureUniqueTaskFileName(taskDir, sourceFileName)
-          await copyFile(resolvedPath, join(taskDir, safeName))
-          addUploadedFileName(safeName)
-        } catch (error) {
-          console.error(`[Skill] 复制上传文件到 task 目录失败: ${id}`, error)
-        }
-      }
-    }
-
-    query = query.replace(fileIdPattern, '').trim()
+  if (attachmentIds.length > 0) {
+    const copiedNames = await hydrateAttachmentsToTaskDir({
+      attachmentIds,
+      taskDir,
+      uploadsDir: getUploadsDir(),
+      onResolveFailure: (id) => {
+        console.warn(`[Skill] 无法解析文件 ID: ${id}`)
+      },
+      onCopyFailure: (id, error) => {
+        console.error(`[Skill] 复制上传文件到 task 目录失败: ${id}`, error)
+      },
+    })
+    copiedNames.forEach(addUploadedFileName)
   }
 
-  let finalQuery = query
+  let finalQuery = cleanQuery
   if (skillId === 'skill-creator' && provisionResolution?.status === 'resolved' && provisionResolution.intent.mode === 'inline_spec') {
     finalQuery = buildSkillCreatorTaskQuery({
       intent: provisionResolution.intent,
@@ -716,7 +685,7 @@ skill.post('/execute', async (c) => {
   // 保存用户消息
   dbHelper.run(
     `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-    [sessionId, 'user', query]
+    [sessionId, 'user', cleanQuery]
   )
 
   runtimeTaskManager.startTask({
@@ -728,7 +697,7 @@ skill.post('/execute', async (c) => {
     modelProfileId: modelSelection.modelProfileId,
     modelProfileName: modelSelection.modelProfileName,
     modelName: modelSelection.modelName,
-    originQuery: skillId === 'skill-creator' ? (originQuery || query) : undefined,
+    originQuery: skillId === 'skill-creator' ? (originQuery || cleanQuery) : undefined,
     beforeSkillIds: skillId === 'skill-creator' ? beforeSkillIds : undefined,
     source: source as 'desktop' | 'feishu' | 'qq' | 'cron' | 'converse',
     sourceMeta,

@@ -14,7 +14,7 @@ import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { API_BASE } from '../config/api'
 import { ExecutionPanel } from '../components/execution'
 import { Tooltip } from '../components/ui'
-import { takePendingFiles } from '../utils/pendingFiles'
+import { parseAttachmentIdsParam } from '../lib/attachments'
 import {
   Dialog,
   DialogContent,
@@ -71,10 +71,11 @@ export default function ExecutePage() {
   useEffect(() => {
     const sid = searchParams.get('sid')
     const query = searchParams.get('q')
+    const attachmentIds = parseAttachmentIdsParam(searchParams.get('attachments'))
     if (!sid && !query) return
 
     const normalizedQuery = query?.trim() || ''
-    const bootstrapKey = `${skillId || ''}|${sid || ''}|${normalizedQuery}`
+    const bootstrapKey = `${skillId || ''}|${sid || ''}|${normalizedQuery}|${attachmentIds.join(',')}`
     if (lastBootstrapKeyRef.current === bootstrapKey) return
     lastBootstrapKeyRef.current = bootstrapKey
 
@@ -123,6 +124,7 @@ export default function ExecutePage() {
     }
 
     const findSameSession = async (): Promise<{ id: string; isRunning: boolean } | null> => {
+      if (attachmentIds.length > 0) return null
       if (!token || !skillId) return null
       try {
         const res = await fetch(`${API_BASE}/sessions`, {
@@ -157,14 +159,12 @@ export default function ExecutePage() {
       let attached = false
       let continuedBySid = false
       let startedNewExecution = false
-      const pendingFiles = takePendingFiles()
-      const filesArg = pendingFiles.length > 0 ? pendingFiles : undefined
 
       if (sid) {
         attached = await tryAttachRunningSession(sid)
         if (!attached && normalizedQuery && await canContinueSession(sid)) {
           agent.resumeSession(sid)
-          await agent.execute(normalizedQuery, filesArg)
+          await agent.execute(normalizedQuery, undefined, { attachmentIds })
           continuedBySid = true
           startedNewExecution = true
         }
@@ -177,7 +177,7 @@ export default function ExecutePage() {
             attached = await tryAttachRunningSession(matchedSession.id)
           } else {
             agent.resumeSession(matchedSession.id)
-            await agent.execute(normalizedQuery, filesArg)
+            await agent.execute(normalizedQuery, undefined, { attachmentIds })
             continuedBySid = true
             startedNewExecution = true
           }
@@ -185,13 +185,14 @@ export default function ExecutePage() {
       }
 
       if (normalizedQuery && !attached && !continuedBySid) {
-        await agent.execute(normalizedQuery, filesArg)
+        await agent.execute(normalizedQuery, undefined, { attachmentIds })
         startedNewExecution = true
       }
 
-      if (query && (startedNewExecution || attached || continuedBySid)) {
+      if ((query || attachmentIds.length > 0) && (startedNewExecution || attached || continuedBySid)) {
         const nextParams = new URLSearchParams(searchParams)
         nextParams.delete('q')
+        nextParams.delete('attachments')
         // sid 存在但并未成功续接时，说明已启动了新的 runtime 会话，清理旧 sid 避免后续误判。
         if (sid && startedNewExecution && !attached && !continuedBySid) {
           nextParams.delete('sid')

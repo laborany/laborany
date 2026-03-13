@@ -8,9 +8,7 @@
 
 import { Router, Request, Response } from 'express'
 import { randomUUID } from 'crypto'
-import { copyFile, mkdir } from 'fs/promises'
-import { existsSync, readdirSync } from 'fs'
-import { basename, dirname, extname, join } from 'path'
+import { join } from 'path'
 import { executeAgent } from '../agent-executor.js'
 import { buildConverseSystemPrompt, type ConverseRuntimeContext } from '../converse-prompt.js'
 import { memoryInjector } from '../memory/io.js'
@@ -27,9 +25,14 @@ import {
 } from '../memory/communication-preferences.js'
 import { normalizeCommunicationStylePreference } from '../memory/communication-style-normalizer.js'
 import { loadCatalog } from '../catalog.js'
-import { DATA_DIR } from '../paths.js'
+import { TASKS_DIR, UPLOADS_DIR } from '../paths.js'
 import { resolveModelProfile } from '../lib/resolve-model-profile.js'
-import type { Skill } from 'laborany-shared'
+import {
+  extractAttachmentIdsFromText,
+  hydrateAttachmentsToTaskDir,
+  normalizeAttachmentIds,
+  type Skill,
+} from 'laborany-shared'
 
 const router = Router()
 
@@ -46,7 +49,6 @@ function sseWrite(res: Response, event: string, data: unknown): void {
   }
 }
 
-const FILE_ID_PATTERN = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
 const ACTION_MARKER_CLEAN_RE = /LABORANY_ACTION:\s*\{[\s\S]*?\}\s*$/gm
 
 function getSrcApiBaseUrl(): string {
@@ -83,6 +85,16 @@ function summarizeAction(action: ConverseActionPayload): string {
     return '已识别为定时任务，进入创建流程。'
   }
   return `准备发送文件：${action.filePaths.join(', ')}`
+}
+
+function withAttachmentIds<T extends object>(
+  payload: T,
+  attachmentIds: string[],
+): T & { attachmentIds: string[] } {
+  return {
+    ...payload,
+    attachmentIds,
+  }
 }
 
 const ADDRESSING_TASK_INTENT_PATTERNS = [
@@ -153,6 +165,7 @@ async function upsertExternalSession(
   sessionId: string,
   query: string,
   status: ExternalSessionStatus = 'running',
+  sourceMeta?: Record<string, unknown>,
 ): Promise<void> {
   try {
     await fetch(`${getSrcApiBaseUrl()}/sessions/external/upsert`, {
@@ -164,6 +177,7 @@ async function upsertExternalSession(
         status,
         skillId: '__converse__',
         source: 'converse',
+        sourceMeta,
       }),
     })
   } catch (err) {
@@ -204,78 +218,18 @@ async function updateExternalSessionStatus(
   }
 }
 
-function getUploadsDir(): string {
-  return join(dirname(DATA_DIR), 'uploads')
-}
-
-function resolveUploadedFileId(fileId: string): string | null {
-  const uploadsDir = getUploadsDir()
-  if (!existsSync(uploadsDir)) return null
-  const files = readdirSync(uploadsDir)
-  const matched = files.find((fileName) => fileName.startsWith(fileId))
-  return matched ? join(uploadsDir, matched) : null
-}
-
-function sanitizeFileName(fileName: string): string {
-  const normalized = (fileName || '').replace(/\\/g, '/').split('/').pop()?.trim() || ''
-  const safe = normalized.replace(/[<>:"|?*\x00-\x1f]/g, '_')
-  return safe || `upload-${Date.now()}`
-}
-
-function ensureUniqueTaskFileName(taskDir: string, preferredName: string): string {
-  const safeName = sanitizeFileName(preferredName)
-  const extension = extname(safeName)
-  const baseName = safeName.slice(0, safeName.length - extension.length) || 'upload'
-
-  let counter = 0
-  while (true) {
-    const suffix = counter === 0 ? '' : `-${counter}`
-    const candidateName = `${baseName}${suffix}${extension}`
-    if (!existsSync(join(taskDir, candidateName))) {
-      return candidateName
-    }
-    counter += 1
-  }
-}
-
-function extractFileIdsFromQuery(rawQuery: string): { query: string; fileIds: string[] } {
-  const fileIds = new Set<string>()
-  const matches = [...rawQuery.matchAll(FILE_ID_PATTERN)]
-  for (const match of matches) {
-    const ids = (match[1] || '')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean)
-    ids.forEach(id => fileIds.add(id))
-  }
-
-  const query = rawQuery.replace(FILE_ID_PATTERN, '').trim()
-  return { query, fileIds: Array.from(fileIds) }
-}
-
 async function hydrateUploadsToTaskDir(fileIds: string[], taskDir: string): Promise<string[]> {
-  if (fileIds.length === 0) return []
-
-  const copiedFiles: string[] = []
-  await mkdir(taskDir, { recursive: true })
-  for (const fileId of fileIds) {
-    const sourcePath = resolveUploadedFileId(fileId)
-    if (!sourcePath) {
+  return hydrateAttachmentsToTaskDir({
+    attachmentIds: fileIds,
+    taskDir,
+    uploadsDir: UPLOADS_DIR,
+    onResolveFailure: (fileId) => {
       console.warn(`[Converse] cannot resolve uploaded file id: ${fileId}`)
-      continue
-    }
-
-    try {
-      const sourceName = basename(sourcePath) || `${fileId}.bin`
-      const targetName = ensureUniqueTaskFileName(taskDir, sourceName)
-      await copyFile(sourcePath, join(taskDir, targetName))
-      copiedFiles.push(targetName)
-    } catch (error) {
+    },
+    onCopyFailure: (fileId, error) => {
       console.warn(`[Converse] failed to copy uploaded file ${fileId}:`, error)
-    }
-  }
-
-  return copiedFiles
+    },
+  })
 }
 
 function buildConverseQuery(query: string, uploadedFiles: string[]): string {
@@ -1432,7 +1386,13 @@ function detectDirectIntentAction(query: string): ConverseActionPayload | null {
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 router.post('/', async (req: Request, res: Response) => {
-  const { sessionId: incomingId, messages: rawMessages, context: rawContext, modelProfileId } = req.body
+  const {
+    sessionId: incomingId,
+    messages: rawMessages,
+    context: rawContext,
+    modelProfileId,
+    attachmentIds: rawAttachmentIds,
+  } = req.body
   const runtimeContext = normalizeRuntimeContext(rawContext)
 
   if (!rawMessages || !Array.isArray(rawMessages) || !rawMessages.length) {
@@ -1457,8 +1417,12 @@ router.post('/', async (req: Request, res: Response) => {
   /* ── 提取最新用户消息（CLI 通过 --continue 维护历史） ── */
   const latestMsg = rawMessages[rawMessages.length - 1]
   const rawQuery = typeof latestMsg?.content === 'string' ? latestMsg.content : ''
-  const extracted = extractFileIdsFromQuery(rawQuery)
-  const baseQuery = extracted.query || rawQuery.trim()
+  const extracted = extractAttachmentIdsFromText(rawQuery)
+  const attachmentIds = Array.from(new Set([
+    ...normalizeAttachmentIds(rawAttachmentIds),
+    ...extracted.attachmentIds,
+  ]))
+  const baseQuery = extracted.text || rawQuery.trim()
   const persistUserQuery = baseQuery || rawQuery.trim() || '用户发起了对话分派请求'
   communicationPreferenceManager.applyFromUserText(baseQuery, persistUserQuery)
   addressingCliExtractor.schedulePersistIfNeeded({
@@ -1467,7 +1431,9 @@ router.post('/', async (req: Request, res: Response) => {
     evidenceText: persistUserQuery,
   })
 
-  await upsertExternalSession(sessionId, persistUserQuery, 'running')
+  await upsertExternalSession(sessionId, persistUserQuery, 'running', {
+    attachmentIds,
+  })
   await appendExternalMessage(sessionId, 'user', persistUserQuery)
 
   const directMetaReply = buildDirectMetaReply(baseQuery)
@@ -1509,7 +1475,7 @@ router.post('/', async (req: Request, res: Response) => {
       validationErrors: guard.validationErrors || [],
     })
     if (guard.ok && guard.action) {
-      sseWrite(res, 'action', guard.action)
+      sseWrite(res, 'action', withAttachmentIds(guard.action, attachmentIds))
       await appendExternalMessage(sessionId, 'assistant', summarizeAction(guard.action))
       await updateExternalSessionStatus(sessionId, 'completed')
     } else if (guard.question) {
@@ -1547,9 +1513,9 @@ router.post('/', async (req: Request, res: Response) => {
   }, 15_000)
 
   try {
-    const taskDir = join(DATA_DIR, 'tasks', sessionId)
-    const uploadedFiles = await hydrateUploadsToTaskDir(extracted.fileIds, taskDir)
-    if (extracted.fileIds.length > 0 && uploadedFiles.length === 0) {
+    const taskDir = join(TASKS_DIR, sessionId)
+    const uploadedFiles = await hydrateUploadsToTaskDir(attachmentIds, taskDir)
+    if (attachmentIds.length > 0 && uploadedFiles.length === 0) {
       sseWrite(res, 'warning', { content: '未能解析上传文件，请重新上传后重试。' })
     }
     const query = buildConverseQuery(baseQuery, uploadedFiles)
@@ -1688,7 +1654,7 @@ router.post('/', async (req: Request, res: Response) => {
             })
 
             if (guard.ok && guard.action) {
-              sseWrite(res, 'action', guard.action)
+              sseWrite(res, 'action', withAttachmentIds(guard.action, attachmentIds))
             } else if (guard.question) {
               hasPendingQuestion = true
               terminalStatus = 'waiting_input'

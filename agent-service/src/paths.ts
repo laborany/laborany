@@ -1,6 +1,11 @@
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { getUserDir } from 'laborany-shared'
+import {
+  getRuntimeDataDir,
+  getRuntimeTasksDir,
+  getRuntimeUploadsDir,
+  getUserDir,
+} from 'laborany-shared'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const isPkg = typeof (process as any).pkg !== 'undefined'
@@ -12,19 +17,10 @@ function getResourcesDir(): string {
   return join(__dirname, '../..')
 }
 
-export function getAppHomeDir(): string {
-  return getUserDir()
-}
-
-function getDataDir(): string {
-  const fromEnv = (process.env.LABORANY_HOME || '').trim()
-  if (fromEnv) return join(fromEnv, 'data')
-  if (!isPkg) return join(__dirname, '../../data')
-  return join(getUserDir(), 'data')
-}
-
 export const RESOURCES_DIR = getResourcesDir()
-export const DATA_DIR = getDataDir()
-export const APP_HOME_DIR = getAppHomeDir()
+export const DATA_DIR = getRuntimeDataDir()
+export const APP_HOME_DIR = getUserDir()
+export const TASKS_DIR = getRuntimeTasksDir()
+export const UPLOADS_DIR = getRuntimeUploadsDir()
 
 export { isPkg }

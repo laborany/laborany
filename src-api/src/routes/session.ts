@@ -52,6 +52,17 @@ function inferRecoveredConverseStatus(lastType?: string, lastContent?: string | 
   return 'failed'
 }
 
+function parseSourceMeta(raw?: string | null): Record<string, unknown> | null {
+  const text = (raw || '').trim()
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text)
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+}
+
 function reconcileStaleConverseSessions(sessionIds: string[] = []): void {
   const filteredIds = sessionIds.map(id => id.trim()).filter(Boolean)
   const params: string[] = []
@@ -198,8 +209,9 @@ session.get('/:sessionId', (c) => {
     work_dir: string | null
     created_at: string
     source?: string
+    source_meta?: string | null
   }>(`
-    SELECT id, skill_id, query, status, cost, work_dir, created_at, source
+    SELECT id, skill_id, query, status, cost, work_dir, created_at, source, source_meta
     FROM sessions
     WHERE id = ?
   `, [sessionId])
@@ -282,9 +294,12 @@ session.get('/:sessionId', (c) => {
     }
   }
 
+  const { source_meta, ...restSession } = sessionData
+
   return c.json({
-    ...sessionData,
+    ...restSession,
     source: inferSessionSource(sessionData.id, sessionData.skill_id, sessionData.source),
+    sourceMeta: parseSourceMeta(source_meta),
     work_dir: workDir,
     messages: formattedMessages,
   })
@@ -350,6 +365,9 @@ session.post('/external/upsert', async (c) => {
   const source = ['desktop', 'feishu', 'qq', 'cron', 'converse'].includes(sourceRaw)
     ? sourceRaw
     : (skillId === '__converse__' ? 'converse' : 'desktop')
+  const sourceMeta = body.sourceMeta && typeof body.sourceMeta === 'object'
+    ? JSON.stringify(body.sourceMeta)
+    : null
 
   if (!sessionId || !query) {
     return c.json({ error: '缺少 sessionId 或 query 参数' }, 400)
@@ -363,17 +381,17 @@ session.post('/external/upsert', async (c) => {
   if (existing) {
     dbHelper.run(
       `UPDATE sessions
-       SET skill_id = ?, query = ?, status = ?, work_dir = COALESCE(?, work_dir), source = ?, updated_at = datetime('now')
+       SET skill_id = ?, query = ?, status = ?, work_dir = COALESCE(?, work_dir), source = ?, source_meta = COALESCE(?, source_meta), updated_at = datetime('now')
        WHERE id = ?`,
-      [skillId, query, status, workDir, source, sessionId],
+      [skillId, query, status, workDir, source, sourceMeta, sessionId],
     )
     return c.json({ success: true, created: false, sessionId })
   }
 
   dbHelper.run(
-    `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [sessionId, userId, skillId, query, status, workDir, source],
+    `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir, source, source_meta)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [sessionId, userId, skillId, query, status, workDir, source, sourceMeta],
   )
 
   return c.json({ success: true, created: true, sessionId })

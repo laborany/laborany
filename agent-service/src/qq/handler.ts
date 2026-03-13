@@ -10,7 +10,7 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from
 import { basename, extname, join } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
-import { DATA_DIR } from '../paths.js'
+import { UPLOADS_DIR } from '../paths.js'
 import type { QQConfig } from './config.js'
 import {
   activateConverseOwner,
@@ -387,9 +387,8 @@ async function parseMessageContent(
       try {
         const fileId = randomUUID()
         const ext = extname(attachment.filename || attachment.url).toLowerCase() || '.bin'
-        const uploadDir = join(DATA_DIR, 'uploads')
-        mkdirSync(uploadDir, { recursive: true })
-        const localPath = join(uploadDir, `${fileId}${ext}`)
+        mkdirSync(UPLOADS_DIR, { recursive: true })
+        const localPath = join(UPLOADS_DIR, `${fileId}${ext}`)
 
         // 下载文件
         const response = await fetch(attachment.url)

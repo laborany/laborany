@@ -8,11 +8,8 @@
 import { Router, Request, Response } from 'express'
 import { readFile, readdir } from 'fs/promises'
 import { existsSync } from 'fs'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const TASKS_DIR = join(__dirname, '../../../tasks')
+import { join } from 'path'
+import { TASKS_DIR } from '../paths.js'
 
 const router = Router()
 

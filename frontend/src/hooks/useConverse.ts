@@ -3,6 +3,11 @@ import { AGENT_API_BASE, API_BASE } from '../config/api'
 import type { PendingQuestion } from './useAgent'
 import type { AgentMessage } from '../types/message'
 import { useModelProfile } from '../contexts/ModelProfileContext'
+import {
+  mergeAttachmentIds,
+  normalizeAttachmentIds,
+  uploadAttachments,
+} from '../lib/attachments'
 
 export interface ConverseAction {
   action:
@@ -21,6 +26,7 @@ export interface ConverseAction {
   targetQuery?: string
   planSteps?: string[]
   query?: string
+  attachmentIds?: string[]
 }
 
 export interface UseConverseReturn {
@@ -46,8 +52,6 @@ export interface UseConverseReturn {
 type ConversePhase = NonNullable<UseConverseReturn['state']>['phase']
 
 const ACTION_MARKER_RE = /\n?LABORANY_ACTION:\s*\{[\s\S]*?\}\s*$/
-const FILE_IDS_MARKER_RE = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
-
 interface SessionDetailMessage {
   id?: number
   type?: string
@@ -73,59 +77,6 @@ function parseUTCDate(dateStr: string): Date {
   const s = dateStr.trim()
   if (s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s)) return new Date(s)
   return new Date(s + 'Z')
-}
-
-function mergeUniqueIds(...lists: string[][]): string[] {
-  const merged = new Set<string>()
-  for (const list of lists) {
-    for (const rawId of list) {
-      const id = rawId.trim()
-      if (id) {
-        merged.add(id)
-      }
-    }
-  }
-  return Array.from(merged)
-}
-
-function appendFileIdMarker(text: string, fileIds: string[]): string {
-  const cleaned = text.replace(FILE_IDS_MARKER_RE, '').trim()
-  if (!fileIds.length) {
-    return cleaned
-  }
-  return `${cleaned}\n\n[LABORANY_FILE_IDS: ${fileIds.join(', ')}]`
-}
-
-async function uploadFiles(files: File[]): Promise<string[]> {
-  const token = localStorage.getItem('token')
-  const headers: HeadersInit = {}
-  if (token) {
-    headers.Authorization = `Bearer ${token}`
-  }
-
-  const uploadedIds: string[] = []
-  for (const file of files) {
-    const formData = new FormData()
-    formData.append('file', file)
-
-    try {
-      const res = await fetch(`${API_BASE}/files/upload`, {
-        method: 'POST',
-        headers,
-        body: formData,
-      })
-      if (!res.ok) continue
-
-      const payload = await res.json().catch(() => null) as { id?: string } | null
-      if (payload?.id) {
-        uploadedIds.push(payload.id)
-      }
-    } catch {
-      // keep uploading the rest
-    }
-  }
-
-  return uploadedIds
 }
 
 export function useConverse(): UseConverseReturn {
@@ -386,9 +337,9 @@ export function useConverse(): UseConverseReturn {
     try {
       let mergedFileIds = sessionFileIdsRef.current
       if (files.length > 0) {
-        const newFileIds = await uploadFiles(files)
+        const newFileIds = await uploadAttachments(files, localStorage.getItem('token'))
         if (newFileIds.length > 0) {
-          mergedFileIds = mergeUniqueIds(sessionFileIdsRef.current, newFileIds)
+          mergedFileIds = mergeAttachmentIds(sessionFileIdsRef.current, newFileIds)
           sessionFileIdsRef.current = mergedFileIds
           setSessionFileIds(mergedFileIds)
         }
@@ -401,14 +352,6 @@ export function useConverse(): UseConverseReturn {
           content: item.content,
         }))
 
-      if (payloadMessages.length > 0) {
-        const lastIdx = payloadMessages.length - 1
-        payloadMessages[lastIdx] = {
-          ...payloadMessages[lastIdx],
-          content: appendFileIdMarker(userInput, mergedFileIds),
-        }
-      }
-
       const res = await fetch(`${AGENT_API_BASE}/converse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -417,6 +360,7 @@ export function useConverse(): UseConverseReturn {
           sessionId: sessionIdRef.current,
           messages: payloadMessages,
           modelProfileId: activeProfileId || undefined,
+          attachmentIds: mergedFileIds,
           context: {
             channel: 'desktop',
             locale: 'zh-CN',
@@ -502,6 +446,9 @@ export function useConverse(): UseConverseReturn {
       const payload = await res.json() as {
         skill_id?: string
         messages?: SessionDetailMessage[]
+        sourceMeta?: {
+          attachmentIds?: string[] | string
+        } | null
       }
       if (payload.skill_id !== '__converse__') return false
 
@@ -573,8 +520,9 @@ export function useConverse(): UseConverseReturn {
       setState(null)
       setError(null)
       setIsThinking(false)
-      setSessionFileIds([])
-      sessionFileIdsRef.current = []
+      const restoredAttachmentIds = normalizeAttachmentIds(payload.sourceMeta?.attachmentIds)
+      setSessionFileIds(restoredAttachmentIds)
+      sessionFileIdsRef.current = restoredAttachmentIds
       sessionIdRef.current = sid
       setSessionId(sid)
       return true

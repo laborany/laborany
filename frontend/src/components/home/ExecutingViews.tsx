@@ -31,6 +31,7 @@ export interface ExecutionContext {
   id: string
   query: string
   originQuery?: string
+  attachmentIds?: string[]
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -105,8 +106,11 @@ export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhas
   useEffect(() => {
     if (hasExecutedRef.current || !execCtx.id) return
     hasExecutedRef.current = true
-    agent.execute(execCtx.query, undefined, { originQuery: execCtx.originQuery })
-  }, [agent.execute, execCtx.id, execCtx.originQuery, execCtx.query])
+    agent.execute(execCtx.query, undefined, {
+      originQuery: execCtx.originQuery,
+      attachmentIds: execCtx.attachmentIds,
+    })
+  }, [agent.execute, execCtx.attachmentIds, execCtx.id, execCtx.originQuery, execCtx.query])
 
   const isExecutionPhase =
     phase === 'executing'

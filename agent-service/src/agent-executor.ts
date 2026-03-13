@@ -14,7 +14,7 @@ import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR, getUserDir } from 'laborany-shared
 import { memoryFileManager, memoryOrchestrator, memoryAsyncQueue } from './memory/index.js'
 import { communicationPreferenceManager } from './memory/communication-preferences.js'
 import { buildClaudeEnvConfig, checkRuntimeDependencies, resolveClaudeCliLaunch, type ModelOverride } from './claude-cli.js'
-import { APP_HOME_DIR, DATA_DIR } from './paths.js'
+import { APP_HOME_DIR, TASKS_DIR, UPLOADS_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -78,7 +78,7 @@ interface ExecuteOptions {
  * │  使用用户数据目录存储任务，避免 pkg 打包后的 snapshot 只读问题             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getTaskDir(sessionId: string): string {
-  return join(DATA_DIR, 'tasks', sessionId)
+  return join(TASKS_DIR, sessionId)
 }
 
 function ensureTaskDir(sessionId: string): string {
@@ -100,8 +100,8 @@ function getRuntimePlatformLabel(): string {
 }
 
 function buildLaborAnyRuntimeContext(taskDir: string, skillId: string): string {
-  const tasksBase = join(DATA_DIR, 'tasks')
-  const uploadsBase = join(APP_HOME_DIR, 'uploads')
+  const tasksBase = TASKS_DIR
+  const uploadsBase = UPLOADS_DIR
   const envPath = join(APP_HOME_DIR, '.env')
   const userHome = getUserDir()
 

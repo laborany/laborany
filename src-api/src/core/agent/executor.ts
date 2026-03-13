@@ -21,6 +21,8 @@ import {
   BUILTIN_SKILLS_DIR,
   USER_SKILLS_DIR,
   getUserDir,
+  getRuntimeTasksDir,
+  getRuntimeUploadsDir,
 } from 'laborany-shared'
 import { isZhipuApi, buildZhipuMcpServers, injectMcpServers } from './mcp/index.js'
 import { getAppHomeDir, isPackagedRuntime } from '../../lib/app-home.js'
@@ -145,18 +147,11 @@ function getAppDataDir(): string {
 }
 
 function getTasksBaseDir(): string {
-  if (isPackagedRuntime()) {
-    // 打包环境：与 agent-service 保持一致，使用 data/tasks
-    return join(getAppDataDir(), 'data', 'tasks')
-  }
-  return join(getAppDataDir(), 'tasks')
+  return getRuntimeTasksDir()
 }
 
 function getUploadsBaseDir(): string {
-  if (isPackagedRuntime()) {
-    return join(getAppHomeDir(), 'uploads')
-  }
-  return join(__dirname, '..', '..', '..', 'uploads')
+  return getRuntimeUploadsDir()
 }
 
 function normalizePathForPrompt(path: string): string {

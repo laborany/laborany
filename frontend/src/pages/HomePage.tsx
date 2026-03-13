@@ -10,19 +10,18 @@ import { API_BASE } from '../config'
 import { GuideBanner } from '../components/home/GuideBanner'
 import { ScenarioCards } from '../components/home/ScenarioCards'
 import ChatInput from '../components/shared/ChatInput'
-import { setPendingFiles } from '../utils/pendingFiles'
 import { ConversationPanel } from '../components/home/ConversationPanel'
 import { CronSetupCard } from '../components/execution'
 import { SkillExecutingView, type HomePhase, type ExecutionContext } from '../components/home/ExecutingViews'
 import { PlanReviewPanel } from '../components/home/PlanReviewPanel'
 import { CandidateConfirmView, FallbackBanner, ErrorView } from '../components/home/DispatchViews'
-
-const FILE_IDS_MARKER_RE = /\[(?:LABORANY_FILE_IDS|已上传文件 ID|Uploaded file IDs?)\s*:\s*([^\]]+)\]/gi
+import { buildExecutePath, stripAttachmentMarkers, uploadAttachments } from '../lib/attachments'
 
 interface CandidateInfo {
   variant: 'recommend' | 'create'
   targetId?: string
   query: string
+  attachmentIds: string[]
   reason?: string
   confidence?: number
   matchType?: 'exact' | 'candidate'
@@ -31,6 +30,7 @@ interface CandidateInfo {
 interface GenericExecutionPlan {
   query: string
   originQuery: string
+  attachmentIds: string[]
   planSteps: string[]
 }
 
@@ -109,26 +109,20 @@ export default function HomePage() {
     if (!converse.action) handledActionRef.current = null
   }, [converse.action])
 
-  const appendSessionFilesMarker = useCallback((rawQuery: string): string => {
-    const query = rawQuery.trim()
-    if (!query) return query
-
-    const fileIds = converse.sessionFileIds
-    if (!fileIds.length) return query
-
-    const cleaned = query.replace(FILE_IDS_MARKER_RE, '').trim()
-    return `${cleaned}\n\n[LABORANY_FILE_IDS: ${fileIds.join(', ')}]`
-  }, [converse.sessionFileIds])
-
-  const handleExecute = useCallback((targetId: string, query: string, files?: File[]) => {
+  const handleExecute = useCallback(async (targetId: string, query: string, files?: File[]) => {
     latestUserQueryRef.current = query
     if (targetId) {
-      if (files && files.length > 0) setPendingFiles(files)
-      navigate(`/execute/${targetId}?q=${encodeURIComponent(query)}`)
+      try {
+        const attachmentIds = await uploadAttachments(files || [], localStorage.getItem('token'))
+        navigate(buildExecutePath(targetId, query, attachmentIds))
+      } catch (error) {
+        setErrorMsg(error instanceof Error ? error.message : '文件上传失败')
+        setPhase('error')
+      }
       return
     }
     setPhase('analyzing')
-    converse.sendMessage(query, files)
+    void converse.sendMessage(query, files)
   }, [navigate, converse.sendMessage])
 
   useEffect(() => {
@@ -139,10 +133,12 @@ export default function HomePage() {
     handledActionRef.current = actionKey
 
     if (action.action === 'recommend_capability' && action.targetId && action.query) {
+      const attachmentIds = action.attachmentIds || converse.sessionFileIds
       setCandidate({
         variant: 'recommend',
         targetId: action.targetId,
-        query: appendSessionFilesMarker(action.query),
+        query: stripAttachmentMarkers(action.query),
+        attachmentIds,
         reason: action.reason,
         confidence: action.confidence,
         matchType: action.matchType,
@@ -153,12 +149,13 @@ export default function HomePage() {
 
     if (action.action === 'execute_generic') {
       const originQuery = latestUserQueryRef.current || action.query || ''
-      const query = appendSessionFilesMarker(action.query || originQuery)
+      const query = stripAttachmentMarkers(action.query || originQuery)
+      const attachmentIds = action.attachmentIds || converse.sessionFileIds
       if (action.planSteps && action.planSteps.length > 0) {
-        setGenericPlan({ query, originQuery, planSteps: action.planSteps })
+        setGenericPlan({ query, originQuery, attachmentIds, planSteps: action.planSteps })
         setPhase('plan_review')
       } else {
-        setExecCtx({ type: 'skill', id: '__generic__', query, originQuery })
+        setExecCtx({ type: 'skill', id: '__generic__', query, originQuery, attachmentIds })
         setPhase('fallback_general')
       }
       return
@@ -166,7 +163,13 @@ export default function HomePage() {
 
     if (action.action === 'create_capability') {
       const seedQuery = action.seedQuery || action.query || latestUserQueryRef.current || ''
-      setCandidate({ variant: 'create', query: appendSessionFilesMarker(seedQuery), reason: action.reason })
+      const attachmentIds = action.attachmentIds || converse.sessionFileIds
+      setCandidate({
+        variant: 'create',
+        query: stripAttachmentMarkers(seedQuery),
+        attachmentIds,
+        reason: action.reason,
+      })
       setPhase('candidate_found')
       return
     }
@@ -185,7 +188,7 @@ export default function HomePage() {
       setPhase('idle')
       return
     }
-  }, [appendSessionFilesMarker, converse.action, converse.pendingQuestion])
+  }, [converse.action, converse.pendingQuestion, converse.sessionFileIds])
 
   useEffect(() => {
     if (phase !== 'idle') return
@@ -236,7 +239,7 @@ export default function HomePage() {
 
     if (candidate.variant === 'recommend' && candidate.targetId) {
       // converse 的 sessionId 不是 runtime 任务会话，不应作为执行页 sid 传入。
-      navigate(`/execute/${candidate.targetId}?q=${encodeURIComponent(candidate.query)}`)
+      navigate(buildExecutePath(candidate.targetId, candidate.query, candidate.attachmentIds))
       return
     }
 
@@ -244,24 +247,26 @@ export default function HomePage() {
       setExecCtx({
         type: 'skill',
         id: 'skill-creator',
-        query: appendSessionFilesMarker(candidate.query),
+        query: candidate.query,
         originQuery: latestUserQueryRef.current || candidate.query,
+        attachmentIds: candidate.attachmentIds,
       })
       setPhase('creating_proposal')
     }
-  }, [appendSessionFilesMarker, candidate, navigate])
+  }, [candidate, navigate])
 
   const handleCandidateReject = useCallback(() => {
-    const query = appendSessionFilesMarker(candidate?.query || '')
+    const query = stripAttachmentMarkers(candidate?.query || '')
     setCandidate(null)
     setExecCtx({
       type: 'skill',
       id: '__generic__',
       query,
       originQuery: latestUserQueryRef.current || query,
+      attachmentIds: candidate?.attachmentIds || [],
     })
     setPhase('fallback_general')
-  }, [appendSessionFilesMarker, candidate])
+  }, [candidate])
 
   const handleCronConfirm = useCallback(async (next: CronPending) => {
     await createJob({
@@ -327,7 +332,7 @@ export default function HomePage() {
     originQuery?: string
   }) => {
     setPhase('routing')
-    const query = appendSessionFilesMarker(created.originQuery || execCtx?.originQuery || execCtx?.query || '')
+    const query = stripAttachmentMarkers(created.originQuery || execCtx?.originQuery || execCtx?.query || '')
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('capability:changed', {
         detail: {
@@ -337,8 +342,8 @@ export default function HomePage() {
         },
       }))
     }
-    navigate(`/execute/${created.id}?q=${encodeURIComponent(query)}`)
-  }, [appendSessionFilesMarker, execCtx?.originQuery, execCtx?.query, navigate])
+    navigate(buildExecutePath(created.id, query, execCtx?.attachmentIds || []))
+  }, [execCtx?.attachmentIds, execCtx?.originQuery, execCtx?.query, navigate])
 
   if (phase === 'idle') {
     return <IdleView
@@ -403,8 +408,9 @@ export default function HomePage() {
         setExecCtx({
           type: 'skill',
           id: '__generic__',
-          query: appendSessionFilesMarker(executionQuery),
+          query: stripAttachmentMarkers(executionQuery),
           originQuery: genericPlan.originQuery,
+          attachmentIds: genericPlan.attachmentIds,
         })
         setPhase('executing')
         setGenericPlan(null)
@@ -462,7 +468,7 @@ export default function HomePage() {
 
 function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending, onCronConfirm, onCronCancel, backgroundTasks, onResumeTask }: {
   userName?: string
-  onExecute: (targetId: string, query: string, files?: File[]) => void
+  onExecute: (targetId: string, query: string, files?: File[]) => void | Promise<void>
   selectedCase: QuickStartItem | null
   onSelectCase: (item: QuickStartItem) => void
   cronPending: CronPending | null

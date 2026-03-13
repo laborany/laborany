@@ -1,10 +1,10 @@
 ﻿import { randomUUID } from 'crypto'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'fs'
-import { basename, dirname, extname, join } from 'path'
+import { basename, extname, join } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import type { Client } from '@larksuiteoapi/node-sdk'
-import { DATA_DIR } from '../paths.js'
+import { UPLOADS_DIR } from '../paths.js'
 import type { FeishuConfig } from './config.js'
 import {
   activateConverseOwner,
@@ -414,7 +414,7 @@ async function* streamSse(response: Response): AsyncGenerator<SseEvent> {
 }
 
 function getUploadsDir(): string {
-  return join(dirname(DATA_DIR), 'uploads')
+  return UPLOADS_DIR
 }
 
 function normalizeApiFilePath(path: string): string {

@@ -6,14 +6,13 @@
 
 import { Hono } from 'hono'
 import { readFile, readdir, stat, writeFile, mkdir } from 'fs/promises'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import { join } from 'path'
 import { existsSync, createWriteStream } from 'fs'
 import { v4 as uuid } from 'uuid'
 import { Readable } from 'stream'
 import { exec } from 'child_process'
 import busboy from 'busboy'
-import { getAppHomeDir, isPackagedRuntime } from '../lib/app-home.js'
+import { getRuntimeTasksDir, getRuntimeUploadsDir } from 'laborany-shared'
 import {
   isLibreOfficeAvailable,
   convertToPdf,
@@ -27,8 +26,6 @@ import {
   getDownloaderDiagnostic,
 } from '../services/libreoffice-downloader.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务目录路径                                        │
  * │                                                                          │
@@ -37,14 +34,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  * │  - 开发环境：项目根目录/tasks                                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getTasksDir(): string {
-  const isPkg = isPackagedRuntime()
-
-  if (isPkg) {
-    return join(getAppHomeDir(), 'data', 'tasks')
-  }
-
-  // 开发模式：相对于项目根目录
-  return join(__dirname, '../../../tasks')
+  return getRuntimeTasksDir()
 }
 
 const TASKS_DIR = getTasksDir()
@@ -251,13 +241,7 @@ file.get('/tasks/:sessionId/files/*', (c) => handleFileDownload(c, 'tasks'))
  * │                       文件上传（复合技能输入）                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export function getUploadsDir(): string {
-  const isProduction = isPackagedRuntime()
-
-  if (isProduction) {
-    return join(getAppHomeDir(), 'uploads')
-  }
-
-  return join(__dirname, '../../../uploads')
+  return getRuntimeUploadsDir()
 }
 
 file.post('/files/upload', async (c) => {
@@ -281,7 +265,7 @@ file.post('/files/upload', async (c) => {
     let fileName = 'upload'
     let fileSize = 0
     let filePath = ''
-    let writeStream: ReturnType<typeof createWriteStream> | null = null
+    const writeTasks: Array<Promise<void>> = []
 
     const bb = busboy({ headers: { 'content-type': contentType } })
 
@@ -292,7 +276,11 @@ file.post('/files/upload', async (c) => {
       const savedFileName = ext ? `${fileId}.${ext}` : fileId
       filePath = join(uploadsDir, savedFileName)
 
-      writeStream = createWriteStream(filePath)
+      const writeStream = createWriteStream(filePath)
+      writeTasks.push(new Promise<void>((resolveWrite, rejectWrite) => {
+        writeStream.on('finish', () => resolveWrite())
+        writeStream.on('error', rejectWrite)
+      }))
       fileStream.pipe(writeStream)
 
       fileStream.on('data', (data: Buffer) => {
@@ -300,7 +288,20 @@ file.post('/files/upload', async (c) => {
       })
     })
 
-    bb.on('close', () => {
+    bb.on('close', async () => {
+      try {
+        await Promise.all(writeTasks)
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : '写入磁盘失败'
+        resolve(c.json({ error: '文件上传失败', detail }, 500))
+        return
+      }
+
+      if (!filePath) {
+        resolve(c.json({ error: '未检测到上传文件' }, 400))
+        return
+      }
+
       console.log(`[File] Upload complete: ${filePath}, size: ${fileSize}`)
       resolve(c.json({
         id: fileId,
