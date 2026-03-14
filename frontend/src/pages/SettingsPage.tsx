@@ -284,10 +284,9 @@ export default function SettingsPage() {
     const qqEnabled = normalizeBool(editValues.QQ_ENABLED)
     if (qqEnabled) {
       if (!(editValues.QQ_APP_ID || '').trim()) errors.push('QQ Bot 已启用，但缺少 QQ_APP_ID')
-      const hasToken = Boolean((editValues.QQ_BOT_TOKEN || '').trim())
       const hasSecret = Boolean((editValues.QQ_APP_SECRET || '').trim())
-      if (!hasToken && !hasSecret) {
-        errors.push('QQ Bot 已启用，但 QQ_BOT_TOKEN 与 QQ_APP_SECRET 至少填写一项（推荐仅填 QQ_APP_SECRET）')
+      if (!hasSecret) {
+        errors.push('QQ Bot 已启用，但缺少 QQ_APP_SECRET（QQ 官方已弃用 Bot Token，请使用 App Secret 获取访问令牌）')
       }
       if (normalizeBool(editValues.QQ_REQUIRE_ALLOWLIST) && !(editValues.QQ_ALLOW_USERS || '').trim()) {
         errors.push('QQ Bot 开启强制白名单时，QQ_ALLOW_USERS 不能为空')
@@ -1168,13 +1167,14 @@ export default function SettingsPage() {
         >
           {renderFields(groupedKeys.qq)}
           <GuideBlock title="QQ Bot 配置提示（可折叠）" tone="blue">
-            <p>基础配置：`QQ_ENABLED=true`、`QQ_APP_ID`，以及 `QQ_APP_SECRET`（推荐）。</p>
-            <p>`QQ_BOT_TOKEN` 改为可选；当填写 `QQ_APP_SECRET` 时，系统会自动换取访问令牌。</p>
+            <p>基础配置：`QQ_ENABLED=true`、`QQ_APP_ID` 和 `QQ_APP_SECRET`（必填）。</p>
+            <p>当填写 `QQ_APP_SECRET` 时，LaborAny 会按 QQ 官方文档自动换取访问令牌，无需再配置 Bot Token。</p>
+            <p>`QQ_BOT_TOKEN` 已在 QQ 官方文档中标记为弃用，仅用于兼容旧版本配置，已移入「高级配置」。新接入请忽略。</p>
             <p>当前仅支持 C2C 私聊场景（用户与机器人一对一消息）。</p>
             <p>需要在 QQ 开放平台申请 `GROUP_AND_C2C_EVENT` 相关权限。</p>
             <p>沙箱模式：测试环境可设置 `QQ_SANDBOX=true`，正式环境设为 `false`。</p>
             <p>白名单：可通过 `QQ_ALLOW_USERS` 限制允许的用户 ID（逗号分隔），`QQ_REQUIRE_ALLOWLIST=true` 强制白名单模式。</p>
-            <p>文件支持：C2C 私聊支持图片和文件上传（单文件上限 20MB）。</p>
+            <p>文件支持：C2C 私聊支持图片和文件上传（单文件上限 20MB），LaborAny 会自动在任务工作目录中挂载这些文件。</p>
           </GuideBlock>
           {qqTestResult && (
             <p className={`mt-3 text-xs ${qqTestResult.success ? 'text-green-700' : 'text-red-700'}`}>

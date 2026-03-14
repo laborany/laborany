@@ -55,8 +55,8 @@ QQ_ENABLED=true
 
 # QQ Bot 应用凭证（从 QQ 开放平台获取）
 QQ_APP_ID=your-qq-app-id
-QQ_APP_SECRET=your-qq-app-secret   # 推荐，仅填这一项也可用
-QQ_BOT_TOKEN=your-qq-bot-token     # 可选（与 QQ_APP_SECRET 二选一）
+QQ_APP_SECRET=your-qq-app-secret   # 必填，LaborAny 会使用 App Secret 自动换取访问令牌
+# QQ_BOT_TOKEN=your-qq-bot-token   # 已弃用，仅兼容旧版本配置，建议不要再使用
 
 # QQ Bot 沙箱模式（测试环境使用）
 QQ_SANDBOX=false
@@ -250,7 +250,7 @@ Bot: **可用技能：**
 
 1. 检查环境变量是否正确配置
 2. 确认 `QQ_ENABLED=true`
-3. 确认 `QQ_APP_ID` 已填写，且 `QQ_BOT_TOKEN` 或 `QQ_APP_SECRET` 至少填写一项
+3. 确认 `QQ_APP_ID` 与 `QQ_APP_SECRET` 已填写（QQ 官方已弃用 Bot Token）
 4. 查看日志：`[QQ] Bot started` 或错误信息
 
 ### Bot 不响应消息

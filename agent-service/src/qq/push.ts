@@ -117,32 +117,44 @@ async function downloadTaskFile(sessionId: string, filePath: string): Promise<Bu
   }
 }
 
-async function sendFileToTarget(
+export async function sendFileToTarget(
   client: any,
   targetId: string,
   targetType: 'c2c',
   fileName: string,
   buffer: Buffer,
-): Promise<boolean> {
+): Promise<'sent' | 'failed'> {
   try {
     const extension = extname(fileName).toLowerCase()
     const isImage = IMAGE_EXTENSIONS.has(extension)
 
     if (targetType === 'c2c') {
-      // C2C 私聊消息：使用 postFile 上传文件
+      // C2C 私聊消息：参考 OpenClaw QQ 插件思路，先上传再通过 file_info 发送文件消息
       const base64 = buffer.toString('base64')
+      const fileType = isImage ? 1 : 4 // 1=图片, 4=通用文件
       const fileRes = await client.c2cApi.postFile(targetId, {
-        file_type: isImage ? 1 : 3,
+        file_type: fileType,
         file_data: base64,
-        srv_send_msg: true,
+        srv_send_msg: false,
       })
-      return !!fileRes?.data?.file_uuid
+      const fileInfo = fileRes?.data?.file_info
+      if (!fileInfo) {
+        console.warn('[QQPush] postFile succeeded but missing file_info')
+        return 'failed'
+      }
+
+      await client.c2cApi.postMessage(targetId, {
+        msg_type: 7, // 图文混排 / 媒体消息
+        content: isImage ? '' : fileName,
+        media: { file_info: fileInfo },
+      })
+      return 'sent'
     }
 
-    return false
+    return 'failed'
   } catch (error) {
     console.warn(`[QQPush] failed to send file ${fileName}:`, error)
-    return false
+    return 'failed'
   }
 }
 
@@ -202,10 +214,22 @@ export async function sendArtifactsToTarget(
       continue
     }
 
-    const ok = await sendFileToTarget(client, targetId, targetType, fileName, payload)
+    const result = await sendFileToTarget(client, targetId, targetType, fileName, payload)
 
-    if (ok) sent += 1
+    if (result === 'sent') sent += 1
     else failed += 1
+  }
+
+  // 可选：如有失败记录一条摘要文本，防止用户误以为完全成功
+  if (failed > 0) {
+    const summary = `本轮文件回传：成功 ${sent}，失败 ${failed}，跳过 ${skipped}。`
+    try {
+      if (targetType === 'c2c') {
+        await client.c2cApi.postMessage(targetId, { content: summary, msg_type: 0 })
+      }
+    } catch (error) {
+      console.warn('[QQPush] failed to send artifacts summary:', error)
+    }
   }
 
   return { sent, failed, skipped }

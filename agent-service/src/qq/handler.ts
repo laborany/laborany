@@ -28,7 +28,8 @@ import {
   getDefaultModelProfileId,
 } from './index.js'
 import { QQStreamingSession } from './streaming.js'
-import { sendArtifactsToTarget } from './push.js'
+import { sendArtifactsToTarget, sendFileToTarget } from './push.js'
+import { stripAttachmentMarkers } from 'laborany-shared'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     配置与常量                                           │
@@ -847,14 +848,8 @@ async function sendFilesByAbsolutePaths(
       }
       const fileName = basename(absolutePath) || absolutePath
       const payload = readFileSync(absolutePath)
-      const extension = extname(fileName).toLowerCase()
-      const isImage = IMAGE_EXTENSIONS.has(extension)
-      const fileRes = await client.c2cApi.postFile(targetId, {
-        file_type: isImage ? 1 : 3,
-        file_data: payload.toString('base64'),
-        srv_send_msg: true,
-      })
-      if (fileRes?.data?.file_uuid) {
+      const result = await sendFileToTarget(client, targetId, 'c2c', fileName, payload)
+      if (result === 'sent') {
         sent += 1
       } else {
         failed += 1
@@ -1811,9 +1806,20 @@ export async function handleQQMessage(
       try {
         // 解析消息
         const parsed = await parseMessageContent(client, event, messageType)
-        const text = parsed.text.trim()
+        let text = parsed.text.trim()
 
-        if (!text) return
+        // 如果只有文件没有任何说明文本，为避免传空 query 给 Claude CLI，这里补上一段默认说明。
+        if (parsed.fileIds.length > 0) {
+          const stripped = stripAttachmentMarkers(text)
+          if (!stripped) {
+            text = '我上传了一些文件，请先读取这些文件再继续处理本轮任务。\n\n' + text
+          }
+        }
+
+        if (!text.trim()) {
+          await sendTextWithContext(client, targetId, messageType, '未检测到有效文本内容，请附带说明或重新发送。', replyCtx)
+          return
+        }
 
         // 检查是否是命令
         if (text.startsWith('/')) {

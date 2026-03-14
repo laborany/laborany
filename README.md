@@ -237,8 +237,8 @@ FEISHU_DOMAIN=feishu                # feishu 或 lark
 ```
 QQ_ENABLED=true
 QQ_APP_ID=your-qq-app-id
-QQ_APP_SECRET=your-qq-app-secret   # 推荐，支持自动换取访问令牌
-QQ_BOT_TOKEN=your-qq-bot-token     # 可选（与 QQ_APP_SECRET 二选一）
+QQ_APP_SECRET=your-qq-app-secret   # 必填，LaborAny 会使用 App Secret 自动换取访问令牌
+# QQ_BOT_TOKEN=your-qq-bot-token   # 已弃用，仅兼容旧版本配置，建议不要再使用
 QQ_ALLOW_USERS=user1,user2         # 可选，空=全部允许
 QQ_SANDBOX=false                   # 是否使用沙箱环境
 QQ_REQUIRE_ALLOWLIST=false         # 为 true 时白名单不能为空
