@@ -1,6 +1,7 @@
 import { memoryOrchestrator } from './orchestrator.js'
 import type { ExtractAndUpsertParams, UpsertResult } from './orchestrator.js'
 import { memoryProcessor } from './consolidator.js'
+import { memoryFileManager } from './file-manager.js'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { DATA_DIR } from '../paths.js'
@@ -110,6 +111,8 @@ class MemoryAsyncQueue {
   private lastClusterAt = readClusterMarker()
   private clusterInFlight = false
   private completedSinceCluster = 0
+  private readonly evolutionCompressedAt = new Map<string, number>()
+  private readonly skillIteratedAt = new Map<string, number>()
 
   enqueue(params: ExtractAndUpsertParams): MemoryQueueResult {
     const settings = getMemoryAsyncSettings()
@@ -202,6 +205,8 @@ class MemoryAsyncQueue {
           )
           this.completedSinceCluster += 1
           this.maybeAutoClusterEpisodes()
+          this.maybeCompressEvolution(job.params.skillId)
+          this.maybeSelfIterateSkill(job.params.skillId)
         } catch (error) {
           this.failed += 1
           const message = error instanceof Error ? error.message : String(error)
@@ -248,6 +253,57 @@ class MemoryAsyncQueue {
       })
       .finally(() => {
         this.clusterInFlight = false
+      })
+  }
+
+  private maybeCompressEvolution(skillId: string): void {
+    const COOLDOWN_MS = 24 * 60 * 60 * 1000 // 24h
+    const MIN_ENTRIES = 10
+    const now = Date.now()
+    const lastCompressed = this.evolutionCompressedAt.get(skillId) || 0
+    const cooldownOk = now - lastCompressed >= COOLDOWN_MS
+
+    if (!cooldownOk) return
+
+    const entryCount = memoryFileManager.countSkillEvolutionEntries(skillId, 14)
+    if (entryCount < MIN_ENTRIES) return
+
+    this.evolutionCompressedAt.set(skillId, now)
+
+    void memoryOrchestrator.compressSkillEvolution(skillId)
+      .then(result => {
+        if (result.compressed) {
+          console.log(`[MemoryQueue] evolution compressed: skill=${skillId}`)
+        }
+      })
+      .catch(err => {
+        this.evolutionCompressedAt.delete(skillId)
+        console.warn(`[MemoryQueue] evolution compression failed: skill=${skillId}`, err)
+      })
+  }
+
+  private maybeSelfIterateSkill(skillId: string): void {
+    const COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+    const MIN_EVOLUTION_LENGTH = 500
+    const now = Date.now()
+    const lastIterated = this.skillIteratedAt.get(skillId) || 0
+
+    if (now - lastIterated < COOLDOWN_MS) return
+
+    const evolution = memoryFileManager.readSkillEvolution(skillId)
+    if (!evolution || evolution.length < MIN_EVOLUTION_LENGTH) return
+
+    this.skillIteratedAt.set(skillId, now)
+
+    void memoryOrchestrator.selfIterateSkill(skillId)
+      .then(result => {
+        if (result.updated) {
+          console.log(`[MemoryQueue] skill self-iterated: skill=${skillId}`)
+        }
+      })
+      .catch(err => {
+        this.skillIteratedAt.delete(skillId)
+        console.warn(`[MemoryQueue] skill self-iteration failed: skill=${skillId}`, err)
       })
   }
 }

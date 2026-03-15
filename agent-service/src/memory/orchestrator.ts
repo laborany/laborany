@@ -5,7 +5,7 @@ import { profileLLMClassifier, profileManager } from './profile/index.js'
 import { memoryConsolidator } from './consolidator.js'
 import { memCellStorage, type MemCell, type ExtractedFact } from './memcell/index.js'
 import { episodeStorage } from './episode/index.js'
-import { memoryCliExtractor } from './io.js'
+import { memoryCliExtractor, runClaudeCliPrompt } from './io.js'
 import { addressingCliExtractor } from './addressing-extractor.js'
 import {
   addressingManager,
@@ -554,16 +554,20 @@ export class MemoryOrchestrator {
     return includesAny(description, GLOBAL_STABLE_PATTERNS)
   }
 
-  private shouldAutoWriteSkillLongTerm(description: string, confidence: number, evidenceCount: number): boolean {
+  private shouldAutoWriteSkillLongTerm(description: string, confidence: number, evidenceCount: number, factType?: string): boolean {
     if (!this.shouldPromoteToLongTerm(description)) return false
+    // Fast-track preferences: lower threshold
+    if (factType === 'preference' && confidence >= 0.75 && evidenceCount >= 1) return true
     if (confidence < 0.88) return false
     if (evidenceCount < 2) return false
     if (description.length > 220) return false
     return true
   }
 
-  private shouldQueueSkillLongTerm(description: string, confidence: number, evidenceCount: number): boolean {
+  private shouldQueueSkillLongTerm(description: string, confidence: number, evidenceCount: number, factType?: string): boolean {
     if (!this.shouldPromoteToLongTerm(description)) return false
+    // Fast-track preferences: lower threshold
+    if (factType === 'preference' && confidence >= 0.65) return true
     if (confidence < 0.72 && evidenceCount < 2) return false
     if (description.length > 220) return false
     return true
@@ -611,6 +615,19 @@ export class MemoryOrchestrator {
     return true
   }
 
+  private isFactSeenAcrossSkills(description: string): boolean {
+    const recentCells = memCellStorage.listRecent(7)
+    const skillIds = new Set<string>()
+    const normalized = description.toLowerCase().slice(0, 50)
+    for (const cell of recentCells) {
+      if (cell.summary?.toLowerCase().includes(normalized) ||
+          cell.facts?.some(f => f.content.toLowerCase().includes(normalized))) {
+        skillIds.add(cell.skillId)
+      }
+    }
+    return skillIds.size >= 2
+  }
+
   private computeLongTermScore(params: {
     section: string
     description: string
@@ -631,6 +648,7 @@ export class MemoryOrchestrator {
     if (includesAny(description, TRANSIENT_FACT_PATTERNS)) score -= 0.2
     if (section === '工作偏好' || section === '沟通风格') score += 0.05
     if (description.length < 10) score -= 0.08
+    if (this.isFactSeenAcrossSkills(description)) score += 0.12
 
     return Math.max(0, Math.min(1, score))
   }
@@ -720,6 +738,18 @@ export class MemoryOrchestrator {
       })
     }
 
+    const skillEvolution = memoryFileManager.readSkillEvolution(skillId)
+    if (skillEvolution?.trim()) {
+      sections.push({
+        title: '技能进化记忆',
+        content: skillEvolution,
+        source: `memory/skills/${skillId}/evolution.md`,
+        category: 'high',
+        score: sectionScore('high'),
+        tokens: estimateTokens(skillEvolution),
+      })
+    }
+
     return sections
   }
 
@@ -747,6 +777,18 @@ export class MemoryOrchestrator {
         category: 'recent',
         score: sectionScore('recent'),
         tokens: estimateTokens(recentSkill),
+      })
+    }
+
+    const todayEvolution = memoryFileManager.readSkillEvolutionRecent(skillId, 1)
+    if (todayEvolution?.trim()) {
+      sections.push({
+        title: '今日技能新洞察',
+        content: todayEvolution,
+        source: `memory/skills/${skillId}/evolution-daily`,
+        category: 'recent',
+        score: sectionScore('recent') + 0.05,
+        tokens: estimateTokens(todayEvolution),
       })
     }
 
@@ -1132,6 +1174,7 @@ export class MemoryOrchestrator {
         latestField.description,
         patch.confidence,
         evidenceCount,
+        patch.intent,
       )) {
         const writeResult = memoryConsolidator.autoUpsertLongTerm({
           scope: 'skill',
@@ -1151,6 +1194,7 @@ export class MemoryOrchestrator {
         latestField.description,
         patch.confidence,
         evidenceCount,
+        patch.intent,
       )) {
         try {
           const skillCandidate = memoryConsolidator.enqueueCandidate({
@@ -1278,6 +1322,39 @@ export class MemoryOrchestrator {
 
     const filteredFacts = this.filterFacts(extraction.facts)
     const summary = this.sanitizeSummary(extraction.summary, memoryUserQuery) || clip(memoryUserQuery, 260)
+
+    // Skill Evolution: 提取 skill_insight facts（独立通道，不经过 user-centric 过滤）
+    const skillInsights = extraction.facts.filter(f =>
+      f.type === 'skill_insight'
+      && f.confidence >= 0.6
+      && (f.persistence === 'long_term' || f.persistence === 'session')
+      && f.content.trim().length >= 10
+      && f.content.trim().length <= 300
+    )
+    if (skillInsights.length > 0) {
+      const evolutionContent = skillInsights
+        .slice(0, 5)
+        .map(f => `- ${f.content.trim()}`)
+        .join('\n')
+      memoryFileManager.appendSkillEvolutionDaily(skillId, evolutionContent, timestamp)
+    }
+
+    // Cross-skill knowledge sharing: detect global-scope insights
+    const globalInsights = extraction.facts.filter(f =>
+      f.type === 'skill_insight'
+      && f.scope === 'global'
+      && f.confidence >= 0.7
+      && f.persistence === 'long_term'
+      && f.content.trim().length >= 10
+      && f.content.trim().length <= 300
+    )
+    if (globalInsights.length > 0) {
+      const globalContent = globalInsights
+        .slice(0, 3)
+        .map(f => `- [来自 ${skillId}] ${f.content.trim()}`)
+        .join('\n')
+      memoryFileManager.appendToDaily({ scope: 'global', content: `**跨技能洞察**\n${globalContent}` })
+    }
 
     if (!summary && filteredFacts.length === 0) {
       memoryConsolidator.recordNoDecisionSummary({
@@ -1418,6 +1495,81 @@ export class MemoryOrchestrator {
     })
 
     return result
+  }
+
+  async selfIterateSkill(skillId: string): Promise<{ updated: boolean; reason?: string }> {
+    const evolution = memoryFileManager.readSkillEvolution(skillId)
+    if (!evolution?.trim()) return { updated: false, reason: 'no_evolution' }
+
+    const currentSkill = memoryFileManager.readSkillDefinition(skillId)
+    if (!currentSkill) return { updated: false, reason: 'skill_not_found' }
+
+    const prompt = `你是一个 Skill 定义优化器。根据积累的进化记忆，更新 Skill 的定义文件。
+
+规则：
+1. 保持 YAML frontmatter 格式不变（name, description, icon, category）
+2. 可以优化对话策略、增加新的指导原则、调整工作流程
+3. 不要删除核心功能，只做增量优化
+4. 如果进化记忆中有明确的方法论改进，融入到工作流程中
+5. 如果进化记忆中有用户偏好相关的洞察，融入到对话原则中
+6. 保持文件总长度合理（不超过原文的 1.5 倍）
+7. 输出完整的 SKILL.md 内容（包含 frontmatter）
+
+当前 SKILL.md：
+${currentSkill}
+
+积累的进化记忆：
+${evolution}
+
+请输出更新后的完整 SKILL.md 内容：`
+
+    const result = await runClaudeCliPrompt(prompt, 60_000)
+
+    if (!result?.trim()) return { updated: false, reason: 'llm_failed' }
+    if (result.length > 15_000) return { updated: false, reason: 'output_too_long' }
+    if (!result.includes('---')) return { updated: false, reason: 'invalid_format' }
+
+    memoryFileManager.backupSkillDefinition(skillId)
+    memoryFileManager.writeSkillDefinition(skillId, result)
+    return { updated: true }
+  }
+
+  async compressSkillEvolution(skillId: string): Promise<{ compressed: boolean; reason?: string }> {
+    const recentEntries = memoryFileManager.readSkillEvolutionRecent(skillId, 14)
+    if (!recentEntries?.trim()) {
+      return { compressed: false, reason: 'no_recent_entries' }
+    }
+
+    const existingEvolution = memoryFileManager.readSkillEvolution(skillId) || ''
+
+    const prompt = `你是一个记忆管理器。将短期观察压缩为长期认知。
+
+规则：
+1. 保留有价值的、可复用的洞察和方法论
+2. 删除一次性的、过时的、重复的内容
+3. 如果新观察和旧记忆矛盾，用新的替代旧的
+4. 多条相似观察压缩为一条更抽象的认知
+5. 按主题分组（方法论、领域知识、对话技巧等）
+6. 总输出不超过 3000 字符
+7. 输出纯 markdown，不要代码块包裹
+
+当前长期记忆：
+${existingEvolution || '（空）'}
+
+新增短期观察：
+${recentEntries}
+
+请输出更新后的完整长期记忆内容：`
+
+    const result = await runClaudeCliPrompt(prompt, 30_000)
+
+    if (result && result.length <= 3000) {
+      memoryFileManager.writeSkillEvolution(skillId, result)
+      memoryFileManager.cleanupOldEvolutionDaily(skillId, 14)
+      return { compressed: true }
+    }
+
+    return { compressed: false, reason: 'compression_failed_or_too_long' }
   }
 
   readTrace(sessionId: string): string[] {

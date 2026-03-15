@@ -15,11 +15,13 @@ export interface Message {
 }
 
 export interface ExtractedFact {
-  type: 'preference' | 'fact' | 'correction' | 'context'
+  type: 'preference' | 'fact' | 'correction' | 'context' | 'skill_insight'
   content: string
   confidence: number
   source: 'user' | 'assistant' | 'event'
-  intent?: 'preference' | 'fact' | 'correction' | 'context' | 'response_style'
+  intent?: 'preference' | 'fact' | 'correction' | 'context' | 'response_style' | 'skill_insight'
+  persistence?: 'ephemeral' | 'session' | 'long_term'
+  scope?: 'user' | 'skill' | 'global'
 }
 
 export interface MemCell {

@@ -6,9 +6,10 @@
  * ║  存储：使用 DATA_DIR（可写目录），避免打包后权限问题                        ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync, readdirSync, unlinkSync } from 'fs'
 import { join, dirname } from 'path'
 import { DATA_DIR } from '../paths.js'
+import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR } from 'laborany-shared'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           路径常量                                        │
@@ -373,6 +374,136 @@ export class MemoryFileManager {
     }
 
     return contents.join('\n\n---\n\n')
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  Skill Evolution: 短期层 — 追加到 evolution-daily
+   *  路径: memory/skills/{skillId}/evolution-daily/YYYY-MM-DD.md
+   * ──────────────────────────────────────────────────────────────────────── */
+  appendSkillEvolutionDaily(skillId: string, content: string, timestamp?: Date): void {
+    const ts = timestamp || new Date()
+    const dateStr = formatDate(ts)
+    const dir = join(getSkillMemoryDir(skillId), 'evolution-daily')
+    ensureDir(dir)
+    const filePath = join(dir, `${dateStr}.md`)
+
+    const timeStr = formatTime(ts)
+    const entry = `\n## ${timeStr}\n${content}\n`
+
+    if (!existsSync(filePath)) {
+      const header = `# ${dateStr} 技能进化记录\n`
+      appendFileSync(filePath, header, 'utf-8')
+    }
+
+    appendFileSync(filePath, entry, 'utf-8')
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  Skill Evolution: 长期层 — 读取 evolution.md
+   *  路径: memory/skills/{skillId}/evolution.md
+   * ──────────────────────────────────────────────────────────────────────── */
+  readSkillEvolution(skillId: string): string | null {
+    const filePath = join(getSkillMemoryDir(skillId), 'evolution.md')
+    return this.readFile(filePath)
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  Skill Evolution: 长期层 — 覆写 evolution.md（压缩后写入）
+   * ──────────────────────────────────────────────────────────────────────── */
+  writeSkillEvolution(skillId: string, content: string): void {
+    const dir = getSkillMemoryDir(skillId)
+    ensureDir(dir)
+    const filePath = join(dir, 'evolution.md')
+    writeFileSync(filePath, content, 'utf-8')
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  Skill Evolution: 短期层 — 读取最近 N 天的 evolution-daily
+   * ──────────────────────────────────────────────────────────────────────── */
+  readSkillEvolutionRecent(skillId: string, days = 14): string {
+    const dir = join(getSkillMemoryDir(skillId), 'evolution-daily')
+    if (!existsSync(dir)) return ''
+
+    const now = new Date()
+    const contents: string[] = []
+
+    for (let i = 0; i < days; i++) {
+      const date = new Date(now)
+      date.setDate(date.getDate() - i)
+      const dateStr = formatDate(date)
+      const filePath = join(dir, `${dateStr}.md`)
+      if (existsSync(filePath)) {
+        contents.push(readFileSync(filePath, 'utf-8'))
+      }
+    }
+
+    return contents.join('\n\n---\n\n')
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  Skill Evolution: 清理过期短期层
+   * ──────────────────────────────────────────────────────────────────────── */
+  cleanupOldEvolutionDaily(skillId: string, keepDays = 14): void {
+    const dir = join(getSkillMemoryDir(skillId), 'evolution-daily')
+    if (!existsSync(dir)) return
+
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - keepDays)
+    const cutoffStr = formatDate(cutoff)
+
+    try {
+      const files = readdirSync(dir).filter(f => f.endsWith('.md'))
+      for (const file of files) {
+        const dateStr = file.replace('.md', '')
+        if (dateStr < cutoffStr) {
+          unlinkSync(join(dir, file))
+        }
+      }
+    } catch {
+      // cleanup failure is non-critical
+    }
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  Skill Evolution: 统计最近 N 天的 evolution-daily 条目数
+   *  条目以 "## HH:MM" 开头的段落为单位
+   * ──────────────────────────────────────────────────────────────────────── */
+  countSkillEvolutionEntries(skillId: string, days = 14): number {
+    const content = this.readSkillEvolutionRecent(skillId, days)
+    if (!content) return 0
+    return (content.match(/^## \d{2}:\d{2}/gm) || []).length
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  Skill Definition: 读取 SKILL.md（USER_SKILLS_DIR 优先，fallback BUILTIN_SKILLS_DIR）
+   * ──────────────────────────────────────────────────────────────────────── */
+  readSkillDefinition(skillId: string): string | null {
+    const userPath = join(USER_SKILLS_DIR, skillId, 'SKILL.md')
+    if (existsSync(userPath)) return readFileSync(userPath, 'utf-8')
+    const builtinPath = join(BUILTIN_SKILLS_DIR, skillId, 'SKILL.md')
+    if (existsSync(builtinPath)) return readFileSync(builtinPath, 'utf-8')
+    return null
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  Skill Definition: 写入更新后的 SKILL.md（只写 USER_SKILLS_DIR）
+   * ──────────────────────────────────────────────────────────────────────── */
+  writeSkillDefinition(skillId: string, content: string): void {
+    const dir = join(USER_SKILLS_DIR, skillId)
+    ensureDir(dir)
+    writeFileSync(join(dir, 'SKILL.md'), content, 'utf-8')
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   *  Skill Definition: 备份旧版本到 memory/skills/{skillId}/skill-backups/
+   * ──────────────────────────────────────────────────────────────────────── */
+  backupSkillDefinition(skillId: string): void {
+    const current = this.readSkillDefinition(skillId)
+    if (!current) return
+    const backupDir = join(getSkillMemoryDir(skillId), 'skill-backups')
+    ensureDir(backupDir)
+    const dateStr = formatDate(new Date())
+    writeFileSync(join(backupDir, `${dateStr}.md`), current, 'utf-8')
   }
 
   /* ────────────────────────────────────────────────────────────────────────

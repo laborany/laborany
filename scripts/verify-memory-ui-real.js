@@ -431,10 +431,7 @@ async function sendChatMessage(page, text) {
   const input = page.getByTestId('chat-input-textarea')
   await input.waitFor({ state: 'visible', timeout: 60000 })
   await input.fill(text)
-
-  const sendButton = page.getByTestId('chat-send-button')
-  await sendButton.waitFor({ state: 'visible', timeout: 15000 })
-  await sendButton.click()
+  await input.press('Enter')
 }
 
 async function main() {

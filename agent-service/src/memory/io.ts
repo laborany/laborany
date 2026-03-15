@@ -196,11 +196,13 @@ const EXTRACTION_PROMPT = `你是一个记忆抽取助手。
   },
   "facts": [
     {
-      "type": "preference|fact|correction|context",
+      "type": "preference|fact|correction|context|skill_insight",
       "content": "事实内容，使用中文",
       "confidence": 0.5,
       "source": "user|assistant|event",
-      "intent": "preference|fact|correction|context|response_style"
+      "intent": "preference|fact|correction|context|response_style|skill_insight",
+      "persistence": "ephemeral|session|long_term",
+      "scope": "user|skill|global"
     }
   ],
   "keywords": ["关键词1", "关键词2"],
@@ -217,7 +219,18 @@ const EXTRACTION_PROMPT = `你是一个记忆抽取助手。
 7) addressingUpdate 只在“用户明确指定或强烈暗示以后怎么称呼他/她”时返回 shouldUpdate=true。
 8) 像“你现在叫我什么”“你一般怎么称呼我”“好的老板”这类问句/礼貌语，addressingUpdate 必须为 shouldUpdate=false。
 9) 不要把“老板/boss/sir”等纯礼貌语当作用户记忆；但“请叫我 Nathan”这类明确称呼偏好可以保留。
-10) 输出语言默认使用中文（保留必要英文术语或专有名词）。`
+10) 输出语言默认使用中文（保留必要英文术语或专有名词）。
+11) persistence 字段判断信息时效性：
+    - ephemeral：一次性请求、临时状态（"帮我看一下这个报错"）
+    - session：本次会话相关但不需要长期记住的信息
+    - long_term：长期有效的偏好、知识、规律、方法论
+12) scope 字段判断信息归属：
+    - user：关于用户本人的信息（偏好、身份、习惯）
+    - skill：当前任务领域的知识、方法论、技巧、洞察（不是关于用户，而是关于这个领域本身）
+    - global：跨技能通用的信息
+13) skill_insight 类型用于记录对话中产生的领域知识、思考方法论、有价值的洞察。
+    这类信息通常 source="assistant" 或 source="event"，scope="skill"，persistence="long_term"。
+    示例：{"type":"skill_insight","content":"讨论创业想法时用第一性原理拆解比直接给建议更有效","scope":"skill","persistence":"long_term"}`
 
 const HARD_NEGATIVE_FEW_SHOTS = `
 困难负例（必须遵循）：
@@ -255,6 +268,18 @@ const HARD_NEGATIVE_FEW_SHOTS = `
 用户：你现在叫我什么？
 助手：……
 正确：{"addressingUpdate":{"shouldUpdate":false,"preferredName":"","confidence":0.05,"reason":"用户在询问当前称呼，不是在设置新称呼"}}
+
+示例 G
+用户：帮我分析一下这个竞品。
+助手：我来从产品定位、用户群体、商业模式三个维度分析。
+错误：{"type":"skill_insight","content":"助手会从三个维度分析竞品","scope":"skill"}
+正确：{"type":"context","content":"助手从产品定位、用户群体、商业模式三个维度分析了竞品","scope":"skill","persistence":"ephemeral"}
+说明：具体的执行动作不是 insight，只有可复用的方法论或规律才是。
+
+示例 H
+用户：我发现用"五个为什么"追问法能帮我找到问题根因。
+助手：这确实是很好的思考工具。
+正确：{"type":"skill_insight","content":"用户认为'五个为什么'追问法能有效找到问题根因","source":"user","scope":"skill","persistence":"long_term"}
 `
 
 const FACT_NOISE_PATTERNS = [
@@ -340,11 +365,13 @@ function parseJSON<T>(raw: string): T {
 
 function sanitizeFacts(rawFacts: unknown): ExtractedFact[] {
   if (!Array.isArray(rawFacts)) return []
-  const allowedType = new Set<ExtractedFact['type']>(['preference', 'fact', 'correction', 'context'])
+  const allowedType = new Set<ExtractedFact['type']>(['preference', 'fact', 'correction', 'context', 'skill_insight'])
   const allowedSource = new Set<ExtractedFact['source']>(['user', 'assistant', 'event'])
   const allowedIntent = new Set<NonNullable<ExtractedFact['intent']>>([
-    'preference', 'fact', 'correction', 'context', 'response_style',
+    'preference', 'fact', 'correction', 'context', 'response_style', 'skill_insight',
   ])
+  const allowedPersistence = new Set<NonNullable<ExtractedFact['persistence']>>(['ephemeral', 'session', 'long_term'])
+  const allowedScope = new Set<NonNullable<ExtractedFact['scope']>>(['user', 'skill', 'global'])
 
   const sanitized: Array<ExtractedFact | null> = rawFacts.map(item => {
     if (!item || typeof item !== 'object') return null
@@ -361,8 +388,12 @@ function sanitizeFacts(rawFacts: unknown): ExtractedFact[] {
     const confidence = Math.max(0.5, Math.min(1, parsedConfidence))
     const source = candidate.source && allowedSource.has(candidate.source) ? candidate.source : 'user'
     const intent = candidate.intent && allowedIntent.has(candidate.intent) ? candidate.intent : candidate.type
+    const persistence = candidate.persistence && allowedPersistence.has(candidate.persistence)
+      ? candidate.persistence : undefined
+    const scope = candidate.scope && allowedScope.has(candidate.scope)
+      ? candidate.scope : undefined
 
-    return { type: candidate.type, content, confidence, source, intent }
+    return { type: candidate.type, content, confidence, source, intent, persistence, scope }
   })
 
   return sanitized.filter((item): item is ExtractedFact => item !== null)
@@ -670,3 +701,64 @@ export class MemoryCliExtractor {
 }
 
 export const memoryCliExtractor = new MemoryCliExtractor()
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  通用 Claude CLI 调用（用于 evolution 压缩等场景）
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+export async function runClaudeCliPrompt(prompt: string, timeoutMs = 30_000): Promise<string | null> {
+  if (!isClaudeCliAvailable()) return null
+
+  refreshRuntimeConfig()
+  const cliLaunch = resolveClaudeCliLaunch()
+  if (!cliLaunch) return null
+
+  const args = ['--print', '--dangerously-skip-permissions']
+  const memoryModel = (
+    process.env.ANTHROPIC_MEMORY_MODEL
+    || process.env.ANTHROPIC_CLASSIFY_MODEL
+    || process.env.ANTHROPIC_MODEL
+    || ''
+  ).trim()
+  if (memoryModel) args.push('--model', memoryModel)
+
+  const spawnArgs = [...cliLaunch.argsPrefix, ...args]
+
+  try {
+    const proc = spawn(cliLaunch.command, spawnArgs, {
+      env: buildClaudeEnvConfig(),
+      shell: cliLaunch.shell,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+
+    let stdout = ''
+    let stderr = ''
+    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf-8') })
+    proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf-8') })
+
+    proc.stdin.write(prompt, 'utf-8')
+    proc.stdin.end()
+
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      proc.kill('SIGTERM')
+    }, timeoutMs)
+
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      proc.on('close', code => resolve(code ?? 1))
+      proc.on('error', reject)
+    })
+    clearTimeout(timer)
+
+    if (timedOut || exitCode !== 0) {
+      console.warn(`[runClaudeCliPrompt] failed: timedOut=${timedOut} exitCode=${exitCode} stderr=${stderr.slice(0, 240)}`)
+      return stdout.trim() || null
+    }
+
+    return stdout.trim() || null
+  } catch (error) {
+    console.warn('[runClaudeCliPrompt] spawn error:', error)
+    return null
+  }
+}

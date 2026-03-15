@@ -99,7 +99,7 @@ function getRuntimePlatformLabel(): string {
   return 'Linux'
 }
 
-function buildLaborAnyRuntimeContext(taskDir: string, skillId: string): string {
+function buildLaborAnyRuntimeContext(taskDir: string, skillId: string, sessionId: string): string {
   const tasksBase = TASKS_DIR
   const uploadsBase = UPLOADS_DIR
   const envPath = join(APP_HOME_DIR, '.env')
@@ -110,6 +110,7 @@ function buildLaborAnyRuntimeContext(taskDir: string, skillId: string): string {
     '',
     `- Platform: ${getRuntimePlatformLabel()} (${process.platform})`,
     `- Current skill ID: ${skillId}`,
+    `- Current session ID: ${sessionId}`,
     `- Current task working directory (cwd): ${normalizePathForPrompt(taskDir)}`,
     `- Task root directory: ${normalizePathForPrompt(tasksBase)}`,
     `- Uploaded files cache: ${normalizePathForPrompt(uploadsBase)}`,
@@ -118,6 +119,7 @@ function buildLaborAnyRuntimeContext(taskDir: string, skillId: string): string {
     `- LaborAny user home: ${normalizePathForPrompt(userHome)}`,
     `- LaborAny app home: ${normalizePathForPrompt(APP_HOME_DIR)}`,
     `- Primary env file path: ${normalizePathForPrompt(envPath)}`,
+    `- API base URL: http://localhost:${process.env.PORT || 23816}`,
     '',
     'Execution constraints:',
     '- You are running inside LaborAny desktop app.',
@@ -297,7 +299,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     tokenBudget: 4000,
   })
   memoryFileManager.ensureSkillMemoryDir(skill.meta.id)
-  const runtimeContext = buildLaborAnyRuntimeContext(taskDir, skill.meta.id)
+  const runtimeContext = buildLaborAnyRuntimeContext(taskDir, skill.meta.id, sessionId)
 
   const systemPrompt = retrieved.context
     ? `${runtimeContext}\n\n---\n\n${retrieved.context}\n\n---\n\n${skill.systemPrompt}`
@@ -426,6 +428,12 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       } else {
         // 正常完成：记录记忆 + 发送 done
         if (code === 0) {
+          // Append assistant response to history.txt for complete conversation export
+          if (agentResponse.trim()) {
+            const assistantEntry = `\n[${new Date().toISOString()}] Assistant:\n${agentResponse}\n`
+            writeFileSync(historyFile, assistantEntry, { flag: 'a' })
+          }
+
           try {
             if (shouldPersistMemory(skill.meta.id, userQuery)) {
               const memoryParams = {

@@ -117,6 +117,6 @@ export {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export { memoryProcessor, MemoryProcessor } from './consolidator.js'
 export { memoryOrchestrator, MemoryOrchestrator } from './orchestrator.js'
-export { memoryCliExtractor, MemoryCliExtractor, type CliExtractResult } from './io.js'
+export { memoryCliExtractor, MemoryCliExtractor, type CliExtractResult, runClaudeCliPrompt } from './io.js'
 export { memoryAsyncQueue, type MemoryQueueStats } from './async-queue.js'
 export type { MemoryScene, InjectedMemorySection, MemoryTraceEvent } from './types.js'
