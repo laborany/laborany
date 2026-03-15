@@ -8,6 +8,7 @@
 
 import { Router, Request, Response } from 'express'
 import { randomUUID } from 'crypto'
+import { existsSync, rmSync } from 'fs'
 import { join } from 'path'
 import { executeAgent } from '../agent-executor.js'
 import { buildConverseSystemPrompt, type ConverseRuntimeContext } from '../converse-prompt.js'
@@ -56,9 +57,85 @@ function getSrcApiBaseUrl(): string {
 }
 
 type ExternalSessionStatus = 'running' | 'waiting_input' | 'completed' | 'failed' | 'stopped' | 'aborted'
+type ConverseMessageKind =
+  | 'user'
+  | 'assistant_reply'
+  | 'decision_reply'
+  | 'action_summary'
+  | 'question_summary'
+  | 'rule_reply'
+  | 'error'
+
+interface ConverseMessageMeta {
+  sessionMode: 'converse'
+  messageKind: ConverseMessageKind
+  turnId: string
+  replyToMessageId?: number | null
+  variantGroupId?: string | null
+  variantIndex?: number | null
+  source: 'user' | 'llm' | 'rule'
+  capabilities: {
+    canCopy: boolean
+    canRegenerate: boolean
+  }
+}
+
+interface StoredConverseMessage {
+  id: number
+  type: string
+  content?: string | null
+  toolName?: string | null
+  toolInput?: Record<string, unknown> | null
+  toolResult?: string | null
+  meta?: ConverseMessageMeta | null
+  createdAt?: string
+}
+
+interface StoredConverseSessionDetail {
+  skill_id?: string
+  messages?: StoredConverseMessage[]
+  sourceMeta?: {
+    attachmentIds?: string[] | string
+    modelProfileId?: string
+  } | null
+}
+
+interface RegenerateContextMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
 
 function stripActionMarkers(text: string): string {
   return text.replace(ACTION_MARKER_CLEAN_RE, '').trim()
+}
+
+function buildConverseMessageMeta({
+  kind,
+  turnId,
+  source,
+  replyToMessageId = null,
+  canRegenerate = false,
+}: {
+  kind: ConverseMessageKind
+  turnId: string
+  source: 'user' | 'llm' | 'rule'
+  replyToMessageId?: number | null
+  canRegenerate?: boolean
+}): ConverseMessageMeta {
+  const supportsVariants = kind === 'assistant_reply'
+  return {
+    sessionMode: 'converse',
+    messageKind: kind,
+    turnId,
+    replyToMessageId,
+    variantGroupId: supportsVariants ? `turn:${turnId}` : null,
+    variantIndex: supportsVariants ? 0 : null,
+    source,
+    capabilities: {
+      canCopy: true,
+      canRegenerate,
+    },
+  }
 }
 
 function buildQuestionSummary(payload: ConverseQuestionPayload): string {
@@ -69,6 +146,61 @@ function buildQuestionSummary(payload: ConverseQuestionPayload): string {
     lines.push(`${header}: ${question}`.trim())
   }
   return lines.filter(Boolean).join('\n')
+}
+
+function buildConverseRegenerateSystemPrompt(memoryContext: string): string {
+  const sections = [
+    '# laborany 对话回复重做助手',
+    '',
+    '你的职责是基于给定的对话 transcript，为最后一条用户消息重新生成一版自然语言回复。',
+    '',
+    '必须遵守：',
+    '- 只输出回复正文，不要输出 LABORANY_ACTION、JSON、工具调用或系统说明。',
+    '- 不要假装执行技能、命令、文件操作或搜索网页。',
+    '- 如果 transcript 中存在称呼、语言、风格偏好，继续遵守。',
+    '- 这是一版新的回复，但不要提及“重做”“版本”“上一版回答”。',
+    '- 若信息确实不足，可以简洁说明缺少什么，但不要调用 AskUserQuestion。',
+  ]
+
+  if (memoryContext) {
+    sections.push('', '## 用户记忆', '', memoryContext)
+  }
+
+  return sections.join('\n')
+}
+
+function buildConverseRegenerateQuery(messages: RegenerateContextMessage[]): string {
+  const transcript = messages
+    .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}:\n${message.content.trim()}`)
+    .join('\n\n')
+
+  return [
+    '以下是当前对话在本轮回复前的上下文。',
+    '请基于这些上下文，对最后一条 User 消息给出一版新的直接回复。',
+    '',
+    '[Conversation Transcript]',
+    transcript,
+  ].join('\n')
+}
+
+async function fetchStoredConverseSession(sessionId: string): Promise<StoredConverseSessionDetail | null> {
+  try {
+    const response = await fetch(`${getSrcApiBaseUrl()}/sessions/${encodeURIComponent(sessionId)}`)
+    if (!response.ok) return null
+    return await response.json() as StoredConverseSessionDetail
+  } catch {
+    return null
+  }
+}
+
+function getLatestConverseUserTurnId(messages: StoredConverseMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.type !== 'user') continue
+    const turnId = message.meta?.turnId?.trim()
+    if (turnId) return turnId
+  }
+  return null
 }
 
 function summarizeAction(action: ConverseActionPayload): string {
@@ -185,21 +317,188 @@ async function upsertExternalSession(
   }
 }
 
+router.post('/regenerate', async (req: Request, res: Response) => {
+  const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim() : ''
+  const targetMessageId = Number(req.body?.messageId)
+  const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : []
+  const requestedModelProfileId = typeof req.body?.modelProfileId === 'string'
+    ? req.body.modelProfileId.trim()
+    : ''
+
+  const contextMessages = rawMessages
+    .map((item: unknown) => {
+      if (!item || typeof item !== 'object') return null
+      const candidate = item as Record<string, unknown>
+      const role = candidate.role === 'user' || candidate.role === 'assistant' ? candidate.role : null
+      const content = typeof candidate.content === 'string' ? candidate.content.trim() : ''
+      if (!role || !content) return null
+      return { role, content } satisfies RegenerateContextMessage
+    })
+    .filter(Boolean) as RegenerateContextMessage[]
+
+  if (!sessionId || !Number.isFinite(targetMessageId) || targetMessageId <= 0) {
+    res.status(400).json({ error: '缺少有效的 sessionId 或 messageId' })
+    return
+  }
+
+  if (contextMessages.length === 0 || contextMessages[contextMessages.length - 1]?.role !== 'user') {
+    res.status(400).json({ error: '缺少有效的对话上下文，且最后一条必须是用户消息' })
+    return
+  }
+
+  const storedSession = await fetchStoredConverseSession(sessionId)
+  if (!storedSession || storedSession.skill_id !== '__converse__') {
+    res.status(404).json({ error: '未找到可重做的 converse 会话' })
+    return
+  }
+
+  const storedMessages = Array.isArray(storedSession.messages) ? storedSession.messages : []
+  const targetMessage = storedMessages.find((message) => message.id === targetMessageId)
+  if (!targetMessage || targetMessage.type !== 'assistant' || targetMessage.meta?.messageKind !== 'assistant_reply') {
+    res.status(400).json({ error: '当前仅支持重做最新一轮的普通 AI 回复' })
+    return
+  }
+
+  const targetTurnId = targetMessage.meta?.turnId?.trim()
+  if (!targetTurnId) {
+    res.status(400).json({ error: '该消息缺少 turnId，暂不支持重做' })
+    return
+  }
+
+  const latestTurnId = getLatestConverseUserTurnId(storedMessages)
+  if (!latestTurnId || latestTurnId !== targetTurnId) {
+    res.status(400).json({ error: '当前仅支持重做最后一轮回复' })
+    return
+  }
+
+  const replyToMessage = storedMessages.find((message) => message.type === 'user' && message.meta?.turnId === targetTurnId)
+  if (!replyToMessage?.id) {
+    res.status(400).json({ error: '未找到该回复对应的用户消息' })
+    return
+  }
+
+  const variantGroupId = targetMessage.meta?.variantGroupId?.trim() || `turn:${targetTurnId}`
+  const variantMessages = storedMessages.filter((message) =>
+    message.type === 'assistant'
+    && message.meta?.messageKind === 'assistant_reply'
+    && (message.meta?.variantGroupId?.trim() || `turn:${message.meta?.turnId || ''}`) === variantGroupId,
+  )
+  const nextVariantIndex = variantMessages.reduce((max, message) => {
+    const candidate = Number(message.meta?.variantIndex)
+    return Number.isFinite(candidate) ? Math.max(max, candidate) : max
+  }, -1) + 1
+
+  const attachmentIds = normalizeAttachmentIds(storedSession.sourceMeta?.attachmentIds)
+  const effectiveModelProfileId = requestedModelProfileId || storedSession.sourceMeta?.modelProfileId || ''
+  const modelOverride = await resolveModelProfile(effectiveModelProfileId || undefined)
+
+  const tempRunId = `${sessionId}-regen-${randomUUID()}`
+  const taskDir = join(TASKS_DIR, tempRunId)
+  let regeneratedText = ''
+  let regeneratedError = ''
+
+  try {
+    const uploadedFiles = await hydrateUploadsToTaskDir(attachmentIds, taskDir)
+    const transcriptQuery = buildConverseRegenerateQuery(contextMessages)
+    const query = buildConverseQuery(transcriptQuery, uploadedFiles)
+    const lastUserMessage = contextMessages[contextMessages.length - 1]?.content || transcriptQuery
+    const memoryCtx = memoryInjector.buildContext({
+      skillId: '__converse__',
+      userQuery: lastUserMessage,
+    })
+
+    const skill = {
+      meta: { id: '__converse__', name: '对话助手重做', description: '重做首页对话回复', kind: 'skill' as const },
+      systemPrompt: buildConverseRegenerateSystemPrompt(memoryCtx),
+      scriptsDir: '',
+      tools: [],
+    } as Skill
+
+    await executeAgent({
+      skill,
+      query,
+      sessionId: tempRunId,
+      signal: new AbortController().signal,
+      modelOverride,
+      onEvent: (event) => {
+        if (event.type === 'text' && event.content) {
+          regeneratedText += event.content
+        }
+
+        if (event.type === 'error' && event.content) {
+          regeneratedError = event.content
+        }
+      },
+    })
+
+    const cleanedText = stripActionMarkers(regeneratedText).trim()
+    if (regeneratedError && !cleanedText) {
+      throw new Error(regeneratedError)
+    }
+    if (!cleanedText) {
+      throw new Error('未生成新的回复内容')
+    }
+
+    const meta: ConverseMessageMeta = {
+      sessionMode: 'converse',
+      messageKind: 'assistant_reply',
+      turnId: targetTurnId,
+      replyToMessageId: replyToMessage.id,
+      variantGroupId,
+      variantIndex: nextVariantIndex,
+      source: 'llm',
+      capabilities: {
+        canCopy: true,
+        canRegenerate: true,
+      },
+    }
+
+    const messageId = await appendExternalMessage(sessionId, 'assistant', cleanedText, meta)
+    if (!messageId) {
+      throw new Error('保存重做结果失败')
+    }
+
+    await updateExternalSessionStatus(sessionId, 'completed')
+    res.json({
+      success: true,
+      message: {
+        id: messageId,
+        type: 'assistant',
+        content: cleanedText,
+        meta,
+        createdAt: new Date().toISOString(),
+      },
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '重做失败'
+    res.status(500).json({ error: message })
+  } finally {
+    if (existsSync(taskDir)) {
+      rmSync(taskDir, { recursive: true, force: true })
+    }
+  }
+})
+
 async function appendExternalMessage(
   sessionId: string,
   type: 'user' | 'assistant' | 'error' | 'system',
   content: string,
-): Promise<void> {
+  meta?: ConverseMessageMeta,
+): Promise<number | null> {
   const text = content.trim()
-  if (!text) return
+  if (!text) return null
   try {
-    await fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
+    const response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, type, content: text }),
+      body: JSON.stringify({ sessionId, type, content: text, meta }),
     })
+    if (!response.ok) return null
+    const data = await response.json().catch(() => ({})) as { messageId?: unknown }
+    return typeof data.messageId === 'number' ? data.messageId : null
   } catch (err) {
     console.warn('[Converse] failed to append external message:', err)
+    return null
   }
 }
 
@@ -1424,6 +1723,7 @@ router.post('/', async (req: Request, res: Response) => {
   ]))
   const baseQuery = extracted.text || rawQuery.trim()
   const persistUserQuery = baseQuery || rawQuery.trim() || '用户发起了对话分派请求'
+  const turnId = randomUUID()
   communicationPreferenceManager.applyFromUserText(baseQuery, persistUserQuery)
   addressingCliExtractor.schedulePersistIfNeeded({
     userText: baseQuery,
@@ -1433,13 +1733,33 @@ router.post('/', async (req: Request, res: Response) => {
 
   await upsertExternalSession(sessionId, persistUserQuery, 'running', {
     attachmentIds,
+    modelProfileId: modelProfileId || undefined,
   })
-  await appendExternalMessage(sessionId, 'user', persistUserQuery)
+  const userMessageId = await appendExternalMessage(
+    sessionId,
+    'user',
+    persistUserQuery,
+    buildConverseMessageMeta({
+      kind: 'user',
+      turnId,
+      source: 'user',
+    }),
+  )
 
   const directMetaReply = buildDirectMetaReply(baseQuery)
   if (directMetaReply) {
     sseWrite(res, 'text', { content: directMetaReply })
-    await appendExternalMessage(sessionId, 'assistant', directMetaReply)
+    await appendExternalMessage(
+      sessionId,
+      'assistant',
+      directMetaReply,
+      buildConverseMessageMeta({
+        kind: 'rule_reply',
+        turnId,
+        source: 'rule',
+        replyToMessageId: userMessageId,
+      }),
+    )
     const shouldQueueDirectMemory = (
       extractStrongCommunicationPreferencePatches(baseQuery).length > 0
       || Boolean(normalizeCommunicationStylePreference(baseQuery))
@@ -1476,16 +1796,46 @@ router.post('/', async (req: Request, res: Response) => {
     })
     if (guard.ok && guard.action) {
       sseWrite(res, 'action', withAttachmentIds(guard.action, attachmentIds))
-      await appendExternalMessage(sessionId, 'assistant', summarizeAction(guard.action))
+      await appendExternalMessage(
+        sessionId,
+        'assistant',
+        summarizeAction(guard.action),
+        buildConverseMessageMeta({
+          kind: 'action_summary',
+          turnId,
+          source: 'rule',
+          replyToMessageId: userMessageId,
+        }),
+      )
       await updateExternalSessionStatus(sessionId, 'completed')
     } else if (guard.question) {
       sseWrite(res, 'question', guard.question)
-      await appendExternalMessage(sessionId, 'assistant', buildQuestionSummary(guard.question))
+      await appendExternalMessage(
+        sessionId,
+        'assistant',
+        buildQuestionSummary(guard.question),
+        buildConverseMessageMeta({
+          kind: 'question_summary',
+          turnId,
+          source: 'rule',
+          replyToMessageId: userMessageId,
+        }),
+      )
       await updateExternalSessionStatus(sessionId, 'waiting_input')
     } else if (guard.validationErrors?.length) {
       const errorText = guard.validationErrors.join('; ')
       sseWrite(res, 'error', { message: errorText })
-      await appendExternalMessage(sessionId, 'error', errorText)
+      await appendExternalMessage(
+        sessionId,
+        'error',
+        errorText,
+        buildConverseMessageMeta({
+          kind: 'error',
+          turnId,
+          source: 'rule',
+          replyToMessageId: userMessageId,
+        }),
+      )
       await updateExternalSessionStatus(sessionId, 'failed')
     }
     sseWrite(res, 'done', {})
@@ -1498,6 +1848,8 @@ router.post('/', async (req: Request, res: Response) => {
   let streamError = ''
   let questionSummary = ''
   let terminalStatus: ExternalSessionStatus = 'running'
+  let assistantMessageKind: ConverseMessageKind = 'assistant_reply'
+  let assistantCanRegenerate = false
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
   const stopHeartbeat = () => {
     if (!heartbeatTimer) return
@@ -1561,6 +1913,8 @@ router.post('/', async (req: Request, res: Response) => {
               hasPendingQuestion = true
               terminalStatus = 'waiting_input'
               questionSummary = buildQuestionSummary(questionPayload)
+              assistantMessageKind = 'question_summary'
+              assistantCanRegenerate = false
               sseWrite(res, 'question', questionPayload)
               abortController.abort()
               return
@@ -1577,6 +1931,8 @@ router.post('/', async (req: Request, res: Response) => {
             hasPendingQuestion = true
             terminalStatus = 'waiting_input'
             questionSummary = buildQuestionSummary(fallbackQuestion)
+            assistantMessageKind = 'question_summary'
+            assistantCanRegenerate = false
             sseWrite(res, 'question', fallbackQuestion)
             abortController.abort()
             return
@@ -1626,6 +1982,8 @@ router.post('/', async (req: Request, res: Response) => {
             hasPendingQuestion = true
             terminalStatus = 'waiting_input'
             questionSummary = buildQuestionSummary(textQuestionPayload)
+            assistantMessageKind = 'question_summary'
+            assistantCanRegenerate = false
             const state = setSessionState(sessionId, {
               phase: textQuestionPayload.questionContext === 'schedule' ? 'schedule_wizard' : 'clarify',
               approvalRequired: false,
@@ -1642,6 +2000,8 @@ router.post('/', async (req: Request, res: Response) => {
             ? stabilizeScheduleAction(rawAction, query)
             : rawAction
           if (action) {
+            assistantMessageKind = 'decision_reply'
+            assistantCanRegenerate = false
             const guard = guardAction(action, runtimeContext, query)
 
             const state = setSessionState(sessionId, {
@@ -1659,18 +2019,27 @@ router.post('/', async (req: Request, res: Response) => {
               hasPendingQuestion = true
               terminalStatus = 'waiting_input'
               questionSummary = buildQuestionSummary(guard.question)
+              assistantMessageKind = 'question_summary'
+              assistantCanRegenerate = false
               sseWrite(res, 'question', guard.question)
             } else if (guard.validationErrors?.length) {
               streamError = guard.validationErrors.join('; ')
+              assistantCanRegenerate = false
               sseWrite(res, 'error', { message: streamError })
             }
           }
           if (!action && !fullText.trim() && !hasPendingQuestion) {
             const fallbackText = '我还缺少一些关键信息，请再描述一次目标，或告诉我你希望先澄清哪一步。'
             fullText += fallbackText
+            assistantMessageKind = 'rule_reply'
+            assistantCanRegenerate = false
             sseWrite(res, 'text', {
               content: fallbackText,
             })
+          }
+          if (!action && !hasPendingQuestion && !streamError && fullText.trim()) {
+            assistantMessageKind = 'assistant_reply'
+            assistantCanRegenerate = true
           }
           terminalStatus = hasPendingQuestion
             ? 'waiting_input'
@@ -1686,6 +2055,7 @@ router.post('/', async (req: Request, res: Response) => {
           }
           streamError = asString(event.content) || '对话服务异常'
           terminalStatus = 'failed'
+          assistantCanRegenerate = false
           sseWrite(res, 'error', { message: streamError })
         }
       },
@@ -1693,13 +2063,44 @@ router.post('/', async (req: Request, res: Response) => {
 
     const cleanedAssistantText = stripActionMarkers(fullText)
     if (cleanedAssistantText) {
-      await appendExternalMessage(sessionId, 'assistant', cleanedAssistantText)
+      await appendExternalMessage(
+        sessionId,
+        'assistant',
+        cleanedAssistantText,
+        buildConverseMessageMeta({
+          kind: assistantMessageKind,
+          turnId,
+          source: assistantMessageKind === 'assistant_reply' || assistantMessageKind === 'decision_reply' ? 'llm' : 'rule',
+          replyToMessageId: userMessageId,
+          canRegenerate: assistantCanRegenerate,
+        }),
+      )
     }
     if (questionSummary) {
-      await appendExternalMessage(sessionId, 'assistant', questionSummary)
+      await appendExternalMessage(
+        sessionId,
+        'assistant',
+        questionSummary,
+        buildConverseMessageMeta({
+          kind: 'question_summary',
+          turnId,
+          source: 'rule',
+          replyToMessageId: userMessageId,
+        }),
+      )
     }
     if (streamError) {
-      await appendExternalMessage(sessionId, 'error', streamError)
+      await appendExternalMessage(
+        sessionId,
+        'error',
+        streamError,
+        buildConverseMessageMeta({
+          kind: 'error',
+          turnId,
+          source: 'rule',
+          replyToMessageId: userMessageId,
+        }),
+      )
       terminalStatus = 'failed'
     }
     if (terminalStatus !== 'running') {
@@ -1710,7 +2111,17 @@ router.post('/', async (req: Request, res: Response) => {
     console.error('[Converse] 错误:', err)
     streamError = msg
     terminalStatus = 'failed'
-    await appendExternalMessage(sessionId, 'error', msg)
+    await appendExternalMessage(
+      sessionId,
+      'error',
+      msg,
+      buildConverseMessageMeta({
+        kind: 'error',
+        turnId,
+        source: 'rule',
+        replyToMessageId: userMessageId,
+      }),
+    )
     await updateExternalSessionStatus(sessionId, 'failed')
     sseWrite(res, 'error', { message: msg })
   } finally {

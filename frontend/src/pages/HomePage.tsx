@@ -363,11 +363,14 @@ export default function HomePage() {
     return <ConversationPanel
       messages={converse.messages}
       onSend={converse.sendMessage}
+      onRegenerate={converse.regenerateMessage}
+      onSelectVariant={converse.selectVariant}
       onStop={converse.stop}
       pendingQuestion={converse.pendingQuestion}
       respondToQuestion={converse.respondToQuestion}
       isThinking={converse.isThinking}
       error={converse.error}
+      regeneratingMessageId={converse.regeneratingMessageId}
       onBack={handleNewTask}
       stateSummary={converse.state}
     />

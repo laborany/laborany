@@ -225,7 +225,7 @@ function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 export default function CronPage() {
-  const { jobs, loading, error, createJob, updateJob, deleteJob, triggerJob } = useCronJobs()
+  const { jobs, loading, error, degraded, createJob, updateJob, deleteJob, triggerJob } = useCronJobs()
   const { getCapabilityName } = useSkillNameMap()
   const { profiles } = useModelProfile()
   const [showForm, setShowForm] = useState(false)
@@ -277,7 +277,9 @@ export default function CronPage() {
         <h1 className="text-lg font-semibold text-foreground">定时任务</h1>
         <button
           onClick={() => setShowForm(true)}
-          className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+          disabled={degraded}
+          className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary"
+          title={degraded ? '定时任务存储暂不可用，当前不能新建任务' : '新建任务'}
         >
           + 新建任务
         </button>
@@ -293,21 +295,31 @@ export default function CronPage() {
             </div>
           )}
 
+          {degraded && (
+            <div className="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+              定时任务存储当前不可用，列表已降级为空结果。通常是本地原生依赖未就绪，恢复后刷新即可。
+            </div>
+          )}
+
           {jobs.length === 0 ? (
             <div className="text-center py-12">
               <div className="text-4xl mb-4">⏰</div>
               <h3 className="text-lg font-medium text-foreground mb-2">
-                还没有定时任务
+                {degraded ? '定时任务暂不可用' : '还没有定时任务'}
               </h3>
               <p className="text-sm text-muted-foreground mb-4">
-                创建定时任务，让 AI 自动为你工作
+                {degraded
+                  ? '当前环境无法读取定时任务存储，修复后刷新页面即可恢复。'
+                  : '创建定时任务，让 AI 自动为你工作'}
               </p>
-              <button
-                onClick={() => setShowForm(true)}
-                className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium"
-              >
-                创建第一个任务
-              </button>
+              {!degraded && (
+                <button
+                  onClick={() => setShowForm(true)}
+                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium"
+                >
+                  创建第一个任务
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-3">

@@ -21,6 +21,11 @@ import {
 } from '../components/preview'
 import { findLatestPreviewableTaskFile, findTaskFileByArtifactPath, toArtifactPath } from '../components/shared/taskFileUtils'
 import { Tooltip } from '../components/ui'
+import {
+  appendMessageWithVariants,
+  applyVariantSelections,
+  loadStoredVariantSelections,
+} from '../lib/messageVariants'
 
 export default function HistoryPage() {
   const [sessions, setSessions] = useState<Session[]>([])
@@ -450,14 +455,21 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
         type: 'user',
         content: msg.content,
         timestamp: parseUTCDate(msg.createdAt),
+        serverMessageId: msg.id,
+        meta: msg.meta || null,
       })
     } else if (msg.type === 'assistant' && msg.content) {
-      messages.push({
+      const assistantMessage: AgentMessage = {
         id: String(msg.id),
         type: 'assistant',
         content: msg.content,
         timestamp: parseUTCDate(msg.createdAt),
-      })
+        serverMessageId: msg.id,
+        meta: msg.meta || null,
+      }
+      const merged = appendMessageWithVariants(messages, assistantMessage)
+      messages.length = 0
+      messages.push(...merged)
     } else if (msg.type === 'tool_use' && msg.toolName) {
       const parsedToolInput =
         msg.toolInput && typeof msg.toolInput === 'object'
@@ -471,6 +483,8 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
         toolName: msg.toolName,
         toolInput: parsedToolInput,
         timestamp: parseUTCDate(msg.createdAt),
+        serverMessageId: msg.id,
+        meta: msg.meta || null,
       })
     } else if (msg.type === 'tool_result' && msg.toolResult) {
       messages.push({
@@ -479,6 +493,8 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
         content: msg.toolResult.substring(0, 500) + (msg.toolResult.length > 500 ? '...' : ''),
         toolName: '执行结果',
         timestamp: parseUTCDate(msg.createdAt),
+        serverMessageId: msg.id,
+        meta: msg.meta || null,
       })
     }
   }
@@ -903,8 +919,12 @@ export function SessionDetailPage() {
   ])
 
   const historyMessages = useMemo(
-    () => convertMessages(session),
-    [session],
+    () => {
+      const converted = convertMessages(session)
+      if (!isConverseSession || !sessionId) return converted
+      return applyVariantSelections(converted, loadStoredVariantSelections(sessionId))
+    },
+    [session, isConverseSession, sessionId],
   )
   const allMessages = useMemo(() => {
     if (isConverseSession) {
@@ -1033,6 +1053,9 @@ export function SessionDetailPage() {
             isRunning={chatIsRunning}
             sessionKey={sessionId}
             initialScrollOnMount="bottom"
+            onRegenerate={isConverseSession && converse.messages.length > 0 ? converse.regenerateMessage : undefined}
+            onSelectVariant={isConverseSession && converse.messages.length > 0 ? converse.selectVariant : undefined}
+            regeneratingMessageId={isConverseSession && converse.messages.length > 0 ? converse.regeneratingMessageId : null}
           />
         </div>
 

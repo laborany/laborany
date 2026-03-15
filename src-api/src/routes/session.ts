@@ -10,6 +10,32 @@ const ALLOWED_MESSAGE_TYPES = new Set(['user', 'assistant', 'tool_use', 'tool_re
 const CONVERSE_HEARTBEAT_STALE_MS = 90 * 1000
 
 type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq'
+type MessageSessionMode = 'converse' | 'execution'
+type MessageKind =
+  | 'user'
+  | 'assistant_reply'
+  | 'decision_reply'
+  | 'action_summary'
+  | 'question_summary'
+  | 'rule_reply'
+  | 'error'
+  | 'system'
+  | 'tool_use'
+  | 'tool_result'
+
+interface MessageMetaPayload {
+  sessionMode?: MessageSessionMode
+  messageKind?: MessageKind
+  turnId?: string
+  replyToMessageId?: number | null
+  variantGroupId?: string | null
+  variantIndex?: number | null
+  source?: 'user' | 'llm' | 'rule' | 'system'
+  capabilities?: {
+    canCopy?: boolean
+    canRegenerate?: boolean
+  }
+}
 
 function inferSessionSource(sessionId: string, skillId: string, dbSource?: string): SessionSource {
   // 先根据 sessionId 推断，兼容历史数据中 source 被错误写成 desktop 的场景
@@ -58,6 +84,17 @@ function parseSourceMeta(raw?: string | null): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(text)
     return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+}
+
+function parseMessageMeta(raw?: string | null): MessageMetaPayload | null {
+  const text = (raw || '').trim()
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text)
+    return parsed && typeof parsed === 'object' ? parsed as MessageMetaPayload : null
   } catch {
     return null
   }
@@ -227,9 +264,10 @@ session.get('/:sessionId', (c) => {
     tool_name: string | null
     tool_input: string | null
     tool_result: string | null
+    meta: string | null
     created_at: string
   }>(`
-    SELECT id, type, content, tool_name, tool_input, tool_result, created_at
+    SELECT id, type, content, tool_name, tool_input, tool_result, meta, created_at
     FROM messages
     WHERE session_id = ?
     ORDER BY created_at ASC
@@ -242,6 +280,7 @@ session.get('/:sessionId', (c) => {
     toolName: msg.tool_name,
     toolInput: msg.tool_input ? JSON.parse(msg.tool_input) : null,
     toolResult: msg.tool_result,
+    meta: parseMessageMeta(msg.meta),
     createdAt: msg.created_at,
   }))
 
@@ -415,6 +454,9 @@ session.post('/external/message', async (c) => {
   const toolInput = body.toolInput && typeof body.toolInput === 'object'
     ? JSON.stringify(body.toolInput)
     : null
+  const meta = body.meta && typeof body.meta === 'object'
+    ? JSON.stringify(body.meta)
+    : null
 
   if (!sessionId || !type) {
     return c.json({ error: '缺少 sessionId 或 type 参数' }, 400)
@@ -432,17 +474,17 @@ session.post('/external/message', async (c) => {
     return c.json({ error: '消息内容不能为空' }, 400)
   }
 
-  dbHelper.run(
-    `INSERT INTO messages (session_id, type, content, tool_name, tool_input, tool_result)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [sessionId, type, content, toolName, toolInput, toolResult],
+  const messageId = dbHelper.insert(
+    `INSERT INTO messages (session_id, type, content, tool_name, tool_input, tool_result, meta)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [sessionId, type, content, toolName, toolInput, toolResult, meta],
   )
   dbHelper.run(
     `UPDATE sessions SET updated_at = datetime('now') WHERE id = ?`,
     [sessionId],
   )
 
-  return c.json({ success: true })
+  return c.json({ success: true, messageId })
 })
 
 session.post('/external/status', async (c) => {

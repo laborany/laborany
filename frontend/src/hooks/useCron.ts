@@ -102,15 +102,26 @@ export interface CreateJobRequest {
   notify?: JobNotify
 }
 
+interface FetchJobsResponse {
+  jobs: CronJob[]
+  degraded: boolean
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           API 调用函数                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-async function fetchJobs(): Promise<CronJob[]> {
+async function fetchJobs(): Promise<FetchJobsResponse> {
   const res = await fetch(`${AGENT_API_BASE}/cron/jobs`)
   if (!res.ok) throw new Error('获取任务列表失败')
-  const data = await res.json()
-  return data.jobs
+  const data = await res.json() as {
+    jobs?: CronJob[]
+    degraded?: boolean
+  }
+  return {
+    jobs: Array.isArray(data.jobs) ? data.jobs : [],
+    degraded: data.degraded === true,
+  }
 }
 
 async function createJobApi(req: CreateJobRequest): Promise<CronJob> {
@@ -173,15 +184,18 @@ export function useCronJobs() {
   const [jobs, setJobs] = useState<CronJob[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [degraded, setDegraded] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
       const data = await fetchJobs()
-      setJobs(data)
+      setJobs(data.jobs)
+      setDegraded(data.degraded)
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败')
+      setDegraded(false)
     } finally {
       setLoading(false)
     }
@@ -219,6 +233,7 @@ export function useCronJobs() {
     jobs,
     loading,
     error,
+    degraded,
     refresh,
     createJob,
     updateJob,

@@ -1,4 +1,42 @@
 
+export type MessageSessionMode = 'converse' | 'execution'
+
+export type MessageKind =
+  | 'user'
+  | 'assistant_reply'
+  | 'decision_reply'
+  | 'action_summary'
+  | 'question_summary'
+  | 'rule_reply'
+  | 'error'
+  | 'system'
+  | 'tool_use'
+  | 'tool_result'
+
+export interface MessageCapabilities {
+  canCopy?: boolean
+  canRegenerate?: boolean
+}
+
+export interface MessageMeta {
+  sessionMode?: MessageSessionMode
+  messageKind?: MessageKind
+  turnId?: string
+  replyToMessageId?: number | null
+  variantGroupId?: string | null
+  variantIndex?: number | null
+  source?: 'user' | 'llm' | 'rule' | 'system'
+  capabilities?: MessageCapabilities
+}
+
+export interface MessageVariant {
+  id: string
+  serverMessageId?: number | null
+  content: string
+  timestamp: Date
+  meta?: MessageMeta | null
+}
+
 export interface AgentMessage {
   id: string
   type: 'user' | 'assistant' | 'tool' | 'error'
@@ -6,6 +44,10 @@ export interface AgentMessage {
   toolName?: string
   toolInput?: Record<string, unknown>
   timestamp: Date
+  serverMessageId?: number | null
+  meta?: MessageMeta | null
+  variants?: MessageVariant[]
+  activeVariantIndex?: number
 }
 
 export interface HistoryMessage {
@@ -15,6 +57,7 @@ export interface HistoryMessage {
   toolName: string | null
   toolInput: unknown | null
   toolResult: string | null
+  meta?: MessageMeta | null
   createdAt: string
 }
 

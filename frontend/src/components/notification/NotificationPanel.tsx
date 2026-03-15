@@ -24,6 +24,7 @@ interface Notification {
 }
 
 interface NotificationPanelProps {
+  degraded?: boolean
   onClose: () => void
   onMarkAllRead: () => void
 }
@@ -43,20 +44,29 @@ const typeConfig: Record<Notification['type'], { label: string; color: string }>
  * │                           通知面板                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-export function NotificationPanel({ onClose, onMarkAllRead }: NotificationPanelProps) {
+export function NotificationPanel({ degraded = false, onClose, onMarkAllRead }: NotificationPanelProps) {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [loading, setLoading] = useState(true)
+  const [isDegraded, setIsDegraded] = useState(degraded)
 
   useEffect(() => {
     fetchNotifications()
   }, [])
 
+  useEffect(() => {
+    setIsDegraded(degraded)
+  }, [degraded])
+
   const fetchNotifications = async () => {
     try {
       const res = await fetch(`${AGENT_API_BASE}/notifications?limit=20`)
       if (res.ok) {
-        const data = await res.json()
-        setNotifications(data.notifications)
+        const data = await res.json() as {
+          notifications?: Notification[]
+          degraded?: boolean
+        }
+        setNotifications(Array.isArray(data.notifications) ? data.notifications : [])
+        setIsDegraded(data.degraded === true || degraded)
       }
     } catch {
       // 静默失败
@@ -106,11 +116,20 @@ export function NotificationPanel({ onClose, onMarkAllRead }: NotificationPanelP
         <h3 className="font-medium text-foreground">通知</h3>
         <button
           onClick={handleMarkAllRead}
-          className="text-xs text-primary hover:underline"
+          disabled={isDegraded}
+          className="text-xs text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
         >
           全部标为已读
         </button>
       </div>
+
+      {isDegraded && (
+        <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2">
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            通知存储当前不可用，列表仅显示为空结果，稍后可重试。
+          </p>
+        </div>
+      )}
 
       {/* 通知列表 */}
       <div className="max-h-[min(60vh,24rem)] overflow-y-auto">
@@ -120,7 +139,7 @@ export function NotificationPanel({ onClose, onMarkAllRead }: NotificationPanelP
           </div>
         ) : notifications.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground text-sm">
-            暂无通知
+            {isDegraded ? '通知中心暂不可用' : '暂无通知'}
           </div>
         ) : (
           notifications.map((notification) => (

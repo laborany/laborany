@@ -26,6 +26,7 @@ import {
   markAllNotificationsRead,
   sendTestEmail,
 } from '../cron/index.js'
+import { isCronStorageUnavailableError } from '../cron/db.js'
 import type {
   CreateJobRequest,
   UpdateJobRequest,
@@ -135,6 +136,10 @@ router.get('/jobs', (req: Request, res: Response) => {
     }
     res.json({ jobs })
   } catch (error) {
+    if (isCronStorageUnavailableError(error)) {
+      res.json({ jobs: [], degraded: true })
+      return
+    }
     res.status(500).json({ error: withDetail('获取任务列表失败', error) })
   }
 })
@@ -287,7 +292,15 @@ router.get('/jobs/:id/runs', (req: Request, res: Response) => {
  * │                       获取定时器状态                                       │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 router.get('/status', (_req: Request, res: Response) => {
-  res.json(getCronTimerStatus())
+  try {
+    res.json(getCronTimerStatus())
+  } catch (error) {
+    if (isCronStorageUnavailableError(error)) {
+      res.json({ running: false, nextWakeAt: null, degraded: true })
+      return
+    }
+    res.status(500).json({ error: withDetail('获取定时器状态失败', error) })
+  }
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -317,6 +330,10 @@ notifRouter.get('/', (req: Request, res: Response) => {
     const notifications = listNotifications(limit)
     res.json({ notifications })
   } catch (error) {
+    if (isCronStorageUnavailableError(error)) {
+      res.json({ notifications: [], degraded: true })
+      return
+    }
     console.error('[Notifications] list failed:', error)
     res.status(500).json({ error: '获取通知列表失败' })
   }
@@ -330,6 +347,10 @@ notifRouter.get('/unread-count', (_req: Request, res: Response) => {
     const count = getUnreadCount()
     res.json({ count })
   } catch (error) {
+    if (isCronStorageUnavailableError(error)) {
+      res.json({ count: 0, degraded: true })
+      return
+    }
     console.error('[Notifications] unread-count failed:', error)
     res.status(500).json({ error: '获取未读数量失败' })
   }
@@ -344,8 +365,16 @@ notifRouter.post('/:id/read', (req: Request, res: Response) => {
     res.status(400).json({ error: '无效的通知 ID' })
     return
   }
-  const success = markNotificationRead(id)
-  res.json({ success })
+  try {
+    const success = markNotificationRead(id)
+    res.json({ success })
+  } catch (error) {
+    if (isCronStorageUnavailableError(error)) {
+      res.json({ success: false, degraded: true })
+      return
+    }
+    res.status(500).json({ error: '标记已读失败' })
+  }
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -356,6 +385,10 @@ notifRouter.post('/read-all', (_req: Request, res: Response) => {
     const count = markAllNotificationsRead()
     res.json({ success: true, count })
   } catch (error) {
+    if (isCronStorageUnavailableError(error)) {
+      res.json({ success: true, count: 0, degraded: true })
+      return
+    }
     res.status(500).json({ error: '标记已读失败' })
   }
 })

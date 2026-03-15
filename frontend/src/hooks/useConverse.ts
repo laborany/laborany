@@ -1,13 +1,22 @@
 import { useCallback, useRef, useState } from 'react'
 import { AGENT_API_BASE, API_BASE } from '../config/api'
 import type { PendingQuestion } from './useAgent'
-import type { AgentMessage } from '../types/message'
+import type { AgentMessage, MessageMeta } from '../types/message'
 import { useModelProfile } from '../contexts/ModelProfileContext'
 import {
   mergeAttachmentIds,
   normalizeAttachmentIds,
   uploadAttachments,
 } from '../lib/attachments'
+import {
+  applyVariantSelections,
+  appendMessageWithVariants,
+  buildRegenerateContextMessages,
+  loadStoredVariantSelections,
+  persistStoredVariantSelection,
+  selectMessageVariant,
+  toConversationPayloadMessages,
+} from '../lib/messageVariants'
 
 export interface ConverseAction {
   action:
@@ -32,6 +41,8 @@ export interface ConverseAction {
 export interface UseConverseReturn {
   messages: AgentMessage[]
   sendMessage: (text: string, files?: File[]) => Promise<void>
+  regenerateMessage: (messageId: string) => Promise<void>
+  selectVariant: (messageId: string, variantIndex: number) => void
   stop: () => void
   resumeSession: (sessionId: string) => Promise<boolean>
   respondToQuestion: (questionId: string, answers: Record<string, string>) => Promise<void>
@@ -46,6 +57,7 @@ export interface UseConverseReturn {
   sessionId: string | null
   sessionFileIds: string[]
   error: string | null
+  regeneratingMessageId: string | null
   reset: () => void
 }
 
@@ -59,7 +71,16 @@ interface SessionDetailMessage {
   toolName?: string | null
   toolInput?: Record<string, unknown> | null
   toolResult?: string | null
+  meta?: MessageMeta | null
   createdAt?: string
+}
+
+interface ConverseSessionPayload {
+  skill_id?: string
+  messages?: SessionDetailMessage[]
+  sourceMeta?: {
+    attachmentIds?: string[] | string
+  } | null
 }
 
 function isAbortLikeError(err: unknown): boolean {
@@ -79,6 +100,138 @@ function parseUTCDate(dateStr: string): Date {
   return new Date(s + 'Z')
 }
 
+function normalizeComparableContent(content: string): string {
+  return content.replace(/\s+/g, ' ').trim()
+}
+
+function restoreMessagesFromPayload(sessionId: string, payload: ConverseSessionPayload): AgentMessage[] {
+  const restored = (Array.isArray(payload.messages) ? payload.messages : [])
+    .reduce<AgentMessage[]>((acc, item, idx) => {
+      const type = (item.type || '').trim()
+      const createdAt = item.createdAt ? parseUTCDate(item.createdAt) : new Date()
+      const id = `resume_${sessionId}_${item.id ?? idx}`
+
+      if (type === 'user') {
+        acc.push({
+          id,
+          type: 'user' as const,
+          content: item.content || '',
+          timestamp: createdAt,
+          serverMessageId: item.id ?? null,
+          meta: item.meta || null,
+        })
+        return acc
+      }
+
+      if (type === 'assistant') {
+        const assistantMessage: AgentMessage = {
+          id,
+          type: 'assistant' as const,
+          content: stripActionMarker(item.content || ''),
+          timestamp: createdAt,
+          serverMessageId: item.id ?? null,
+          meta: item.meta || null,
+        }
+        return appendMessageWithVariants(acc, assistantMessage)
+      }
+
+      if (type === 'tool_use') {
+        acc.push({
+          id,
+          type: 'tool' as const,
+          content: '',
+          toolName: item.toolName || 'Tool',
+          toolInput: item.toolInput || {},
+          timestamp: createdAt,
+          serverMessageId: item.id ?? null,
+          meta: item.meta || null,
+        })
+        return acc
+      }
+
+      if (type === 'tool_result') {
+        acc.push({
+          id,
+          type: 'tool' as const,
+          content: item.toolResult || item.content || '',
+          timestamp: createdAt,
+          serverMessageId: item.id ?? null,
+          meta: item.meta || null,
+        })
+        return acc
+      }
+
+      if (type === 'error' || type === 'system') {
+        acc.push({
+          id,
+          type: 'assistant' as const,
+          content: item.content || '',
+          timestamp: createdAt,
+          serverMessageId: item.id ?? null,
+          meta: item.meta || null,
+        })
+        return acc
+      }
+
+      return acc
+    }, [])
+
+  return applyVariantSelections(restored, loadStoredVariantSelections(sessionId))
+}
+
+function mergePersistedMessages(
+  liveMessages: AgentMessage[],
+  persistedMessages: AgentMessage[],
+): AgentMessage[] {
+  if (liveMessages.length === 0) return persistedMessages
+  if (persistedMessages.length === 0) return liveMessages
+
+  const persistedConversationMessages = persistedMessages.filter((message) => message.type !== 'tool')
+  if (persistedConversationMessages.length === 0) return liveMessages
+
+  const merged: AgentMessage[] = []
+  let persistedIndex = 0
+
+  for (const liveMessage of liveMessages) {
+    if (liveMessage.type === 'tool') {
+      merged.push(liveMessage)
+      continue
+    }
+
+    const persistedMessage = persistedConversationMessages[persistedIndex]
+    if (!persistedMessage) {
+      merged.push(liveMessage)
+      continue
+    }
+
+    const isSameConversationMessage =
+      liveMessage.type === persistedMessage.type
+      && normalizeComparableContent(liveMessage.content) === normalizeComparableContent(persistedMessage.content)
+
+    if (isSameConversationMessage) {
+      merged.push({
+        ...liveMessage,
+        content: persistedMessage.content,
+        timestamp: persistedMessage.timestamp,
+        serverMessageId: persistedMessage.serverMessageId ?? null,
+        meta: persistedMessage.meta || null,
+        variants: persistedMessage.variants,
+        activeVariantIndex: persistedMessage.activeVariantIndex,
+      })
+      persistedIndex += 1
+      continue
+    }
+
+    merged.push(liveMessage)
+  }
+
+  if (persistedIndex < persistedConversationMessages.length) {
+    merged.push(...persistedConversationMessages.slice(persistedIndex))
+  }
+
+  return merged
+}
+
 export function useConverse(): UseConverseReturn {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [action, setAction] = useState<ConverseAction | null>(null)
@@ -89,6 +242,7 @@ export function useConverse(): UseConverseReturn {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionFileIds, setSessionFileIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [regeneratingMessageId, setRegeneratingMessageId] = useState<string | null>(null)
 
   const sessionIdRef = useRef<string | null>(null)
   const sessionFileIdsRef = useRef<string[]>([])
@@ -106,6 +260,77 @@ export function useConverse(): UseConverseReturn {
     setIsThinking(false)
   }, [])
 
+  const fetchSessionPayload = useCallback(async (sid: string): Promise<ConverseSessionPayload | null> => {
+    const token = localStorage.getItem('token')
+    const headers: HeadersInit = {}
+    if (token) {
+      headers.Authorization = `Bearer ${token}`
+    }
+
+    const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sid)}`, { headers })
+    if (!res.ok) return null
+
+    const payload = await res.json() as ConverseSessionPayload
+    if (payload.skill_id !== '__converse__') return null
+    return payload
+  }, [])
+
+  const applySessionPayload = useCallback((
+    sid: string,
+    payload: ConverseSessionPayload,
+    options?: {
+      merge?: boolean
+      clearInteractiveState?: boolean
+    },
+  ) => {
+    const restored = restoreMessagesFromPayload(sid, payload)
+    const nextMessages = options?.merge
+      ? mergePersistedMessages(messagesRef.current, restored)
+      : restored
+
+    setMessages(nextMessages)
+    messagesRef.current = nextMessages
+
+    if (options?.clearInteractiveState !== false) {
+      setAction(null)
+      setPendingQuestion(null)
+      setState(null)
+      setError(null)
+    }
+
+    setRegeneratingMessageId(null)
+    setIsThinking(false)
+
+    const restoredAttachmentIds = normalizeAttachmentIds(payload.sourceMeta?.attachmentIds)
+    setSessionFileIds(restoredAttachmentIds)
+    sessionFileIdsRef.current = restoredAttachmentIds
+    sessionIdRef.current = sid
+    setSessionId(sid)
+  }, [])
+
+  const syncPersistedMessages = useCallback(async (sid: string, expectedRequestSeq?: number): Promise<boolean> => {
+    try {
+      if (expectedRequestSeq !== undefined && expectedRequestSeq !== requestSeqRef.current) {
+        return false
+      }
+
+      const payload = await fetchSessionPayload(sid)
+      if (!payload) return false
+
+      if (expectedRequestSeq !== undefined && expectedRequestSeq !== requestSeqRef.current) {
+        return false
+      }
+
+      applySessionPayload(sid, payload, {
+        merge: true,
+        clearInteractiveState: false,
+      })
+      return true
+    } catch {
+      return false
+    }
+  }, [applySessionPayload, fetchSessionPayload])
+
   const processSSEStream = useCallback(async (res: globalThis.Response) => {
     const reader = res.body?.getReader()
     if (!reader) return
@@ -113,14 +338,29 @@ export function useConverse(): UseConverseReturn {
     const decoder = new TextDecoder()
     let buffer = ''
     let assistantText = ''
-    let shouldTerminate = false
     const assistantId = `assistant_${Date.now()}`
     let pendingAssistantFlush = false
     let assistantFlushRaf: number | null = null
     const upsertAssistant = (prev: AgentMessage[], text: string): AgentMessage[] => {
       const withoutCurrent = prev.filter((item) => item.id !== assistantId)
       if (!text) return withoutCurrent
-      return [...withoutCurrent, { id: assistantId, type: 'assistant', content: text, timestamp: new Date() }]
+      return [
+        ...withoutCurrent,
+        {
+          id: assistantId,
+          type: 'assistant',
+          content: text,
+          timestamp: new Date(),
+          meta: {
+            sessionMode: 'converse',
+            source: 'llm',
+            capabilities: {
+              canCopy: true,
+              canRegenerate: false,
+            },
+          },
+        },
+      ]
     }
 
     const flushAssistantText = (force = false) => {
@@ -205,7 +445,6 @@ export function useConverse(): UseConverseReturn {
       if (eventType === 'question') {
         setPendingQuestion(data as unknown as PendingQuestion)
         setIsThinking(false)
-        shouldTerminate = true
         return
       }
 
@@ -243,7 +482,6 @@ export function useConverse(): UseConverseReturn {
       }
 
       if (eventType === 'done') {
-        shouldTerminate = true
         setIsThinking(false)
       }
     }
@@ -284,13 +522,6 @@ export function useConverse(): UseConverseReturn {
       buffer = blocks.pop() || ''
       for (const block of blocks) {
         parseSSEBlock(block)
-        if (shouldTerminate) {
-          void reader.cancel()
-          break
-        }
-      }
-      if (shouldTerminate) {
-        break
       }
     }
 
@@ -301,10 +532,6 @@ export function useConverse(): UseConverseReturn {
 
     cancelAssistantFlush()
     flushAssistantText(true)
-
-    if (shouldTerminate) {
-      void reader.cancel()
-    }
   }, [])
 
   const sendMessage = useCallback(async (text: string, files: File[] = []) => {
@@ -322,9 +549,19 @@ export function useConverse(): UseConverseReturn {
       type: 'user',
       content: userInput,
       timestamp: new Date(),
+      meta: {
+        sessionMode: 'converse',
+        messageKind: 'user',
+        source: 'user',
+        capabilities: {
+          canCopy: true,
+          canRegenerate: false,
+        },
+      },
     }
 
     const updated = [...messagesRef.current, userMessage]
+    messagesRef.current = updated
     setMessages(updated)
     setAction(null)
     setPendingQuestion(null)
@@ -345,12 +582,7 @@ export function useConverse(): UseConverseReturn {
         }
       }
 
-      const payloadMessages = updated
-        .filter((item) => item.type !== 'tool')
-        .map((item) => ({
-          role: item.type === 'assistant' ? 'assistant' : 'user',
-          content: item.content,
-        }))
+      const payloadMessages = toConversationPayloadMessages(updated)
 
       const res = await fetch(`${AGENT_API_BASE}/converse`, {
         method: 'POST',
@@ -374,15 +606,19 @@ export function useConverse(): UseConverseReturn {
 
       if (!res.ok) {
         if (res.status === 503 || res.status === 404) {
-          setMessages((prev) => ([
-            ...prev,
-            {
-              id: `assistant_fallback_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-              type: 'assistant',
-              content: '首页调度服务暂不可用，已切换到通用执行模式。请确认后我继续执行。',
-              timestamp: new Date(),
-            },
-          ]))
+          setMessages((prev) => {
+            const next = [
+              ...prev,
+              {
+                id: `assistant_fallback_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                type: 'assistant' as const,
+                content: '首页调度服务暂不可用，已切换到通用执行模式。请确认后我继续执行。',
+                timestamp: new Date(),
+              },
+            ]
+            messagesRef.current = next
+            return next
+          })
           setAction({ action: 'execute_generic', query: userInput, planSteps: [] })
           return
         }
@@ -390,6 +626,11 @@ export function useConverse(): UseConverseReturn {
       }
 
       await processSSEStream(res)
+
+      const persistedSessionId = sessionIdRef.current?.trim()
+      if (persistedSessionId && requestSeq === requestSeqRef.current) {
+        await syncPersistedMessages(persistedSessionId, requestSeq)
+      }
     } catch (err) {
       if (isAbortLikeError(err)) {
         return
@@ -406,7 +647,110 @@ export function useConverse(): UseConverseReturn {
         setIsThinking(false)
       }
     }
-  }, [activeProfileId, processSSEStream])
+  }, [activeProfileId, processSSEStream, syncPersistedMessages])
+
+  const selectVariant = useCallback((messageId: string, variantIndex: number) => {
+    const sessionKey = sessionIdRef.current?.trim()
+    const currentMessage = messagesRef.current.find((message) => message.id === messageId)
+    const variantGroupId = currentMessage?.meta?.variantGroupId?.trim()
+
+    setMessages((prev) => {
+      const next = selectMessageVariant(prev, messageId, variantIndex)
+      messagesRef.current = next
+      return next
+    })
+
+    if (sessionKey && variantGroupId) {
+      persistStoredVariantSelection(sessionKey, variantGroupId, variantIndex)
+    }
+  }, [])
+
+  const regenerateMessage = useCallback(async (messageId: string) => {
+    const sid = sessionIdRef.current?.trim()
+    if (!sid || isThinkingRef.current || regeneratingMessageId) return
+
+    const targetMessage = messagesRef.current.find((message) => message.id === messageId)
+    if (
+      !targetMessage
+      || targetMessage.type !== 'assistant'
+      || !targetMessage.serverMessageId
+      || targetMessage.meta?.sessionMode !== 'converse'
+      || targetMessage.meta?.messageKind !== 'assistant_reply'
+    ) {
+      return
+    }
+
+    const contextMessages = buildRegenerateContextMessages(messagesRef.current, messageId)
+    if (contextMessages.length === 0) {
+      setError('缺少重做所需的会话上下文')
+      return
+    }
+
+    setRegeneratingMessageId(messageId)
+    setError(null)
+
+    try {
+      const response = await fetch(`${AGENT_API_BASE}/converse/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sid,
+          messageId: targetMessage.serverMessageId,
+          modelProfileId: activeProfileId || undefined,
+          messages: contextMessages,
+        }),
+      })
+
+      const payload = await response.json().catch(() => ({})) as {
+        error?: string
+        message?: {
+          id?: number
+          content?: string
+          meta?: MessageMeta | null
+          createdAt?: string
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(payload.error || `请求失败: ${response.status}`)
+      }
+
+      if (!payload.message?.content || !payload.message.id) {
+        throw new Error('重做结果为空')
+      }
+
+      const variantMessage: AgentMessage = {
+        id: `${messageId}_variant_${payload.message.id}`,
+        type: 'assistant',
+        content: payload.message.content,
+        timestamp: payload.message.createdAt ? parseUTCDate(payload.message.createdAt) : new Date(),
+        serverMessageId: payload.message.id,
+        meta: payload.message.meta || null,
+      }
+
+      setMessages((prev) => {
+        const next = appendMessageWithVariants(prev, variantMessage)
+        messagesRef.current = next
+        return next
+      })
+
+      const variantGroupId = payload.message.meta?.variantGroupId?.trim()
+      const variantIndex = payload.message.meta?.variantIndex
+      if (
+        sid
+        && variantGroupId
+        && typeof variantIndex === 'number'
+        && Number.isInteger(variantIndex)
+        && variantIndex >= 0
+      ) {
+        persistStoredVariantSelection(sid, variantGroupId, variantIndex)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '重做失败')
+    } finally {
+      setRegeneratingMessageId(null)
+    }
+  }, [activeProfileId, regeneratingMessageId])
 
   const respondToQuestion = useCallback(async (
     _questionId: string,
@@ -435,101 +779,18 @@ export function useConverse(): UseConverseReturn {
     abortRef.current = null
 
     try {
-      const token = localStorage.getItem('token')
-      const headers: HeadersInit = {}
-      if (token) {
-        headers.Authorization = `Bearer ${token}`
-      }
-      const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sid)}`, { headers })
-      if (!res.ok) return false
+      const payload = await fetchSessionPayload(sid)
+      if (!payload) return false
 
-      const payload = await res.json() as {
-        skill_id?: string
-        messages?: SessionDetailMessage[]
-        sourceMeta?: {
-          attachmentIds?: string[] | string
-        } | null
-      }
-      if (payload.skill_id !== '__converse__') return false
-
-      const restored = (Array.isArray(payload.messages) ? payload.messages : [])
-        .reduce<AgentMessage[]>((acc, item, idx) => {
-          const type = (item.type || '').trim()
-          const createdAt = item.createdAt ? parseUTCDate(item.createdAt) : new Date()
-          const id = `resume_${sid}_${item.id ?? idx}`
-
-          if (type === 'user') {
-            acc.push({
-              id,
-              type: 'user' as const,
-              content: item.content || '',
-              timestamp: createdAt,
-            })
-            return acc
-          }
-
-          if (type === 'assistant') {
-            acc.push({
-              id,
-              type: 'assistant' as const,
-              content: stripActionMarker(item.content || ''),
-              timestamp: createdAt,
-            })
-            return acc
-          }
-
-          if (type === 'tool_use') {
-            acc.push({
-              id,
-              type: 'tool' as const,
-              content: '',
-              toolName: item.toolName || 'Tool',
-              toolInput: item.toolInput || {},
-              timestamp: createdAt,
-            })
-            return acc
-          }
-
-          if (type === 'tool_result') {
-            acc.push({
-              id,
-              type: 'tool' as const,
-              content: item.toolResult || item.content || '',
-              timestamp: createdAt,
-            })
-            return acc
-          }
-
-          if (type === 'error' || type === 'system') {
-            acc.push({
-              id,
-              type: 'assistant' as const,
-              content: item.content || '',
-              timestamp: createdAt,
-            })
-            return acc
-          }
-
-          return acc
-        }, [])
-
-      setMessages(restored)
-      messagesRef.current = restored
-      setAction(null)
-      setPendingQuestion(null)
-      setState(null)
-      setError(null)
-      setIsThinking(false)
-      const restoredAttachmentIds = normalizeAttachmentIds(payload.sourceMeta?.attachmentIds)
-      setSessionFileIds(restoredAttachmentIds)
-      sessionFileIdsRef.current = restoredAttachmentIds
-      sessionIdRef.current = sid
-      setSessionId(sid)
+      applySessionPayload(sid, payload, {
+        merge: false,
+        clearInteractiveState: true,
+      })
       return true
     } catch {
       return false
     }
-  }, [])
+  }, [applySessionPayload, fetchSessionPayload])
 
   const reset = useCallback(() => {
     stop()
@@ -540,6 +801,8 @@ export function useConverse(): UseConverseReturn {
     setSessionId(null)
     setSessionFileIds([])
     setError(null)
+    setRegeneratingMessageId(null)
+    messagesRef.current = []
     sessionIdRef.current = null
     sessionFileIdsRef.current = []
   }, [stop])
@@ -547,6 +810,8 @@ export function useConverse(): UseConverseReturn {
   return {
     messages,
     sendMessage,
+    regenerateMessage,
+    selectVariant,
     stop,
     resumeSession,
     respondToQuestion,
@@ -557,6 +822,7 @@ export function useConverse(): UseConverseReturn {
     sessionId,
     sessionFileIds,
     error,
+    regeneratingMessageId,
     reset,
   }
 }

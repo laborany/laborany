@@ -119,6 +119,7 @@ function createTables(db: Database): void {
       tool_name TEXT,
       tool_input TEXT,
       tool_result TEXT,
+      meta TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (session_id) REFERENCES sessions(id)
     )
@@ -151,6 +152,13 @@ function createTables(db: Database): void {
 function migrateDatabase(db: Database): void {
   // 检查 sessions 表是否有新增列
   try {
+    const messageTableInfo = db.exec('PRAGMA table_info(messages)')
+    const messageColumns = messageTableInfo[0]?.values.map(row => row[1]) || []
+    if (!messageColumns.includes('meta')) {
+      db.run('ALTER TABLE messages ADD COLUMN meta TEXT')
+      console.log('[DB] 迁移：添加 messages.meta 列')
+    }
+
     const tableInfo = db.exec('PRAGMA table_info(sessions)')
     const columns = tableInfo[0]?.values.map(row => row[1]) || []
     if (!columns.includes('work_dir')) {
@@ -211,6 +219,17 @@ export function runQuery(sql: string, params: BindParams = []): void {
   saveDb()
 }
 
+export function insertQuery(sql: string, params: BindParams = []): number {
+  const database = getDb()
+  database.run(sql, params)
+
+  const result = database.exec('SELECT last_insert_rowid() AS id')
+  saveDb()
+
+  const rawId = result[0]?.values?.[0]?.[0]
+  return typeof rawId === 'number' ? rawId : Number(rawId || 0)
+}
+
 export function getOne<T>(sql: string, params: BindParams = []): T | undefined {
   const database = getDb()
   const stmt = database.prepare(sql)
@@ -243,4 +262,5 @@ export const dbHelper = {
   query: <T>(sql: string, params: BindParams = []): T[] => getAll<T>(sql, params),
   get: <T>(sql: string, params: BindParams = []): T | undefined => getOne<T>(sql, params),
   run: (sql: string, params: BindParams = []): void => runQuery(sql, params),
+  insert: (sql: string, params: BindParams = []): number => insertQuery(sql, params),
 }

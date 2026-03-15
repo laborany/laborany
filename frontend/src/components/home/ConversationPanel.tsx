@@ -28,11 +28,14 @@ export interface DecisionPrompt {
 interface ConversationPanelProps {
   messages: AgentMessage[]
   onSend: (text: string, files?: File[]) => void
+  onRegenerate?: (messageId: string) => void | Promise<void>
+  onSelectVariant?: (messageId: string, variantIndex: number) => void
   onStop?: () => void
   pendingQuestion?: PendingQuestion | null
   respondToQuestion?: (questionId: string, answers: Record<string, string>) => void
   isThinking: boolean
   error: string | null
+  regeneratingMessageId?: string | null
   onBack: () => void
   decisionPrompt?: DecisionPrompt | null
   onDecision?: (key: string) => void
@@ -46,11 +49,14 @@ interface ConversationPanelProps {
 export function ConversationPanel({
   messages,
   onSend,
+  onRegenerate,
+  onSelectVariant,
   onStop,
   pendingQuestion,
   respondToQuestion,
   isThinking,
   error,
+  regeneratingMessageId,
   onBack,
   decisionPrompt,
   onDecision,
@@ -85,7 +91,13 @@ export function ConversationPanel({
       {/* ── 消息列表（复用 shared/MessageList） ── */}
       <div className="flex-1 overflow-y-auto px-6 py-4">
         <div className="max-w-3xl mx-auto">
-          <MessageList messages={messages} isRunning={isThinking && !pendingQuestion} />
+          <MessageList
+            messages={messages}
+            isRunning={isThinking && !pendingQuestion}
+            onRegenerate={onRegenerate}
+            onSelectVariant={onSelectVariant}
+            regeneratingMessageId={regeneratingMessageId}
+          />
 
           {error && <p className="text-sm text-red-500 text-center mt-4">{error}</p>}
 

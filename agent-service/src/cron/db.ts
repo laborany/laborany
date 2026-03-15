@@ -20,4 +20,22 @@ export const createDatabase = (filename: string, options?: { readonly?: boolean 
   })
 }
 
+export function isCronStorageUnavailableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const code = typeof (error as { code?: unknown }).code === 'string'
+    ? (error as { code?: string }).code
+    : ''
+
+  const details = [
+    error.message || '',
+    code || '',
+  ].join('\n')
+
+  return (
+    details.includes('better_sqlite3.node')
+    || details.includes('ERR_DLOPEN_FAILED')
+    || details.includes('NODE_MODULE_VERSION')
+  )
+}
+
 export default Database

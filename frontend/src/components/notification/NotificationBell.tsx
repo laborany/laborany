@@ -15,6 +15,7 @@ import { NotificationPanel } from './NotificationPanel'
 export function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [showPanel, setShowPanel] = useState(false)
+  const [isDegraded, setIsDegraded] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // 轮询未读数量
@@ -24,7 +25,8 @@ export function NotificationBell() {
         const res = await fetch(`${AGENT_API_BASE}/notifications/unread-count`)
         if (res.ok) {
           const data = await res.json()
-          setUnreadCount(data.count)
+          setUnreadCount(typeof data.count === 'number' ? data.count : 0)
+          setIsDegraded(data.degraded === true)
         }
       } catch {
         // 静默失败
@@ -59,7 +61,8 @@ export function NotificationBell() {
       <button
         onClick={() => setShowPanel(!showPanel)}
         className="relative flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title="通知"
+        title={isDegraded ? '通知中心暂不可用' : '通知'}
+        aria-label={isDegraded ? '通知中心暂不可用' : '通知'}
       >
         {/* 铃铛图标 */}
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -77,11 +80,19 @@ export function NotificationBell() {
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
+
+        {isDegraded && unreadCount === 0 && (
+          <span
+            className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-card"
+            aria-hidden="true"
+          />
+        )}
       </button>
 
       {/* 通知面板 */}
       {showPanel && (
         <NotificationPanel
+          degraded={isDegraded}
           onClose={() => setShowPanel(false)}
           onMarkAllRead={handleMarkAllRead}
         />

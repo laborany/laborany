@@ -9,7 +9,8 @@ import {
 } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { AgentMessage } from '../../types'
+import type { AgentMessage, MessageMeta } from '../../types'
+import { getLatestRegeneratableMessageId } from '../../lib/messageVariants'
 import { ThinkingIndicator } from './ThinkingIndicator'
 
 interface MessageListProps {
@@ -17,11 +18,29 @@ interface MessageListProps {
   isRunning?: boolean
   sessionKey?: string
   initialScrollOnMount?: 'bottom' | 'preserve'
+  onRegenerate?: (messageId: string) => void | Promise<void>
+  onSelectVariant?: (messageId: string, variantIndex: number) => void
+  regeneratingMessageId?: string | null
 }
 
-type TextBlock = { type: 'text'; content: string; isStreaming: boolean }
+type TextBlock = {
+  type: 'text'
+  content: string
+  isStreaming: boolean
+  showActions?: boolean
+  actionText?: string
+  messageId?: string
+  serverMessageId?: number | null
+  meta?: MessageMeta | null
+}
 type ToolGroup = { type: 'tools'; tools: ToolEntry[]; isCompleted: boolean }
-type UserBlock = { type: 'user'; content: string }
+type UserBlock = {
+  type: 'user'
+  content: string
+  messageId?: string
+  serverMessageId?: number | null
+  meta?: MessageMeta | null
+}
 type ErrorBlock = { type: 'error'; content: string }
 type ThinkingStatusBlock = { type: 'thinking' }
 type ThinkingContentBlock = { type: 'thinking_content'; content: string }
@@ -126,11 +145,43 @@ function splitAssistantContent(content: string): AssistantSegment[] {
   return segments
 }
 
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  if (typeof document === 'undefined') {
+    throw new Error('Clipboard is unavailable')
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.top = '-9999px'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+
+  try {
+    const success = document.execCommand('copy')
+    if (!success) {
+      throw new Error('Copy command failed')
+    }
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
 export default function MessageList({
   messages,
   isRunning = false,
   sessionKey,
   initialScrollOnMount = 'bottom',
+  onRegenerate,
+  onSelectVariant,
+  regeneratingMessageId,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLElement | null>(null)
@@ -219,13 +270,31 @@ export default function MessageList({
     () => buildRenderBlocks(messages, isRunning),
     [messages, isRunning],
   )
+  const messageMap = useMemo(
+    () => new Map(messages.map((message) => [message.id, message])),
+    [messages],
+  )
+  const latestRegeneratableMessageId = useMemo(
+    () => (isRunning ? null : getLatestRegeneratableMessageId(messages)),
+    [messages, isRunning],
+  )
 
   if (messages.length === 0) return null
 
   return (
     <div className="space-y-4">
       {blocks.map((block, index) => (
-        <BlockRenderer key={index} block={block} />
+        <BlockRenderer
+          key={index}
+          block={block}
+          message={block.type === 'user' || block.type === 'text'
+            ? (block.messageId ? messageMap.get(block.messageId) : undefined)
+            : undefined}
+          latestRegeneratableMessageId={latestRegeneratableMessageId}
+          onRegenerate={onRegenerate}
+          onSelectVariant={onSelectVariant}
+          regeneratingMessageId={regeneratingMessageId}
+        />
       ))}
       <div ref={bottomRef} />
     </div>
@@ -245,19 +314,45 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
   for (const message of messages) {
     if (message.type === 'user') {
       flushTools(true)
-      blocks.push({ type: 'user', content: message.content })
+      blocks.push({
+        type: 'user',
+        content: message.content,
+        messageId: message.id,
+        serverMessageId: message.serverMessageId ?? null,
+        meta: message.meta || null,
+      })
       continue
     }
 
     if (message.type === 'assistant' && message.content) {
       flushTools(true)
       const segments = splitAssistantContent(message.content)
+      const actionText = segments
+        .filter((segment): segment is Extract<AssistantSegment, { type: 'text' }> => segment.type === 'text')
+        .map((segment) => segment.content.trim())
+        .filter(Boolean)
+        .join('\n\n')
+      const textBlockIndexes: number[] = []
       for (const segment of segments) {
         if (segment.type === 'text') {
-          blocks.push({ type: 'text', content: segment.content, isStreaming: false })
+          textBlockIndexes.push(blocks.length)
+          blocks.push({
+            type: 'text',
+            content: segment.content,
+            isStreaming: false,
+            showActions: false,
+            actionText,
+            messageId: message.id,
+            serverMessageId: message.serverMessageId ?? null,
+            meta: message.meta || null,
+          })
           continue
         }
         blocks.push({ type: 'thinking_content', content: segment.content })
+      }
+      const lastTextBlockIndex = textBlockIndexes[textBlockIndexes.length - 1]
+      if (typeof lastTextBlockIndex === 'number' && blocks[lastTextBlockIndex]?.type === 'text') {
+        ;(blocks[lastTextBlockIndex] as TextBlock).showActions = true
       }
       continue
     }
@@ -302,12 +397,39 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
   return blocks
 }
 
-function BlockRenderer({ block }: { block: RenderBlock }) {
+function BlockRenderer({
+  block,
+  message,
+  latestRegeneratableMessageId,
+  onRegenerate,
+  onSelectVariant,
+  regeneratingMessageId,
+}: {
+  block: RenderBlock
+  message?: AgentMessage
+  latestRegeneratableMessageId: string | null
+  onRegenerate?: (messageId: string) => void | Promise<void>
+  onSelectVariant?: (messageId: string, variantIndex: number) => void
+  regeneratingMessageId?: string | null
+}) {
   switch (block.type) {
     case 'user':
-      return <UserBubble content={block.content} />
+      return <UserBubble content={block.content} meta={block.meta} />
     case 'text':
-      return <TextBlockView content={block.content} isStreaming={block.isStreaming} />
+      return (
+        <TextBlockView
+          content={block.content}
+          isStreaming={block.isStreaming}
+          showActions={block.showActions ?? true}
+          actionText={block.actionText}
+          meta={block.meta}
+          message={message}
+          latestRegeneratableMessageId={latestRegeneratableMessageId}
+          onRegenerate={onRegenerate}
+          onSelectVariant={onSelectVariant}
+          regeneratingMessageId={regeneratingMessageId}
+        />
+      )
     case 'tools':
       return <ToolGroupView tools={block.tools} isCompleted={block.isCompleted} />
     case 'error':
@@ -319,11 +441,16 @@ function BlockRenderer({ block }: { block: RenderBlock }) {
   }
 }
 
-function UserBubble({ content }: { content: string }) {
+function UserBubble({ content, meta }: { content: string; meta?: MessageMeta | null }) {
+  const canCopy = meta?.capabilities?.canCopy ?? true
+
   return (
-    <div className="animate-in slide-in-from-bottom-1 flex justify-end duration-200 fade-in">
-      <div className="max-w-[85%] rounded-lg bg-primary px-4 py-3 text-primary-foreground">
-        <div className="whitespace-pre-wrap">{content}</div>
+    <div className="group animate-in slide-in-from-bottom-1 flex justify-end duration-200 fade-in">
+      <div className="max-w-[85%]">
+        <div className="rounded-lg bg-primary px-4 py-3 text-primary-foreground">
+          <div className="whitespace-pre-wrap">{content}</div>
+        </div>
+        <MessageActionBar text={content} canCopy={canCopy} latestRegeneratableMessageId={null} />
       </div>
     </div>
   )
@@ -371,14 +498,37 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced
 }
 
-function TextBlockView({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+function TextBlockView({
+  content,
+  isStreaming,
+  showActions,
+  actionText,
+  meta,
+  message,
+  latestRegeneratableMessageId,
+  onRegenerate,
+  onSelectVariant,
+  regeneratingMessageId,
+}: {
+  content: string
+  isStreaming: boolean
+  showActions: boolean
+  actionText?: string
+  meta?: MessageMeta | null
+  message?: AgentMessage
+  latestRegeneratableMessageId: string | null
+  onRegenerate?: (messageId: string) => void | Promise<void>
+  onSelectVariant?: (messageId: string, variantIndex: number) => void
+  regeneratingMessageId?: string | null
+}) {
   // Fix P0-1: 降低 debounce 延迟，从 300ms → 50ms，减少卡顿感
   const debouncedContent = useDebouncedValue(content, isStreaming ? 50 : 0)
+  const canCopy = meta?.capabilities?.canCopy ?? true
 
   if (isStreaming) {
     const canRenderStreamingMarkdown = debouncedContent.length <= 12000
     return (
-      <div className="animate-in slide-in-from-bottom-1 duration-150 fade-in">
+      <div className="group animate-in slide-in-from-bottom-1 duration-150 fade-in">
         {canRenderStreamingMarkdown ? (
           <div className="prose prose-sm max-w-none dark:prose-invert">
             <MarkdownView content={debouncedContent} />
@@ -390,15 +540,209 @@ function TextBlockView({ content, isStreaming }: { content: string; isStreaming:
             <span className="ml-0.5 inline-block h-4 w-2 animate-pulse rounded-sm bg-primary/70" />
           </div>
         )}
+        {showActions && (
+          <>
+            <MessageActionBar
+              text={actionText || content}
+              canCopy={canCopy}
+              message={message}
+              latestRegeneratableMessageId={latestRegeneratableMessageId}
+              onRegenerate={onRegenerate}
+              regeneratingMessageId={regeneratingMessageId}
+            />
+            <VariantPager message={message} onSelectVariant={onSelectVariant} />
+          </>
+        )}
       </div>
     )
   }
 
   return (
-    <div className="animate-in slide-in-from-bottom-1 duration-200 fade-in">
+    <div className="group animate-in slide-in-from-bottom-1 duration-200 fade-in">
       <div className="prose prose-sm max-w-none dark:prose-invert">
         <MarkdownView content={content} />
       </div>
+      {showActions && (
+        <>
+          <MessageActionBar
+            text={actionText || content}
+            canCopy={canCopy}
+            message={message}
+            latestRegeneratableMessageId={latestRegeneratableMessageId}
+            onRegenerate={onRegenerate}
+            regeneratingMessageId={regeneratingMessageId}
+          />
+          <VariantPager message={message} onSelectVariant={onSelectVariant} />
+        </>
+      )}
+    </div>
+  )
+}
+
+function MessageActionBar({
+  text,
+  canCopy,
+  message,
+  latestRegeneratableMessageId,
+  onRegenerate,
+  regeneratingMessageId,
+}: {
+  text: string
+  canCopy: boolean
+  message?: AgentMessage
+  latestRegeneratableMessageId: string | null
+  onRegenerate?: (messageId: string) => void | Promise<void>
+  regeneratingMessageId?: string | null
+}) {
+  const canRegenerate = Boolean(
+    message
+    && onRegenerate
+    && message.id === latestRegeneratableMessageId
+    && message.meta?.capabilities?.canRegenerate,
+  )
+
+  if (!text.trim() || (!canCopy && !canRegenerate)) return null
+
+  return (
+    <div className="mt-1 flex justify-end gap-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+      {canRegenerate && message && (
+        <RegenerateButton
+          messageId={message.id}
+          isLoading={regeneratingMessageId === message.id}
+          onRegenerate={onRegenerate!}
+        />
+      )}
+      {canCopy && <CopyButton text={text} />}
+    </div>
+  )
+}
+
+function RegenerateButton({
+  messageId,
+  isLoading,
+  onRegenerate,
+}: {
+  messageId: string
+  isLoading: boolean
+  onRegenerate: (messageId: string) => void | Promise<void>
+}) {
+  return (
+    <button
+      type="button"
+      disabled={isLoading}
+      onClick={() => { void onRegenerate(messageId) }}
+      title={isLoading ? '重做中...' : '重做'}
+      aria-label={isLoading ? '重做中...' : '重做'}
+      className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      <svg className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+      <span>{isLoading ? '重做中...' : '重做'}</span>
+    </button>
+  )
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const timeoutRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await copyTextToClipboard(text)
+      setStatus('copied')
+    } catch {
+      setStatus('failed')
+    } finally {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current)
+      }
+      timeoutRef.current = window.setTimeout(() => {
+        setStatus('idle')
+        timeoutRef.current = null
+      }, 1800)
+    }
+  }, [text])
+
+  const label = status === 'copied'
+    ? '已复制'
+    : status === 'failed'
+      ? '复制失败'
+      : '复制'
+
+  return (
+    <button
+      type="button"
+      onClick={() => { void handleCopy() }}
+      title={label}
+      aria-label={label}
+      className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
+    >
+      {status === 'copied' ? (
+        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+          />
+        </svg>
+      )}
+      <span>{label}</span>
+    </button>
+  )
+}
+
+function VariantPager({
+  message,
+  onSelectVariant,
+}: {
+  message?: AgentMessage
+  onSelectVariant?: (messageId: string, variantIndex: number) => void
+}) {
+  if (!message?.variants || message.variants.length <= 1 || !onSelectVariant) return null
+
+  const activeIndex = message.activeVariantIndex ?? (message.variants.length - 1)
+  const canPrev = activeIndex > 0
+  const canNext = activeIndex < message.variants.length - 1
+
+  return (
+    <div className="mt-1 flex items-center justify-end gap-2 text-xs text-muted-foreground">
+      <button
+        type="button"
+        disabled={!canPrev}
+        onClick={() => onSelectVariant(message.id, activeIndex - 1)}
+        aria-label="上一版本"
+        className="inline-flex h-6 w-6 items-center justify-center rounded border border-border/60 bg-background/90 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+      </button>
+      <span>{`${activeIndex + 1} / ${message.variants.length}`}</span>
+      <button
+        type="button"
+        disabled={!canNext}
+        onClick={() => onSelectVariant(message.id, activeIndex + 1)}
+        aria-label="下一版本"
+        className="inline-flex h-6 w-6 items-center justify-center rounded border border-border/60 bg-background/90 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
     </div>
   )
 }

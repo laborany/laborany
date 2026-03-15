@@ -175,11 +175,45 @@ export default function ChatInput({
     }
   }
 
-  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault()
-      handleSubmit()
+  function insertNewlineAtCursor() {
+    const textarea = textareaRef.current
+    if (!textarea) {
+      setValue((prev) => `${prev}\n`)
+      return
     }
+
+    const { selectionStart, selectionEnd, value: currentValue } = textarea
+    const nextValue = `${currentValue.slice(0, selectionStart)}\n${currentValue.slice(selectionEnd)}`
+    const nextCaret = selectionStart + 1
+
+    setValue(nextValue)
+
+    window.requestAnimationFrame(() => {
+      const nextTextarea = textareaRef.current
+      if (!nextTextarea) return
+      nextTextarea.selectionStart = nextCaret
+      nextTextarea.selectionEnd = nextCaret
+      nextTextarea.style.height = 'auto'
+      nextTextarea.style.height = `${Math.min(nextTextarea.scrollHeight, 400)}px`
+    })
+  }
+
+  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key !== 'Enter') return
+
+    // 中文输入法组合态下回车用于选词，不能触发发送。
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return
+
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault()
+      insertNewlineAtCursor()
+      return
+    }
+
+    if (e.shiftKey || e.altKey) return
+
+    e.preventDefault()
+    handleSubmit()
   }
 
   function handleInput() {
@@ -345,7 +379,7 @@ export default function ChatInput({
             </DropdownMenu>
           )}
 
-          <span className="hidden sm:inline text-xs text-muted-foreground">Ctrl + Enter 发送</span>
+          <span className="hidden sm:inline text-xs text-muted-foreground">Enter 发送，Ctrl / Cmd + Enter 换行</span>
         </div>
 
         {isRunning ? (

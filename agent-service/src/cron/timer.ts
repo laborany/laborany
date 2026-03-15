@@ -7,6 +7,7 @@
 
 import { getDueJobs, getNextWakeTime } from './store.js'
 import { runJob } from './executor.js'
+import { isCronStorageUnavailableError } from './db.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           定时器状态                                      │
@@ -61,7 +62,17 @@ function armTimer(): void {
     timerId = null
   }
 
-  const nextAt = getNextWakeTime()
+  let nextAt: number | null = null
+  try {
+    nextAt = getNextWakeTime()
+  } catch (error) {
+    if (isCronStorageUnavailableError(error)) {
+      console.warn('[Cron] 存储暂不可用，60 秒后重试调度')
+      timerId = setTimeout(armTimer, 60_000)
+      return
+    }
+    throw error
+  }
 
   /* ────────────────────────────────────────────────────────────────────────
    *  无待执行任务时，每 60 秒检查一次（兜底）
@@ -136,8 +147,17 @@ export function triggerPoll(): void {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 export function getCronTimerStatus(): { running: boolean; nextWakeAt: number | null } {
+  let nextWakeAt: number | null = null
+  try {
+    nextWakeAt = getNextWakeTime()
+  } catch (error) {
+    if (!isCronStorageUnavailableError(error)) {
+      throw error
+    }
+  }
+
   return {
     running: isRunning,
-    nextWakeAt: getNextWakeTime()
+    nextWakeAt,
   }
 }
