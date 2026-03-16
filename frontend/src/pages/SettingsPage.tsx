@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { API_BASE, AGENT_API_BASE } from '../config/api'
 import { useModelProfile } from '../contexts/ModelProfileContext'
 import type { ModelProfile } from '../contexts/ModelProfileContext'
+import { McpSection } from '../components/mcp/McpSection'
 
 interface ConfigItem {
   value: string
@@ -215,6 +216,8 @@ export default function SettingsPage() {
 
   const [testingQQ, setTestingQQ] = useState(false)
   const [qqTestResult, setQQTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  const [activeTab, setActiveTab] = useState<'basic' | 'integration' | 'system' | 'tools'>('basic')
 
   useEffect(() => {
     void loadConfig()
@@ -836,6 +839,21 @@ export default function SettingsPage() {
         <h1 className="text-lg font-semibold text-foreground">设置中心</h1>
       </header>
 
+      <div className="border-b border-border bg-card">
+        <div className="mx-auto max-w-5xl px-6">
+          <nav className="flex gap-6">
+            {(['basic', 'integration', 'system', 'tools'] as const).map(tab => (
+              <SettingsTabButton
+                key={tab}
+                active={activeTab === tab}
+                onClick={() => setActiveTab(tab)}
+                label={{ basic: '基础配置', integration: '集成服务', system: '系统', tools: '工具扩展' }[tab]}
+              />
+            ))}
+          </nav>
+        </div>
+      </div>
+
       <div className="mx-auto max-w-5xl p-6 space-y-6">
         {message && (
           <div className={`rounded-lg border p-4 ${
@@ -860,6 +878,7 @@ export default function SettingsPage() {
           </div>
         )}
 
+        {activeTab === 'basic' && (
         <div className="space-y-6">
           <SettingsCard title="个人信息" description="用于本地模式显示昵称，不需要邮箱注册。">
             <label className="block text-sm font-medium text-foreground mb-1">本地名称</label>
@@ -958,9 +977,8 @@ export default function SettingsPage() {
               建议使用独立目录作为存储根路径。切换时会做增量迁移（目标目录已有同名文件会保留）。
             </div>
           </SettingsCard>
-        </div>
 
-        <SettingsCard
+          <SettingsCard
           title={groups.find(g => g.id === 'model')?.title || '模型服务'}
           description="管理多个模型配置，支持不同 API Key、Base URL 和模型名称。profiles[0] 为默认配置。"
           action={
@@ -1123,7 +1141,11 @@ export default function SettingsPage() {
             </button>
           </div>
         </SettingsCard>
+        </div>
+        )}
 
+        {activeTab === 'integration' && (
+        <div className="space-y-6">
         <SettingsCard
           title={groups.find(g => g.id === 'feishu')?.title || '飞书 Bot'}
           description={groups.find(g => g.id === 'feishu')?.description || '飞书会话配置'}
@@ -1208,7 +1230,11 @@ export default function SettingsPage() {
             </p>
           )}
         </SettingsCard>
+        </div>
+        )}
 
+        {activeTab === 'system' && (
+        <div className="space-y-6">
         <SettingsCard
           title={groups.find(g => g.id === 'system')?.title || '系统参数'}
           description={groups.find(g => g.id === 'system')?.description || '系统级配置'}
@@ -1244,7 +1270,18 @@ export default function SettingsPage() {
             </p>
           )}
         </SettingsCard>
+        </div>
+        )}
 
+        {activeTab === 'tools' && (
+        <div className="space-y-6">
+        <SettingsCard title="MCP 工具扩展" description="管理 MCP (Model Context Protocol) 服务器，扩展 AI 工具能力。">
+          <McpSection />
+        </SettingsCard>
+        </div>
+        )}
+
+        {activeTab !== 'tools' && (
         <div className="sticky bottom-4 z-10 flex items-center justify-end gap-3 rounded-lg border border-border bg-card/95 p-4 backdrop-blur">
           <span className="text-xs text-muted-foreground">带 * 的字段为必填项，保存后会自动尝试应用。</span>
           <button
@@ -1258,8 +1295,28 @@ export default function SettingsPage() {
             保存配置
           </button>
         </div>
+        )}
       </div>
     </div>
+  )
+}
+
+function SettingsTabButton({ active, onClick, label }: {
+  active: boolean
+  onClick: () => void
+  label: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`border-b-2 py-3 text-sm font-medium transition-colors ${
+        active
+          ? 'border-primary text-primary'
+          : 'border-transparent text-muted-foreground hover:text-foreground'
+      }`}
+    >
+      {label}
+    </button>
   )
 }
 

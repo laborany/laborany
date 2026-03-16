@@ -1,27 +1,13 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                         智谱 MCP 服务器配置                               ║
- * ║                                                                          ║
+ * ║                                                                        ║
  * ║  职责：定义智谱 API 的 MCP 服务器配置                                      ║
  * ║  设计：纯函数，无副作用，配置即数据                                         ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-/* ┌──────────────────────────────────────────────────────────────────────────┐
- * │                           类型定义                                        │
- * └──────────────────────────────────────────────────────────────────────────┘ */
-export interface McpStdioServerConfig {
-  type: 'stdio'
-  command: string
-  args?: string[]
-  env?: Record<string, string>
-}
+import type { McpServerConfig } from './types.js'
 
-export interface McpHttpServerConfig {
-  type: 'http'
-  url: string
-  headers?: Record<string, string>
-}
-
-export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig
+export type { McpStdioServerConfig, McpHttpServerConfig, McpServerConfig } from './types.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       智谱 API 检测                                       │

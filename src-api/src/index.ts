@@ -65,6 +65,7 @@ import setupRoutes from './routes/setup.js'
 import sandboxRoutes from './routes/sandbox.js'
 import previewRoutes from './routes/preview.js'
 import llmBridgeRoutes from './routes/llm-bridge.js'
+import mcpRoutes from './routes/mcp.js'
 import { initDb, closeDb } from './core/database.js'
 import { registerAllProviders } from './providers/index.js'
 import { stopAllProviders } from './core/sandbox/registry.js'
@@ -112,6 +113,7 @@ app.route('/api/setup', setupRoutes)
 app.route('/api/sandbox', sandboxRoutes)
 app.route('/api/preview', previewRoutes)
 app.route('/api/llm-bridge', llmBridgeRoutes)
+app.route('/api/mcp', mcpRoutes)
 app.route('/api', fileRoutes)
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
