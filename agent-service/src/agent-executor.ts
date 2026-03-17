@@ -77,9 +77,20 @@ export interface AgentEvent {
  * │  匹配到的行透传到前端，其余仅打印到控制台                                  │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const STDERR_FORWARD_PATTERN = /retry|retrying|attempt|reconnect|error|failed|timeout|refused|ECONNREFUSED|ETIMEDOUT|rate.limit|overloaded|529|503/i
+const MISSING_PRINT_INPUT_RE = /Input must be provided either through stdin or as a prompt argument when using --print/i
 
 const IDLE_WARNING_THRESHOLD_MS = 10 * 60 * 1000
 const IDLE_WARNING_CHECK_INTERVAL_MS = 60 * 1000
+
+function formatClaudeCliExitError(code: number | null, stderrSnippet: string): string {
+  const trimmed = stderrSnippet.trim()
+  if (MISSING_PRINT_INPUT_RE.test(trimmed)) {
+    return '执行内容为空。请先输入任务内容，或上传文件后再试。'
+  }
+  return trimmed
+    ? `Claude Code 退出码: ${code}\n${trimmed}`
+    : `Claude Code 退出码: ${code}`
+}
 
 interface ExecuteOptions {
   skill: Skill
@@ -403,6 +414,15 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   // 用户消息只包含查询内容
   const prompt = userQuery
 
+  if (!prompt.trim()) {
+    onEvent({
+      type: 'error',
+      content: '执行内容为空。请先输入任务内容，或上传文件后再试。',
+    })
+    onEvent({ type: 'done' })
+    return
+  }
+
   console.log(`[Agent] Args: ${args.join(' ')}`)
 
   const spawnArgs = [...cliLaunch.argsPrefix, ...args]
@@ -567,9 +587,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
           const stderrSnippet = stderrBuffer.trim().slice(0, 600)
           onEvent({
             type: 'error',
-            content: stderrSnippet
-              ? `Claude Code 退出码: ${code}\n${stderrSnippet}`
-              : `Claude Code 退出码: ${code}`,
+            content: formatClaudeCliExitError(code, stderrSnippet),
           })
         } else {
           onEvent({ type: 'done' })

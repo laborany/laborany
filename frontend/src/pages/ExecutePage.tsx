@@ -26,6 +26,8 @@ import {
 } from '../components/ui'
 import { Button } from '../components/ui'
 import { getExecuteGenerativeWidgetSupport } from '../lib/widgetSupport'
+
+const ATTACHMENT_ONLY_EXECUTION_QUERY = '请先查看我上传的文件，并根据文件内容继续处理。'
 import { ModelWidgetSupportSummary } from '../components/shared/ModelWidgetSupportSummary'
 
 export default function ExecutePage() {
@@ -78,9 +80,9 @@ export default function ExecutePage() {
     const sid = searchParams.get('sid')
     const query = searchParams.get('q')
     const attachmentIds = parseAttachmentIdsParam(searchParams.get('attachments'))
-    if (!sid && !query) return
+    if (!sid && !query && attachmentIds.length === 0) return
 
-    const normalizedQuery = query?.trim() || ''
+    const normalizedQuery = query?.trim() || (attachmentIds.length > 0 ? ATTACHMENT_ONLY_EXECUTION_QUERY : '')
     const bootstrapKey = `${skillId || ''}|${sid || ''}|${normalizedQuery}|${attachmentIds.join(',')}`
     if (lastBootstrapKeyRef.current === bootstrapKey) return
     lastBootstrapKeyRef.current = bootstrapKey

@@ -68,6 +68,7 @@ export interface UseConverseReturn {
 type ConversePhase = NonNullable<UseConverseReturn['state']>['phase']
 
 const ACTION_MARKER_RE = /\n?LABORANY_ACTION:\s*\{[\s\S]*?\}\s*$/
+const ATTACHMENT_ONLY_CONVERSE_QUERY = '我上传了一些文件，请先读取文件再继续处理。'
 interface SessionDetailMessage {
   id?: number
   type?: string
@@ -644,7 +645,7 @@ export function useConverse(): UseConverseReturn {
     const q = text.trim()
     if (!q && files.length === 0) return
 
-    const userInput = q || 'I uploaded files. Please read them first and continue.'
+    const userInput = q || ATTACHMENT_ONLY_CONVERSE_QUERY
 
     abortRef.current?.abort()
     abortRef.current = null
@@ -695,6 +696,7 @@ export function useConverse(): UseConverseReturn {
         signal: controller.signal,
         body: JSON.stringify({
           sessionId: sessionIdRef.current,
+          latestUserQuery: userInput,
           messages: payloadMessages,
           modelProfileId: activeProfileId || undefined,
           attachmentIds: mergedFileIds,

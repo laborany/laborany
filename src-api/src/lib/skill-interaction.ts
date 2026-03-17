@@ -34,10 +34,24 @@ function asBoolean(value: unknown, fallback = false): boolean {
 export function looksLikeWaitingInputMessage(content?: string | null): boolean {
   const text = (content || '').trim()
   if (!text) return false
-  if (/有什么需要(调整|补充|修改)|是否需要我继续|要不要我继续|如果你需要.*我可以|还想看哪部分/.test(text)) {
+
+  const tail = text
+    .split(/\n{2,}/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-2)
+    .join('\n')
+
+  if (
+    /有什么需要(调整|补充|修改)|是否需要我继续|要不要我继续|如果你需要.*我可以|还想看哪部分/.test(tail)
+    || /(如果|若|如|要是).{0,40}(需要|想要).{0,40}(我可以|我能|告诉我|继续|再给你|再帮你)/.test(tail)
+    || /(如需|需要的话|有需要的话).{0,40}(我可以|我能|告诉我|继续|再给你|再帮你)/.test(tail)
+    || /(欢迎|随时|也可以).{0,20}(告诉我|继续问|继续提|找我)/.test(tail)
+  ) {
     return false
   }
-  return /(请(补充|提供|确认|选择|输入|告诉|说明|回复)|还缺少|需要补充|请再|执行时间|开始时间|结束时间|频率|时区|补充信息|告诉我|请给出|请填写|继续执行前)/.test(text)
+
+  return /(请(补充|提供|确认|选择|输入|告诉|说明|回复)|还缺少|需要补充|请再|执行时间|开始时间|结束时间|频率|时区|补充信息|告诉我|请给出|请填写|继续执行前)/.test(tail)
 }
 
 export function buildSkillQuestionSummary(payload: SkillQuestionPayload): string {

@@ -64,6 +64,7 @@ const RESUME_HINT_MIN_IDLE_MS = 60000
 const LAST_SESSION_KEY_PREFIX = 'lastSession_'
 const LAST_SESSION_LIST_KEY_PREFIX = 'lastSessions_'
 const MAX_TRACKED_SESSIONS_PER_SKILL = 12
+const ATTACHMENT_ONLY_EXECUTION_QUERY = '请先查看我上传的文件，并根据文件内容继续处理。'
 
 const TRANSIENT_NETWORK_ERROR_PATTERNS = [
   'network error',
@@ -1076,8 +1077,23 @@ export function useAgent(skillId: string) {
         return
       }
 
+      const trimmedQuery = query.trim()
+      const normalizedQuery = trimmedQuery
+        || ((files && files.length > 0) || (options?.attachmentIds?.length || 0) > 0
+          ? ATTACHMENT_ONLY_EXECUTION_QUERY
+          : '')
+
+      if (!normalizedQuery) {
+        setState((s) => ({
+          ...s,
+          error: '请输入任务内容，或上传文件后再试',
+          connectionStatus: null,
+        }))
+        return
+      }
+
       const fingerprint = JSON.stringify({
-        query: query.trim(),
+        query: normalizedQuery,
         sessionId: sessionIdRef.current || '',
         files: (files || []).map((file) => `${file.name}:${file.size}:${file.lastModified}`).join('|'),
         originQuery: options?.originQuery || '',
@@ -1103,7 +1119,7 @@ export function useAgent(skillId: string) {
       const userMessage: AgentMessage = {
         id: crypto.randomUUID(),
         type: 'user',
-        content: query,
+        content: normalizedQuery,
         timestamp: new Date(),
       }
 
@@ -1160,7 +1176,7 @@ export function useAgent(skillId: string) {
         headers['Content-Type'] = 'application/json'
         body = JSON.stringify({
           skill_id: executionSkillId,
-          query,
+          query: normalizedQuery,
           originQuery: options?.originQuery,
           attachmentIds: fileIds,
           sessionId: currentSessionId,

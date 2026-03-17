@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { getAppHomeDir, isPackagedRuntime } from './app-home.js'
+import { getAppHomeDir } from './app-home.js'
 
 export interface LocalProfile {
   name: string
@@ -8,25 +8,12 @@ export interface LocalProfile {
   updatedAt: string
 }
 
-function isPackaged(): boolean {
-  return isPackagedRuntime()
-}
-
 export function getConfigDir(): string {
-  if (isPackaged()) {
-    const appDataDir = getAppHomeDir()
-
-    if (!existsSync(appDataDir)) {
-      mkdirSync(appDataDir, { recursive: true })
-    }
-    return appDataDir
+  const configDir = getAppHomeDir()
+  if (!existsSync(configDir)) {
+    mkdirSync(configDir, { recursive: true })
   }
-
-  const devConfigDir = join(process.cwd(), 'data')
-  if (!existsSync(devConfigDir)) {
-    mkdirSync(devConfigDir, { recursive: true })
-  }
-  return devConfigDir
+  return configDir
 }
 
 export function getEnvPath(): string {

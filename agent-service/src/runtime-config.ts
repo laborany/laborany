@@ -29,6 +29,10 @@ const PROCESS_OVERRIDE_KEYS = [
   'SRC_API_BASE_URL',
   'AGENT_SERVICE_URL',
   'PORT',
+  'FEISHU_ENABLED',
+  'QQ_ENABLED',
+  'NOTIFY_ON_SUCCESS',
+  'NOTIFY_ON_ERROR',
 ] as const
 
 let lastLoadedEnvKeys = new Set<string>()

@@ -50,6 +50,7 @@ interface ResolvedModelSelection extends SessionModelMeta {
 }
 
 const skill = new Hono()
+const ATTACHMENT_ONLY_EXECUTION_QUERY = '请先查看当前上传的文件，并根据文件内容继续处理。'
 
 function ensureRunningSession(
   sessionId: string,
@@ -446,7 +447,7 @@ skill.post('/execute', async (c) => {
   const source = (sourceRaw || '').trim() || 'desktop'
   const requestAttachmentIds = normalizeAttachmentIds(attachmentIdsRaw)
 
-  if (!skillId || !query) {
+  if (!skillId || typeof query !== 'string') {
     return c.json({ error: '缺少 skillId 或 query 参数' }, 400)
   }
 
@@ -458,12 +459,16 @@ skill.post('/execute', async (c) => {
   }
 
   const extractedAttachments = extractAttachmentIdsFromText(query)
-  const cleanQuery = extractedAttachments.text || query.trim()
-  query = cleanQuery
+  const trimmedQuery = extractedAttachments.text || query.trim()
   const attachmentIds = Array.from(new Set([
     ...requestAttachmentIds,
     ...extractedAttachments.attachmentIds,
   ]))
+  const cleanQuery = trimmedQuery || (attachmentIds.length > 0 ? ATTACHMENT_ONLY_EXECUTION_QUERY : '')
+  query = cleanQuery
+  if (!cleanQuery) {
+    return c.json({ error: '请输入任务内容，或上传文件后再试' }, 400)
+  }
 
   const installSourceQuery = (originQuery || cleanQuery).trim() || cleanQuery
   const provisionResolution = skillId === 'skill-creator'

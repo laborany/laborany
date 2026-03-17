@@ -29,6 +29,7 @@ import { normalizeCommunicationStylePreference } from '../memory/communication-s
 import { loadCatalog } from '../catalog.js'
 import { TASKS_DIR, UPLOADS_DIR } from '../paths.js'
 import { resolveModelProfile } from '../lib/resolve-model-profile.js'
+import { extractLatestUserMessageContent } from '../lib/converse-request.js'
 import {
   extractAttachmentIdsFromText,
   hydrateAttachmentsToTaskDir,
@@ -38,6 +39,7 @@ import {
 } from 'laborany-shared'
 
 const router = Router()
+const ATTACHMENT_ONLY_CONVERSE_QUERY = '我上传了一些文件，请先读取文件再继续处理。'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     SSE 工具函数                                         │
@@ -1623,6 +1625,17 @@ function hasExplicitGenericIntent(text: string): boolean {
   return /直接做|直接执行|通用助手|generic|先直接做|先做一遍/i.test(text)
 }
 
+function shouldSuppressActionForInformationalQuery(text: string): boolean {
+  const query = text.trim()
+  if (!query) return false
+  if (hasCreateCapabilityIntent(query) || hasExplicitGenericIntent(query)) return false
+  if (/定时|cron|schedule|执行|运行|做|创建|新建|生成|修复|写|改/i.test(query)) return false
+
+  const subjectPattern = /(tools?|mcp|工具|能力|skills?|skill|模型|profiles?|profile)/i
+  const infoPattern = /(有哪些|是什么|说明|介绍|列出|列表|当前|可用|支持|how many|what|which|list|available|show me)/i
+  return subjectPattern.test(query) && infoPattern.test(query)
+}
+
 function inferFallbackAction(query: string, fullText: string): ConverseActionPayload | null {
   const deterministicSchedule = detectDeterministicScheduleAction(query)
   if (deterministicSchedule) return deterministicSchedule
@@ -1696,6 +1709,7 @@ router.post('/', async (req: Request, res: Response) => {
     context: rawContext,
     modelProfileId,
     attachmentIds: rawAttachmentIds,
+    latestUserQuery: rawLatestUserQuery,
   } = req.body
   const runtimeContext = normalizeRuntimeContext(rawContext)
 
@@ -1719,16 +1733,37 @@ router.post('/', async (req: Request, res: Response) => {
   sseWrite(res, 'state', currentState)
 
   /* ── 提取最新用户消息（CLI 通过 --continue 维护历史） ── */
-  const latestMsg = rawMessages[rawMessages.length - 1]
-  const rawQuery = typeof latestMsg?.content === 'string' ? latestMsg.content : ''
+  const explicitLatestUserQuery = typeof rawLatestUserQuery === 'string'
+    ? rawLatestUserQuery.trim()
+    : ''
+  const rawQuery = explicitLatestUserQuery || extractLatestUserMessageContent(rawMessages)
   const extracted = extractAttachmentIdsFromText(rawQuery)
   const attachmentIds = Array.from(new Set([
     ...normalizeAttachmentIds(rawAttachmentIds),
     ...extracted.attachmentIds,
   ]))
-  const baseQuery = extracted.text || rawQuery.trim()
+  const baseQuery = extracted.text || rawQuery.trim() || (attachmentIds.length > 0 ? ATTACHMENT_ONLY_CONVERSE_QUERY : '')
   const persistUserQuery = baseQuery || rawQuery.trim() || '用户发起了对话分派请求'
   const turnId = randomUUID()
+  if (!baseQuery) {
+    console.warn('[Converse] Empty user query after message extraction', {
+      sessionId,
+      messageCount: rawMessages.length,
+      tail: rawMessages.slice(-3).map((item) => {
+        if (!item || typeof item !== 'object') return { role: 'unknown', hasContent: false }
+        const record = item as Record<string, unknown>
+        return {
+          role: typeof record.role === 'string' ? record.role : 'unknown',
+          hasContent: typeof record.content === 'string' && record.content.trim().length > 0,
+        }
+      }),
+    })
+    sseWrite(res, 'error', { message: '对话内容为空。请重新输入问题后再试。' })
+    await updateExternalSessionStatus(sessionId, 'failed')
+    sseWrite(res, 'done', {})
+    res.end()
+    return
+  }
   communicationPreferenceManager.applyFromUserText(baseQuery, persistUserQuery)
   addressingCliExtractor.schedulePersistIfNeeded({
     userText: baseQuery,
@@ -2058,7 +2093,7 @@ router.post('/', async (req: Request, res: Response) => {
             /* ── 从累积文本中提取决策标记 ── */
             // A committed widget means this turn stayed in direct explanation mode.
             // Even if the model emits a stray action marker, do not route away.
-            const rawAction = committedWidget != null
+            const rawAction = committedWidget != null || shouldSuppressActionForInformationalQuery(query)
               ? null
               : (extractAction(fullText) || inferFallbackAction(query, fullText))
             const action = rawAction?.action === 'setup_schedule'

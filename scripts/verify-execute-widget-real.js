@@ -680,8 +680,12 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error)
-  console.error(`[verify-execute-widget-real] FAILED: ${message}`)
-  process.exit(1)
-})
+main()
+  .then(() => {
+    process.exit(0)
+  })
+  .catch((error) => {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(`[verify-execute-widget-real] FAILED: ${message}`)
+    process.exit(1)
+  })
