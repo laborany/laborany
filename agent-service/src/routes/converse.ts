@@ -272,7 +272,7 @@ function buildDirectMetaReply(userText: string): string | null {
   }
 
   if (isMetaQuery) {
-    return '你还没有设置专属称呼，我目前会先按默认方式称呼你。'
+    return '你还没有设置专属称呼，我目前默认会叫你老板。'
   }
 
   if (hasTaskIntent) {
@@ -869,14 +869,26 @@ function extractScheduleTargetQuery(
     if (candidate) return candidate
   }
 
+  const explicitContentMatch = text.match(
+    /(?:内容|执行内容|任务内容|任务|查询|query)\s*(?:是|为|改为)\s*[「」【】《》“”"'`]?([\s\S]+?)[」】》“”"'`]?\s*$/i,
+  )
+  if (explicitContentMatch?.[1]) {
+    const candidate = explicitContentMatch[1].trim()
+    if (candidate) return candidate
+  }
+
   let remainder = text.replace(matchedText, ' ')
   if (capabilityMatchText) {
     remainder = remainder.replace(capabilityMatchText, ' ')
   }
 
   remainder = remainder
+    .replace(/(?:内容|执行内容|任务内容|任务|查询|query)\s*(?:是|为|改为)\s*/gi, ' ')
     .replace(/(?:用|使用|通过|调用)\s*(?:目标)?技能\s*[「」【】《》“”"'`]?[^，,。；;：:\n]+[」】》“”"'`]?\s*/gi, ' ')
     .replace(/(?:目标技能|技能)\s*(?:是|为|设为|设成)?\s*[「」【】《》“”"'`]?[^，,。；;：:\n]+[」】》“”"'`]?\s*/gi, ' ')
+    .replace(/^(?:请|帮我|麻烦)?\s*(?:设置|设定|安排|创建|建立|新增|添加|生成|弄一个|做一个)\s*(?:一个|一条|个|条)?\s*/gi, '')
+    .replace(/(?:自动执行|自动运行|自动触发)\s*/gi, ' ')
+    .replace(/(?:的)?定时任务/g, ' ')
     .replace(/^[，,。.\s]+/, '')
     .replace(/^(请|帮我|麻烦|定时|自动|安排|设置|创建|生成)+/g, '')
     .replace(/^(在|于)\s*/g, '')
@@ -1034,7 +1046,7 @@ function stabilizeScheduleAction(
     everyMs: detected.everyMs ?? action.everyMs,
     tz: detected.tz ?? action.tz,
     targetId: detected.targetId ?? action.targetId,
-    targetQuery: detected.targetQuery || action.targetQuery,
+    targetQuery: action.targetQuery || detected.targetQuery,
   }
 }
 

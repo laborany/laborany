@@ -1383,7 +1383,7 @@ async function runConverse(
 
     if (actionEvent) {
       // 命中执行动作时，交给 execute 阶段统一输出，避免同一轮多次回包导致 QQ 丢消息。
-      await dispatchAction(client, actionEvent, targetType, targetId, stateKey, config, accumulatedText, replyCtx)
+      await dispatchAction(client, actionEvent, targetType, targetId, stateKey, config, accumulatedText, userMessage, replyCtx)
       return
     }
 
@@ -1407,11 +1407,13 @@ async function dispatchAction(
   stateKey: string,
   config: QQConfig,
   converseText: string,
+  userText: string,
   replyCtx?: PassiveReplyContext,
 ): Promise<void> {
   const action = event.action
   const resolvedTargetId = (event.targetId || '').trim()
-  const query = (event.query || converseText || '').trim()
+  const fallbackQuery = (userText || converseText || '').trim()
+  const query = (event.query || fallbackQuery).trim()
 
   if (action === 'send_file') {
     const rawPaths = Array.isArray(event.filePaths) ? event.filePaths : []
@@ -1437,7 +1439,7 @@ async function dispatchAction(
     const sessionId = buildExecuteSessionId(resolved.skillId, state.activeSkillId, state.executeSessionId)
     await executeSkill(client, null, targetType, targetId, stateKey, resolved.skillId, query, sessionId, config, replyCtx)
   } else if (action === 'create_capability') {
-    const seedQuery = (event.seedQuery || query || '').trim()
+    const seedQuery = (event.seedQuery || query || fallbackQuery).trim()
     if (!seedQuery) {
       await sendTextWithContext(client, targetId, targetType, '缺少技能创建需求，请补充你希望沉淀成技能的任务描述。', replyCtx)
       return
@@ -1466,7 +1468,7 @@ async function dispatchAction(
     const tz = (event.tz || QQ_DEFAULT_CRON_TZ).trim()
     const atMs = parseNumberLike(event.atMs)
     const everyMs = parseNumberLike(event.everyMs)
-    const scheduleQuery = (event.targetQuery || query || '').trim()
+    const scheduleQuery = (event.targetQuery || query || fallbackQuery).trim()
     let scheduleTargetId = resolvedTargetId
 
     if (!scheduleQuery) {

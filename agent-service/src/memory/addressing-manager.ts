@@ -61,6 +61,11 @@ const ROLE_WORD_PATTERNS = [
   /^(?:程序员|开发|开发者|工程师|产品|产品经理|设计师|运营|老板|用户|助手|机器人|同学|老师|学生)$/i,
 ]
 
+const ROLE_RELATIONSHIP_PATTERNS = [
+  /^(?:你(?:的)?|我(?:的)?|他(?:的)?|她(?:的)?|咱(?:们)?(?:的)?|我们(?:的)?)(?:老板|老大|领导|上司|经理|雇主)$/i,
+  /^(?:老板|老大|领导|上司|经理|雇主)(?:本人)?$/i,
+]
+
 const PURE_ADDRESSING_NOISE_PATTERNS = [
   /^\s*(?:老板好|老板您好|好的老板|收到老板|ok boss|yes sir|hi boss|hello boss)\s*$/i,
 ]
@@ -75,27 +80,25 @@ const ADDRESSING_INTENT_CUE_PATTERNS = [
   /(?:叫我|称呼我|喊我|我的名字是|名字是)/i,
   /(?:call me|address me|my name is)/i,
   /^\s*我叫\s*[A-Za-z0-9\u4e00-\u9fa5·._ -]{1,20}(?:[，,。.!！？；;:：\s]|$)/i,
-  /^\s*我是\s*[A-Za-z0-9\u4e00-\u9fa5·._ -]{1,12}(?:[，,。.!！？；;:：\s]|$)/i,
   /(?:^|[，,。.!！？；;:：\s])我叫\s*[A-Za-z0-9\u4e00-\u9fa5·._ -]{1,20}(?:[，,。.!！？；;:：\s]|$)/i,
-  /(?:^|[，,。.!！？；;:：\s])我是\s*[A-Za-z0-9\u4e00-\u9fa5·._ -]{1,12}(?:[，,。.!！？；;:：\s]|$)/i,
 ]
 
 const STRONG_ADDRESSING_SET_PATTERNS = [
   /(?:^|[，,。.!！？；;:：\s])(?:以后|之后|后面)?(?:请|麻烦)?(?:叫我|称呼我(?:为)?|喊我(?:为)?)[\s:："“”'‘’「」【\[\(]?[A-Za-z0-9\u4e00-\u9fa5·._ -]{1,20}(?:[”"’'」】\]\)]|[，,。.!！？；;:：\s]|$)/i,
-  /(?:^|[，,。.!！？；;:：\s])(?:我的名字是|名字是|我叫|我是)\s*[A-Za-z0-9\u4e00-\u9fa5·._ -]{1,20}(?:[，,。.!！？；;:：\s]|$)/i,
+  /(?:^|[，,。.!！？；;:：\s])(?:我的名字是|名字是|我叫)\s*[A-Za-z0-9\u4e00-\u9fa5·._ -]{1,20}(?:[，,。.!！？；;:：\s]|$)/i,
   /(?:^|[，,。.!！？；;:：\s])(?:call me|address me as|my name is)\s+[A-Za-z0-9\u4e00-\u9fa5·._ -]{1,20}(?:[，,。.!！？；;:：\s]|$)/i,
 ]
 
 const STRONG_ADDRESSING_CAPTURE_PATTERNS = [
   /(?:^|[，,。.!！？；;:：\s])(?:以后|之后|后面)?(?:请|麻烦)?(?:叫我|称呼我(?:为)?|喊我(?:为)?)[\s:："“”'‘’「」【\[\(]*([A-Za-z0-9\u4e00-\u9fa5·._ -]{1,20})(?=[”"’'」】\]\)]*(?:[，,。.!！？；;:：\s]|$))/i,
-  /(?:^|[，,。.!！？；;:：\s])(?:我的名字是|名字是|我叫|我是)\s*([A-Za-z0-9\u4e00-\u9fa5·._ -]{1,20})(?=[，,。.!！？；;:：\s]|$)/i,
+  /(?:^|[，,。.!！？；;:：\s])(?:我的名字是|名字是|我叫)\s*([A-Za-z0-9\u4e00-\u9fa5·._ -]{1,20})(?=[，,。.!！？；;:：\s]|$)/i,
   /(?:^|[，,。.!！？；;:：\s])(?:call me|address me as|my name is)\s+([A-Za-z0-9\u4e00-\u9fa5·._ -]{1,20})(?=[，,。.!！？；;:：\s]|$)/i,
 ]
 
 const ADDRESSING_META_QUERY_PATTERNS = [
-  /^\s*你(?:现在|目前|一般|平时|通常)?(?:都)?(?:怎么|如何)?(?:称呼|叫|喊)我(?:啊|呀|呢)?[？?]?\s*$/i,
-  /^\s*你(?:现在|目前|一般|平时|通常)?(?:都)?叫我(?:什么|啥|什么名字|啥名字)(?:啊|呀|呢)?[？?]?\s*$/i,
-  /(?:你现在|你目前|你一般|你平时|你通常).{0,6}(?:怎么称呼我|如何称呼我|叫我什么|叫我啥)/i,
+  /^\s*(?:默认)?\s*你?(?:现在|目前|一般|平时|通常|默认)?(?:都)?(?:怎么|如何)?(?:称呼|叫|喊)我(?:啊|呀|呢)?[？?]?\s*$/i,
+  /^\s*(?:默认)?\s*你?(?:现在|目前|一般|平时|通常|默认)?(?:都)?叫我(?:什么|啥|什么名字|啥名字)(?:啊|呀|呢)?[？?]?\s*$/i,
+  /(?:(?:默认|你现在|你目前|你一般|你平时|你通常)).{0,6}(?:怎么称呼我|如何称呼我|叫我什么|叫我啥)/i,
 ]
 
 function defaultSettings(): AddressingSettings {
@@ -156,6 +159,7 @@ function looksLikeNameCandidate(name: string, mode: 'explicit' | 'inferred'): bo
   if (isReservedAddressingValue(normalized)) return false
   if (isQuestionLikeAddressingValue(normalized)) return false
   if (ROLE_WORD_PATTERNS.some(pattern => pattern.test(normalized))) return false
+  if (ROLE_RELATIONSHIP_PATTERNS.some(pattern => pattern.test(normalized))) return false
 
   if (mode === 'inferred') {
     if (/[，。,.!?！？]/.test(normalized)) return false

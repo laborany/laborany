@@ -1540,13 +1540,15 @@ async function dispatchAction(
   stateKey: string,
   actionEvent: SseEvent,
   converseText: string,
+  userText: string,
   card: FeishuOutputSession,
   historySessionId: string,
   modelProfileIdOverride?: string,
 ): Promise<void> {
   const actionType = (actionEvent as any)?.action || ''
   const targetId = (actionEvent as any)?.targetId || ''
-  const query = (actionEvent as any)?.query || converseText || ''
+  const fallbackQuery = (userText || converseText || '').trim()
+  const query = ((actionEvent as any)?.query || fallbackQuery).trim()
 
   if (actionType === 'send_file') {
     const rawPaths = Array.isArray((actionEvent as any)?.filePaths)
@@ -1597,7 +1599,7 @@ async function dispatchAction(
   }
 
   if (actionType === 'create_capability') {
-    const seedQuery = ((actionEvent as any)?.seedQuery || query || '').trim()
+    const seedQuery = ((actionEvent as any)?.seedQuery || query || fallbackQuery).trim()
     if (!seedQuery) {
       const msg = '缺少技能创建需求，请补充你希望沉淀成技能的任务描述。'
       await card.close(msg)
@@ -1634,7 +1636,7 @@ async function dispatchAction(
     const tz = ((actionEvent as any)?.tz || FEISHU_DEFAULT_CRON_TZ).trim()
     const atMs = parseNumberLike((actionEvent as any)?.atMs)
     const everyMs = parseNumberLike((actionEvent as any)?.everyMs)
-    const scheduleQuery = (actionEvent as any)?.targetQuery || query || ''
+    const scheduleQuery = ((actionEvent as any)?.targetQuery || query || fallbackQuery).trim()
     let resolvedTargetId = targetId.trim()
 
     if (!scheduleQuery.trim()) {
@@ -1832,7 +1834,7 @@ async function runConverse(
   }
 
   if (action) {
-    await dispatchAction(client, config, openId, chatId, stateKey, action, converseText, card, historySessionId, modelProfileId)
+    await dispatchAction(client, config, openId, chatId, stateKey, action, converseText, text, card, historySessionId, modelProfileId)
     return
   }
 

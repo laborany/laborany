@@ -24,6 +24,7 @@ interface Notification {
 }
 
 interface NotificationPanelProps {
+  placement?: 'bottom' | 'right'
   degraded?: boolean
   onClose: () => void
   onMarkAllRead: () => void
@@ -44,10 +45,18 @@ const typeConfig: Record<Notification['type'], { label: string; color: string }>
  * │                           通知面板                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-export function NotificationPanel({ degraded = false, onClose, onMarkAllRead }: NotificationPanelProps) {
+export function NotificationPanel({
+  placement = 'bottom',
+  degraded = false,
+  onClose,
+  onMarkAllRead,
+}: NotificationPanelProps) {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [loading, setLoading] = useState(true)
   const [isDegraded, setIsDegraded] = useState(degraded)
+  const panelClassName = placement === 'right'
+    ? 'absolute left-full bottom-0 z-50 ml-2 w-[min(20rem,calc(100vw-6rem))] overflow-hidden rounded-lg border border-border bg-card shadow-lg'
+    : 'absolute right-0 top-full z-50 mt-2 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-lg border border-border bg-card shadow-lg'
 
   useEffect(() => {
     fetchNotifications()
@@ -110,7 +119,7 @@ export function NotificationPanel({ degraded = false, onClose, onMarkAllRead }: 
   }
 
   return (
-    <div className="absolute right-0 top-full z-50 mt-2 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+    <div className={panelClassName}>
       {/* 头部 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <h3 className="font-medium text-foreground">通知</h3>

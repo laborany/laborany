@@ -22,6 +22,8 @@ interface RunningTask {
   query?: string
 }
 
+type RunningTasksPanelPlacement = 'bottom' | 'right'
+
 function getTaskSourceLabel(source?: RunningTask['source']): string {
   if (source === 'cron') return '定时'
   if (source === 'feishu') return '飞书'
@@ -34,11 +36,18 @@ function getTaskSourceLabel(source?: RunningTask['source']): string {
  * │                           运行中任务指示器                                │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-export function RunningTasksIndicator() {
+export function RunningTasksIndicator({
+  panelPlacement = 'bottom',
+}: {
+  panelPlacement?: RunningTasksPanelPlacement
+}) {
   const [tasks, setTasks] = useState<RunningTask[]>([])
   const [showPanel, setShowPanel] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const hasRunningTasks = tasks.length > 0
+  const panelClassName = panelPlacement === 'right'
+    ? 'absolute left-full bottom-0 z-50 ml-2 w-[min(18rem,calc(100vw-6rem))] overflow-hidden rounded-lg border border-border bg-card shadow-lg'
+    : 'absolute right-0 top-full z-50 mt-2 w-[min(18rem,calc(100vw-1rem))] overflow-hidden rounded-lg border border-border bg-card shadow-lg'
 
   // 轮询运行中任务
   useEffect(() => {
@@ -138,7 +147,7 @@ export function RunningTasksIndicator() {
 
       {/* 任务列表面板 */}
       {showPanel && hasRunningTasks && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-[min(18rem,calc(100vw-1rem))] overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+        <div className={panelClassName}>
           {/* 头部 */}
           <div className="px-4 py-3 border-b border-border">
             <h3 className="font-medium text-foreground">运行中的任务</h3>

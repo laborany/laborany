@@ -6,25 +6,25 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState } from 'react'
-import { cronToHuman } from '../../utils/cronHuman'
+import { describeSchedule } from '../../hooks/useCron'
+import type { Schedule } from '../../hooks/useCron'
 import { useSkillNameMap } from '../../hooks/useSkillNameMap'
+import { ScheduleInput } from '../cron/ScheduleInput'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                       │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 export interface CronSetupCardProps {
-  schedule: string
-  timezone?: string
+  schedule: Schedule
   targetQuery: string
   targetType?: 'skill'
   targetId?: string
   onConfirm: (payload: {
-    schedule: string
-    timezone?: string
+    schedule: Schedule
     targetQuery: string
     targetType: 'skill'
-    targetId: string
+    targetId?: string
   }) => void | Promise<void>
   onCancel: () => void
 }
@@ -37,7 +37,6 @@ type CardStatus = 'pending' | 'confirming' | 'success' | 'error'
 
 export function CronSetupCard({
   schedule,
-  timezone,
   targetQuery,
   targetType,
   targetId,
@@ -46,26 +45,30 @@ export function CronSetupCard({
 }: CronSetupCardProps) {
   const [status, setStatus] = useState<CardStatus>('pending')
   const [errMsg, setErrMsg] = useState('')
-  const [draftSchedule, setDraftSchedule] = useState(schedule)
-  const [draftTimezone, setDraftTimezone] = useState(timezone || '')
+  const [draftSchedule, setDraftSchedule] = useState<Schedule>(schedule)
   const [draftTargetQuery, setDraftTargetQuery] = useState(targetQuery)
   const [draftTargetType] = useState<'skill'>(targetType || 'skill')
   const [draftTargetId, setDraftTargetId] = useState(targetId || '')
-  const humanDesc = cronToHuman(draftSchedule)
+  const humanDesc = describeSchedule(draftSchedule)
   const { getCapabilityName } = useSkillNameMap()
   const displayTargetName = draftTargetId
     ? getCapabilityName(draftTargetId)
     : ''
 
   async function handleConfirm() {
-    if (!draftSchedule.trim()) {
+    if (draftSchedule.kind === 'cron' && !draftSchedule.expr.trim()) {
       setStatus('error')
       setErrMsg('请填写 cron 表达式')
       return
     }
-    if (!draftTargetId.trim()) {
+    if (draftSchedule.kind === 'at' && (!Number.isFinite(draftSchedule.atMs) || draftSchedule.atMs <= Date.now())) {
       setStatus('error')
-      setErrMsg('请填写执行目标 ID')
+      setErrMsg('请填写未来的执行时间')
+      return
+    }
+    if (draftSchedule.kind === 'every' && (!Number.isFinite(draftSchedule.everyMs) || draftSchedule.everyMs <= 0)) {
+      setStatus('error')
+      setErrMsg('请填写有效的执行间隔')
       return
     }
     if (!draftTargetQuery.trim()) {
@@ -77,11 +80,12 @@ export function CronSetupCard({
     setStatus('confirming')
     try {
       await onConfirm({
-        schedule: draftSchedule.trim(),
-        timezone: draftTimezone.trim() || undefined,
+        schedule: draftSchedule.kind === 'cron'
+          ? { ...draftSchedule, expr: draftSchedule.expr.trim(), tz: draftSchedule.tz?.trim() || undefined }
+          : draftSchedule,
         targetQuery: draftTargetQuery.trim(),
         targetType: draftTargetType,
-        targetId: draftTargetId.trim(),
+        targetId: draftTargetId.trim() || undefined,
       })
       setStatus('success')
     } catch (e) {
@@ -107,9 +111,7 @@ export function CronSetupCard({
       <ScheduleEditor
         humanDesc={humanDesc}
         schedule={draftSchedule}
-        timezone={draftTimezone}
         onScheduleChange={setDraftSchedule}
-        onTimezoneChange={setDraftTimezone}
       />
       <TaskRow
         targetQuery={draftTargetQuery}
@@ -149,37 +151,16 @@ function Header() {
 function ScheduleEditor({
   humanDesc,
   schedule,
-  timezone,
   onScheduleChange,
-  onTimezoneChange,
 }: {
   humanDesc: string
-  schedule: string
-  timezone?: string
-  onScheduleChange: (value: string) => void
-  onTimezoneChange: (value: string) => void
+  schedule: Schedule
+  onScheduleChange: (value: Schedule) => void
 }) {
   return (
     <div className="mb-3 space-y-2">
       <p className="text-sm text-foreground font-medium">{humanDesc}</p>
-      <div>
-        <label className="block text-xs text-muted-foreground mb-1">Cron 表达式</label>
-        <input
-          value={schedule}
-          onChange={(e) => onScheduleChange(e.target.value)}
-          className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs font-mono"
-          placeholder="0 9 * * *"
-        />
-      </div>
-      <div>
-        <label className="block text-xs text-muted-foreground mb-1">时区</label>
-        <input
-          value={timezone || ''}
-          onChange={(e) => onTimezoneChange(e.target.value)}
-          className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-          placeholder="Asia/Shanghai"
-        />
-      </div>
+      <ScheduleInput value={schedule} onChange={onScheduleChange} />
     </div>
   )
 }
@@ -231,10 +212,15 @@ function TaskRow({
             value={targetId}
             onChange={(e) => onTargetIdChange(e.target.value)}
             className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
-            placeholder="skill-id"
+            placeholder="留空则使用通用助手"
           />
         </div>
       </div>
+      {!targetId && (
+        <p className="text-xs text-muted-foreground">
+          未指定目标能力时，将默认使用 `__generic__` 执行。
+        </p>
+      )}
       {targetName && (
         <p className="text-xs text-muted-foreground mt-0.5">
           目标：{targetLabel} / {targetName}

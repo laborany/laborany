@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useAgent } from '../hooks/useAgent'
 import { useConverse } from '../hooks/useConverse'
 import { useCronJobs } from '../hooks/useCron'
+import type { Schedule } from '../hooks/useCron'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { useModelProfile } from '../contexts/ModelProfileContext'
 import { type QuickStartItem } from '../contexts/QuickStartContext'
@@ -41,11 +42,10 @@ interface GenericExecutionPlan {
 }
 
 interface CronPending {
-  schedule: string
-  timezone?: string
+  schedule: Schedule
   name?: string
   targetQuery: string
-  targetId: string
+  targetId?: string
 }
 
 interface RunningTaskBrief {
@@ -185,12 +185,24 @@ export default function HomePage() {
     }
 
     if (action.action === 'setup_schedule') {
-      const cronExpr = action.cronExpr || ''
-      const targetQuery = action.targetQuery || action.query || ''
+      const resolvedSchedule: Schedule = action.scheduleKind === 'at' && typeof action.atMs === 'number'
+        ? { kind: 'at', atMs: Math.round(action.atMs) }
+        : action.scheduleKind === 'every' && typeof action.everyMs === 'number'
+          ? { kind: 'every', everyMs: Math.round(action.everyMs) }
+          : {
+              kind: 'cron',
+              expr: action.cronExpr || '0 9 * * *',
+              tz: action.tz,
+            }
+      const targetQuery = stripAttachmentMarkers(
+        action.targetQuery
+        || action.query
+        || latestUserQueryRef.current
+        || '',
+      )
       const targetId = action.targetId || ''
       setCronPending({
-        schedule: cronExpr,
-        timezone: action.tz,
+        schedule: resolvedSchedule,
         name: action.name,
         targetQuery,
         targetId,
@@ -279,11 +291,12 @@ export default function HomePage() {
   }, [candidate])
 
   const handleCronConfirm = useCallback(async (next: CronPending) => {
+    const targetId = (next.targetId || '').trim() || '__generic__'
     await createJob({
       name: next.name || next.targetQuery.slice(0, 50) || '定时任务',
       description: next.targetQuery,
-      schedule: { kind: 'cron', expr: next.schedule, tz: next.timezone },
-      target: { type: 'skill', id: next.targetId, query: next.targetQuery },
+      schedule: next.schedule,
+      target: { type: 'skill', id: targetId, query: next.targetQuery },
     })
     setCronPending(null)
   }, [createJob])
@@ -605,12 +618,11 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
         />
         <GuideBanner />
         {cronPending && (
-          <CronSetupCard
-            schedule={cronPending.schedule}
-            timezone={cronPending.timezone}
-            targetQuery={cronPending.targetQuery}
-            targetId={cronPending.targetId}
-            onConfirm={onCronConfirm}
+            <CronSetupCard
+              schedule={cronPending.schedule}
+              targetQuery={cronPending.targetQuery}
+              targetId={cronPending.targetId}
+              onConfirm={onCronConfirm}
             onCancel={onCronCancel}
           />
         )}

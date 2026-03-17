@@ -25,6 +25,9 @@ export interface ConverseAction {
     | 'execute_generic'
     | 'create_capability'
     | 'setup_schedule'
+  scheduleKind?: 'cron' | 'at' | 'every'
+  atMs?: number
+  everyMs?: number
   targetId?: string
   seedQuery?: string
   confidence?: number

@@ -8,11 +8,17 @@ import { useState, useEffect, useRef } from 'react'
 import { AGENT_API_BASE } from '../../config/api'
 import { NotificationPanel } from './NotificationPanel'
 
+type NotificationPanelPlacement = 'bottom' | 'right'
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           通知铃铛                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-export function NotificationBell() {
+export function NotificationBell({
+  panelPlacement = 'bottom',
+}: {
+  panelPlacement?: NotificationPanelPlacement
+}) {
   const [unreadCount, setUnreadCount] = useState(0)
   const [showPanel, setShowPanel] = useState(false)
   const [isDegraded, setIsDegraded] = useState(false)
@@ -92,6 +98,7 @@ export function NotificationBell() {
       {/* 通知面板 */}
       {showPanel && (
         <NotificationPanel
+          placement={panelPlacement}
           degraded={isDegraded}
           onClose={() => setShowPanel(false)}
           onMarkAllRead={handleMarkAllRead}

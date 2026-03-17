@@ -178,8 +178,12 @@ function AppLayout({
             />
           </nav>
 
-          {/* 用户信息 */}
-          <div className="p-3 border-t border-border">
+          <div className="border-t border-border p-3">
+            <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-1'} mb-3`}>
+              <RunningTasksIndicator panelPlacement="right" />
+              <NotificationBell panelPlacement="right" />
+            </div>
+
             <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center' : ''}`}>
               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-sm font-medium">
                 {(profileName || 'U').charAt(0).toUpperCase()}
@@ -198,12 +202,6 @@ function AppLayout({
       <main
         className={`flex-1 transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-56'}`}
       >
-        {/* 顶部通知栏 */}
-        <div className="fixed right-4 top-4 z-20 flex max-w-[calc(100vw-2rem)] items-center gap-1 rounded-xl border border-border/80 bg-card/95 px-1.5 py-1 shadow-sm backdrop-blur">
-          <RunningTasksIndicator />
-          <div className="h-5 w-px bg-border/70" />
-          <NotificationBell />
-        </div>
         {children}
       </main>
     </div>
