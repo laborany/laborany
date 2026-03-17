@@ -1,5 +1,6 @@
 import { writeFileSync } from 'fs'
 import { join } from 'path'
+import { homedir } from 'os'
 import { readClaudeSettings } from '../mcp/settings-io.js'
 
 const GUIDELINES_CORE = `# Widget Design Guidelines - Core
@@ -271,11 +272,11 @@ export function writeMcpConfig(taskDir: string, nodeCommand: string): string {
  * 写入仅包含用户 MCP 服务器的配置文件（不含 generative-ui）
  * 用于 widget 未启用但用户有 MCP 配置的场景
  */
-export function writeUserMcpConfig(taskDir: string): string | null {
+export function writeUserMcpConfig(_taskDir: string): string | null {
   const userMcpServers = readClaudeSettings().mcpServers || {}
   if (Object.keys(userMcpServers).length === 0) return null
 
-  const configPath = join(taskDir, '.mcp-user.json')
+  const configPath = join(homedir(), '.claude', '.mcp-user.json')
   writeFileSync(
     configPath,
     JSON.stringify({ mcpServers: userMcpServers }, null, 2),

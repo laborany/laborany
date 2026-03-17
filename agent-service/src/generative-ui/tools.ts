@@ -329,11 +329,11 @@ export function writeMcpConfig(taskDir: string, nodePath?: string): string {
  * Write a config containing only user MCP servers (no generative-ui).
  * Returns null if no user MCP servers are configured.
  */
-export function writeUserMcpConfig(taskDir: string): string | null {
+export function writeUserMcpConfig(_taskDir: string): string | null {
   const userMcpServers = readUserMcpServers()
   if (Object.keys(userMcpServers).length === 0) return null
 
-  const configPath = join(taskDir, '.mcp-user.json')
+  const configPath = join(homedir(), '.claude', '.mcp-user.json')
   writeFileSync(
     configPath,
     JSON.stringify({ mcpServers: userMcpServers }, null, 2),
