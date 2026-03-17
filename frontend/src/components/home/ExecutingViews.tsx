@@ -6,6 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useRef, useEffect } from 'react'
+import type { WidgetState } from '../../types'
 import type { useAgent } from '../../hooks/useAgent'
 import { ExecutionPanel } from '../execution'
 
@@ -83,7 +84,7 @@ export function ExecutionHeader({ title, isRunning, isDone, onStop, onBack, onNe
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │        SkillExecutingView - 统一 Capability 执行态（三面板布局）        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhaseChange, onBack, onNewTask, onCapabilityCreated, onError }: {
+export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhaseChange, onBack, onNewTask, onCapabilityCreated, onError, activeWidget, onCloseWidget, onWidgetInteraction, onWidgetFallbackToText, onShowWidget }: {
   agent: ReturnType<typeof useAgent>
   execCtx: ExecutionContext
   displayTitle: string
@@ -93,6 +94,11 @@ export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhas
   onNewTask: () => void
   onCapabilityCreated: (created: { type: 'skill'; id: string; originQuery?: string }) => void
   onError: (msg: string) => void
+  activeWidget?: WidgetState | null
+  onCloseWidget?: () => void
+  onWidgetInteraction?: (widgetId: string, data: unknown) => void
+  onWidgetFallbackToText?: () => void
+  onShowWidget?: (widgetId: string) => void
 }) {
   const hasExecutedRef = useRef(false)
   const createdHandledRef = useRef<string | null>(null)
@@ -200,6 +206,11 @@ export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhas
         pendingQuestion={agent.pendingQuestion}
         respondToQuestion={agent.respondToQuestion}
         placeholder="继续对话..."
+        activeWidget={activeWidget}
+        onCloseWidget={onCloseWidget}
+        onWidgetInteraction={onWidgetInteraction}
+        onWidgetFallbackToText={onWidgetFallbackToText}
+        onShowWidget={onShowWidget}
         headerSlot={
           <ExecutionHeader
             title={displayTitle}

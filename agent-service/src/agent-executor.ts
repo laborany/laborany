@@ -10,12 +10,25 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { platform } from 'os'
 import { join } from 'path'
 import type { Skill } from 'laborany-shared'
-import { BUILTIN_SKILLS_DIR, USER_SKILLS_DIR, getUserDir } from 'laborany-shared'
+import {
+  BUILTIN_SKILLS_DIR,
+  USER_SKILLS_DIR,
+  getUserDir,
+  resolveGenerativeWidgetSupport,
+} from 'laborany-shared'
 import { memoryFileManager, memoryOrchestrator, memoryAsyncQueue } from './memory/index.js'
 import { communicationPreferenceManager } from './memory/communication-preferences.js'
 import { buildClaudeEnvConfig, checkRuntimeDependencies, resolveClaudeCliLaunch, type ModelOverride } from './claude-cli.js'
 import { APP_HOME_DIR, TASKS_DIR, UPLOADS_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
+import {
+  writeMcpConfig,
+  isWidgetTool,
+  createWidgetHandlerState,
+  processStreamEvent,
+  type WidgetHandlerState,
+  type WidgetEvent,
+} from './generative-ui/index.js'
 
 /* ════════════════════════════════════════════════════════════════════════════
  *  默认超时时间：30 分钟
@@ -43,6 +56,7 @@ function stripPipelineContext(userQuery: string): string {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentEvent {
   type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done' | 'stopped' | 'status'
+    | 'widget_start' | 'widget_delta' | 'widget_commit' | 'widget_error'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
@@ -50,6 +64,10 @@ export interface AgentEvent {
   toolResult?: string
   taskDir?: string
   isError?: boolean  // 结构化错误标记，用于判断执行是否失败
+  // Widget event fields
+  widgetId?: string
+  widgetTitle?: string
+  widgetHtml?: string
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -70,6 +88,7 @@ interface ExecuteOptions {
   signal: AbortSignal
   onEvent: (event: AgentEvent) => void
   modelOverride?: ModelOverride
+  enableWidgets?: boolean
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -150,9 +169,25 @@ interface StreamMessage {
   result?: string
   tool_name?: string
   tool_input?: Record<string, unknown>
+  // stream_event fields
+  event?: {
+    type?: string
+    content_block?: ContentBlock
+    delta?: { type?: string; text?: string; partial_json?: string }
+    index?: number
+  }
 }
 
-function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): AgentEvent | null {
+interface ParseStreamContext {
+  widgetState?: WidgetHandlerState
+  onWidgetEvent?: (event: WidgetEvent) => void
+}
+
+function parseStreamLine(
+  line: string,
+  onEvent: (event: AgentEvent) => void,
+  ctx?: ParseStreamContext,
+): AgentEvent | null {
   if (!line.trim()) return null
 
   try {
@@ -169,6 +204,16 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): Ag
           textChunks.push(block.text)
           lastEvent = event
         } else if (block.type === 'tool_use' && block.name) {
+          // Check if this is a widget tool — emit widget_commit
+          if (ctx?.widgetState && isWidgetTool(block.name)) {
+            const widgetEvt = processStreamEvent(
+              ctx.widgetState,
+              'tool_use_complete',
+              undefined,
+              { ...block.input, _toolName: block.name },
+            )
+            if (widgetEvt) ctx.onWidgetEvent?.(widgetEvt)
+          }
           const event: AgentEvent = {
             type: 'tool_use',
             toolName: block.name,
@@ -212,6 +257,26 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): Ag
 
       return lastEvent
     }
+    // 处理 stream_event（widget tool 检测）
+    else if (msg.type === 'stream_event' && msg.event && ctx?.widgetState) {
+      const evt = msg.event
+      if (evt.type === 'content_block_start' && evt.content_block) {
+        const widgetEvt = processStreamEvent(
+          ctx.widgetState,
+          'content_block_start',
+          evt.content_block as any,
+        )
+        if (widgetEvt) ctx.onWidgetEvent?.(widgetEvt)
+      } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta') {
+        const widgetEvt = processStreamEvent(
+          ctx.widgetState,
+          'input_json_delta',
+          undefined,
+          { partial_json: evt.delta.partial_json || '' },
+        )
+        if (widgetEvt) ctx.onWidgetEvent?.(widgetEvt)
+      }
+    }
   } catch {
     // 非 JSON 行，忽略
   }
@@ -222,7 +287,7 @@ function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): Ag
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, modelOverride } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, modelOverride, enableWidgets } = options
 
   refreshRuntimeConfig()
 
@@ -271,12 +336,21 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   console.log(`[Agent] Claude CLI source: ${cliLaunch.source}`)
   console.log(`[Agent] Claude CLI command: ${cliLaunch.command}`)
   const effectiveModel = modelOverride?.model || process.env.ANTHROPIC_MODEL
+  const effectiveBaseUrl = modelOverride?.baseUrl || process.env.ANTHROPIC_BASE_URL
+  const widgetSupport = resolveGenerativeWidgetSupport({
+    requested: Boolean(enableWidgets),
+    interfaceType: modelOverride?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,
+    model: effectiveModel,
+    baseUrl: effectiveBaseUrl,
+  })
+  const cliWidgetRuntimeEnabled = widgetSupport.enabled && widgetSupport.runtime === 'claude_cli_mcp'
   console.log(`[Agent] Model: ${effectiveModel || 'default'}`)
 
   const args = [
     '--print',
     '--output-format', 'stream-json',
     '--verbose',
+    '--include-partial-messages',
     '--dangerously-skip-permissions',
   ]
 
@@ -287,6 +361,23 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   if (effectiveModel) {
     args.push('--model', effectiveModel)
+  }
+
+  // ── Generative UI: MCP config + widget state ──
+  let widgetState: WidgetHandlerState | undefined
+  if (cliWidgetRuntimeEnabled) {
+    try {
+      const mcpConfigPath = writeMcpConfig(taskDir)
+      args.push('--mcp-config', mcpConfigPath)
+      widgetState = createWidgetHandlerState()
+      console.log(`[Agent] Generative UI enabled, MCP config: ${mcpConfigPath}`)
+    } catch (err) {
+      console.error('[Agent] Failed to write MCP config for generative UI:', err)
+    }
+  } else if (enableWidgets) {
+    const disableReason = widgetSupport.reasonMessage
+      || (widgetSupport.enabled ? 'Current execute surface only supports the Claude CLI widget runtime.' : 'unknown reason')
+    console.log(`[Agent] Generative UI requested but disabled: ${disableReason}`)
   }
 
   communicationPreferenceManager.applyFromUserText(userQuery, userQuery)
@@ -334,6 +425,22 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   /* ────────────────────────────────────────────────────────────────────────
    *  包装 onEvent：统一收集文本和工具调用信息
    * ──────────────────────────────────────────────────────────────────────── */
+  const onWidgetEvent = (evt: WidgetEvent) => {
+    if (evt.type === 'widget_start') {
+      onEvent({ type: 'widget_start', widgetId: evt.widgetId, widgetTitle: evt.title })
+    } else if (evt.type === 'widget_delta') {
+      onEvent({ type: 'widget_delta', widgetId: evt.widgetId, widgetHtml: evt.html })
+    } else if (evt.type === 'widget_commit') {
+      onEvent({ type: 'widget_commit', widgetId: evt.widgetId, widgetTitle: evt.title, widgetHtml: evt.html })
+    } else if (evt.type === 'widget_error') {
+      onEvent({ type: 'widget_error', widgetId: evt.widgetId, content: evt.message })
+    }
+  }
+
+  const streamCtx: ParseStreamContext | undefined = widgetState
+    ? { widgetState, onWidgetEvent }
+    : undefined
+
   const wrappedOnEvent = (event: AgentEvent) => {
     onEvent(event)
     if (event.type === 'text' && event.content) {
@@ -358,7 +465,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     const lines = lineBuffer.split('\n')
     lineBuffer = lines.pop() || ''
     for (const line of lines) {
-      parseStreamLine(line, wrappedOnEvent)
+      parseStreamLine(line, wrappedOnEvent, streamCtx)
     }
   })
 
@@ -416,7 +523,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       clearInterval(idleWarningTimer)
       signal.removeEventListener('abort', abortHandler)
       if (lineBuffer.trim()) {
-        parseStreamLine(lineBuffer, wrappedOnEvent)
+        parseStreamLine(lineBuffer, wrappedOnEvent, streamCtx)
       }
 
       /* ──────────────────────────────────────────────────────────────────────

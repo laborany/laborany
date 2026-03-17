@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "generative-ui": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["/Users/chensnathan/Projects/laborany/agent-service/src/generative-ui/spike/mcp-server.mjs"],
+      "cwd": "/Users/chensnathan/Projects/laborany/agent-service/src/generative-ui/spike"
+    }
+  }
+}

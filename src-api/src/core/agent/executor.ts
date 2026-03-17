@@ -8,7 +8,7 @@
 import { spawn, execSync, spawnSync } from 'child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { platform, homedir } from 'os'
-import { join, dirname } from 'path'
+import { join, dirname, basename } from 'path'
 import { fileURLToPath } from 'url'
 import type { Skill } from 'laborany-shared'
 import {
@@ -17,6 +17,9 @@ import {
   sanitizeClaudeEnv,
   encodeOpenAiBridgeApiKey,
   normalizeModelInterfaceType,
+  resolveExecuteGenerativeWidgetSupport,
+  resolveGenerativeWidgetSupport,
+  type GenerativeWidgetSupport,
   type ModelInterfaceType,
   BUILTIN_SKILLS_DIR,
   USER_SKILLS_DIR,
@@ -26,6 +29,16 @@ import {
 } from 'laborany-shared'
 import { isZhipuApi, buildZhipuMcpServers, injectMcpServers } from './mcp/index.js'
 import { getAppHomeDir, isPackagedRuntime } from '../../lib/app-home.js'
+import {
+  createWidgetHandlerState,
+  processStreamEvent,
+  type WidgetEvent,
+  type WidgetHandlerState,
+} from './generative-ui/handler.js'
+import {
+  isWidgetTool,
+  writeMcpConfig,
+} from './generative-ui/tools.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -34,13 +47,29 @@ const __dirname = dirname(__filename)
  * │                           类型定义                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentEvent {
-  type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done' | 'status'
+  type:
+    | 'init'
+    | 'text'
+    | 'tool_use'
+    | 'tool_result'
+    | 'warning'
+    | 'error'
+    | 'done'
+    | 'status'
+    | 'widget_start'
+    | 'widget_delta'
+    | 'widget_commit'
+    | 'widget_error'
   content?: string
   toolName?: string
   toolUseId?: string
   toolInput?: Record<string, unknown>
   toolResult?: string
   taskDir?: string
+  widgetId?: string
+  title?: string
+  html?: string
+  message?: string
 }
 
 export interface ModelOverride {
@@ -134,6 +163,7 @@ interface ExecuteOptions {
   onEvent: (event: AgentEvent) => void
   workDir?: string  // 可选的工作目录，用于复合技能共享目录
   modelOverride?: ModelOverride
+  enableWidgets?: boolean
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -270,6 +300,8 @@ function getBundledClaudePath(): { node: string; cli: string } | null {
     exeDir,
     join(exeDir, '..', 'resources'),
     join(exeDir, 'resources'),
+    join(__dirname, '..', '..'),
+    join(__dirname, '..', '..', '..'),
     join(__dirname, '..', '..', '..', '..'),
     process.cwd(),
   ]
@@ -418,6 +450,8 @@ function getBundledSearchBases(): string[] {
     parentDir,
     join(exeDir, 'resources'),
     join(parentDir, 'resources'),
+    join(__dirname, '..', '..'),
+    join(__dirname, '..', '..', '..'),
     join(__dirname, '..', '..', '..', '..'),
   ]
 
@@ -648,13 +682,28 @@ interface StreamMessage {
   result?: string
   tool_name?: string
   tool_input?: Record<string, unknown>
+  event?: {
+    type?: string
+    content_block?: ContentBlock
+    delta?: { type?: string; text?: string; partial_json?: string }
+    index?: number
+  }
 }
 
-function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void): void {
-  parseStreamLineWithReturn(line, onEvent)
+interface ParseStreamContext {
+  widgetState?: WidgetHandlerState
+  onWidgetEvent?: (event: WidgetEvent) => void
 }
 
-function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) => void): AgentEvent | null {
+function parseStreamLine(line: string, onEvent: (event: AgentEvent) => void, ctx?: ParseStreamContext): void {
+  parseStreamLineWithReturn(line, onEvent, ctx)
+}
+
+function parseStreamLineWithReturn(
+  line: string,
+  onEvent: (event: AgentEvent) => void,
+  ctx?: ParseStreamContext,
+): AgentEvent | null {
   if (!line.trim()) return null
 
   try {
@@ -670,10 +719,20 @@ function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) =>
           textChunks.push(block.text)
           lastEvent = event
         } else if (block.type === 'tool_use' && block.name) {
+          if (ctx?.widgetState && isWidgetTool(block.name)) {
+            const widgetEvt = processStreamEvent(
+              ctx.widgetState,
+              'tool_use_complete',
+              undefined,
+              { ...block.input, _toolName: block.name },
+            )
+            if (widgetEvt) ctx.onWidgetEvent?.(widgetEvt)
+          }
           const event: AgentEvent = {
             type: 'tool_use',
             toolName: block.name,
             toolInput: block.input,
+            toolUseId: block.id,
             content: `调用工具: ${block.name}`,
           }
           onEvent(event)
@@ -706,6 +765,24 @@ function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) =>
       }
 
       return lastEvent
+    } else if (msg.type === 'stream_event' && msg.event && ctx?.widgetState) {
+      const evt = msg.event
+      if (evt.type === 'content_block_start' && evt.content_block) {
+        const widgetEvt = processStreamEvent(
+          ctx.widgetState,
+          'content_block_start',
+          evt.content_block as ContentBlock,
+        )
+        if (widgetEvt) ctx.onWidgetEvent?.(widgetEvt)
+      } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta') {
+        const widgetEvt = processStreamEvent(
+          ctx.widgetState,
+          'input_json_delta',
+          undefined,
+          { partial_json: evt.delta.partial_json || '' },
+        )
+        if (widgetEvt) ctx.onWidgetEvent?.(widgetEvt)
+      }
     }
   } catch {
     // 非 JSON 行，忽略
@@ -713,11 +790,156 @@ function parseStreamLineWithReturn(line: string, onEvent: (event: AgentEvent) =>
   return null
 }
 
+function resolveMcpNodeCommand(nodePath?: string): string {
+  if (nodePath) return nodePath
+  const execName = basename(process.execPath).toLowerCase()
+  if (execName === 'node' || execName === 'node.exe') {
+    return process.execPath
+  }
+  return 'node'
+}
+
+const WIDGET_EXPLANATION_PATTERN = /可视化|图解|图表|流程图|示意图|示意|画图|渲染|交互式|计算器|仪表盘|widget|diagram|flow.?chart|chart|visuali[sz]e|interactive|calculator|dashboard|svg/i
+const EXPLANATION_INTENT_PATTERN = /解释|说明|讲解|展示|演示|理解|compare|comparison|illustrate|walk me through|explain|teach/i
+const NO_FILE_PATTERN = /不要写文件|不要创建文件|不要生成文件|不要落地文件|不要改代码|不要实现|直接回答|直接解释|直接用|just explain|do not write files?|don't write files?/i
+const EXECUTION_ARTIFACT_PATTERN = /修复|实现|重构|写代码|编程|代码|项目|仓库|repo|repository|脚本|命令|测试|提交|commit|build|fix|implement|refactor|create file|write file|edit file/i
+const MODEL_TOOL_LOAD_GUIDELINES = 'load_guidelines'
+const MODEL_TOOL_SHOW_WIDGET = 'show_widget'
+
+function shouldForceDirectWidgetMode(skillId: string, userQuery: string): boolean {
+  const text = userQuery.trim()
+  if (!text) return false
+
+  const asksForVisual = WIDGET_EXPLANATION_PATTERN.test(text)
+  const asksToExplain = EXPLANATION_INTENT_PATTERN.test(text)
+  const forbidsArtifacts = NO_FILE_PATTERN.test(text)
+  const looksLikeBuildTask = EXECUTION_ARTIFACT_PATTERN.test(text)
+
+  if (skillId === '__generic__' && forbidsArtifacts && (asksForVisual || asksToExplain)) {
+    return true
+  }
+
+  if (asksForVisual && asksToExplain && !looksLikeBuildTask) {
+    return true
+  }
+
+  return false
+}
+
+function buildDirectWidgetExecutionSkillPrompt(widgetSupport: GenerativeWidgetSupport): string {
+  const lines = [
+    '# LaborAny Execute Direct Explanation Mode',
+    '',
+    'You are handling a desktop execute request that should be answered directly, not treated as a repository coding task.',
+    '',
+    'Mandatory rules:',
+    '- Treat visual explanation, diagram, chart, calculator, and interactive demo requests as direct-answer tasks.',
+    '- Do not inspect the workspace, repository, or source tree unless the user explicitly asks you to do so.',
+    '- Do not write files, run shell commands, or build standalone HTML pages as a substitute for the widget.',
+    '- Do not probe tool availability with Bash, fake JSON, or any workaround. Either call the widget MCP tools directly or answer in text.',
+    '- Do not use built-in execution/search/media tools such as Bash, Read, Glob, Grep, LS, Skill, AskUserQuestion, analyze_image, browser, or web search for this type of request.',
+    '- Do not ask for plan approval and do not use AskUserQuestion unless the user request is genuinely ambiguous.',
+    '- Prefer a concise explanation plus one focused widget instead of a long execution workflow.',
+  ]
+
+  if (widgetSupport.enabled) {
+    const runtimeHint = widgetSupport.capability === 'full_stream'
+      ? '- The current widget runtime may stream partial widget updates before the final render.'
+      : '- The current widget runtime may only commit the widget after the tool call finishes.'
+    lines.push(
+      `- The widget tool names exposed to you are ${MODEL_TOOL_LOAD_GUIDELINES} and ${MODEL_TOOL_SHOW_WIDGET}.`,
+      `- If widget tools are available, silently call ${MODEL_TOOL_LOAD_GUIDELINES} before your first widget, then call ${MODEL_TOOL_SHOW_WIDGET}.`,
+      '- Call those widget tools directly. Do not wrap them inside the built-in Skill tool.',
+      runtimeHint,
+      '- After rendering the widget, continue with concise natural-language explanation.',
+    )
+  } else {
+    lines.push(
+      '- Widget MCP tools are unavailable for the current model/provider.',
+      '- Do not attempt to call widget tools or mention internal tool failures to the user.',
+      '- Explain the topic directly in text only.',
+    )
+  }
+
+  return lines.join('\n')
+}
+
+function buildDirectWidgetExecutionUserPrompt(
+  userQuery: string,
+  widgetSupport: GenerativeWidgetSupport,
+): string {
+  const lines = [
+    'Direct explanation request for LaborAny execute:',
+    '- Answer the user topic directly.',
+    '- Do not use Bash, Read, LS, Glob, Grep, Skill, AskUserQuestion, analyze_image, browser, or web search.',
+    '- Do not test tool availability with shell commands or fake tool JSON.',
+  ]
+
+  if (widgetSupport.enabled) {
+    lines.push(
+      `- If a widget helps, call ${MODEL_TOOL_LOAD_GUIDELINES} first and then ${MODEL_TOOL_SHOW_WIDGET}.`,
+      '- If widget generation does not succeed, skip it and continue with a concise text explanation.',
+    )
+  } else {
+    lines.push('- Widget tools are unavailable for this run. Answer in text only.')
+  }
+
+  lines.push('', userQuery)
+  return lines.join('\n')
+}
+
+function buildWidgetExecutionPrompt(
+  skillPrompt: string,
+  forceDirectMode: boolean,
+  widgetSupport: GenerativeWidgetSupport,
+): string {
+  const sections = [
+    forceDirectMode ? buildDirectWidgetExecutionSkillPrompt(widgetSupport) : skillPrompt,
+  ]
+
+  if (widgetSupport.enabled) {
+    sections.push(
+      '',
+      'Generative UI guidance:',
+      '- When a visual explanation, chart, diagram, calculator, or interactive widget would materially help, prefer using the widget tools.',
+      `- Before your first widget in this conversation, call ${MODEL_TOOL_LOAD_GUIDELINES} with the relevant modules.`,
+      `- Then call ${MODEL_TOOL_SHOW_WIDGET} with a complete HTML fragment in widget_code.`,
+      `- Use the widget tool names exactly as written: ${MODEL_TOOL_LOAD_GUIDELINES} and ${MODEL_TOOL_SHOW_WIDGET}.`,
+      '- Do not use the built-in Skill tool as a proxy for widget rendering.',
+      '- Do not mention guideline loading to the user.',
+      '- Do not write standalone HTML files when an inline widget is a better fit.',
+    )
+  }
+
+  if (forceDirectMode) {
+    sections.push(
+      '- This request is in direct explanation mode. These rules override any earlier plan-first or approval-first workflow.',
+      '- Answer the user topic directly. Do not inspect files, run tools like Read/Glob/Bash, or create project artifacts unless the user explicitly requests that work.',
+    )
+  }
+
+  return sections.join('\n')
+}
+
+function buildEffectiveSkillPrompt(
+  skill: Skill,
+  userQuery: string,
+  requestedWidgets: boolean,
+  widgetSupport: GenerativeWidgetSupport,
+  forceDirectMode: boolean,
+): string {
+  if (!requestedWidgets && !forceDirectMode) {
+    return skill.systemPrompt
+  }
+
+  return buildWidgetExecutionPrompt(skill.systemPrompt, forceDirectMode, widgetSupport)
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, workDir, modelOverride } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, workDir, modelOverride, enableWidgets } = options
 
   let lastProgressAt = Date.now()
   let idleWarningSent = false
@@ -743,10 +965,42 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const historyFile = join(taskDir, `history-${sessionId}.txt`)
   const isNewSession = !existsSync(historyFile)
 
-  // 新会话时写入 CLAUDE.md（含 Memory 上下文，传入 userQuery 用于智能检索）
-  if (isNewSession) {
-    await writeClaudeMdWithMemory(taskDir, skill.meta.id, skill.systemPrompt, userQuery)
-  }
+  const effectiveApiKey = modelOverride?.apiKey?.trim() || process.env.ANTHROPIC_API_KEY || ''
+  const effectiveBaseUrl = modelOverride
+    ? (modelOverride.baseUrl?.trim() || undefined)
+    : process.env.ANTHROPIC_BASE_URL
+  const effectiveModel = modelOverride
+    ? (modelOverride.model?.trim() || undefined)
+    : process.env.ANTHROPIC_MODEL
+  const interfaceType = normalizeModelInterfaceType(modelOverride?.interfaceType)
+  const widgetSupport = resolveGenerativeWidgetSupport({
+    requested: Boolean(enableWidgets),
+    interfaceType,
+    model: effectiveModel,
+    baseUrl: effectiveBaseUrl,
+  })
+  const executeWidgetSupport = resolveExecuteGenerativeWidgetSupport({
+    requested: Boolean(enableWidgets),
+    interfaceType,
+    model: effectiveModel,
+    baseUrl: effectiveBaseUrl,
+  })
+  const forceDirectMode = shouldForceDirectWidgetMode(skill.meta.id, userQuery)
+  const effectiveSkillPrompt = buildEffectiveSkillPrompt(
+    skill,
+    userQuery,
+    Boolean(enableWidgets),
+    executeWidgetSupport,
+    forceDirectMode,
+  )
+
+  // 每轮都重写 CLAUDE.md，确保继续会话时也能切换到当前用户意图对应的 prompt。
+  await writeClaudeMdWithMemory(
+    taskDir,
+    skill.meta.id,
+    effectiveSkillPrompt,
+    userQuery,
+  )
   console.log(`[Agent] Task directory: ${taskDir}`)
   console.log(`[Agent] Is new session: ${isNewSession}`)
 
@@ -776,15 +1030,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     emitEvent({ type: 'done' })
     return
   }
-
-  const effectiveApiKey = modelOverride?.apiKey?.trim() || process.env.ANTHROPIC_API_KEY || ''
-  const effectiveBaseUrl = modelOverride
-    ? (modelOverride.baseUrl?.trim() || undefined)
-    : process.env.ANTHROPIC_BASE_URL
-  const effectiveModel = modelOverride
-    ? (modelOverride.model?.trim() || undefined)
-    : process.env.ANTHROPIC_MODEL
-  const interfaceType = normalizeModelInterfaceType(modelOverride?.interfaceType)
 
   // 检查 API Key 配置
   if (!effectiveApiKey) {
@@ -820,6 +1065,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     '--print',
     '--output-format', 'stream-json',
     '--verbose',
+    '--include-partial-messages',
     '--dangerously-skip-permissions',
   ]
 
@@ -831,10 +1077,27 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     args.push('--model', effectiveModel)
   }
 
+  let widgetState: WidgetHandlerState | undefined
+  if (executeWidgetSupport.enabled && executeWidgetSupport.runtime === 'claude_cli_mcp') {
+    try {
+      const mcpNodeCommand = resolveMcpNodeCommand(claudeConfig.useBundled ? claudeConfig.nodePath : undefined)
+      const mcpConfigPath = writeMcpConfig(taskDir, mcpNodeCommand)
+      args.push('--mcp-config', mcpConfigPath)
+      widgetState = createWidgetHandlerState()
+      console.log(`[Agent] Generative UI enabled, MCP config: ${mcpConfigPath}`)
+    } catch (error) {
+      console.error('[Agent] Failed to initialize Generative UI MCP config:', error)
+    }
+  } else if (enableWidgets) {
+    console.log(`[Agent] Generative UI requested but disabled: ${executeWidgetSupport.reasonMessage || 'unknown reason'}`)
+  }
+
   /* ═══════════════════════════════════════════════════════════════════════════
    * 构建 prompt（系统提示词已写入 CLAUDE.md，这里只传用户查询）
    * ═══════════════════════════════════════════════════════════════════════════ */
-  const prompt = userQuery
+  const prompt = forceDirectMode
+    ? buildDirectWidgetExecutionUserPrompt(userQuery, executeWidgetSupport)
+    : userQuery
 
   console.log(`[Agent] Args: ${args.join(' ')}`)
 
@@ -863,13 +1126,27 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   let lineBuffer = ''
   let agentResponse = ''  // 收集 Agent 的文本输出
+  const onWidgetEvent = (event: WidgetEvent) => {
+    if (event.type === 'widget_start') {
+      onEvent({ type: 'widget_start', widgetId: event.widgetId, title: event.title })
+    } else if (event.type === 'widget_delta') {
+      onEvent({ type: 'widget_delta', widgetId: event.widgetId, html: event.html })
+    } else if (event.type === 'widget_commit') {
+      onEvent({ type: 'widget_commit', widgetId: event.widgetId, title: event.title, html: event.html })
+    } else if (event.type === 'widget_error') {
+      onEvent({ type: 'widget_error', widgetId: event.widgetId, message: event.message })
+    }
+  }
+  const streamCtx: ParseStreamContext | undefined = widgetState
+    ? { widgetState, onWidgetEvent }
+    : undefined
 
   proc.stdout.on('data', (data: Buffer) => {
     lineBuffer += data.toString('utf-8')
     const lines = lineBuffer.split('\n')
     lineBuffer = lines.pop() || ''
     for (const line of lines) {
-      const event = parseStreamLineWithReturn(line, emitEvent)
+      const event = parseStreamLineWithReturn(line, emitEvent, streamCtx)
       // 收集文本输出用于记忆
       if (event?.type === 'text' && event.content) {
         agentResponse += event.content
@@ -920,7 +1197,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       clearInterval(idleWarningTimer)
       signal.removeEventListener('abort', abortHandler)
       if (lineBuffer.trim()) {
-        const event = parseStreamLineWithReturn(lineBuffer, emitEvent)
+        const event = parseStreamLineWithReturn(lineBuffer, emitEvent, streamCtx)
         if (event?.type === 'text' && event.content) {
           agentResponse += event.content
         }

@@ -1,8 +1,9 @@
 import { useCallback, useRef, useState } from 'react'
 import { AGENT_API_BASE, API_BASE } from '../config/api'
 import type { PendingQuestion } from './useAgent'
-import type { AgentMessage, MessageMeta } from '../types/message'
+import type { AgentMessage, MessageMeta, WidgetState } from '../types/message'
 import { useModelProfile } from '../contexts/ModelProfileContext'
+import { supportsGenerativeWidgets } from '../lib/widgetSupport'
 import {
   mergeAttachmentIds,
   normalizeAttachmentIds,
@@ -58,6 +59,9 @@ export interface UseConverseReturn {
   sessionFileIds: string[]
   error: string | null
   regeneratingMessageId: string | null
+  activeWidget: WidgetState | null
+  setActiveWidget: React.Dispatch<React.SetStateAction<WidgetState | null>>
+  showWidget: (widgetId: string) => void
   reset: () => void
 }
 
@@ -104,6 +108,21 @@ function normalizeComparableContent(content: string): string {
   return content.replace(/\s+/g, ' ').trim()
 }
 
+function collectCommittedWidgets(messages: AgentMessage[]): Map<string, WidgetState> {
+  const widgets = new Map<string, WidgetState>()
+  for (const message of messages) {
+    const widget = message.meta?.widget
+    if (!widget) continue
+    widgets.set(widget.widgetId, {
+      widgetId: widget.widgetId,
+      title: widget.title,
+      html: widget.html,
+      status: widget.status as WidgetState['status'],
+    })
+  }
+  return widgets
+}
+
 function restoreMessagesFromPayload(sessionId: string, payload: ConverseSessionPayload): AgentMessage[] {
   const restored = (Array.isArray(payload.messages) ? payload.messages : [])
     .reduce<AgentMessage[]>((acc, item, idx) => {
@@ -124,13 +143,19 @@ function restoreMessagesFromPayload(sessionId: string, payload: ConverseSessionP
       }
 
       if (type === 'assistant') {
+        const widgetMeta = item.meta?.widget
         const assistantMessage: AgentMessage = {
           id,
           type: 'assistant' as const,
-          content: stripActionMarker(item.content || ''),
+          content: widgetMeta ? '' : stripActionMarker(item.content || ''),
           timestamp: createdAt,
           serverMessageId: item.id ?? null,
           meta: item.meta || null,
+          ...(widgetMeta ? { widgetId: widgetMeta.widgetId, widgetTitle: widgetMeta.title } : {}),
+        }
+        if (widgetMeta) {
+          acc.push(assistantMessage)
+          return acc
         }
         return appendMessageWithVariants(acc, assistantMessage)
       }
@@ -238,11 +263,14 @@ export function useConverse(): UseConverseReturn {
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [state, setState] = useState<UseConverseReturn['state']>(null)
   const [isThinking, setIsThinking] = useState(false)
-  const { activeProfileId } = useModelProfile()
+  const { activeProfileId, profiles } = useModelProfile()
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0] || null
+  const canRenderWidgets = supportsGenerativeWidgets(activeProfile)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionFileIds, setSessionFileIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<string | null>(null)
+  const [activeWidget, setActiveWidget] = useState<WidgetState | null>(null)
 
   const sessionIdRef = useRef<string | null>(null)
   const sessionFileIdsRef = useRef<string[]>([])
@@ -250,6 +278,9 @@ export function useConverse(): UseConverseReturn {
   const abortRef = useRef<AbortController | null>(null)
   const requestSeqRef = useRef(0)
   const isThinkingRef = useRef(false)
+  const pendingDeltaRef = useRef<string | null>(null)
+  const deltaRafRef = useRef<number | null>(null)
+  const committedWidgetsRef = useRef<Map<string, WidgetState>>(new Map())
 
   messagesRef.current = messages
   isThinkingRef.current = isThinking
@@ -300,6 +331,17 @@ export function useConverse(): UseConverseReturn {
 
     setRegeneratingMessageId(null)
     setIsThinking(false)
+
+    committedWidgetsRef.current = collectCommittedWidgets(nextMessages)
+
+    // Restore widget state from persisted messages
+    const lastWidgetMsg = [...nextMessages].reverse().find((m) => m.meta?.widget)
+    if (lastWidgetMsg?.meta?.widget) {
+      const w = lastWidgetMsg.meta.widget
+      setActiveWidget({ widgetId: w.widgetId, title: w.title, html: w.html, status: w.status as WidgetState['status'] })
+    } else {
+      setActiveWidget(null)
+    }
 
     const restoredAttachmentIds = normalizeAttachmentIds(payload.sourceMeta?.attachmentIds)
     setSessionFileIds(restoredAttachmentIds)
@@ -476,6 +518,69 @@ export function useConverse(): UseConverseReturn {
         return
       }
 
+      if (eventType === 'widget_start') {
+        setActiveWidget({
+          widgetId: data.widgetId as string,
+          title: (data.title as string) || 'Loading...',
+          html: '',
+          status: 'loading',
+        })
+        return
+      }
+
+      if (eventType === 'widget_delta') {
+        const html = (data.html as string) || ''
+        // Skip oversized deltas — final HTML arrives on commit
+        if (html.length > 512_000) return
+        pendingDeltaRef.current = html
+        if (deltaRafRef.current === null) {
+          deltaRafRef.current = window.requestAnimationFrame(() => {
+            deltaRafRef.current = null
+            const pending = pendingDeltaRef.current
+            if (pending !== null) {
+              pendingDeltaRef.current = null
+              setActiveWidget((prev) => prev ? { ...prev, html: pending } : null)
+            }
+          })
+        }
+        return
+      }
+
+      if (eventType === 'widget_commit') {
+        const widgetId = data.widgetId as string
+        const title = (data.title as string) || 'Widget'
+        const html = (data.html as string) || ''
+        const widgetState: WidgetState = { widgetId, title, html, status: 'ready' }
+        committedWidgetsRef.current.set(widgetId, widgetState)
+        setActiveWidget(widgetState)
+        // Insert anchor card into messages
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `widget_anchor_${widgetId}`,
+            type: 'assistant' as const,
+            content: '',
+            timestamp: new Date(),
+            widgetId,
+            widgetTitle: title,
+            meta: {
+              sessionMode: 'converse',
+              source: 'llm',
+            },
+          },
+        ])
+        return
+      }
+
+      if (eventType === 'widget_error') {
+        setActiveWidget((prev) => prev ? {
+          ...prev,
+          status: 'error',
+          errorMessage: (data.message as string) || 'Widget rendering failed',
+        } : null)
+        return
+      }
+
       if (eventType === 'error') {
         setError((data.message as string) || '对话服务异常')
         return
@@ -599,6 +704,7 @@ export function useConverse(): UseConverseReturn {
             capabilities: {
               canSendFile: false,
               canSendImage: false,
+              canRenderWidgets,
             },
           },
         }),
@@ -647,7 +753,7 @@ export function useConverse(): UseConverseReturn {
         setIsThinking(false)
       }
     }
-  }, [activeProfileId, processSSEStream, syncPersistedMessages])
+  }, [activeProfileId, canRenderWidgets, processSSEStream, syncPersistedMessages])
 
   const selectVariant = useCallback((messageId: string, variantIndex: number) => {
     const sessionKey = sessionIdRef.current?.trim()
@@ -792,8 +898,19 @@ export function useConverse(): UseConverseReturn {
     }
   }, [applySessionPayload, fetchSessionPayload])
 
+  const showWidget = useCallback((widgetId: string) => {
+    const widget = committedWidgetsRef.current.get(widgetId)
+    if (widget) setActiveWidget(widget)
+  }, [])
+
   const reset = useCallback(() => {
     stop()
+    if (deltaRafRef.current !== null) {
+      window.cancelAnimationFrame(deltaRafRef.current)
+      deltaRafRef.current = null
+    }
+    pendingDeltaRef.current = null
+    committedWidgetsRef.current.clear()
     setMessages([])
     setAction(null)
     setPendingQuestion(null)
@@ -802,6 +919,7 @@ export function useConverse(): UseConverseReturn {
     setSessionFileIds([])
     setError(null)
     setRegeneratingMessageId(null)
+    setActiveWidget(null)
     messagesRef.current = []
     sessionIdRef.current = null
     sessionFileIdsRef.current = []
@@ -823,6 +941,9 @@ export function useConverse(): UseConverseReturn {
     sessionFileIds,
     error,
     regeneratingMessageId,
+    activeWidget,
+    setActiveWidget,
+    showWidget,
     reset,
   }
 }

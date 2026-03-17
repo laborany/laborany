@@ -63,3 +63,16 @@ export {
   type ModelInterfaceType,
   type OpenAiBridgeCredential,
 } from './model-interface.js'
+
+export {
+  resolveGenerativeWidgetSupport,
+  resolveExecuteGenerativeWidgetSupport,
+  supportsGenerativeWidgets,
+  supportsExecuteGenerativeWidgets,
+  type GenerativeWidgetCapability,
+  type GenerativeWidgetRuntime,
+  type GenerativeWidgetProvider,
+  type GenerativeWidgetDisabledReason,
+  type GenerativeWidgetTarget,
+  type GenerativeWidgetSupport,
+} from './generative-widgets.js'

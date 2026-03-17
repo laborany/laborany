@@ -12,6 +12,7 @@ import { existsSync, rmSync } from 'fs'
 import { join } from 'path'
 import { executeAgent } from '../agent-executor.js'
 import { buildConverseSystemPrompt, type ConverseRuntimeContext } from '../converse-prompt.js'
+import { planConverseWidgetRuntime } from '../generative-ui/runtime.js'
 import { memoryInjector } from '../memory/io.js'
 import { memoryAsyncQueue } from '../memory/index.js'
 import {
@@ -32,6 +33,7 @@ import {
   extractAttachmentIdsFromText,
   hydrateAttachmentsToTaskDir,
   normalizeAttachmentIds,
+  resolveGenerativeWidgetSupport,
   type Skill,
 } from 'laborany-shared'
 
@@ -78,6 +80,7 @@ interface ConverseMessageMeta {
     canCopy: boolean
     canRegenerate: boolean
   }
+  widget?: { widgetId: string; title: string; html: string; status: string }
 }
 
 interface StoredConverseMessage {
@@ -1103,6 +1106,7 @@ function normalizeRuntimeContext(raw: unknown): ConverseRuntimeContext {
     capabilities: {
       canSendFile: asBoolean(capabilitiesRaw.canSendFile),
       canSendImage: asBoolean(capabilitiesRaw.canSendImage),
+      canRenderWidgets: asBoolean(capabilitiesRaw.canRenderWidgets),
     },
   }
 }
@@ -1620,13 +1624,14 @@ function hasExplicitGenericIntent(text: string): boolean {
 }
 
 function inferFallbackAction(query: string, fullText: string): ConverseActionPayload | null {
-  const combined = `${query}\n${fullText}`
   const deterministicSchedule = detectDeterministicScheduleAction(query)
   if (deterministicSchedule) return deterministicSchedule
 
-  const rejectCreate = hasRejectCreateIntent(combined)
-  const acceptCreate = hasCreateCapabilityIntent(combined)
-  const genericSignal = hasExplicitGenericIntent(combined)
+  // Keep user intent and assistant prose separate. Mixing them can turn
+  // harmless phrases like "创建组件" + "不要推荐 skill" into a false create_capability action.
+  const rejectCreate = hasRejectCreateIntent(query) || hasRejectCreateIntent(fullText)
+  const acceptCreate = hasCreateCapabilityIntent(query) || hasCreateCapabilityIntent(fullText)
+  const genericSignal = hasExplicitGenericIntent(query) || hasExplicitGenericIntent(fullText)
 
   if (acceptCreate && !rejectCreate) {
     return {
@@ -1850,6 +1855,8 @@ router.post('/', async (req: Request, res: Response) => {
   let terminalStatus: ExternalSessionStatus = 'running'
   let assistantMessageKind: ConverseMessageKind = 'assistant_reply'
   let assistantCanRegenerate = false
+  let committedWidget: { widgetId: string; title: string; html: string } | null = null
+  let lastDeltaTs = 0
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
   const stopHeartbeat = () => {
     if (!heartbeatTimer) return
@@ -1877,14 +1884,29 @@ router.post('/', async (req: Request, res: Response) => {
     if (modelProfileId && !modelOverride) {
       sseWrite(res, 'warning', { content: `模型配置 ${modelProfileId} 未找到，已回退到默认模型` })
     }
+    const widgetSupport = resolveGenerativeWidgetSupport({
+      requested: Boolean(runtimeContext?.capabilities?.canRenderWidgets),
+      interfaceType: modelOverride?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,
+      model: modelOverride?.model || process.env.ANTHROPIC_MODEL,
+      baseUrl: modelOverride?.baseUrl || process.env.ANTHROPIC_BASE_URL,
+    })
+    const widgetRuntimePlan = planConverseWidgetRuntime(query, widgetSupport)
+    const effectiveRuntimeContext: ConverseRuntimeContext | undefined = runtimeContext
+      ? {
+          ...runtimeContext,
+          capabilities: {
+            ...runtimeContext.capabilities,
+            canRenderWidgets: widgetRuntimePlan.canRenderWidgets,
+          },
+        }
+      : undefined
 
     /* ── 构建 converse skill ── */
     const memoryCtx = memoryInjector.buildContext({
       skillId: '__converse__',
       userQuery: query,
     })
-    const systemPrompt = buildConverseSystemPrompt(memoryCtx, runtimeContext)
-
+    const systemPrompt = buildConverseSystemPrompt(memoryCtx, effectiveRuntimeContext)
     const skill = {
       meta: { id: '__converse__', name: '对话助手', description: '多轮对话', kind: 'skill' as const },
       systemPrompt,
@@ -1892,174 +1914,220 @@ router.post('/', async (req: Request, res: Response) => {
       tools: [],
     } as Skill
 
-    /* ── 通过 CLI 执行对话 ── */
     let fullText = ''
     let hasPendingQuestion = false
+    const runCliConverse = async (enableWidgets: boolean): Promise<void> => {
 
-    await executeAgent({
-      skill,
-      query,
-      sessionId,
-      signal: abortController.signal,
-      modelOverride,
-      onEvent: (event) => {
-        if (event.type === 'tool_use') {
-          if (/^AskU(?:ser|er)Question$/i.test(event.toolName || '')) {
-            const questionPayload = normalizeQuestionPayload(
-              event.toolInput || {},
-              event.toolUseId,
-            )
-            if (questionPayload) {
+      /* ── 通过 CLI 执行对话 ── */
+      await executeAgent({
+        skill,
+        query,
+        sessionId,
+        signal: abortController.signal,
+        modelOverride,
+        enableWidgets,
+        onEvent: (event) => {
+          if (event.type === 'widget_start') {
+            sseWrite(res, 'widget_start', {
+              widgetId: event.widgetId,
+              title: event.widgetTitle || 'Loading...',
+            })
+            return
+          }
+          if (event.type === 'widget_delta') {
+            const now = Date.now()
+            if (now - lastDeltaTs < 100) return
+            lastDeltaTs = now
+            sseWrite(res, 'widget_delta', {
+              widgetId: event.widgetId,
+              html: event.widgetHtml || '',
+            })
+            return
+          }
+          if (event.type === 'widget_commit') {
+            const widgetId = event.widgetId as string
+            const title = event.widgetTitle as string
+            const html = event.widgetHtml as string
+            committedWidget = { widgetId, title, html }
+            sseWrite(res, 'widget_commit', {
+              widgetId,
+              title,
+              html,
+            })
+            return
+          }
+          if (event.type === 'widget_error') {
+            sseWrite(res, 'widget_error', {
+              widgetId: event.widgetId,
+              message: event.content,
+            })
+            return
+          }
+
+          if (event.type === 'tool_use') {
+            if (/^AskU(?:ser|er)Question$/i.test(event.toolName || '')) {
+              const questionPayload = normalizeQuestionPayload(
+                event.toolInput || {},
+                event.toolUseId,
+              )
+              if (questionPayload) {
+                hasPendingQuestion = true
+                terminalStatus = 'waiting_input'
+                questionSummary = buildQuestionSummary(questionPayload)
+                assistantMessageKind = 'question_summary'
+                assistantCanRegenerate = false
+                sseWrite(res, 'question', questionPayload)
+                abortController.abort()
+                return
+              }
+
+              const fallbackQuestion = toQuestionPayload([
+                {
+                  header: '信息补充',
+                  question: asString((event.toolInput || {}).question) || '请补充本轮缺失信息，以便我继续执行。',
+                  options: [],
+                  multiSelect: false,
+                },
+              ], { questionContext: 'clarify' })
               hasPendingQuestion = true
               terminalStatus = 'waiting_input'
-              questionSummary = buildQuestionSummary(questionPayload)
+              questionSummary = buildQuestionSummary(fallbackQuestion)
               assistantMessageKind = 'question_summary'
               assistantCanRegenerate = false
-              sseWrite(res, 'question', questionPayload)
+              sseWrite(res, 'question', fallbackQuestion)
               abortController.abort()
               return
             }
 
-            const fallbackQuestion = toQuestionPayload([
-              {
-                header: '信息补充',
-                question: asString((event.toolInput || {}).question) || '请补充本轮缺失信息，以便我继续执行。',
-                options: [],
-                multiSelect: false,
-              },
-            ], { questionContext: 'clarify' })
-            hasPendingQuestion = true
-            terminalStatus = 'waiting_input'
-            questionSummary = buildQuestionSummary(fallbackQuestion)
-            assistantMessageKind = 'question_summary'
-            assistantCanRegenerate = false
-            sseWrite(res, 'question', fallbackQuestion)
-            abortController.abort()
+            sseWrite(res, 'tool_use', {
+              toolName: event.toolName,
+              toolInput: event.toolInput || {},
+              toolUseId: event.toolUseId || null,
+            })
             return
           }
 
-          sseWrite(res, 'tool_use', {
-            toolName: event.toolName,
-            toolInput: event.toolInput || {},
-            toolUseId: event.toolUseId || null,
-          })
-          return
-        }
-
-        if (event.type === 'tool_result') {
-          sseWrite(res, 'tool_result', {
-            toolResult: event.toolResult || event.content || '',
-            toolUseId: event.toolUseId || null,
-          })
-          return
-        }
-
-        if (event.type === 'text' && event.content) {
-          fullText += event.content
-          sseWrite(res, 'text', { content: event.content })
-        }
-
-        if (event.type === 'status' && event.content) {
-          sseWrite(res, 'status', { content: event.content })
-        }
-
-        if (event.type === 'stopped') {
-          if (hasPendingQuestion) {
-            terminalStatus = 'waiting_input'
-            sseWrite(res, 'done', {})
-          }
-          return
-        }
-
-        if (event.type === 'done') {
-          if (hasPendingQuestion) {
-            sseWrite(res, 'done', {})
+          if (event.type === 'tool_result') {
+            sseWrite(res, 'tool_result', {
+              toolResult: event.toolResult || event.content || '',
+              toolUseId: event.toolUseId || null,
+            })
             return
           }
 
-          const textQuestionPayload = parseQuestionCallFromText(fullText)
-          if (textQuestionPayload) {
-            hasPendingQuestion = true
-            terminalStatus = 'waiting_input'
-            questionSummary = buildQuestionSummary(textQuestionPayload)
-            assistantMessageKind = 'question_summary'
-            assistantCanRegenerate = false
-            const state = setSessionState(sessionId, {
-              phase: textQuestionPayload.questionContext === 'schedule' ? 'schedule_wizard' : 'clarify',
-              approvalRequired: false,
-            })
-            sseWrite(res, 'state', state)
-            sseWrite(res, 'question', textQuestionPayload)
-            sseWrite(res, 'done', {})
-            return
+          if (event.type === 'text' && event.content) {
+            fullText += event.content
+            sseWrite(res, 'text', { content: event.content })
           }
 
-          /* ── 从累积文本中提取决策标记 ── */
-          const rawAction = extractAction(fullText) || inferFallbackAction(query, fullText)
-          const action = rawAction?.action === 'setup_schedule'
-            ? stabilizeScheduleAction(rawAction, query)
-            : rawAction
-          if (action) {
-            assistantMessageKind = 'decision_reply'
-            assistantCanRegenerate = false
-            const guard = guardAction(action, runtimeContext, query)
+          if (event.type === 'status' && event.content) {
+            sseWrite(res, 'status', { content: event.content })
+          }
 
-            const state = setSessionState(sessionId, {
-              phase: guard.phase,
-              approvalRequired: guard.approvalRequired,
-            })
-            sseWrite(res, 'state', {
-              ...state,
-              validationErrors: guard.validationErrors || [],
-            })
-
-            if (guard.ok && guard.action) {
-              sseWrite(res, 'action', withAttachmentIds(guard.action, attachmentIds))
-            } else if (guard.question) {
-              hasPendingQuestion = true
+          if (event.type === 'stopped') {
+            if (hasPendingQuestion) {
               terminalStatus = 'waiting_input'
-              questionSummary = buildQuestionSummary(guard.question)
-              assistantMessageKind = 'question_summary'
-              assistantCanRegenerate = false
-              sseWrite(res, 'question', guard.question)
-            } else if (guard.validationErrors?.length) {
-              streamError = guard.validationErrors.join('; ')
-              assistantCanRegenerate = false
-              sseWrite(res, 'error', { message: streamError })
+              sseWrite(res, 'done', {})
             }
+            return
           }
-          if (!action && !fullText.trim() && !hasPendingQuestion) {
-            const fallbackText = '我还缺少一些关键信息，请再描述一次目标，或告诉我你希望先澄清哪一步。'
-            fullText += fallbackText
-            assistantMessageKind = 'rule_reply'
-            assistantCanRegenerate = false
-            sseWrite(res, 'text', {
-              content: fallbackText,
-            })
-          }
-          if (!action && !hasPendingQuestion && !streamError && fullText.trim()) {
-            assistantMessageKind = 'assistant_reply'
-            assistantCanRegenerate = true
-          }
-          terminalStatus = hasPendingQuestion
-            ? 'waiting_input'
-            : (streamError ? 'failed' : 'completed')
-          sseWrite(res, 'done', {})
-        }
-        if (event.type === 'error') {
-          if (hasPendingQuestion) {
-            const msg = asString(event.content)
-            if (!msg || /abort|aborted|中止|stopped/i.test(msg)) {
+
+          if (event.type === 'done') {
+            if (hasPendingQuestion) {
+              sseWrite(res, 'done', {})
               return
             }
+
+            const textQuestionPayload = parseQuestionCallFromText(fullText)
+            if (textQuestionPayload) {
+              hasPendingQuestion = true
+              terminalStatus = 'waiting_input'
+              questionSummary = buildQuestionSummary(textQuestionPayload)
+              assistantMessageKind = 'question_summary'
+              assistantCanRegenerate = false
+              const state = setSessionState(sessionId, {
+                phase: textQuestionPayload.questionContext === 'schedule' ? 'schedule_wizard' : 'clarify',
+                approvalRequired: false,
+              })
+              sseWrite(res, 'state', state)
+              sseWrite(res, 'question', textQuestionPayload)
+              sseWrite(res, 'done', {})
+              return
+            }
+
+            /* ── 从累积文本中提取决策标记 ── */
+            // A committed widget means this turn stayed in direct explanation mode.
+            // Even if the model emits a stray action marker, do not route away.
+            const rawAction = committedWidget != null
+              ? null
+              : (extractAction(fullText) || inferFallbackAction(query, fullText))
+            const action = rawAction?.action === 'setup_schedule'
+              ? stabilizeScheduleAction(rawAction, query)
+              : rawAction
+            if (action) {
+              assistantMessageKind = 'decision_reply'
+              assistantCanRegenerate = false
+              const guard = guardAction(action, runtimeContext, query)
+
+              const state = setSessionState(sessionId, {
+                phase: guard.phase,
+                approvalRequired: guard.approvalRequired,
+              })
+              sseWrite(res, 'state', {
+                ...state,
+                validationErrors: guard.validationErrors || [],
+              })
+
+              if (guard.ok && guard.action) {
+                sseWrite(res, 'action', withAttachmentIds(guard.action, attachmentIds))
+              } else if (guard.question) {
+                hasPendingQuestion = true
+                terminalStatus = 'waiting_input'
+                questionSummary = buildQuestionSummary(guard.question)
+                assistantMessageKind = 'question_summary'
+                assistantCanRegenerate = false
+                sseWrite(res, 'question', guard.question)
+              } else if (guard.validationErrors?.length) {
+                streamError = guard.validationErrors.join('; ')
+                assistantCanRegenerate = false
+                sseWrite(res, 'error', { message: streamError })
+              }
+            }
+            if (!action && !fullText.trim() && !hasPendingQuestion) {
+              const fallbackText = '我还缺少一些关键信息，请再描述一次目标，或告诉我你希望先澄清哪一步。'
+              fullText += fallbackText
+              assistantMessageKind = 'rule_reply'
+              assistantCanRegenerate = false
+              sseWrite(res, 'text', {
+                content: fallbackText,
+              })
+            }
+            if (!action && !hasPendingQuestion && !streamError && fullText.trim()) {
+              assistantMessageKind = 'assistant_reply'
+              assistantCanRegenerate = true
+            }
+            terminalStatus = hasPendingQuestion
+              ? 'waiting_input'
+              : (streamError ? 'failed' : 'completed')
+            sseWrite(res, 'done', {})
           }
-          streamError = asString(event.content) || '对话服务异常'
-          terminalStatus = 'failed'
-          assistantCanRegenerate = false
-          sseWrite(res, 'error', { message: streamError })
-        }
-      },
-    })
+          if (event.type === 'error') {
+            if (hasPendingQuestion) {
+              const msg = asString(event.content)
+              if (!msg || /abort|aborted|中止|stopped/i.test(msg)) {
+                return
+              }
+            }
+            streamError = asString(event.content) || '对话服务异常'
+            terminalStatus = 'failed'
+            assistantCanRegenerate = false
+            sseWrite(res, 'error', { message: streamError })
+          }
+        },
+      })
+    }
+
+    await runCliConverse(widgetRuntimePlan.mode === 'cli')
 
     const cleanedAssistantText = stripActionMarkers(fullText)
     if (cleanedAssistantText) {
@@ -2087,6 +2155,28 @@ router.post('/', async (req: Request, res: Response) => {
           source: 'rule',
           replyToMessageId: userMessageId,
         }),
+      )
+    }
+    if (committedWidget != null) {
+      const cw = committedWidget as { widgetId: string; title: string; html: string }
+      await appendExternalMessage(
+        sessionId,
+        'assistant',
+        `[widget:${cw.title}]`,
+        {
+          ...buildConverseMessageMeta({
+            kind: 'assistant_reply',
+            turnId,
+            source: 'llm',
+            replyToMessageId: userMessageId,
+          }),
+          widget: {
+            widgetId: cw.widgetId,
+            title: cw.title,
+            html: cw.html,
+            status: 'ready',
+          },
+        },
       )
     }
     if (streamError) {

@@ -82,10 +82,11 @@ export function useSettingsConfig() {
   const [retryingApply, setRetryingApply] = useState(false)
   const [message, setMessage] = useState<{ type: BannerType; text: string } | null>(null)
 
-  const { profiles: ctxProfiles, refreshProfiles } = useModelProfile()
+  const { profiles: ctxProfiles, activeProfileId, setActiveProfile, refreshProfiles } = useModelProfile()
   const [editProfiles, setEditProfiles] = useState<ModelProfile[]>([])
   const [profilesLoaded, setProfilesLoaded] = useState(false)
   const [savingProfiles, setSavingProfiles] = useState(false)
+  const [promotingProfileId, setPromotingProfileId] = useState<string | null>(null)
   const [profilesMessage, setProfilesMessage] = useState<{ type: BannerType; text: string } | null>(null)
   const [showProfileKeys, setShowProfileKeys] = useState<Record<string, boolean>>({})
   const [testingProfileId, setTestingProfileId] = useState<string | null>(null)
@@ -319,38 +320,69 @@ export function useSettingsConfig() {
     }
   }
 
-  async function saveModelProfiles() {
-    if (editProfiles.length === 0) { setProfilesMessage({ type: 'error', text: '至少需要一个模型配置' }); return }
+  function validateModelProfiles(profilesToSave: ModelProfile[]): string | null {
+    if (profilesToSave.length === 0) return '至少需要一个模型配置'
     const normalizedNames = new Set<string>()
-    for (let i = 0; i < editProfiles.length; i++) {
-      const profile = editProfiles[i]
+    for (let i = 0; i < profilesToSave.length; i++) {
+      const profile = profilesToSave[i]
       const name = profile.name.trim()
-      if (!name) { setProfilesMessage({ type: 'error', text: `配置 #${i + 1} 的名称不能为空` }); return }
+      if (!name) return `配置 #${i + 1} 的名称不能为空`
       const normalized = name.toLowerCase()
-      if (normalizedNames.has(normalized)) { setProfilesMessage({ type: 'error', text: `模型配置名称重复：${name}` }); return }
+      if (normalizedNames.has(normalized)) return `模型配置名称重复：${name}`
       normalizedNames.add(normalized)
     }
-    const firstApiKey = editProfiles[0].apiKey.trim()
-    if (!firstApiKey) { setProfilesMessage({ type: 'error', text: '默认配置（第一项）必须填写 API Key' }); return }
+    const firstApiKey = profilesToSave[0].apiKey.trim()
+    if (!firstApiKey) return '默认配置（第一项）必须填写 API Key'
+    return null
+  }
+
+  async function persistModelProfiles(
+    profilesToSave: ModelProfile[],
+    options?: {
+      successMessage?: string
+      nextActiveProfileId?: string
+    },
+  ): Promise<boolean> {
+    const validationError = validateModelProfiles(profilesToSave)
+    if (validationError) {
+      setProfilesMessage({ type: 'error', text: validationError })
+      return false
+    }
+
     setSavingProfiles(true)
     setProfilesMessage(null)
     try {
       const res = await fetch(`${API_BASE}/config/model-profiles`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profiles: editProfiles }),
+        body: JSON.stringify({ profiles: profilesToSave }),
       })
       const data = await res.json() as { success?: boolean; error?: string; profiles?: ModelProfile[] }
-      if (!res.ok) { setProfilesMessage({ type: 'error', text: data.error || '保存失败' }); return }
-      setProfilesMessage({ type: 'success', text: '模型配置已保存' })
+      if (!res.ok) {
+        setProfilesMessage({ type: 'error', text: data.error || '保存失败' })
+        return false
+      }
+      if (options?.nextActiveProfileId) {
+        setActiveProfile(options.nextActiveProfileId)
+      }
+      setProfilesMessage({ type: 'success', text: options?.successMessage || '模型配置已保存' })
       await refreshProfiles()
       if (data.profiles) setEditProfiles(data.profiles.map(p => ({ ...p })))
+      else setEditProfiles(profilesToSave.map(p => ({ ...p })))
       await loadConfig()
+      return true
     } catch {
       setProfilesMessage({ type: 'error', text: '保存失败，请检查网络' })
+      return false
     } finally {
       setSavingProfiles(false)
     }
+  }
+
+  async function saveModelProfiles() {
+    await persistModelProfiles(editProfiles, {
+      successMessage: '模型配置已保存',
+    })
   }
 
   async function testProfileConnection(profile: ModelProfile) {
@@ -408,6 +440,26 @@ export function useSettingsConfig() {
 
   function updateProfile(id: string, field: keyof ModelProfile, value: string) {
     setEditProfiles(prev => prev.map(p => p.id === id ? { ...p, [field]: value, updatedAt: new Date().toISOString() } : p))
+  }
+
+  async function setProfileAsCurrentDefault(id: string) {
+    const target = editProfiles.find((profile) => profile.id === id)
+    if (!target) return
+
+    const nextProfiles = [
+      target,
+      ...editProfiles.filter((profile) => profile.id !== id),
+    ]
+
+    setPromotingProfileId(id)
+    try {
+      await persistModelProfiles(nextProfiles, {
+        successMessage: `已将 ${target.name || '该配置'} 设为当前默认模型`,
+        nextActiveProfileId: id,
+      })
+    } finally {
+      setPromotingProfileId(null)
+    }
   }
 
   async function testEmailConfig() {
@@ -550,6 +602,7 @@ export function useSettingsConfig() {
 
     // Model profiles
     editProfiles, profilesMessage, savingProfiles,
+    activeProfileId, promotingProfileId,
     showProfileKeys, setShowProfileKeys,
     testingProfileId, profileTestResults,
 
@@ -564,6 +617,7 @@ export function useSettingsConfig() {
     // Actions
     saveConfig, retryApplyConfig, exportLogs, switchStorageHome,
     saveModelProfiles, testProfileConnection, addProfile, removeProfile, moveProfile, updateProfile,
+    setProfileAsCurrentDefault,
     testEmailConfig, testFeishuConfig, testQQConfig,
     handleChange, toggleShowValue, isFieldVisible,
   }

@@ -9,7 +9,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import type { AgentMessage, TaskFile } from '../../types'
+import type { AgentMessage, TaskFile, WidgetState } from '../../types'
 import type { FileArtifact } from '../preview'
 import { getExt, getCategory } from '../preview'
 import { useVitePreview } from '../../hooks/useVitePreview'
@@ -23,6 +23,7 @@ import { PreviewPanel } from './PreviewPanel'
 import { FileSidebar } from './FileSidebar'
 import { StepProgress } from './StepProgress'
 import type { CompositeStep as CompositeStepUI } from './StepProgress'
+import { WidgetPanel } from '../widget/WidgetPanel'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           Props 定义                                      │
@@ -63,6 +64,13 @@ export interface ExecutionPanelProps {
   /* 复合技能步骤进度（可选，有值时在消息流上方显示 StepProgress） */
   compositeSteps?: CompositeStepUI[]
   currentCompositeStep?: number
+
+  /* Widget 面板 */
+  activeWidget?: WidgetState | null
+  onCloseWidget?: () => void
+  onWidgetInteraction?: (widgetId: string, data: unknown) => void
+  onWidgetFallbackToText?: () => void
+  onShowWidget?: (widgetId: string) => void
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -123,6 +131,11 @@ export function ExecutionPanel({
   headerSlot,
   compositeSteps,
   currentCompositeStep,
+  activeWidget,
+  onCloseWidget,
+  onWidgetInteraction,
+  onWidgetFallbackToText,
+  onShowWidget,
 }: ExecutionPanelProps) {
   /* ── 预览状态 ── */
   const [isPreviewVisible, setIsPreviewVisible] = useState(false)
@@ -196,7 +209,7 @@ export function ExecutionPanel({
     selectedPathRef, setSelectedArtifact, previewSelectionHint,
   )
 
-  const showResizeHandle = isPreviewVisible || isRightSidebarVisible
+  const showResizeHandle = isPreviewVisible || isRightSidebarVisible || Boolean(activeWidget)
 
   return (
     <div className="flex h-full">
@@ -218,6 +231,7 @@ export function ExecutionPanel({
         placeholder={placeholder}
         compositeSteps={compositeSteps}
         currentCompositeStep={currentCompositeStep}
+        onShowWidget={onShowWidget}
       />
 
       {/* ════════════════════════════════════════════════════════════════════
@@ -232,9 +246,23 @@ export function ExecutionPanel({
       )}
 
       {/* ════════════════════════════════════════════════════════════════════
-       * 中间：预览面板
+       * 中间：Widget 面板（优先于预览）
        * ════════════════════════════════════════════════════════════════════ */}
-      {isPreviewVisible && (
+      {activeWidget && onCloseWidget && (
+        <div className="flex-1 min-w-[300px]">
+          <WidgetPanel
+            widget={activeWidget}
+            onClose={onCloseWidget}
+            onWidgetInteraction={onWidgetInteraction}
+            onFallbackToText={onWidgetFallbackToText}
+          />
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════
+       * 中间：预览面板（Widget 不活跃时显示）
+       * ════════════════════════════════════════════════════════════════════ */}
+      {isPreviewVisible && !activeWidget && (
         <div className="flex-1 min-w-[300px] border-l border-border">
           <PreviewPanel
             selectedArtifact={selectedArtifact}
@@ -287,6 +315,7 @@ interface ChatPanelProps {
   placeholder: string
   compositeSteps?: CompositeStepUI[]
   currentCompositeStep?: number
+  onShowWidget?: (widgetId: string) => void
 }
 
 function ChatPanel({
@@ -304,6 +333,7 @@ function ChatPanel({
   placeholder,
   compositeSteps,
   currentCompositeStep,
+  onShowWidget,
 }: ChatPanelProps) {
   return (
     <div
@@ -333,7 +363,7 @@ function ChatPanel({
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto mb-4 min-h-0">
         {messages.length === 0 ? <EmptyState isRunning={isRunning} connectionStatus={connectionStatus} /> : (
-          <MessageList messages={messages} isRunning={isRunning} />
+          <MessageList messages={messages} isRunning={isRunning} onShowWidget={onShowWidget} />
         )}
       </div>
 

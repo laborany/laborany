@@ -3,6 +3,7 @@ import type { Skill, CompositeStep } from 'laborany-shared'
 import {
   loadSkill,
   normalizeCapabilityDisplayName,
+  resolveExecuteGenerativeWidgetSupport,
 } from 'laborany-shared'
 import { dbHelper } from '../database.js'
 import { executeAgent, ensureTaskDir, type AgentEvent, type ModelOverride } from './executor.js'
@@ -43,6 +44,22 @@ const TOOL_PATH_KEYS = new Set([
   'workDir',
   'command',
 ])
+
+function shouldEnableDesktopWidgetsForTask(
+  source: RuntimeTaskSource,
+  modelOverride?: ModelOverride,
+): boolean {
+  if (source !== 'desktop') return false
+
+  const support = resolveExecuteGenerativeWidgetSupport({
+    requested: true,
+    interfaceType: modelOverride?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,
+    model: modelOverride?.model || process.env.ANTHROPIC_MODEL,
+    baseUrl: modelOverride?.baseUrl || process.env.ANTHROPIC_BASE_URL,
+  })
+
+  return support.enabled
+}
 
 export type RuntimeEvent =
   | AgentEvent
@@ -131,6 +148,11 @@ interface RuntimeTask {
   hasError: boolean
   awaitingInput: boolean
   assistantContent: string
+  committedWidgets: Array<{
+    widgetId: string
+    title: string
+    html: string
+  }>
   controller: AbortController
   events: RuntimeEvent[]
   subscribers: Set<(event: RuntimeEvent) => void | Promise<void>>
@@ -207,6 +229,7 @@ class RuntimeTaskManager {
       hasError: false,
       awaitingInput: false,
       assistantContent: '',
+      committedWidgets: [],
       controller: new AbortController(),
       events: [],
       subscribers: new Set(),
@@ -695,6 +718,7 @@ class RuntimeTaskManager {
           sessionId: task.sessionId,
           signal: task.controller.signal,
           modelOverride: options.modelOverride,
+          enableWidgets: shouldEnableDesktopWidgetsForTask(task.source, options.modelOverride),
           onEvent: (event) => this.handleAgentEvent(task, event),
         })
       }
@@ -769,6 +793,25 @@ class RuntimeTaskManager {
         dbHelper.run(
           `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
           [task.sessionId, 'assistant', task.assistantContent],
+        )
+      }
+
+      for (const widget of task.committedWidgets) {
+        dbHelper.run(
+          `INSERT INTO messages (session_id, type, content, meta) VALUES (?, ?, ?, ?)`,
+          [
+            task.sessionId,
+            'assistant',
+            `[widget:${widget.title}]`,
+            JSON.stringify({
+              widget: {
+                widgetId: widget.widgetId,
+                title: widget.title,
+                html: widget.html,
+                status: 'ready',
+              },
+            }),
+          ],
         )
       }
 
@@ -896,6 +939,7 @@ class RuntimeTaskManager {
         signal: task.controller.signal,
         workDir: options.workDir,
         modelOverride: options.modelOverride,
+        enableWidgets: shouldEnableDesktopWidgetsForTask(task.source, options.modelOverride),
         onEvent: (event) => {
           if (event.type === 'text' && event.content) {
             output += event.content
@@ -998,6 +1042,20 @@ class RuntimeTaskManager {
 
     if (event.type === 'text' && event.content) {
       task.assistantContent += event.content
+    }
+
+    if (event.type === 'widget_commit' && event.widgetId && event.title && event.html) {
+      const existingIndex = task.committedWidgets.findIndex((item) => item.widgetId === event.widgetId)
+      const nextWidget = {
+        widgetId: event.widgetId,
+        title: event.title,
+        html: event.html,
+      }
+      if (existingIndex >= 0) {
+        task.committedWidgets.splice(existingIndex, 1, nextWidget)
+      } else {
+        task.committedWidgets.push(nextWidget)
+      }
     }
 
     this.collectExternalPathCandidates(task, event)

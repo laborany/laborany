@@ -24,6 +24,13 @@ const RUNTIME_OWNED_PREFIXES = [
   'NOTIFY_',
 ] as const
 
+const PROCESS_OVERRIDE_KEYS = [
+  'AGENT_PORT',
+  'SRC_API_BASE_URL',
+  'AGENT_SERVICE_URL',
+  'PORT',
+] as const
+
 let lastLoadedEnvKeys = new Set<string>()
 
 function isPackaged(): boolean {
@@ -56,6 +63,13 @@ export interface RuntimeConfigSnapshot {
 export function refreshRuntimeConfig(): RuntimeConfigSnapshot {
   const runtimeHome = (process.env.LABORANY_HOME || '').trim()
   const runtimeLogDir = (process.env.LABORANY_LOG_DIR || '').trim()
+  const explicitOverrides = new Map<string, string>()
+  for (const key of PROCESS_OVERRIDE_KEYS) {
+    const value = process.env[key]
+    if (typeof value === 'string' && value.trim()) {
+      explicitOverrides.set(key, value)
+    }
+  }
   const runtimeEnvPath = getRuntimeEnvPath()
   const candidates = isPackaged()
     ? [runtimeEnvPath]
@@ -124,6 +138,10 @@ export function refreshRuntimeConfig(): RuntimeConfigSnapshot {
   }
 
   for (const [key, value] of Object.entries(merged)) {
+    process.env[key] = value
+  }
+
+  for (const [key, value] of explicitOverrides) {
     process.env[key] = value
   }
 

@@ -13,6 +13,7 @@ import {
   DropdownMenuItem,
 } from '../ui'
 import { useModelProfile } from '../../contexts/ModelProfileContext'
+import { ModelWidgetSupportSummary } from './ModelWidgetSupportSummary'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           常量定义                                        │
@@ -69,6 +70,34 @@ export default function ChatInput({
   const prevIsRunningRef = useRef(isRunning)
   const { profiles, activeProfileId, setActiveProfile } = useModelProfile()
   const activeProfile = profiles.find(p => p.id === activeProfileId) ?? profiles[0]
+
+  const renderProfileTriggerContent = useCallback((withChevron: boolean) => {
+    if (!activeProfile) return null
+
+    return (
+      <>
+        <svg className="w-4 h-4 shrink-0 self-start mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-2" />
+        </svg>
+        <span className="min-w-0 flex-1 text-left">
+          <span className="block truncate text-sm font-medium leading-tight">
+            {activeProfile.name || '默认模型'}
+          </span>
+          <ModelWidgetSupportSummary
+            profile={activeProfile}
+            compact
+            labelMode="short"
+            className="pt-1"
+          />
+        </span>
+        {withChevron && (
+          <svg className="w-3.5 h-3.5 shrink-0 opacity-70 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        )}
+      </>
+    )
+  }, [activeProfile])
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                       任务完成后自动聚焦                                   │
@@ -319,64 +348,69 @@ export default function ChatInput({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* 模型选择按钮：只有多个 profile 时显示 */}
-          {profiles.length > 1 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  className="flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-card px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 max-w-[240px] sm:max-w-[300px]"
-                  disabled={isRunning}
-                  title={activeProfile?.name}
-                >
-                  <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-2" />
-                  </svg>
-                  <span className="truncate max-w-[160px] sm:max-w-[220px] font-medium">
-                    {activeProfile?.name || '默认模型'}
-                  </span>
-                  <svg className="w-3.5 h-3.5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" side="top" className="min-w-[320px] max-w-[440px] p-1.5">
-                {profiles.map((p, idx) => {
-                  const isActive = p.id === activeProfileId
-                  return (
-                    <DropdownMenuItem
-                      key={p.id}
-                      onClick={() => setActiveProfile(p.id)}
-                      className={`${isActive ? 'bg-accent/70' : ''} rounded-lg px-3 py-2.5`}
-                    >
-                      <span className="grid w-full grid-cols-[1rem,minmax(0,1fr)] gap-x-3 gap-y-1">
-                        <span className="row-span-2 mt-0.5 flex h-4 w-4 items-center justify-center">
-                          {isActive && (
-                            <svg className="h-4 w-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </span>
-
-                        <span className="flex min-w-0 items-start justify-between gap-2">
-                          <span className="min-w-0 text-left text-sm font-medium leading-snug [overflow-wrap:anywhere]">
-                            {p.name}
+          {activeProfile && (
+            profiles.length > 1 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    data-testid="active-profile-trigger"
+                    className="flex min-h-11 items-start gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 max-w-[260px] sm:max-w-[320px]"
+                    disabled={isRunning}
+                    title={activeProfile.name}
+                  >
+                    {renderProfileTriggerContent(true)}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" side="top" className="min-w-[320px] max-w-[440px] p-1.5">
+                  {profiles.map((p, idx) => {
+                    const isActive = p.id === activeProfileId
+                    return (
+                      <DropdownMenuItem
+                        key={p.id}
+                        onClick={() => setActiveProfile(p.id)}
+                        className={`${isActive ? 'bg-accent/70' : ''} rounded-lg px-3 py-2.5`}
+                      >
+                        <span className="grid w-full grid-cols-[1rem,minmax(0,1fr)] gap-x-3 gap-y-1">
+                          <span className="row-span-2 mt-0.5 flex h-4 w-4 items-center justify-center">
+                            {isActive && (
+                              <svg className="h-4 w-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
                           </span>
-                          {idx === 0 && (
-                            <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                              默认
-                            </span>
-                          )}
-                        </span>
 
-                        <span className="min-w-0 truncate text-left font-mono text-[11px] text-muted-foreground">
-                          {p.model || '未配置模型'}
+                          <span className="flex min-w-0 items-start justify-between gap-2">
+                            <span className="min-w-0 text-left text-sm font-medium leading-snug [overflow-wrap:anywhere]">
+                              {p.name}
+                            </span>
+                            {idx === 0 && (
+                              <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                                默认
+                              </span>
+                            )}
+                          </span>
+
+                          <span className="min-w-0 truncate text-left font-mono text-[11px] text-muted-foreground">
+                            {p.model || '未配置模型'}
+                          </span>
+                          <span className="col-start-2 min-w-0 pt-0.5">
+                            <ModelWidgetSupportSummary profile={p} compact />
+                          </span>
                         </span>
-                      </span>
-                    </DropdownMenuItem>
-                  )
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                      </DropdownMenuItem>
+                    )
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <div
+                data-testid="active-profile-trigger"
+                className="flex min-h-11 items-start gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm text-muted-foreground max-w-[260px] sm:max-w-[320px]"
+                title={activeProfile.name}
+              >
+                {renderProfileTriggerContent(false)}
+              </div>
+            )
           )}
 
           <span className="hidden sm:inline text-xs text-muted-foreground">Enter 发送，Ctrl / Cmd + Enter 换行</span>

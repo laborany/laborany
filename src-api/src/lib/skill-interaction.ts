@@ -34,8 +34,10 @@ function asBoolean(value: unknown, fallback = false): boolean {
 export function looksLikeWaitingInputMessage(content?: string | null): boolean {
   const text = (content || '').trim()
   if (!text) return false
-  if (/[？?]\s*$/.test(text)) return true
-  return /(请(补充|提供|确认|选择|输入|告诉|说明)|还缺少|需要补充|请再|执行时间|开始时间|结束时间|频率|时区|补充信息|告诉我)/.test(text)
+  if (/有什么需要(调整|补充|修改)|是否需要我继续|要不要我继续|如果你需要.*我可以|还想看哪部分/.test(text)) {
+    return false
+  }
+  return /(请(补充|提供|确认|选择|输入|告诉|说明|回复)|还缺少|需要补充|请再|执行时间|开始时间|结束时间|频率|时区|补充信息|告诉我|请给出|请填写|继续执行前)/.test(text)
 }
 
 export function buildSkillQuestionSummary(payload: SkillQuestionPayload): string {

@@ -6,10 +6,12 @@
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 import type { AgentMessage } from '../../types/message'
+import type { WidgetState } from '../../types/message'
 import type { PendingQuestion } from '../../hooks/useAgent'
 import MessageList from '../shared/MessageList'
 import ChatInput from '../shared/ChatInput'
 import { QuestionInput } from '../shared/QuestionInput'
+import { WidgetPanel } from '../widget/WidgetPanel'
 
 /* ── 决策卡片类型 ── */
 export interface DecisionAction {
@@ -44,6 +46,16 @@ interface ConversationPanelProps {
     approvalRequired: boolean
     validationErrors: string[]
   } | null
+  activeWidget?: WidgetState | null
+  onCloseWidget?: () => void
+  onWidgetInteraction?: (widgetId: string, data: unknown) => void
+  onWidgetFallbackToText?: () => void
+  onShowWidget?: (widgetId: string) => void
+  onVisualizeMessage?: (content: string) => void
+  widgetNotice?: {
+    tone: 'warning' | 'neutral'
+    message: string
+  } | null
 }
 
 export function ConversationPanel({
@@ -61,9 +73,20 @@ export function ConversationPanel({
   decisionPrompt,
   onDecision,
   stateSummary,
+  activeWidget,
+  onCloseWidget,
+  onWidgetInteraction,
+  onWidgetFallbackToText,
+  onShowWidget,
+  onVisualizeMessage,
+  widgetNotice,
 }: ConversationPanelProps) {
+  const hasWidget = activeWidget != null
+
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex">
+      {/* ── Chat panel ── */}
+      <div className={`flex flex-col ${hasWidget ? 'w-1/2' : 'w-full'} transition-all duration-300`}>
       {/* ── Header ── */}
       <div className="shrink-0 px-6 py-4 border-b border-border">
         <div className="flex items-center justify-between">
@@ -97,7 +120,19 @@ export function ConversationPanel({
             onRegenerate={onRegenerate}
             onSelectVariant={onSelectVariant}
             regeneratingMessageId={regeneratingMessageId}
+            onShowWidget={onShowWidget}
+            onVisualizeMessage={onVisualizeMessage}
           />
+
+          {widgetNotice && (
+            <div className={`mt-4 rounded-md border px-3 py-2 text-xs ${
+              widgetNotice.tone === 'warning'
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : 'border-border bg-secondary/60 text-muted-foreground'
+            }`}>
+              {widgetNotice.message}
+            </div>
+          )}
 
           {error && <p className="text-sm text-red-500 text-center mt-4">{error}</p>}
 
@@ -137,6 +172,14 @@ export function ConversationPanel({
           />
         </div>
       </div>
+      </div>
+
+      {/* ── Widget panel (right side) ── */}
+      {hasWidget && activeWidget && (
+        <div className="w-1/2 transition-all duration-300">
+          <WidgetPanel widget={activeWidget} onClose={onCloseWidget || (() => {})} onWidgetInteraction={onWidgetInteraction} onFallbackToText={onWidgetFallbackToText} />
+        </div>
+      )}
     </div>
   )
 }

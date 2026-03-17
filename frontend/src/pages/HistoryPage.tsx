@@ -5,7 +5,7 @@ import { useAgent, type PendingQuestion } from '../hooks/useAgent'
 import { useConverse } from '../hooks/useConverse'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { useVitePreview } from '../hooks/useVitePreview'
-import type { AgentMessage, TaskFile, Session, SessionDetail, SessionLiveStatus } from '../types'
+import type { AgentMessage, TaskFile, Session, SessionDetail, SessionLiveStatus, WidgetState } from '../types'
 import { API_BASE } from '../config'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
@@ -26,6 +26,7 @@ import {
   applyVariantSelections,
   loadStoredVariantSelections,
 } from '../lib/messageVariants'
+import { WidgetPanel } from '../components/widget/WidgetPanel'
 
 export default function HistoryPage() {
   const [sessions, setSessions] = useState<Session[]>([])
@@ -459,17 +460,23 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
         meta: msg.meta || null,
       })
     } else if (msg.type === 'assistant' && msg.content) {
+      const widgetMeta = msg.meta?.widget
       const assistantMessage: AgentMessage = {
         id: String(msg.id),
         type: 'assistant',
-        content: msg.content,
+        content: widgetMeta ? '' : msg.content,
         timestamp: parseUTCDate(msg.createdAt),
         serverMessageId: msg.id,
         meta: msg.meta || null,
+        ...(widgetMeta ? { widgetId: widgetMeta.widgetId, widgetTitle: widgetMeta.title } : {}),
       }
-      const merged = appendMessageWithVariants(messages, assistantMessage)
-      messages.length = 0
-      messages.push(...merged)
+      if (widgetMeta) {
+        messages.push(assistantMessage)
+      } else {
+        const merged = appendMessageWithVariants(messages, assistantMessage)
+        messages.length = 0
+        messages.push(...merged)
+      }
     } else if (msg.type === 'tool_use' && msg.toolName) {
       const parsedToolInput =
         msg.toolInput && typeof msg.toolInput === 'object'
@@ -526,6 +533,7 @@ export function SessionDetailPage() {
   const [isRightSidebarVisible, setIsRightSidebarVisible] = useState(false)
   const [selectedArtifact, setSelectedArtifact] = useState<FileArtifact | null>(null)
   const [showLivePreview, setShowLivePreview] = useState(false)
+  const [viewingWidget, setViewingWidget] = useState<WidgetState | null>(null)
 
   // 自动展开标记
   const hasAutoExpandedRef = useRef(false)
@@ -934,6 +942,17 @@ export function SessionDetailPage() {
       ? mergeTimelineMessages(historyMessages, agent.messages)
       : historyMessages
   }, [isConverseSession, converse.messages, historyMessages, continuing, agent.messages])
+  const handleShowWidget = useCallback((widgetId: string) => {
+    const widgetMsg = allMessages.find((m) => m.widgetId === widgetId && m.meta?.widget)
+    if (!widgetMsg?.meta?.widget) return
+    const w = widgetMsg.meta.widget
+    setViewingWidget({
+      widgetId: w.widgetId,
+      title: w.title,
+      html: w.html,
+      status: w.status as WidgetState['status'],
+    })
+  }, [allMessages])
   const chatIsRunning = isConverseSession ? converse.isThinking : agent.isRunning
   const activePendingQuestion = isConverseSession
     ? converse.pendingQuestion
@@ -942,7 +961,7 @@ export function SessionDetailPage() {
     ? converse.respondToQuestion
     : (agent.pendingQuestion ? agent.respondToQuestion : handleQuestionSubmit)
   const stopHandler = isConverseSession ? converse.stop : agent.stop
-  const showResizeHandle = isPreviewVisible || isRightSidebarVisible
+  const showResizeHandle = isPreviewVisible || isRightSidebarVisible || Boolean(viewingWidget)
 
   if (loading) {
     return (
@@ -1056,6 +1075,7 @@ export function SessionDetailPage() {
             onRegenerate={isConverseSession && converse.messages.length > 0 ? converse.regenerateMessage : undefined}
             onSelectVariant={isConverseSession && converse.messages.length > 0 ? converse.selectVariant : undefined}
             regeneratingMessageId={isConverseSession && converse.messages.length > 0 ? converse.regeneratingMessageId : null}
+            onShowWidget={handleShowWidget}
           />
         </div>
 
@@ -1092,8 +1112,18 @@ export function SessionDetailPage() {
         />
       )}
 
-      {/* 中间：预览面板 */}
-      {isPreviewVisible && (
+      {/* 中间：Widget 面板（优先于预览） */}
+      {viewingWidget && (
+        <div className="flex-1 min-w-[300px]">
+          <WidgetPanel
+            widget={viewingWidget}
+            onClose={() => setViewingWidget(null)}
+          />
+        </div>
+      )}
+
+      {/* 中间：预览面板（Widget 不活跃时显示） */}
+      {isPreviewVisible && !viewingWidget && (
         <div className="flex-1 min-w-[300px] border-l border-border">
           {showLivePreview ? (
             /* Live Preview */

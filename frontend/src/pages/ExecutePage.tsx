@@ -11,6 +11,7 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAgent } from '../hooks/useAgent'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
+import { useModelProfile } from '../contexts/ModelProfileContext'
 import { API_BASE } from '../config/api'
 import { ExecutionPanel } from '../components/execution'
 import { Tooltip } from '../components/ui'
@@ -24,6 +25,8 @@ import {
   DialogFooter,
 } from '../components/ui'
 import { Button } from '../components/ui'
+import { getExecuteGenerativeWidgetSupport } from '../lib/widgetSupport'
+import { ModelWidgetSupportSummary } from '../components/shared/ModelWidgetSupportSummary'
 
 export default function ExecutePage() {
   const { skillId } = useParams<{ skillId: string }>()
@@ -31,9 +34,12 @@ export default function ExecutePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const agent = useAgent(skillId || '')
   const { getSkillName } = useSkillNameMap()
+  const { profiles, activeProfileId } = useModelProfile()
   const displaySkillName = getSkillName(skillId)
   const handledCreatedRef = useRef<string | null>(null)
   const effectiveRunning = agent.isRunning && !agent.pendingQuestion
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0] || null
+  const executeWidgetSupport = getExecuteGenerativeWidgetSupport(activeProfile)
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      页面级状态（对话框 + 断线重连）                       │
@@ -262,48 +268,72 @@ export default function ExecutePage() {
    * │                      顶部导航栏                                          │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   const header = (
-    <div className="flex items-center justify-between mb-4 shrink-0 pr-24 sm:pr-28">
-      <div className="flex items-center gap-4">
-        <button
-          type="button"
-          onClick={handleBackToHome}
-          className="text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <h2 className="text-lg font-semibold text-foreground">
-          {displaySkillName}
-        </h2>
-      </div>
-      <div className="flex items-center gap-3">
-        {effectiveRunning ? (
+    <div className="mb-4 shrink-0 space-y-3">
+      <div className="flex items-center justify-between pr-24 sm:pr-28">
+        <div className="flex items-center gap-4">
           <button
-            onClick={agent.stop}
-            className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm transition-colors"
+            type="button"
+            onClick={handleBackToHome}
+            className="text-muted-foreground hover:text-foreground transition-colors"
           >
-            停止任务
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
           </button>
-        ) : agent.messages.length > 0 ? (
-          <button
-            onClick={handleClear}
-            className="text-sm text-primary hover:text-primary/80 transition-colors"
-          >
-            新对话
-          </button>
-        ) : null}
-        {agent.messages.length > 0 && !effectiveRunning && (
-          <Tooltip content="清空当前对话记录" side="bottom">
+          <h2 className="text-lg font-semibold text-foreground">
+            {displaySkillName}
+          </h2>
+        </div>
+        <div className="flex items-center gap-3">
+          {effectiveRunning ? (
             <button
-              onClick={() => setShowClearDialog(true)}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              onClick={agent.stop}
+              className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm transition-colors"
             >
-              清空
+              停止任务
             </button>
-          </Tooltip>
-        )}
+          ) : agent.messages.length > 0 ? (
+            <button
+              onClick={handleClear}
+              className="text-sm text-primary hover:text-primary/80 transition-colors"
+            >
+              新对话
+            </button>
+          ) : null}
+          {agent.messages.length > 0 && !effectiveRunning && (
+            <Tooltip content="清空当前对话记录" side="bottom">
+              <button
+                onClick={() => setShowClearDialog(true)}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                清空
+              </button>
+            </Tooltip>
+          )}
+        </div>
       </div>
+      {activeProfile && (
+        <div
+          data-testid="execute-active-profile-card"
+          className={`rounded-md border px-3 py-3 ${
+            executeWidgetSupport.enabled
+              ? 'border-green-200 bg-green-50'
+              : 'border-amber-200 bg-amber-50'
+          }`}
+        >
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-foreground">
+              当前模型: {activeProfile.name}
+            </p>
+            <ModelWidgetSupportSummary profile={activeProfile} showDescription />
+            {!executeWidgetSupport.enabled && executeWidgetSupport.reasonMessage && (
+              <p className="text-xs text-amber-800">
+                {executeWidgetSupport.reasonMessage}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 

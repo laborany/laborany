@@ -5,6 +5,7 @@ import { useAgent } from '../hooks/useAgent'
 import { useConverse } from '../hooks/useConverse'
 import { useCronJobs } from '../hooks/useCron'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
+import { useModelProfile } from '../contexts/ModelProfileContext'
 import { type QuickStartItem } from '../contexts/QuickStartContext'
 import { API_BASE } from '../config'
 import { GuideBanner } from '../components/home/GuideBanner'
@@ -16,6 +17,11 @@ import { SkillExecutingView, type HomePhase, type ExecutionContext } from '../co
 import { PlanReviewPanel } from '../components/home/PlanReviewPanel'
 import { CandidateConfirmView, FallbackBanner, ErrorView } from '../components/home/DispatchViews'
 import { buildExecutePath, stripAttachmentMarkers, uploadAttachments } from '../lib/attachments'
+import {
+  getHomeWidgetRuntimeNotice,
+  supportsGenerativeWidgets,
+} from '../lib/widgetSupport'
+import { ModelWidgetSupportSummary } from '../components/shared/ModelWidgetSupportSummary'
 
 interface CandidateInfo {
   variant: 'recommend' | 'create'
@@ -64,10 +70,14 @@ export default function HomePage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { getCapabilityName } = useSkillNameMap()
+  const { activeProfileId, profiles } = useModelProfile()
   const cachedProfileName = typeof window !== 'undefined'
     ? (localStorage.getItem('laborany.profile.name') || '').trim()
     : ''
   const displayUserName = user?.name?.trim() || cachedProfileName
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0] || null
+  const canRenderWidgets = supportsGenerativeWidgets(activeProfile)
+  const homeWidgetNotice = getHomeWidgetRuntimeNotice(activeProfile)
 
   const [phase, setPhase] = useState<HomePhase>('idle')
   const [execCtx, setExecCtx] = useState<ExecutionContext | null>(null)
@@ -356,6 +366,8 @@ export default function HomePage() {
       onCronCancel={() => setCronPending(null)}
       backgroundTasks={backgroundTasks}
       onResumeTask={handleResumeBackgroundTask}
+      activeProfile={activeProfile}
+      widgetNotice={homeWidgetNotice}
     />
   }
 
@@ -373,6 +385,23 @@ export default function HomePage() {
       regeneratingMessageId={converse.regeneratingMessageId}
       onBack={handleNewTask}
       stateSummary={converse.state}
+      activeWidget={converse.activeWidget}
+      onCloseWidget={() => converse.setActiveWidget(null)}
+      onWidgetFallbackToText={() => {
+        converse.setActiveWidget(null)
+        void converse.sendMessage('[请改为文本解释]')
+      }}
+      onShowWidget={converse.showWidget}
+      onVisualizeMessage={canRenderWidgets
+        ? (content) => {
+          void converse.sendMessage(`请将以下内容改为可视化组件解释：\n\n${content}`)
+        }
+        : undefined}
+      widgetNotice={homeWidgetNotice}
+      onWidgetInteraction={(_widgetId, data) => {
+        const text = `[来自组件交互]\n${JSON.stringify(data, null, 2)}`
+        void converse.sendMessage(text)
+      }}
     />
   }
 
@@ -463,13 +492,24 @@ export default function HomePage() {
           onNewTask={handleNewTask}
           onCapabilityCreated={handleCapabilityCreated}
           onError={(msg) => { setErrorMsg(msg); setPhase('error') }}
+          activeWidget={agent.activeWidget}
+          onCloseWidget={() => agent.setActiveWidget(null)}
+          onWidgetInteraction={(_widgetId, data) => {
+            const text = `[来自组件交互]\n${JSON.stringify(data, null, 2)}`
+            void agent.execute(text)
+          }}
+          onWidgetFallbackToText={() => {
+            agent.setActiveWidget(null)
+            void agent.execute('[请改为文本解释]')
+          }}
+          onShowWidget={agent.showWidget}
         />
       </div>
     </div>
   )
 }
 
-function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending, onCronConfirm, onCronCancel, backgroundTasks, onResumeTask }: {
+function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending, onCronConfirm, onCronCancel, backgroundTasks, onResumeTask, activeProfile, widgetNotice }: {
   userName?: string
   onExecute: (targetId: string, query: string, files?: File[]) => void | Promise<void>
   selectedCase: QuickStartItem | null
@@ -479,6 +519,8 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
   onCronCancel: () => void
   backgroundTasks: RunningTaskBrief[]
   onResumeTask: (task: RunningTaskBrief) => void
+  activeProfile: ReturnType<typeof useModelProfile>['profiles'][number] | null
+  widgetNotice: ReturnType<typeof getHomeWidgetRuntimeNotice>
 }) {
   return (
     <div className="min-h-screen p-6">
@@ -491,6 +533,36 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
             直接描述你的任务，我来帮你完成。
           </p>
         </div>
+        {activeProfile && (
+          <div
+            data-testid="home-active-profile-card"
+            className={`rounded-xl border p-4 ${
+              widgetNotice?.tone === 'warning'
+                ? 'border-amber-200 bg-amber-50'
+                : widgetNotice?.tone === 'neutral'
+                  ? 'border-border bg-card'
+                  : 'border-green-200 bg-green-50'
+            }`}
+          >
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-foreground">
+                当前模型: {activeProfile.name}
+              </p>
+              <ModelWidgetSupportSummary profile={activeProfile} showDescription />
+              {widgetNotice && (
+                <p className={`text-xs ${
+                  widgetNotice.tone === 'warning'
+                    ? 'text-amber-800'
+                    : widgetNotice.tone === 'neutral'
+                      ? 'text-muted-foreground'
+                      : 'text-green-800'
+                }`}>
+                  {widgetNotice.message}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
         {backgroundTasks.length > 0 && (
           <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
             <div className="mb-2 flex items-center justify-between">

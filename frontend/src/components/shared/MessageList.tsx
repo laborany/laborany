@@ -21,6 +21,8 @@ interface MessageListProps {
   onRegenerate?: (messageId: string) => void | Promise<void>
   onSelectVariant?: (messageId: string, variantIndex: number) => void
   regeneratingMessageId?: string | null
+  onShowWidget?: (widgetId: string) => void
+  onVisualizeMessage?: (content: string) => void
 }
 
 type TextBlock = {
@@ -44,6 +46,7 @@ type UserBlock = {
 type ErrorBlock = { type: 'error'; content: string }
 type ThinkingStatusBlock = { type: 'thinking' }
 type ThinkingContentBlock = { type: 'thinking_content'; content: string }
+type WidgetAnchorBlock = { type: 'widget_anchor'; widgetId: string; title: string }
 
 type ToolEntry = { name: string; input?: Record<string, unknown> }
 type RenderBlock =
@@ -53,6 +56,7 @@ type RenderBlock =
   | ErrorBlock
   | ThinkingStatusBlock
   | ThinkingContentBlock
+  | WidgetAnchorBlock
 
 type AssistantSegment =
   | { type: 'text'; content: string }
@@ -182,6 +186,8 @@ export default function MessageList({
   onRegenerate,
   onSelectVariant,
   regeneratingMessageId,
+  onShowWidget,
+  onVisualizeMessage,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLElement | null>(null)
@@ -294,6 +300,8 @@ export default function MessageList({
           onRegenerate={onRegenerate}
           onSelectVariant={onSelectVariant}
           regeneratingMessageId={regeneratingMessageId}
+          onShowWidget={onShowWidget}
+          onVisualizeMessage={onVisualizeMessage}
         />
       ))}
       <div ref={bottomRef} />
@@ -320,6 +328,16 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
         messageId: message.id,
         serverMessageId: message.serverMessageId ?? null,
         meta: message.meta || null,
+      })
+      continue
+    }
+
+    if (message.type === 'assistant' && message.widgetId) {
+      flushTools(true)
+      blocks.push({
+        type: 'widget_anchor',
+        widgetId: message.widgetId,
+        title: message.widgetTitle || 'Widget',
       })
       continue
     }
@@ -404,6 +422,8 @@ function BlockRenderer({
   onRegenerate,
   onSelectVariant,
   regeneratingMessageId,
+  onShowWidget,
+  onVisualizeMessage,
 }: {
   block: RenderBlock
   message?: AgentMessage
@@ -411,6 +431,8 @@ function BlockRenderer({
   onRegenerate?: (messageId: string) => void | Promise<void>
   onSelectVariant?: (messageId: string, variantIndex: number) => void
   regeneratingMessageId?: string | null
+  onShowWidget?: (widgetId: string) => void
+  onVisualizeMessage?: (content: string) => void
 }) {
   switch (block.type) {
     case 'user':
@@ -428,6 +450,7 @@ function BlockRenderer({
           onRegenerate={onRegenerate}
           onSelectVariant={onSelectVariant}
           regeneratingMessageId={regeneratingMessageId}
+          onVisualizeMessage={onVisualizeMessage}
         />
       )
     case 'tools':
@@ -438,6 +461,8 @@ function BlockRenderer({
       return <ThinkingIndicator variant="accent" />
     case 'thinking_content':
       return <ThinkingContentView content={block.content} />
+    case 'widget_anchor':
+      return <WidgetAnchorCard widgetId={block.widgetId} title={block.title} onClick={onShowWidget} />
   }
 }
 
@@ -509,6 +534,7 @@ function TextBlockView({
   onRegenerate,
   onSelectVariant,
   regeneratingMessageId,
+  onVisualizeMessage,
 }: {
   content: string
   isStreaming: boolean
@@ -520,6 +546,7 @@ function TextBlockView({
   onRegenerate?: (messageId: string) => void | Promise<void>
   onSelectVariant?: (messageId: string, variantIndex: number) => void
   regeneratingMessageId?: string | null
+  onVisualizeMessage?: (content: string) => void
 }) {
   // Fix P0-1: 降低 debounce 延迟，从 300ms → 50ms，减少卡顿感
   const debouncedContent = useDebouncedValue(content, isStreaming ? 50 : 0)
@@ -549,6 +576,7 @@ function TextBlockView({
               latestRegeneratableMessageId={latestRegeneratableMessageId}
               onRegenerate={onRegenerate}
               regeneratingMessageId={regeneratingMessageId}
+              onVisualizeMessage={onVisualizeMessage}
             />
             <VariantPager message={message} onSelectVariant={onSelectVariant} />
           </>
@@ -571,6 +599,7 @@ function TextBlockView({
             latestRegeneratableMessageId={latestRegeneratableMessageId}
             onRegenerate={onRegenerate}
             regeneratingMessageId={regeneratingMessageId}
+            onVisualizeMessage={onVisualizeMessage}
           />
           <VariantPager message={message} onSelectVariant={onSelectVariant} />
         </>
@@ -586,6 +615,7 @@ function MessageActionBar({
   latestRegeneratableMessageId,
   onRegenerate,
   regeneratingMessageId,
+  onVisualizeMessage,
 }: {
   text: string
   canCopy: boolean
@@ -593,6 +623,7 @@ function MessageActionBar({
   latestRegeneratableMessageId: string | null
   onRegenerate?: (messageId: string) => void | Promise<void>
   regeneratingMessageId?: string | null
+  onVisualizeMessage?: (content: string) => void
 }) {
   const canRegenerate = Boolean(
     message
@@ -600,11 +631,26 @@ function MessageActionBar({
     && message.id === latestRegeneratableMessageId
     && message.meta?.capabilities?.canRegenerate,
   )
+  const canVisualize = Boolean(onVisualizeMessage && text.trim())
 
-  if (!text.trim() || (!canCopy && !canRegenerate)) return null
+  if (!text.trim() || (!canCopy && !canRegenerate && !canVisualize)) return null
 
   return (
     <div className="mt-1 flex justify-end gap-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+      {canVisualize && (
+        <button
+          type="button"
+          onClick={() => onVisualizeMessage!(text)}
+          title="可视化"
+          aria-label="可视化"
+          className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+          <span>可视化</span>
+        </button>
+      )}
       {canRegenerate && message && (
         <RegenerateButton
           messageId={message.id}
@@ -982,4 +1028,28 @@ function getToolDescription(name: string, input?: Record<string, unknown>): stri
     default:
       return ''
   }
+}
+
+function WidgetAnchorCard({ widgetId, title, onClick }: { widgetId: string; title: string; onClick?: (widgetId: string) => void }) {
+  return (
+    <div
+      className="animate-in slide-in-from-bottom-1 fade-in duration-200 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-primary/10 transition-colors"
+      data-widget-id={widgetId}
+      onClick={() => onClick?.(widgetId)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(widgetId) }}
+    >
+      <svg className="w-5 h-5 text-primary shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+      </svg>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-foreground truncate">{title}</p>
+        <p className="text-xs text-muted-foreground">Interactive widget</p>
+      </div>
+      <svg className="w-4 h-4 text-muted-foreground shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+      </svg>
+    </div>
+  )
 }

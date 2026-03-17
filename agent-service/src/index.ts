@@ -70,7 +70,14 @@ if (!existsSync(DATA_DIR)) {
 }
 
 const port = getAgentPort()
-app.listen(port, () => {
+const server = app.listen(port)
+
+server.once('error', (error) => {
+  console.error('[Agent Service] 启动失败:', error)
+  process.exit(1)
+})
+
+server.once('listening', () => {
   console.log(`[Agent Service] 运行在 http://localhost:${port}`)
   console.log(`[Agent Service] 数据目录: ${DATA_DIR}`)
   startCronTimer()

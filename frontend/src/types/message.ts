@@ -27,6 +27,7 @@ export interface MessageMeta {
   variantIndex?: number | null
   source?: 'user' | 'llm' | 'rule' | 'system'
   capabilities?: MessageCapabilities
+  widget?: { widgetId: string; title: string; html: string; status: string }
 }
 
 export interface MessageVariant {
@@ -48,6 +49,17 @@ export interface AgentMessage {
   meta?: MessageMeta | null
   variants?: MessageVariant[]
   activeVariantIndex?: number
+  /** Widget anchor: links this message to a widget in the panel */
+  widgetId?: string
+  widgetTitle?: string
+}
+
+export interface WidgetState {
+  widgetId: string
+  title: string
+  html: string
+  status: 'loading' | 'ready' | 'error'
+  errorMessage?: string
 }
 
 export interface HistoryMessage {

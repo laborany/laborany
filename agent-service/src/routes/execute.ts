@@ -7,7 +7,10 @@
 
 import { Router, Request, Response } from 'express'
 import { v4 as uuid } from 'uuid'
-import { loadSkill } from 'laborany-shared'
+import {
+  loadSkill,
+  resolveExecuteGenerativeWidgetSupport,
+} from 'laborany-shared'
 import { SessionManager } from '../session-manager.js'
 import { executeAgent } from '../agent-executor.js'
 import { taskManager as taskManagerInstance } from '../task-manager.js'
@@ -61,6 +64,12 @@ function createExecuteRouter(sessionManager: SessionManager, taskManager: TaskMa
         res.write(`data: ${JSON.stringify({ type: 'warning', content: `模型配置 ${modelProfileId} 未找到，已回退到默认模型` })}\n\n`)
       } catch { /* ignore */ }
     }
+    const executeWidgetSupport = resolveExecuteGenerativeWidgetSupport({
+      requested: true,
+      interfaceType: modelOverride?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,
+      model: modelOverride?.model || process.env.ANTHROPIC_MODEL,
+      baseUrl: modelOverride?.baseUrl || process.env.ANTHROPIC_BASE_URL,
+    })
 
     // Fix P1-6: res.write 包装 try-catch，防止缓冲区满或连接断开时进程崩溃
     const unsubscribe = taskManager.subscribe(sessionId, (event) => {
@@ -83,6 +92,7 @@ function createExecuteRouter(sessionManager: SessionManager, taskManager: TaskMa
         signal: abortController.signal,
         onEvent: (event) => taskManager.addEvent(sessionId, event),
         modelOverride,
+        enableWidgets: executeWidgetSupport.enabled,
       })
     } catch (error) {
       if ((error as Error).name === 'AbortError') {

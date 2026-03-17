@@ -1,6 +1,6 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { AgentMessage, TaskFile } from '../types'
+import type { AgentMessage, TaskFile, WidgetState } from '../types'
 import { API_BASE } from '../config/api'
 import { useModelProfile } from '../contexts/ModelProfileContext'
 import { mergeAttachmentIds, uploadAttachments } from '../lib/attachments'
@@ -51,6 +51,7 @@ interface AgentState {
     completedAt?: string
   }>
   currentCompositeStep: number
+  activeWidget: WidgetState | null
 }
 
 const EXECUTE_DEDUPE_WINDOW_MS = 1200
@@ -325,6 +326,7 @@ export function useAgent(skillId: string) {
     filesVersion: 0,
     compositeSteps: [],
     currentCompositeStep: -1,
+    activeWidget: null,
   })
 
   const abortRef = useRef<AbortController | null>(null)
@@ -348,6 +350,9 @@ export function useAgent(skillId: string) {
   const textFlushRafRef = useRef<number | null>(null)
   const pendingTextFlushRef = useRef(false)
   const isReplayingRef = useRef(false)
+  const pendingWidgetDeltaRef = useRef<string | null>(null)
+  const widgetDeltaRafRef = useRef<number | null>(null)
+  const committedWidgetsRef = useRef<Map<string, WidgetState>>(new Map())
   const { activeProfileId } = useModelProfile()
 
   const flushAssistantText = useCallback((force = false) => {
@@ -462,6 +467,7 @@ export function useAgent(skillId: string) {
       filesVersion: 0,
       compositeSteps: [],
       currentCompositeStep: -1,
+      activeWidget: null,
     })
 
     prevSkillIdRef.current = skillId
@@ -744,6 +750,70 @@ export function useAgent(skillId: string) {
 
         case 'pipeline_done':
           setState((s) => ({ ...s, currentCompositeStep: -1 }))
+          break
+
+        case 'widget_start':
+          setState((s) => ({
+            ...s,
+            activeWidget: {
+              widgetId: event.widgetId as string,
+              title: (event.title as string) || (event.widgetTitle as string) || 'Loading...',
+              html: '',
+              status: 'loading',
+            },
+          }))
+          break
+
+        case 'widget_delta': {
+          const html = (event.html as string) || (event.widgetHtml as string) || ''
+          if (html.length > 512_000) break
+          pendingWidgetDeltaRef.current = html
+          if (widgetDeltaRafRef.current === null) {
+            widgetDeltaRafRef.current = window.requestAnimationFrame(() => {
+              widgetDeltaRafRef.current = null
+              const pending = pendingWidgetDeltaRef.current
+              if (pending !== null) {
+                pendingWidgetDeltaRef.current = null
+                setState((s) => s.activeWidget ? { ...s, activeWidget: { ...s.activeWidget, html: pending } } : s)
+              }
+            })
+          }
+          break
+        }
+
+        case 'widget_commit': {
+          const widgetId = event.widgetId as string
+          const title = (event.title as string) || (event.widgetTitle as string) || 'Widget'
+          const html = (event.html as string) || (event.widgetHtml as string) || ''
+          const widgetState: WidgetState = { widgetId, title, html, status: 'ready' }
+          committedWidgetsRef.current.set(widgetId, widgetState)
+          setState((s) => ({
+            ...s,
+            activeWidget: widgetState,
+            messages: [
+              ...s.messages,
+              {
+                id: `widget_anchor_${widgetId}`,
+                type: 'assistant' as const,
+                content: '',
+                timestamp: new Date(),
+                widgetId,
+                widgetTitle: title,
+              },
+            ],
+          }))
+          break
+        }
+
+        case 'widget_error':
+          setState((s) => s.activeWidget ? {
+            ...s,
+            activeWidget: {
+              ...s.activeWidget,
+              status: 'error',
+              errorMessage: (event.message as string) || (event.content as string) || 'Widget rendering failed',
+            },
+          } : s)
           break
 
         case 'created_capability': {
@@ -1210,6 +1280,12 @@ export function useAgent(skillId: string) {
       window.cancelAnimationFrame(textFlushRafRef.current)
       textFlushRafRef.current = null
     }
+    if (widgetDeltaRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(widgetDeltaRafRef.current)
+      widgetDeltaRafRef.current = null
+    }
+    pendingWidgetDeltaRef.current = null
+    committedWidgetsRef.current.clear()
     setState({
       messages: [],
       isRunning: false,
@@ -1224,6 +1300,7 @@ export function useAgent(skillId: string) {
       filesVersion: 0,
       compositeSteps: [],
       currentCompositeStep: -1,
+      activeWidget: null,
     })
   }, [forgetActiveSessionId])
 
@@ -1283,6 +1360,15 @@ export function useAgent(skillId: string) {
     },
     [state.pendingQuestion, execute],
   )
+
+  const showWidget = useCallback((widgetId: string) => {
+    const widget = committedWidgetsRef.current.get(widgetId)
+    if (widget) setState((s) => ({ ...s, activeWidget: widget }))
+  }, [])
+
+  const setActiveWidget = useCallback((widget: WidgetState | null) => {
+    setState((s) => ({ ...s, activeWidget: widget }))
+  }, [])
 
   const checkRunningTask = useCallback(async (): Promise<string | null> => {
     const trackedSessionIds = readTrackedSessionIds(skillId)
@@ -1420,6 +1506,8 @@ export function useAgent(skillId: string) {
     checkRunningTask,
     attachToSession,
     runCompletedAt: state.runCompletedAt,
+    showWidget,
+    setActiveWidget,
   }
 }
 

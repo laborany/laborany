@@ -95,8 +95,10 @@ export default function SettingsPage() {
             <ModelSection
               groups={s.groups}
               editProfiles={s.editProfiles}
+              activeProfileId={s.activeProfileId}
               profilesMessage={s.profilesMessage}
               savingProfiles={s.savingProfiles}
+              promotingProfileId={s.promotingProfileId}
               showProfileKeys={s.showProfileKeys}
               setShowProfileKeys={s.setShowProfileKeys}
               testingProfileId={s.testingProfileId}
@@ -105,6 +107,7 @@ export default function SettingsPage() {
               removeProfile={s.removeProfile}
               moveProfile={s.moveProfile}
               updateProfile={s.updateProfile}
+              setProfileAsCurrentDefault={s.setProfileAsCurrentDefault}
               testProfileConnection={s.testProfileConnection}
               saveModelProfiles={s.saveModelProfiles}
             />

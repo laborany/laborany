@@ -57,6 +57,8 @@
     "verify:memory-fastpaths": "node scripts/verify-memory-fastpaths.js",
     "verify:memory-ui-real": "node scripts/verify-memory-ui-real.js",
     "verify:converse-ui-real": "node scripts/verify-converse-ui-real.js",
+    "verify:converse-widget-real": "node scripts/verify-converse-widget-real.js",
+    "verify:execute-widget-real": "node scripts/verify-execute-widget-real.js",
     "verify:remote-bot-flow": "npm --prefix agent-service exec tsx ./scripts/verify-remote-bot-flow.ts",
     "test:dispatch": "concurrently -k -s first -n AGENT,API,E2E -c yellow,blue,green \"tmp-debug\\run-agent-e2e.cmd\" \"tmp-debug\\run-api-e2e.cmd\" \"tmp-debug\\run-e2e-dispatch.cmd\"",
     "build:electron": "npm run bundle:all:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && npm run fix:native:win && node ./scripts/run-local-bin.js electron-builder --win --publish never",
