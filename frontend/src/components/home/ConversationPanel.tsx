@@ -47,6 +47,14 @@ interface ConversationPanelProps {
   onWidgetFallbackToText?: () => void
   onShowWidget?: (widgetId: string) => void
   onVisualizeMessage?: (content: string) => void
+  widgetNotice?: {
+    tone: 'warning' | 'neutral'
+    message: string
+  } | null
+  mcpNotice?: {
+    tone: 'warning' | 'neutral' | 'success'
+    message: string
+  } | null
 }
 
 export function ConversationPanel({
@@ -69,6 +77,8 @@ export function ConversationPanel({
   onWidgetFallbackToText,
   onShowWidget,
   onVisualizeMessage,
+  widgetNotice,
+  mcpNotice,
 }: ConversationPanelProps) {
   const hasWidget = activeWidget != null
 
@@ -112,6 +122,28 @@ export function ConversationPanel({
             onShowWidget={onShowWidget}
             onVisualizeMessage={onVisualizeMessage}
           />
+
+          {widgetNotice && (
+            <div className={`mt-4 rounded-md border px-3 py-2 text-xs ${
+              widgetNotice.tone === 'warning'
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : 'border-border bg-secondary/60 text-muted-foreground'
+            }`}>
+              {widgetNotice.message}
+            </div>
+          )}
+
+          {mcpNotice && (
+            <div className={`mt-4 rounded-md border px-3 py-2 text-xs ${
+              mcpNotice.tone === 'warning'
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : mcpNotice.tone === 'success'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : 'border-border bg-secondary/60 text-muted-foreground'
+            }`}>
+              {mcpNotice.message}
+            </div>
+          )}
 
           {error && <p className="text-sm text-red-500 text-center mt-4">{error}</p>}
 

@@ -413,6 +413,8 @@ export default function HomePage() {
           ].join('\n'))
         }
         : undefined}
+      widgetNotice={homeWidgetNotice}
+      mcpNotice={converse.mcpNotice}
       onWidgetInteraction={(_widgetId, data) => {
         const text = `[来自组件交互]\n${JSON.stringify(data, null, 2)}`
         void converse.sendMessage(text)

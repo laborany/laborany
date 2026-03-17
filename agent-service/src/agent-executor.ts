@@ -23,6 +23,7 @@ import { APP_HOME_DIR, TASKS_DIR, UPLOADS_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
 import {
   writeMcpConfig,
+  writeUserMcpConfig,
   isWidgetTool,
   createWidgetHandlerState,
   processStreamEvent,
@@ -56,7 +57,7 @@ function stripPipelineContext(userQuery: string): string {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentEvent {
   type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done' | 'stopped' | 'status'
-    | 'widget_start' | 'widget_delta' | 'widget_commit' | 'widget_error'
+    | 'widget_start' | 'widget_delta' | 'widget_commit' | 'widget_error' | 'mcp_status'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
@@ -68,6 +69,13 @@ export interface AgentEvent {
   widgetId?: string
   widgetTitle?: string
   widgetHtml?: string
+  mcpServers?: McpServerStatus[]
+}
+
+export interface McpServerStatus {
+  name: string
+  status: 'connected' | 'failed' | 'disabled' | 'connecting'
+  reason?: string
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -180,6 +188,7 @@ interface StreamMessage {
   result?: string
   tool_name?: string
   tool_input?: Record<string, unknown>
+  mcp_servers?: Array<{ name?: string; status?: string }>
   // stream_event fields
   event?: {
     type?: string
@@ -205,6 +214,26 @@ function parseStreamLine(
     const msg: StreamMessage = JSON.parse(line)
     let lastEvent: AgentEvent | null = null
     const textChunks: string[] = []
+
+    if (msg.type === 'system' && msg.subtype === 'init' && Array.isArray(msg.mcp_servers)) {
+      const mcpServers = msg.mcp_servers
+        .map((server) => {
+          const name = typeof server.name === 'string' ? server.name.trim() : ''
+          const status = typeof server.status === 'string' ? server.status.trim() : ''
+          if (!name) return null
+          if (status === 'connected' || status === 'failed' || status === 'disabled') {
+            return { name, status } satisfies McpServerStatus
+          }
+          return { name, status: 'connecting' as const }
+        })
+        .filter(Boolean) as McpServerStatus[]
+
+      if (mcpServers.length > 0) {
+        const event: AgentEvent = { type: 'mcp_status', mcpServers }
+        onEvent(event)
+        return event
+      }
+    }
 
     // 处理 assistant 消息（文本和工具调用）
     if (msg.type === 'assistant' && msg.message?.content) {
@@ -294,6 +323,63 @@ function parseStreamLine(
   return null
 }
 
+function normalizeMcpReason(reason: string): string {
+  const text = reason.trim()
+  if (!text) return ''
+  return text
+    .replace(/^Connection failed:\s*/i, '')
+    .replace(/^Error:\s*/i, '')
+    .replace(/^HTTP Connection failed after \d+ms:\s*/i, '')
+    .replace(/^Connection failed after \d+ms:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function updateMcpServerStatuses(
+  current: Map<string, McpServerStatus>,
+  incoming: McpServerStatus[],
+): McpServerStatus[] | null {
+  let changed = false
+
+  for (const server of incoming) {
+    const prev = current.get(server.name)
+    if (!prev || prev.status !== server.status || prev.reason !== server.reason) {
+      current.set(server.name, server)
+      changed = true
+    }
+  }
+
+  if (!changed) return null
+  return Array.from(current.values()).sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function parseMcpStatusLine(line: string): McpServerStatus | null {
+  const connectedMatch = line.match(/MCP server "([^"]+)": Successfully connected/i)
+  if (connectedMatch) {
+    return { name: connectedMatch[1], status: 'connected' }
+  }
+
+  const failedMatch = line.match(/MCP server "([^"]+)": (?:HTTP )?Connection failed(?: after \d+ms)?: (.+)$/i)
+  if (failedMatch) {
+    return {
+      name: failedMatch[1],
+      status: 'failed',
+      reason: normalizeMcpReason(failedMatch[2]),
+    }
+  }
+
+  const errorMatch = line.match(/MCP server "([^"]+)" Connection failed: (.+)$/i)
+  if (errorMatch) {
+    return {
+      name: errorMatch[1],
+      status: 'failed',
+      reason: normalizeMcpReason(errorMatch[2]),
+    }
+  }
+
+  return null
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -376,19 +462,38 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   // ── Generative UI: MCP config + widget state ──
   let widgetState: WidgetHandlerState | undefined
+  let hasInjectedMcpConfig = false
   if (cliWidgetRuntimeEnabled) {
     try {
       const mcpConfigPath = writeMcpConfig(taskDir)
       args.push('--mcp-config', mcpConfigPath)
+      hasInjectedMcpConfig = true
       widgetState = createWidgetHandlerState()
       console.log(`[Agent] Generative UI enabled, MCP config: ${mcpConfigPath}`)
     } catch (err) {
       console.error('[Agent] Failed to write MCP config for generative UI:', err)
     }
-  } else if (enableWidgets) {
-    const disableReason = widgetSupport.reasonMessage
-      || (widgetSupport.enabled ? 'Current execute surface only supports the Claude CLI widget runtime.' : 'unknown reason')
-    console.log(`[Agent] Generative UI requested but disabled: ${disableReason}`)
+  } else {
+    // Widget 未启用时，仍然传递用户配置的 MCP 服务器
+    try {
+      const userMcpPath = writeUserMcpConfig(taskDir)
+      if (userMcpPath) {
+        args.push('--mcp-config', userMcpPath)
+        hasInjectedMcpConfig = true
+        console.log(`[Agent] User MCP config injected: ${userMcpPath}`)
+      }
+    } catch (err) {
+      console.error('[Agent] Failed to write user MCP config:', err)
+    }
+    if (enableWidgets) {
+      const disableReason = widgetSupport.reasonMessage
+        || (widgetSupport.enabled ? 'Current execute surface only supports the Claude CLI widget runtime.' : 'unknown reason')
+      console.log(`[Agent] Generative UI requested but disabled: ${disableReason}`)
+    }
+  }
+
+  if (hasInjectedMcpConfig) {
+    args.push('--debug', 'mcp')
   }
 
   communicationPreferenceManager.applyFromUserText(userQuery, userQuery)
@@ -441,6 +546,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   let agentResponse = ''  // 收集 Agent 的文本输出
   let toolSummary = ''    // 收集工具调用摘要
   let stderrBuffer = ''
+  const mcpServerStatuses = new Map<string, McpServerStatus>()
 
   /* ────────────────────────────────────────────────────────────────────────
    *  包装 onEvent：统一收集文本和工具调用信息
@@ -462,6 +568,14 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     : undefined
 
   const wrappedOnEvent = (event: AgentEvent) => {
+    if (event.type === 'mcp_status' && Array.isArray(event.mcpServers)) {
+      const merged = updateMcpServerStatuses(mcpServerStatuses, event.mcpServers)
+      if (merged) {
+        onEvent({ type: 'mcp_status', mcpServers: merged })
+      }
+      return
+    }
+
     onEvent(event)
     if (event.type === 'text' && event.content) {
       lastProgressAt = Date.now()
@@ -500,6 +614,13 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     /* 逐行检查，匹配到重试/错误模式的行透传到前端 */
     for (const line of chunk.split('\n')) {
       const trimmed = line.trim()
+      const mcpUpdate = parseMcpStatusLine(trimmed)
+      if (mcpUpdate) {
+        const merged = updateMcpServerStatuses(mcpServerStatuses, [mcpUpdate])
+        if (merged) {
+          onEvent({ type: 'mcp_status', mcpServers: merged })
+        }
+      }
       if (trimmed && STDERR_FORWARD_PATTERN.test(trimmed)) {
         onEvent({ type: 'status', content: trimmed })
       }

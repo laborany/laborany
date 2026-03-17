@@ -33,7 +33,7 @@ export function McpServerTestButton({ serverName }: { serverName: string }) {
         disabled={testing}
         className="rounded px-2 py-1 text-xs bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {testing ? '测试中...' : '测试'}
+        {testing ? '握手测试中...' : '握手测试'}
       </button>
       {result && (
         <span className={`text-xs ${result.success ? 'text-green-700' : 'text-red-600'}`}>

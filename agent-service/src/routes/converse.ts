@@ -2326,6 +2326,11 @@ router.post('/', async (req: Request, res: Response) => {
             sseWrite(res, 'status', { content: event.content })
           }
 
+          if (event.type === 'mcp_status' && event.mcpServers) {
+            sseWrite(res, 'mcp_status', { servers: event.mcpServers })
+            return
+          }
+
           if (event.type === 'stopped') {
             if (hasPendingQuestion) {
               terminalStatus = 'waiting_input'

@@ -142,7 +142,7 @@ mcpRoutes.post('/:name/test', async (c) => {
       return c.json({ success: false, error: `服务器 "${name}" 不存在` }, 404)
     }
 
-    const result = await testMcpServer(server.config)
+    const result = await testMcpServer(server.config, server.name)
     return c.json(result)
   } catch (err) {
     console.error('[MCP Route] 测试服务器失败:', err)

@@ -5,9 +5,10 @@
  * Runtime MCP injection uses the SDK-backed server implementation.
  */
 
-import { writeFileSync, existsSync } from 'fs'
+import { writeFileSync, existsSync, readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+import { homedir } from 'os'
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url))
 
@@ -292,8 +293,21 @@ function resolveMcpServerPath(): string {
 
 // ── MCP Config generation ──
 
+function readUserMcpServers(): Record<string, unknown> {
+  try {
+    const settingsPath = join(homedir(), '.claude', 'settings.json')
+    if (!existsSync(settingsPath)) return {}
+    const content = readFileSync(settingsPath, 'utf-8')
+    const settings = JSON.parse(content)
+    return settings.mcpServers || {}
+  } catch {
+    return {}
+  }
+}
+
 /**
  * Write the MCP config for the SDK-backed server into taskDir.
+ * Merges user MCP servers from ~/.claude/settings.json.
  * Returns the path to the mcp-config.json file.
  */
 export function writeMcpConfig(taskDir: string, nodePath?: string): string {
@@ -301,16 +315,30 @@ export function writeMcpConfig(taskDir: string, nodePath?: string): string {
   const node = nodePath || process.execPath
   const serverPath = resolveMcpServerPath()
 
-  const config = {
-    mcpServers: {
-      'generative-ui': {
-        command: node,
-        args: [serverPath],
-      },
-    },
-  }
+  const userMcpServers = readUserMcpServers()
+  const mergedServers: Record<string, unknown> = { ...userMcpServers }
+  mergedServers['generative-ui'] = { command: node, args: [serverPath] }
+
+  const config = { mcpServers: mergedServers }
 
   writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+  return configPath
+}
+
+/**
+ * Write a config containing only user MCP servers (no generative-ui).
+ * Returns null if no user MCP servers are configured.
+ */
+export function writeUserMcpConfig(taskDir: string): string | null {
+  const userMcpServers = readUserMcpServers()
+  if (Object.keys(userMcpServers).length === 0) return null
+
+  const configPath = join(taskDir, '.mcp-user.json')
+  writeFileSync(
+    configPath,
+    JSON.stringify({ mcpServers: userMcpServers }, null, 2),
+    'utf-8',
+  )
   return configPath
 }
 

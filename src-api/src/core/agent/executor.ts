@@ -38,6 +38,7 @@ import {
 import {
   isWidgetTool,
   writeMcpConfig,
+  writeUserMcpConfig,
 } from './generative-ui/tools.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -1099,8 +1100,20 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     } catch (error) {
       console.error('[Agent] Failed to initialize Generative UI MCP config:', error)
     }
-  } else if (enableWidgets) {
-    console.log(`[Agent] Generative UI requested but disabled: ${executeWidgetSupport.reasonMessage || 'unknown reason'}`)
+  } else {
+    // Widget 未启用时，仍然传递用户配置的 MCP 服务器
+    try {
+      const userMcpPath = writeUserMcpConfig(taskDir)
+      if (userMcpPath) {
+        args.push('--mcp-config', userMcpPath)
+        console.log(`[Agent] User MCP config injected: ${userMcpPath}`)
+      }
+    } catch (error) {
+      console.error('[Agent] Failed to write user MCP config:', error)
+    }
+    if (enableWidgets) {
+      console.log(`[Agent] Generative UI requested but disabled: ${executeWidgetSupport.reasonMessage || 'unknown reason'}`)
+    }
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════

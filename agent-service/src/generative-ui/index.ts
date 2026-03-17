@@ -5,6 +5,7 @@
 export {
   getGuidelines,
   writeMcpConfig,
+  writeUserMcpConfig,
   isWidgetTool,
   TOOL_LOAD_GUIDELINES,
   TOOL_SHOW_WIDGET,

@@ -1,5 +1,6 @@
 import { writeFileSync } from 'fs'
 import { join } from 'path'
+import { readClaudeSettings } from '../mcp/settings-io.js'
 
 const GUIDELINES_CORE = `# Widget Design Guidelines - Core
 
@@ -251,18 +252,34 @@ export function writeMcpConfig(taskDir: string, nodeCommand: string): string {
   const serverPath = join(taskDir, '.mcp-generative-ui-server.mjs')
 
   writeFileSync(serverPath, buildMcpServerScript(), 'utf-8')
+
+  // 合并用户在 settings 中配置的 MCP 服务器
+  const userMcpServers = readClaudeSettings().mcpServers || {}
+  const mergedServers: Record<string, unknown> = { ...userMcpServers }
+  mergedServers['generative-ui'] = { command: nodeCommand, args: [serverPath] }
+
   writeFileSync(
     configPath,
-    JSON.stringify({
-      mcpServers: {
-        'generative-ui': {
-          command: nodeCommand,
-          args: [serverPath],
-        },
-      },
-    }, null, 2),
+    JSON.stringify({ mcpServers: mergedServers }, null, 2),
     'utf-8',
   )
 
+  return configPath
+}
+
+/**
+ * 写入仅包含用户 MCP 服务器的配置文件（不含 generative-ui）
+ * 用于 widget 未启用但用户有 MCP 配置的场景
+ */
+export function writeUserMcpConfig(taskDir: string): string | null {
+  const userMcpServers = readClaudeSettings().mcpServers || {}
+  if (Object.keys(userMcpServers).length === 0) return null
+
+  const configPath = join(taskDir, '.mcp-user.json')
+  writeFileSync(
+    configPath,
+    JSON.stringify({ mcpServers: userMcpServers }, null, 2),
+    'utf-8',
+  )
   return configPath
 }

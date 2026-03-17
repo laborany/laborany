@@ -70,9 +70,19 @@ export interface UseConverseReturn {
   error: string | null
   regeneratingMessageId: string | null
   activeWidget: WidgetState | null
+  mcpNotice: {
+    tone: 'warning' | 'neutral' | 'success'
+    message: string
+  } | null
   setActiveWidget: React.Dispatch<React.SetStateAction<WidgetState | null>>
   showWidget: (widgetId: string) => void
   reset: () => void
+}
+
+interface McpServerStatus {
+  name: string
+  status: 'connected' | 'failed' | 'disabled' | 'connecting'
+  reason?: string
 }
 
 type ConversePhase = NonNullable<UseConverseReturn['state']>['phase']
@@ -191,6 +201,39 @@ function parseUTCDate(dateStr: string): Date {
 
 function normalizeComparableContent(content: string): string {
   return content.replace(/\s+/g, ' ').trim()
+}
+
+function buildMcpNotice(servers: McpServerStatus[]): UseConverseReturn['mcpNotice'] {
+  if (servers.length === 0) return null
+
+  const connected = servers.filter(server => server.status === 'connected')
+  const failed = servers.filter(server => server.status === 'failed')
+  const disabled = servers.filter(server => server.status === 'disabled')
+
+  const parts: string[] = []
+  if (connected.length > 0) {
+    parts.push(`已连接 ${connected.length} 个 MCP：${connected.map(server => server.name).join('、')}`)
+  }
+  if (failed.length > 0) {
+    const failedText = failed
+      .map((server) => server.reason ? `${server.name}（${server.reason}）` : server.name)
+      .join('；')
+    parts.push(`连接失败 ${failed.length} 个：${failedText}`)
+  }
+  if (disabled.length > 0) {
+    parts.push(`已禁用 ${disabled.length} 个：${disabled.map(server => server.name).join('、')}`)
+  }
+
+  const tone = failed.length > 0
+    ? 'warning'
+    : connected.length > 0
+      ? 'success'
+      : 'neutral'
+
+  return {
+    tone,
+    message: parts.join('。'),
+  }
 }
 
 function collectCommittedWidgets(messages: AgentMessage[]): Map<string, WidgetState> {
@@ -356,6 +399,7 @@ export function useConverse(): UseConverseReturn {
   const [error, setError] = useState<string | null>(null)
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<string | null>(null)
   const [activeWidget, setActiveWidget] = useState<WidgetState | null>(null)
+  const [mcpNotice, setMcpNotice] = useState<UseConverseReturn['mcpNotice']>(null)
 
   const sessionIdRef = useRef<string | null>(null)
   const sessionFileIdsRef = useRef<string[]>([])
@@ -671,6 +715,32 @@ export function useConverse(): UseConverseReturn {
         return
       }
 
+      if (eventType === 'mcp_status') {
+        const servers = Array.isArray(data.servers)
+          ? data.servers
+            .map((item) => {
+              if (!item || typeof item !== 'object') return null
+              const candidate = item as Record<string, unknown>
+              const name = typeof candidate.name === 'string' ? candidate.name.trim() : ''
+              const status = typeof candidate.status === 'string' ? candidate.status.trim() : ''
+              const reason = typeof candidate.reason === 'string' ? candidate.reason.trim() : ''
+              if (!name) return null
+              if (status !== 'connected' && status !== 'failed' && status !== 'disabled' && status !== 'connecting') {
+                return null
+              }
+              return {
+                name,
+                status,
+                ...(reason ? { reason } : {}),
+              } satisfies McpServerStatus
+            })
+            .filter(Boolean) as McpServerStatus[]
+          : []
+
+        setMcpNotice(buildMcpNotice(servers))
+        return
+      }
+
       if (eventType === 'done') {
         setIsThinking(false)
       }
@@ -760,6 +830,7 @@ export function useConverse(): UseConverseReturn {
     setAction(null)
     setPendingQuestion(null)
     setError(null)
+    setMcpNotice(null)
     setIsThinking(true)
 
     const controller = new AbortController()
@@ -1005,6 +1076,7 @@ export function useConverse(): UseConverseReturn {
     setError(null)
     setRegeneratingMessageId(null)
     setActiveWidget(null)
+    setMcpNotice(null)
     messagesRef.current = []
     sessionIdRef.current = null
     sessionFileIdsRef.current = []
@@ -1027,6 +1099,7 @@ export function useConverse(): UseConverseReturn {
     error,
     regeneratingMessageId,
     activeWidget,
+    mcpNotice,
     setActiveWidget,
     showWidget,
     reset,
