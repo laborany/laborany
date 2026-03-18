@@ -12,7 +12,11 @@ import { existsSync, rmSync } from 'fs'
 import { join } from 'path'
 import { executeAgent } from '../agent-executor.js'
 import { buildConverseSystemPrompt, type ConverseRuntimeContext } from '../converse-prompt.js'
-import { planConverseWidgetRuntime } from '../generative-ui/runtime.js'
+import {
+  buildConverseWidgetDirectQuery,
+  planConverseWidgetRuntime,
+  shouldForceConverseWidgetDirectMode,
+} from '../generative-ui/runtime.js'
 import { memoryInjector } from '../memory/io.js'
 import { memoryAsyncQueue } from '../memory/index.js'
 import {
@@ -633,6 +637,20 @@ interface ConverseQuestionPayload {
   questionContext?: 'clarify' | 'schedule' | 'approval'
 }
 
+interface ConverseQuestionAnswer {
+  header: string
+  question: string
+  answer: string
+}
+
+interface ConverseQuestionResponsePayload {
+  questionId: string
+  toolUseId: string
+  answers: ConverseQuestionAnswer[]
+  missingFields?: string[]
+  questionContext?: 'clarify' | 'schedule' | 'approval'
+}
+
 type ConversePhase =
   | 'clarify'
   | 'match'
@@ -672,6 +690,59 @@ function toQuestionPayload(
     questions,
     missingFields: options?.missingFields,
     questionContext: options?.questionContext,
+  }
+}
+
+function inferQuestionContext(
+  items: Array<Pick<ConverseQuestion, 'header' | 'question'>>,
+): ConverseQuestionPayload['questionContext'] | undefined {
+  const combined = items
+    .map((item) => `${item.header || ''} ${item.question || ''}`.trim())
+    .filter(Boolean)
+    .join('\n')
+  if (!combined) return undefined
+  if (/(定时|执行频率|执行时间|执行间隔|cron|时区|提醒|间隔)/i.test(combined)) {
+    return 'schedule'
+  }
+  return undefined
+}
+
+function normalizeQuestionContext(
+  value: unknown,
+): ConverseQuestionPayload['questionContext'] | undefined {
+  return value === 'clarify' || value === 'schedule' || value === 'approval'
+    ? value
+    : undefined
+}
+
+function normalizeQuestionResponsePayload(raw: unknown): ConverseQuestionResponsePayload | null {
+  if (!raw || typeof raw !== 'object') return null
+  const obj = raw as Record<string, unknown>
+  const rawAnswers = Array.isArray(obj.answers) ? obj.answers : []
+  const answers = rawAnswers
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const candidate = item as Record<string, unknown>
+      const answer = asString(candidate.answer)
+      if (!answer) return null
+      return {
+        header: asString(candidate.header) || '问题',
+        question: asString(candidate.question),
+        answer,
+      }
+    })
+    .filter((item): item is ConverseQuestionAnswer => Boolean(item))
+
+  if (!answers.length) return null
+
+  return {
+    questionId: asString(obj.questionId) || `question_${randomUUID()}`,
+    toolUseId: asString(obj.toolUseId) || `tool_${randomUUID()}`,
+    answers,
+    missingFields: Array.isArray(obj.missingFields)
+      ? obj.missingFields.map(item => asString(item)).filter(Boolean)
+      : undefined,
+    questionContext: normalizeQuestionContext(obj.questionContext) || inferQuestionContext(answers),
   }
 }
 
@@ -810,6 +881,98 @@ function normalizeWeekdayToCron(value: string): string | null {
   return null
 }
 
+function extractPriorUserTexts(rawMessages: unknown[]): string[] {
+  const userTexts: string[] = []
+  for (const item of rawMessages) {
+    if (!item || typeof item !== 'object') continue
+    const record = item as Record<string, unknown>
+    if (record.role !== 'user') continue
+    const content = asString(record.content)
+    if (content) userTexts.push(content)
+  }
+  return userTexts
+}
+
+function findQuestionAnswer(
+  answers: ConverseQuestionAnswer[],
+  pattern: RegExp,
+): string {
+  for (const item of answers) {
+    const haystack = `${item.header} ${item.question}`.trim()
+    if (pattern.test(haystack)) {
+      return item.answer
+    }
+  }
+  return ''
+}
+
+function buildScheduleFollowUpQuery(
+  priorUserTexts: string[],
+  response: ConverseQuestionResponsePayload,
+): string {
+  const priorIntent = priorUserTexts[priorUserTexts.length - 2] || priorUserTexts[0] || '帮我设置一个定时任务'
+  const frequency = findQuestionAnswer(response.answers, /(执行频率|频率|定时频率)/i)
+  const runAt = findQuestionAnswer(response.answers, /(执行时间|时间|运行时间)/i)
+  const interval = findQuestionAnswer(response.answers, /(执行间隔|间隔)/i)
+  const targetId = findQuestionAnswer(response.answers, /(执行目标|目标.*ID|skill id|技能.*ID)/i)
+  const targetQueryAnswer = findQuestionAnswer(response.answers, /(执行内容|任务内容|任务描述|query|要执行什么)/i)
+  const timezone = findQuestionAnswer(response.answers, /(时区|timezone)/i)
+
+  const parts: string[] = []
+  parts.push(priorIntent.includes('定时任务') ? priorIntent : `帮我设置一个定时任务，${priorIntent}`)
+
+  const normalizedFrequency = frequency.replace(/\s+/g, '')
+  if (runAt && /一次性|单次|只执行一次/.test(normalizedFrequency)) {
+    parts.push(`在${runAt}执行一次`)
+  } else if (interval) {
+    parts.push(`每隔${interval}执行`)
+  } else if (/每天|每日/.test(normalizedFrequency) && runAt) {
+    parts.push(`每天${runAt}执行`)
+  } else if (/每周|每星期/.test(normalizedFrequency) && runAt) {
+    parts.push(`${frequency.replace(/执行/g, '').trim()} ${runAt}执行`)
+  } else if (frequency) {
+    parts.push(`执行频率为${frequency}`)
+  }
+
+  if (runAt && !parts.some(part => part.includes(runAt))) {
+    parts.push(`执行时间为${runAt}`)
+  }
+  if (targetId) {
+    parts.push(`目标技能 ID 是 ${targetId}`)
+  }
+  if (targetQueryAnswer && !/沿用当前需求/i.test(targetQueryAnswer)) {
+    parts.push(`任务内容是${targetQueryAnswer}`)
+  }
+  if (timezone) {
+    parts.push(`时区使用${timezone}`)
+  }
+
+  return parts.join('，').trim()
+}
+
+function buildQuestionAwareQuery(
+  rawMessages: unknown[],
+  baseQuery: string,
+  questionResponse: ConverseQuestionResponsePayload | null,
+): string {
+  if (!questionResponse) return baseQuery
+
+  const priorUserTexts = extractPriorUserTexts(rawMessages)
+  if (questionResponse.questionContext === 'schedule') {
+    return buildScheduleFollowUpQuery(priorUserTexts, questionResponse)
+  }
+
+  const lines = [
+    '这是对上一轮补充问题的回答，请继续当前任务，不要重复询问已经回答过的项。',
+    ...questionResponse.answers.map(item => `- ${item.header || item.question}: ${item.answer}`),
+  ]
+  const priorIntent = priorUserTexts[priorUserTexts.length - 2] || priorUserTexts[0] || ''
+  if (priorIntent) {
+    lines.splice(1, 0, `原始任务：${priorIntent}`)
+  }
+  return lines.join('\n').trim()
+}
+
 function normalizeCapabilityAlias(value: string): string {
   return value
     .trim()
@@ -877,7 +1040,7 @@ function extractScheduleTargetQuery(
     if (candidate) return candidate
   }
 
-  let remainder = text.replace(matchedText, ' ')
+  let remainder = matchedText ? text.replace(matchedText, ' ') : text
   if (capabilityMatchText) {
     remainder = remainder.replace(capabilityMatchText, ' ')
   }
@@ -902,7 +1065,35 @@ function extractScheduleTargetQuery(
     .replace(/^[，,。.\s:：-]+/, '')
     .trim()
 
+  if (/^(?:请|帮我|麻烦|设置|设定|安排|创建|建立|新增|添加|定时|自动|执行|运行|任务|一下|一个|一条|个|条|\s)+$/i.test(remainder)) {
+    return ''
+  }
+
   return remainder
+}
+
+function hasRuleBasedScheduleIntent(text: string): boolean {
+  const normalized = text.trim()
+  if (!normalized) return false
+  return /(定时任务|定时执行|定时提醒|自动执行|自动运行|定期执行|cron|schedule|提醒我)/i.test(normalized)
+}
+
+function detectRuleBasedScheduleAction(query: string): ScheduleActionPayload | null {
+  const deterministic = detectDeterministicScheduleAction(query)
+  if (deterministic) return deterministic
+
+  const text = query.trim()
+  if (!hasRuleBasedScheduleIntent(text)) return null
+
+  const capabilityRef = extractReferencedCapability(text)
+  const targetQuery = extractScheduleTargetQuery(text, '', capabilityRef.matchedText)
+
+  return {
+    action: 'setup_schedule',
+    targetType: 'skill',
+    targetId: capabilityRef.targetId,
+    targetQuery,
+  }
 }
 
 function detectDeterministicScheduleAction(query: string): ScheduleActionPayload | null {
@@ -1196,13 +1387,7 @@ function normalizeQuestionPayload(
     missingFields: Array.isArray(toolInput.missingFields)
       ? toolInput.missingFields.map(item => asString(item)).filter(Boolean)
       : undefined,
-    questionContext: (() => {
-      const ctx = asString(toolInput.questionContext)
-      if (ctx === 'clarify' || ctx === 'schedule' || ctx === 'approval') {
-        return ctx
-      }
-      return undefined
-    })(),
+    questionContext: normalizeQuestionContext(toolInput.questionContext) || inferQuestionContext(questions),
   }
 }
 
@@ -1649,8 +1834,8 @@ function shouldSuppressActionForInformationalQuery(text: string): boolean {
 }
 
 function inferFallbackAction(query: string, fullText: string): ConverseActionPayload | null {
-  const deterministicSchedule = detectDeterministicScheduleAction(query)
-  if (deterministicSchedule) return deterministicSchedule
+  const ruleBasedSchedule = detectRuleBasedScheduleAction(query)
+  if (ruleBasedSchedule) return ruleBasedSchedule
 
   // Keep user intent and assistant prose separate. Mixing them can turn
   // harmless phrases like "创建组件" + "不要推荐 skill" into a false create_capability action.
@@ -1722,8 +1907,10 @@ router.post('/', async (req: Request, res: Response) => {
     modelProfileId,
     attachmentIds: rawAttachmentIds,
     latestUserQuery: rawLatestUserQuery,
+    questionResponse: rawQuestionResponse,
   } = req.body
   const runtimeContext = normalizeRuntimeContext(rawContext)
+  const questionResponse = normalizeQuestionResponsePayload(rawQuestionResponse)
 
   if (!rawMessages || !Array.isArray(rawMessages) || !rawMessages.length) {
     res.status(400).json({ error: '缺少 messages 参数' })
@@ -1755,7 +1942,8 @@ router.post('/', async (req: Request, res: Response) => {
     ...extracted.attachmentIds,
   ]))
   const baseQuery = extracted.text || rawQuery.trim() || (attachmentIds.length > 0 ? ATTACHMENT_ONLY_CONVERSE_QUERY : '')
-  const persistUserQuery = baseQuery || rawQuery.trim() || '用户发起了对话分派请求'
+  const effectiveBaseQuery = buildQuestionAwareQuery(rawMessages, baseQuery, questionResponse)
+  const persistUserQuery = rawQuery.trim() || baseQuery || '用户发起了对话分派请求'
   const turnId = randomUUID()
   if (!baseQuery) {
     console.warn('[Converse] Empty user query after message extraction', {
@@ -1835,9 +2023,71 @@ router.post('/', async (req: Request, res: Response) => {
     return
   }
 
-  const directAction = detectDirectIntentAction(baseQuery)
+  const ruleBasedScheduleAction = detectRuleBasedScheduleAction(effectiveBaseQuery)
+  if (ruleBasedScheduleAction) {
+    const guard = guardAction(ruleBasedScheduleAction, runtimeContext, effectiveBaseQuery)
+    const state = setSessionState(sessionId, {
+      phase: guard.phase,
+      approvalRequired: guard.approvalRequired,
+    })
+    sseWrite(res, 'state', {
+      ...state,
+      validationErrors: guard.validationErrors || [],
+    })
+    if (guard.ok && guard.action) {
+      sseWrite(res, 'action', withAttachmentIds(guard.action, attachmentIds))
+      await appendExternalMessage(
+        sessionId,
+        'assistant',
+        summarizeAction(guard.action),
+        buildConverseMessageMeta({
+          kind: 'action_summary',
+          turnId,
+          source: 'rule',
+          replyToMessageId: userMessageId,
+        }),
+      )
+      await updateExternalSessionStatus(sessionId, 'completed')
+    } else if (guard.question) {
+      sseWrite(res, 'question', guard.question)
+      await appendExternalMessage(
+        sessionId,
+        'assistant',
+        buildQuestionSummary(guard.question),
+        buildConverseMessageMeta({
+          kind: 'question_summary',
+          turnId,
+          source: 'rule',
+          replyToMessageId: userMessageId,
+        }),
+      )
+      await updateExternalSessionStatus(sessionId, 'waiting_input')
+    } else if (guard.validationErrors?.length) {
+      const errorText = guard.validationErrors.join('; ')
+      sseWrite(res, 'error', { message: errorText })
+      await appendExternalMessage(
+        sessionId,
+        'error',
+        errorText,
+        buildConverseMessageMeta({
+          kind: 'error',
+          turnId,
+          source: 'rule',
+          replyToMessageId: userMessageId,
+        }),
+      )
+      await updateExternalSessionStatus(sessionId, 'failed')
+    }
+    sseWrite(res, 'done', {})
+    res.end()
+    return
+  }
+
+  const directAction = shouldForceConverseWidgetDirectMode(effectiveBaseQuery)
+    ? null
+    : detectDirectIntentAction(effectiveBaseQuery)
   if (directAction) {
-    const guard = guardAction(directAction, runtimeContext, baseQuery)
+    const guard = guardAction(directAction, runtimeContext, effectiveBaseQuery)
     const state = setSessionState(sessionId, {
       phase: guard.phase,
       approvalRequired: guard.approvalRequired,
@@ -1924,7 +2174,7 @@ router.post('/', async (req: Request, res: Response) => {
     if (attachmentIds.length > 0 && uploadedFiles.length === 0) {
       sseWrite(res, 'warning', { content: '未能解析上传文件，请重新上传后重试。' })
     }
-    const query = buildConverseQuery(baseQuery, uploadedFiles)
+    const query = buildConverseQuery(effectiveBaseQuery, uploadedFiles)
 
     // Resolve model profile for this round
     const modelOverride = await resolveModelProfile(modelProfileId)
@@ -1938,6 +2188,9 @@ router.post('/', async (req: Request, res: Response) => {
       baseUrl: modelOverride?.baseUrl || process.env.ANTHROPIC_BASE_URL,
     })
     const widgetRuntimePlan = planConverseWidgetRuntime(query, widgetSupport)
+    const agentQuery = widgetRuntimePlan.mode === 'cli' && widgetRuntimePlan.forceDirectMode
+      ? buildConverseWidgetDirectQuery(query)
+      : query
     const effectiveRuntimeContext: ConverseRuntimeContext | undefined = runtimeContext
       ? {
           ...runtimeContext,
@@ -1953,7 +2206,9 @@ router.post('/', async (req: Request, res: Response) => {
       skillId: '__converse__',
       userQuery: query,
     })
-    const systemPrompt = buildConverseSystemPrompt(memoryCtx, effectiveRuntimeContext)
+    const systemPrompt = buildConverseSystemPrompt(memoryCtx, effectiveRuntimeContext, {
+      forceWidgetDirectMode: widgetRuntimePlan.forceDirectMode,
+    })
     const skill = {
       meta: { id: '__converse__', name: '对话助手', description: '多轮对话', kind: 'skill' as const },
       systemPrompt,
@@ -1968,7 +2223,7 @@ router.post('/', async (req: Request, res: Response) => {
       /* ── 通过 CLI 执行对话 ── */
       await executeAgent({
         skill,
-        query,
+        query: agentQuery,
         sessionId,
         signal: abortController.signal,
         modelOverride,
@@ -2105,7 +2360,7 @@ router.post('/', async (req: Request, res: Response) => {
             /* ── 从累积文本中提取决策标记 ── */
             // A committed widget means this turn stayed in direct explanation mode.
             // Even if the model emits a stray action marker, do not route away.
-            const rawAction = committedWidget != null || shouldSuppressActionForInformationalQuery(query)
+            const rawAction = committedWidget != null || widgetRuntimePlan.forceDirectMode || shouldSuppressActionForInformationalQuery(query)
               ? null
               : (extractAction(fullText) || inferFallbackAction(query, fullText))
             const action = rawAction?.action === 'setup_schedule'

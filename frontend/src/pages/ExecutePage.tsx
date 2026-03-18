@@ -11,7 +11,6 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAgent } from '../hooks/useAgent'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
-import { useModelProfile } from '../contexts/ModelProfileContext'
 import { API_BASE } from '../config/api'
 import { ExecutionPanel } from '../components/execution'
 import { Tooltip } from '../components/ui'
@@ -25,10 +24,8 @@ import {
   DialogFooter,
 } from '../components/ui'
 import { Button } from '../components/ui'
-import { getExecuteGenerativeWidgetSupport } from '../lib/widgetSupport'
 
 const ATTACHMENT_ONLY_EXECUTION_QUERY = '请先查看我上传的文件，并根据文件内容继续处理。'
-import { ModelWidgetSupportSummary } from '../components/shared/ModelWidgetSupportSummary'
 
 export default function ExecutePage() {
   const { skillId } = useParams<{ skillId: string }>()
@@ -36,13 +33,9 @@ export default function ExecutePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const agent = useAgent(skillId || '')
   const { getSkillName } = useSkillNameMap()
-  const { profiles, activeProfileId } = useModelProfile()
   const displaySkillName = getSkillName(skillId)
   const handledCreatedRef = useRef<string | null>(null)
   const effectiveRunning = agent.isRunning && !agent.pendingQuestion
-  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0] || null
-  const executeWidgetSupport = getExecuteGenerativeWidgetSupport(activeProfile)
-
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      页面级状态（对话框 + 断线重连）                       │
    * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -314,28 +307,6 @@ export default function ExecutePage() {
           )}
         </div>
       </div>
-      {activeProfile && (
-        <div
-          data-testid="execute-active-profile-card"
-          className={`rounded-md border px-3 py-3 ${
-            executeWidgetSupport.enabled
-              ? 'border-green-200 bg-green-50'
-              : 'border-amber-200 bg-amber-50'
-          }`}
-        >
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-foreground">
-              当前模型: {activeProfile.name}
-            </p>
-            <ModelWidgetSupportSummary profile={activeProfile} showDescription />
-            {!executeWidgetSupport.enabled && executeWidgetSupport.reasonMessage && (
-              <p className="text-xs text-amber-800">
-                {executeWidgetSupport.reasonMessage}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 

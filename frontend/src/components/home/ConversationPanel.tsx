@@ -41,21 +41,12 @@ interface ConversationPanelProps {
   onBack: () => void
   decisionPrompt?: DecisionPrompt | null
   onDecision?: (key: string) => void
-  stateSummary?: {
-    phase: 'clarify' | 'match' | 'choose_strategy' | 'plan_review' | 'schedule_wizard' | 'ready'
-    approvalRequired: boolean
-    validationErrors: string[]
-  } | null
   activeWidget?: WidgetState | null
   onCloseWidget?: () => void
   onWidgetInteraction?: (widgetId: string, data: unknown) => void
   onWidgetFallbackToText?: () => void
   onShowWidget?: (widgetId: string) => void
   onVisualizeMessage?: (content: string) => void
-  widgetNotice?: {
-    tone: 'warning' | 'neutral'
-    message: string
-  } | null
 }
 
 export function ConversationPanel({
@@ -72,14 +63,12 @@ export function ConversationPanel({
   onBack,
   decisionPrompt,
   onDecision,
-  stateSummary,
   activeWidget,
   onCloseWidget,
   onWidgetInteraction,
   onWidgetFallbackToText,
   onShowWidget,
   onVisualizeMessage,
-  widgetNotice,
 }: ConversationPanelProps) {
   const hasWidget = activeWidget != null
 
@@ -124,27 +113,7 @@ export function ConversationPanel({
             onVisualizeMessage={onVisualizeMessage}
           />
 
-          {widgetNotice && (
-            <div className={`mt-4 rounded-md border px-3 py-2 text-xs ${
-              widgetNotice.tone === 'warning'
-                ? 'border-amber-200 bg-amber-50 text-amber-800'
-                : 'border-border bg-secondary/60 text-muted-foreground'
-            }`}>
-              {widgetNotice.message}
-            </div>
-          )}
-
           {error && <p className="text-sm text-red-500 text-center mt-4">{error}</p>}
-
-          {stateSummary && (stateSummary.validationErrors.length > 0 || stateSummary.approvalRequired) && (
-            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-              <p>当前阶段：{stateSummary.phase}</p>
-              {stateSummary.approvalRequired && <p>下一步需要你的确认后才会执行。</p>}
-              {stateSummary.validationErrors.map((item) => (
-                <p key={item}>- {item}</p>
-              ))}
-            </div>
-          )}
 
           {pendingQuestion && respondToQuestion && (
             <div className="mt-4">

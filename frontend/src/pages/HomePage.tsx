@@ -18,11 +18,7 @@ import { SkillExecutingView, type HomePhase, type ExecutionContext } from '../co
 import { PlanReviewPanel } from '../components/home/PlanReviewPanel'
 import { CandidateConfirmView, FallbackBanner, ErrorView } from '../components/home/DispatchViews'
 import { buildExecutePath, stripAttachmentMarkers, uploadAttachments } from '../lib/attachments'
-import {
-  getHomeWidgetRuntimeNotice,
-  supportsGenerativeWidgets,
-} from '../lib/widgetSupport'
-import { ModelWidgetSupportSummary } from '../components/shared/ModelWidgetSupportSummary'
+import { supportsGenerativeWidgets } from '../lib/widgetSupport'
 
 interface CandidateInfo {
   variant: 'recommend' | 'create'
@@ -77,7 +73,6 @@ export default function HomePage() {
   const displayUserName = user?.name?.trim() || cachedProfileName
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0] || null
   const canRenderWidgets = supportsGenerativeWidgets(activeProfile)
-  const homeWidgetNotice = getHomeWidgetRuntimeNotice(activeProfile)
 
   const [phase, setPhase] = useState<HomePhase>('idle')
   const [execCtx, setExecCtx] = useState<ExecutionContext | null>(null)
@@ -379,8 +374,6 @@ export default function HomePage() {
       onCronCancel={() => setCronPending(null)}
       backgroundTasks={backgroundTasks}
       onResumeTask={handleResumeBackgroundTask}
-      activeProfile={activeProfile}
-      widgetNotice={homeWidgetNotice}
     />
   }
 
@@ -397,7 +390,6 @@ export default function HomePage() {
       error={converse.error}
       regeneratingMessageId={converse.regeneratingMessageId}
       onBack={handleNewTask}
-      stateSummary={converse.state}
       activeWidget={converse.activeWidget}
       onCloseWidget={() => converse.setActiveWidget(null)}
       onWidgetFallbackToText={() => {
@@ -407,10 +399,20 @@ export default function HomePage() {
       onShowWidget={converse.showWidget}
       onVisualizeMessage={canRenderWidgets
         ? (content) => {
-          void converse.sendMessage(`请将以下内容改为可视化组件解释：\n\n${content}`)
+          void converse.sendMessage([
+            '请把下面这段内容改成当前对话里直接渲染的交互式可视化组件。',
+            '要求：',
+            '- 这是直接解释，不是执行任务。',
+            '- 不要推荐 skill，不要输出 LABORANY_ACTION。',
+            '- 不要写文件，不要打开浏览器，不要用 ASCII 图代替。',
+            '- 如果当前会话提供 mcp__generative-ui__load_guidelines 和 mcp__generative-ui__show_widget，请直接调用。',
+            '- 如果最终无法渲染 widget，就直接给出简洁文本图解，不要暴露内部工具限制。',
+            '',
+            '原内容：',
+            content,
+          ].join('\n'))
         }
         : undefined}
-      widgetNotice={homeWidgetNotice}
       onWidgetInteraction={(_widgetId, data) => {
         const text = `[来自组件交互]\n${JSON.stringify(data, null, 2)}`
         void converse.sendMessage(text)
@@ -522,7 +524,7 @@ export default function HomePage() {
   )
 }
 
-function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending, onCronConfirm, onCronCancel, backgroundTasks, onResumeTask, activeProfile, widgetNotice }: {
+function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending, onCronConfirm, onCronCancel, backgroundTasks, onResumeTask }: {
   userName?: string
   onExecute: (targetId: string, query: string, files?: File[]) => void | Promise<void>
   selectedCase: QuickStartItem | null
@@ -532,8 +534,6 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
   onCronCancel: () => void
   backgroundTasks: RunningTaskBrief[]
   onResumeTask: (task: RunningTaskBrief) => void
-  activeProfile: ReturnType<typeof useModelProfile>['profiles'][number] | null
-  widgetNotice: ReturnType<typeof getHomeWidgetRuntimeNotice>
 }) {
   return (
     <div className="min-h-screen p-6">
@@ -546,36 +546,6 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
             直接描述你的任务，我来帮你完成。
           </p>
         </div>
-        {activeProfile && (
-          <div
-            data-testid="home-active-profile-card"
-            className={`rounded-xl border p-4 ${
-              widgetNotice?.tone === 'warning'
-                ? 'border-amber-200 bg-amber-50'
-                : widgetNotice?.tone === 'neutral'
-                  ? 'border-border bg-card'
-                  : 'border-green-200 bg-green-50'
-            }`}
-          >
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-foreground">
-                当前模型: {activeProfile.name}
-              </p>
-              <ModelWidgetSupportSummary profile={activeProfile} showDescription />
-              {widgetNotice && (
-                <p className={`text-xs ${
-                  widgetNotice.tone === 'warning'
-                    ? 'text-amber-800'
-                    : widgetNotice.tone === 'neutral'
-                      ? 'text-muted-foreground'
-                      : 'text-green-800'
-                }`}>
-                  {widgetNotice.message}
-                </p>
-              )}
-            </div>
-          </div>
-        )}
         {backgroundTasks.length > 0 && (
           <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
             <div className="mb-2 flex items-center justify-between">

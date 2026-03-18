@@ -18,6 +18,13 @@ import {
   selectMessageVariant,
   toConversationPayloadMessages,
 } from '../lib/messageVariants'
+import {
+  buildQuestionResponsePayload,
+  buildQuestionResponseText,
+  inferQuestionContextFromQuestions,
+  normalizeQuestionContext,
+  type QuestionResponsePayload,
+} from '../lib/question-response'
 
 export interface ConverseAction {
   action:
@@ -89,6 +96,80 @@ interface ConverseSessionPayload {
   sourceMeta?: {
     attachmentIds?: string[] | string
   } | null
+}
+
+function normalizePendingQuestion(
+  payload: Record<string, unknown>,
+): PendingQuestion {
+  const rawQuestions = Array.isArray(payload.questions)
+    ? payload.questions
+    : (() => {
+      const singleQuestion = typeof payload.question === 'string' ? payload.question.trim() : ''
+      if (!singleQuestion) return []
+      return [{
+        question: singleQuestion,
+        header: typeof payload.header === 'string' && payload.header.trim()
+          ? payload.header.trim()
+          : '问题',
+        options: Array.isArray(payload.options) ? payload.options : [],
+        multiSelect: Boolean(payload.multiSelect),
+      }]
+    })()
+  const questions = rawQuestions
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const candidate = item as Record<string, unknown>
+      const question = typeof candidate.question === 'string' ? candidate.question.trim() : ''
+      if (!question) return null
+      const header = typeof candidate.header === 'string' && candidate.header.trim()
+        ? candidate.header.trim()
+        : '问题'
+      const options = Array.isArray(candidate.options)
+        ? candidate.options
+          .map((option) => {
+            if (typeof option === 'string') {
+              const label = option.trim()
+              return label ? { label, description: '' } : null
+            }
+            if (!option || typeof option !== 'object') return null
+            const opt = option as Record<string, unknown>
+            const label = typeof opt.label === 'string' ? opt.label.trim() : ''
+            if (!label) return null
+            return {
+              label,
+              description: typeof opt.description === 'string' ? opt.description : '',
+            }
+          })
+          .filter(Boolean) as Array<{ label: string; description: string }>
+        : []
+      return {
+        question,
+        header,
+        options,
+        multiSelect: Boolean(candidate.multiSelect),
+      }
+    })
+    .filter(Boolean) as PendingQuestion['questions']
+
+  const normalizedQuestions = questions.length > 0
+    ? questions
+    : [{
+        question: '请补充当前任务缺失信息，以便继续执行。',
+        header: '信息补充',
+        options: [],
+        multiSelect: false,
+      }]
+
+  return {
+    id: (payload.id as string) || `question_${Date.now()}`,
+    toolUseId: (payload.toolUseId as string) || `tool_${Date.now()}`,
+    questions: normalizedQuestions,
+    missingFields: Array.isArray(payload.missingFields)
+      ? payload.missingFields.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : undefined,
+    questionContext: normalizeQuestionContext(payload.questionContext)
+      || inferQuestionContextFromQuestions(normalizedQuestions),
+  }
 }
 
 function isAbortLikeError(err: unknown): boolean {
@@ -489,7 +570,7 @@ export function useConverse(): UseConverseReturn {
       }
 
       if (eventType === 'question') {
-        setPendingQuestion(data as unknown as PendingQuestion)
+        setPendingQuestion(normalizePendingQuestion(data))
         setIsThinking(false)
         return
       }
@@ -643,7 +724,11 @@ export function useConverse(): UseConverseReturn {
     flushAssistantText(true)
   }, [])
 
-  const sendMessage = useCallback(async (text: string, files: File[] = []) => {
+  const sendMessage = useCallback(async (
+    text: string,
+    files: File[] = [],
+    questionResponse?: QuestionResponsePayload | null,
+  ) => {
     const requestSeq = ++requestSeqRef.current
     const q = text.trim()
     if (!q && files.length === 0) return
@@ -702,6 +787,7 @@ export function useConverse(): UseConverseReturn {
           latestUserQuery: userInput,
           messages: payloadMessages,
           modelProfileId: activeProfileId || undefined,
+          questionResponse: questionResponse || undefined,
           attachmentIds: mergedFileIds,
           context: {
             channel: 'desktop',
@@ -863,22 +949,16 @@ export function useConverse(): UseConverseReturn {
     }
   }, [activeProfileId, regeneratingMessageId])
 
-  const respondToQuestion = useCallback(async (
-    _questionId: string,
-    answers: Record<string, string>,
-  ) => {
+  const respondToQuestion = useCallback(async (_questionId: string, answers: Record<string, string>) => {
     if (!pendingQuestion) return
 
-    const answerText = Object.values(answers)
-      .map((answer) => answer.trim())
-      .filter(Boolean)
-      .join('\n')
-      .trim()
+    const responsePayload = buildQuestionResponsePayload(pendingQuestion, answers)
+    const answerText = responsePayload ? buildQuestionResponseText(responsePayload) : ''
 
     if (!answerText) return
 
     setPendingQuestion(null)
-    await sendMessage(answerText)
+    await sendMessage(answerText, [], responsePayload)
   }, [pendingQuestion, sendMessage])
 
   const resumeSession = useCallback(async (targetSessionId: string): Promise<boolean> => {

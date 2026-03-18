@@ -4,6 +4,13 @@ import type { AgentMessage, TaskFile, WidgetState } from '../types'
 import { API_BASE } from '../config/api'
 import { useModelProfile } from '../contexts/ModelProfileContext'
 import { mergeAttachmentIds, uploadAttachments } from '../lib/attachments'
+import {
+  buildQuestionResponsePayload,
+  buildQuestionResponseText,
+  inferQuestionContextFromQuestions,
+  normalizeQuestionContext,
+  type QuestionContext,
+} from '../lib/question-response'
 
 export type { AgentMessage, TaskFile }
 
@@ -23,6 +30,8 @@ export interface PendingQuestion {
   id: string
   toolUseId: string
   questions: AgentQuestion[]
+  missingFields?: string[]
+  questionContext?: QuestionContext
 }
 
 interface AgentState {
@@ -309,6 +318,24 @@ function normalizeAgentQuestions(payload: Record<string, unknown>): AgentQuestio
   return normalizedQuestions
 }
 
+function normalizePendingQuestionPayload(
+  payload: Record<string, unknown>,
+  fallbackId: string,
+  fallbackToolUseId: string,
+): PendingQuestion {
+  const questions = normalizeAgentQuestions(payload)
+  return {
+    id: (payload.id as string) || fallbackId,
+    toolUseId: (payload.toolUseId as string) || fallbackToolUseId,
+    questions,
+    missingFields: Array.isArray(payload.missingFields)
+      ? payload.missingFields.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : undefined,
+    questionContext: normalizeQuestionContext(payload.questionContext)
+      || inferQuestionContextFromQuestions(questions),
+  }
+}
+
 export function useAgent(skillId: string) {
   const initialVisibilityState: DocumentVisibilityState =
     typeof document !== 'undefined' ? document.visibilityState : 'visible'
@@ -569,16 +596,14 @@ export function useAgent(skillId: string) {
 
           const isAskUserQuestion = /^AskU(?:ser|er)Question$/i.test(toolName || '')
           if (isAskUserQuestion) {
-            const normalizedQuestions = normalizeAgentQuestions(toolInput)
-
             setState((s) => ({
               ...s,
               isRunning: false,
-              pendingQuestion: {
-                id: `question_${Date.now()}`,
-                toolUseId: (event.toolUseId as string) || `tool_${Date.now()}`,
-                questions: normalizedQuestions,
-              },
+              pendingQuestion: normalizePendingQuestionPayload(
+                toolInput,
+                `question_${Date.now()}`,
+                (event.toolUseId as string) || `tool_${Date.now()}`,
+              ),
             }))
             abortByQuestionRef.current = true
             executeInFlightRef.current = false
@@ -623,15 +648,14 @@ export function useAgent(skillId: string) {
 
         case 'question': {
           const payload = event as Record<string, unknown>
-          const normalizedQuestions = normalizeAgentQuestions(payload)
           setState((s) => ({
             ...s,
             isRunning: false,
-            pendingQuestion: {
-              id: (payload.id as string) || `question_${Date.now()}`,
-              toolUseId: (payload.toolUseId as string) || `tool_${Date.now()}`,
-              questions: normalizedQuestions,
-            },
+            pendingQuestion: normalizePendingQuestionPayload(
+              payload,
+              `question_${Date.now()}`,
+              `tool_${Date.now()}`,
+            ),
           }))
           abortByQuestionRef.current = true
           executeInFlightRef.current = false
@@ -1361,10 +1385,8 @@ export function useAgent(skillId: string) {
     async (_questionId: string, answers: Record<string, string>) => {
       if (!state.pendingQuestion) return
 
-      const answerText = Object.values(answers)
-        .map((answer) => answer.trim())
-        .filter(Boolean)
-        .join('\n')
+      const responsePayload = buildQuestionResponsePayload(state.pendingQuestion, answers)
+      const answerText = responsePayload ? buildQuestionResponseText(responsePayload) : ''
 
       if (!answerText) return
 

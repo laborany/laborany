@@ -18,6 +18,10 @@ export interface ConverseRuntimeContext {
   }
 }
 
+export interface ConversePromptOptions {
+  forceWidgetDirectMode?: boolean
+}
+
 function formatCatalog(items: CatalogItem[]): string {
   if (!items.length) return '- (暂无可用 skill)'
   return items
@@ -46,8 +50,26 @@ function buildRuntimeContextSection(context?: ConverseRuntimeContext): string {
     '你必须严格遵守上述能力边界：',
     '- 若 canSendFile=true 且用户要求”发送文件”，应优先通过 action 输出结构化发送动作，不要口头声明”无法发送文件”。',
     '- 若 canSendFile=false，不要伪造可发送能力，应提供替代方案（如返回文件路径、摘要或重新生成）。',
-    '- 若 canRenderWidgets=true，当用户请求可视化解释、图表、计算器、流程图等场景时，优先使用 show_widget 工具生成交互式组件。使用前必须先调用 load_guidelines。',
-    '- 若 canRenderWidgets=false，不要使用 show_widget，改为纯文本解释。',
+    '- 若 canRenderWidgets=true，当用户请求可视化解释、图表、计算器、流程图等场景时，优先使用 widget MCP 工具生成交互式组件。',
+    '- Claude Code 中这些工具通常会暴露为 mcp__generative-ui__load_guidelines 和 mcp__generative-ui__show_widget；如存在，使用这两个准确名字。',
+    '- 使用前必须先调用 load_guidelines / mcp__generative-ui__load_guidelines。',
+    '- 若 canRenderWidgets=false，不要使用任何 widget 工具，改为纯文本解释。',
+  ].join('\n')
+}
+
+function buildWidgetDirectModeSection(): string {
+  return [
+    '## 本轮特殊模式：直接可视化解释（最高优先级）',
+    '',
+    '本轮用户要的是“在当前对话里直接可视化解释”，不是创建网页文件，也不是启动 skill 执行流。',
+    '',
+    '必须遵守：',
+    '- 不要输出 LABORANY_ACTION，不要推荐 skill，不要进入路由分发模式。',
+    '- 不要写文件，不要创建或打开 HTML 页面，不要用 Bash/Write/Edit/Read/Glob/Grep/Skill 来替代 widget。',
+    '- 不要去工作区或任务目录里搜索 guideline 文件；设计规范只能通过 MCP widget 工具读取。',
+    '- 如果工具列表中存在 mcp__generative-ui__load_guidelines 和 mcp__generative-ui__show_widget，必须优先直接调用它们。',
+    '- 调用 widget 工具后，继续给出简短自然语言解释。',
+    '- 如果 widget 工具最终不可用，就直接给出简洁文本解释；不要向用户暴露“没有 show_widget 工具”这类内部限制。',
   ].join('\n')
 }
 
@@ -93,6 +115,8 @@ const QUESTION_PROTOCOL_SECTION = `## AskUserQuestion 协议
 
 信息不足时，优先调用 AskUserQuestion：
 AskUserQuestion({
+  "questionContext": "clarify | schedule | approval",
+  "missingFields": ["field_a", "field_b"],
   "questions": [
     {
       "header": "目标确认",
@@ -104,7 +128,13 @@ AskUserQuestion({
       "multiSelect": false
     }
   ]
-})`
+})
+
+规则：
+- schedule 场景必须显式写 "questionContext": "schedule"。
+- schedule 的 missingFields 仅可使用：cronExpr、atMs、everyMs、targetQuery、targetId、tz。
+- 如果只是审批/确认，写 "questionContext": "approval"。
+- 不要重复询问用户已经明确回答过的字段。`
 
 const ACTION_PROTOCOL_SECTION = `## 决策输出协议
 
@@ -206,6 +236,7 @@ LABORANY_ACTION: {"action":"setup_schedule","scheduleKind":"at","atMs":177284160
 export function buildConverseSystemPrompt(
   memoryContext: string,
   runtimeContext?: ConverseRuntimeContext,
+  options?: ConversePromptOptions,
 ): string {
   const catalogText = formatCatalog(loadCatalog())
   const sections = [
@@ -217,6 +248,10 @@ export function buildConverseSystemPrompt(
     ACTION_PROTOCOL_SECTION,
     FEW_SHOT_SECTION,
   ]
+
+  if (options?.forceWidgetDirectMode) {
+    sections.splice(3, 0, buildWidgetDirectModeSection())
+  }
 
   if (memoryContext) {
     sections.push(`## 用户记忆\n\n${memoryContext}`)

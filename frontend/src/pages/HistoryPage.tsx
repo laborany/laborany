@@ -26,6 +26,12 @@ import {
   applyVariantSelections,
   loadStoredVariantSelections,
 } from '../lib/messageVariants'
+import {
+  buildQuestionResponsePayload,
+  buildQuestionResponseText,
+  inferQuestionContextFromQuestions,
+  normalizeQuestionContext,
+} from '../lib/question-response'
 import { WidgetPanel } from '../components/widget/WidgetPanel'
 
 export default function HistoryPage() {
@@ -422,6 +428,11 @@ function buildPendingQuestionFromHistory(session: SessionDetail | null): Pending
     id: `history_question_${session.id}_${askMessage.id}`,
     toolUseId: `history_tool_${askMessage.id}`,
     questions,
+    missingFields: Array.isArray(toolInput.missingFields)
+      ? toolInput.missingFields.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : undefined,
+    questionContext: normalizeQuestionContext(toolInput.questionContext)
+      || inferQuestionContextFromQuestions(questions),
   }
 }
 
@@ -812,15 +823,16 @@ export function SessionDetailPage() {
 
   const handleQuestionSubmit = useCallback(
     async (_questionId: string, answers: Record<string, string>) => {
-      const answerText = Object.values(answers)
-        .map((answer) => answer.trim())
-        .filter(Boolean)
-        .join('\n')
+      const targetQuestion = agent.pendingQuestion || historyPendingQuestion
+      const responsePayload = targetQuestion
+        ? buildQuestionResponsePayload(targetQuestion, answers)
+        : null
+      const answerText = responsePayload ? buildQuestionResponseText(responsePayload) : ''
 
       if (!answerText) return
       await handleContinue(answerText)
     },
-    [handleContinue],
+    [agent.pendingQuestion, handleContinue, historyPendingQuestion],
   )
 
   async function handleDeleteSession() {
