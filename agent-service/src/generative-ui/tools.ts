@@ -293,53 +293,45 @@ function resolveMcpServerPath(): string {
 
 // ── MCP Config generation ──
 
-function readUserMcpServers(): Record<string, unknown> {
-  try {
-    const settingsPath = join(homedir(), '.claude', 'settings.json')
-    if (!existsSync(settingsPath)) return {}
-    const content = readFileSync(settingsPath, 'utf-8')
-    const settings = JSON.parse(content)
-    return settings.mcpServers || {}
-  } catch {
-    return {}
-  }
-}
-
 /**
- * Write the MCP config for the SDK-backed server into taskDir.
- * Merges user MCP servers from ~/.claude/settings.json.
- * Returns the path to the mcp-config.json file.
+ * Write the MCP config for the generative-ui server into taskDir.
+ * User MCP servers are loaded separately from laborany-mcp.json.
  */
 export function writeMcpConfig(taskDir: string, nodePath?: string): string {
   const configPath = join(taskDir, '.mcp-generative-ui.json')
   const node = nodePath || process.execPath
   const serverPath = resolveMcpServerPath()
 
-  const userMcpServers = readUserMcpServers()
-  const mergedServers: Record<string, unknown> = { ...userMcpServers }
-  mergedServers['generative-ui'] = { command: node, args: [serverPath] }
-
-  const config = { mcpServers: mergedServers }
+  const config = {
+    mcpServers: {
+      'generative-ui': {
+        command: node,
+        args: [serverPath],
+      },
+    },
+  }
 
   writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
   return configPath
 }
 
 /**
- * Write a config containing only user MCP servers (no generative-ui).
- * Returns null if no user MCP servers are configured.
+ * 返回 laborany MCP 配置文件路径
+ * 配置由 MCP 管理界面直接写入，运行时只需返回路径
  */
 export function writeUserMcpConfig(_taskDir: string): string | null {
-  const userMcpServers = readUserMcpServers()
-  if (Object.keys(userMcpServers).length === 0) return null
-
-  const configPath = join(homedir(), '.claude', '.mcp-user.json')
-  writeFileSync(
-    configPath,
-    JSON.stringify({ mcpServers: userMcpServers }, null, 2),
-    'utf-8',
-  )
-  return configPath
+  const configPath = join(homedir(), '.claude', 'laborany-mcp.json')
+  // 检查文件是否存在且非空
+  try {
+    const content = readFileSync(configPath, 'utf-8')
+    const parsed = JSON.parse(content)
+    if (parsed.mcpServers && Object.keys(parsed.mcpServers).length > 0) {
+      return configPath
+    }
+  } catch {
+    // 文件不存在或解析失败
+  }
+  return null
 }
 
 // ── Tool name constants ──

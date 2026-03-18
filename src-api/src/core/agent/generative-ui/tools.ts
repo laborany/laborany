@@ -1,7 +1,6 @@
 import { writeFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import { readClaudeSettings } from '../mcp/settings-io.js'
 
 const GUIDELINES_CORE = `# Widget Design Guidelines - Core
 
@@ -248,39 +247,44 @@ process.stdin.on('data', (chunk) => {
 `
 }
 
+/**
+ * Write the MCP config for the generative-ui server into taskDir.
+ * User MCP servers are loaded separately from laborany-mcp.json.
+ */
 export function writeMcpConfig(taskDir: string, nodeCommand: string): string {
   const configPath = join(taskDir, '.mcp-generative-ui.json')
   const serverPath = join(taskDir, '.mcp-generative-ui-server.mjs')
 
   writeFileSync(serverPath, buildMcpServerScript(), 'utf-8')
 
-  // 合并用户在 settings 中配置的 MCP 服务器
-  const userMcpServers = readClaudeSettings().mcpServers || {}
-  const mergedServers: Record<string, unknown> = { ...userMcpServers }
-  mergedServers['generative-ui'] = { command: nodeCommand, args: [serverPath] }
+  const config = {
+    mcpServers: {
+      'generative-ui': {
+        command: nodeCommand,
+        args: [serverPath],
+      },
+    },
+  }
 
-  writeFileSync(
-    configPath,
-    JSON.stringify({ mcpServers: mergedServers }, null, 2),
-    'utf-8',
-  )
-
+  writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
   return configPath
 }
 
 /**
- * 写入仅包含用户 MCP 服务器的配置文件（不含 generative-ui）
- * 用于 widget 未启用但用户有 MCP 配置的场景
+ * 返回 laborany MCP 配置文件路径
+ * 配置由 MCP 管理界面直接写入，运行时只需返回路径
  */
 export function writeUserMcpConfig(_taskDir: string): string | null {
-  const userMcpServers = readClaudeSettings().mcpServers || {}
-  if (Object.keys(userMcpServers).length === 0) return null
-
-  const configPath = join(homedir(), '.claude', '.mcp-user.json')
-  writeFileSync(
-    configPath,
-    JSON.stringify({ mcpServers: userMcpServers }, null, 2),
-    'utf-8',
-  )
-  return configPath
+  const configPath = join(homedir(), '.claude', 'laborany-mcp.json')
+  // 检查文件是否存在且非空
+  try {
+    const content = require('fs').readFileSync(configPath, 'utf-8')
+    const parsed = JSON.parse(content)
+    if (parsed.mcpServers && Object.keys(parsed.mcpServers).length > 0) {
+      return configPath
+    }
+  } catch {
+    // 文件不存在或解析失败
+  }
+  return null
 }

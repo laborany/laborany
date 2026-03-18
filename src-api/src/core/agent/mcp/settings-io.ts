@@ -1,8 +1,8 @@
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                    MCP Settings 读写                                    ║
  * ║                                                                        ║
- * ║  职责：~/.claude/settings.json 的 MCP 服务器 CRUD                       ║
- * ║  设计：read-modify-write，保留非 MCP 配置项                              ║
+ * ║  职责：~/.claude/laborany-mcp.json 的 MCP 服务器 CRUD                  ║
+ * ║  设计：laborany 专用 MCP 配置，不污染 Claude Code 的 settings.json      ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
@@ -18,38 +18,38 @@ function getClaudeDir(): string {
   return join(homedir(), '.claude')
 }
 
-function getClaudeSettingsPath(): string {
-  return join(getClaudeDir(), 'settings.json')
+function getLaboranyMcpPath(): string {
+  return join(getClaudeDir(), 'laborany-mcp.json')
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       配置读取与写入                                       │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-export interface ClaudeSettings {
-  mcpServers?: Record<string, McpServerConfig>
-  [key: string]: unknown
+export interface LaboranyMcpConfig {
+  mcpServers: Record<string, McpServerConfig>
 }
 
-export function readClaudeSettings(): ClaudeSettings {
-  const settingsPath = getClaudeSettingsPath()
-  if (!existsSync(settingsPath)) return {}
+export function readClaudeSettings(): LaboranyMcpConfig {
+  const mcpPath = getLaboranyMcpPath()
+  if (!existsSync(mcpPath)) return { mcpServers: {} }
 
   try {
-    const content = readFileSync(settingsPath, 'utf-8')
-    return JSON.parse(content) as ClaudeSettings
+    const content = readFileSync(mcpPath, 'utf-8')
+    const parsed = JSON.parse(content) as Partial<LaboranyMcpConfig>
+    return { mcpServers: parsed.mcpServers || {} }
   } catch {
-    console.warn('[MCP] 无法解析 settings.json，将使用空配置')
-    return {}
+    console.warn('[MCP] 无法解析 laborany-mcp.json，将使用空配置')
+    return { mcpServers: {} }
   }
 }
 
-export function writeClaudeSettings(settings: ClaudeSettings): void {
+export function writeClaudeSettings(config: LaboranyMcpConfig): void {
   const claudeDir = getClaudeDir()
   if (!existsSync(claudeDir)) {
     mkdirSync(claudeDir, { recursive: true })
   }
-  writeFileSync(getClaudeSettingsPath(), JSON.stringify(settings, null, 2), 'utf-8')
+  writeFileSync(getLaboranyMcpPath(), JSON.stringify(config, null, 2), 'utf-8')
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -57,8 +57,8 @@ export function writeClaudeSettings(settings: ClaudeSettings): void {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 export function listMcpServers(): McpServerEntry[] {
-  const settings = readClaudeSettings()
-  const servers = settings.mcpServers || {}
+  const config = readClaudeSettings()
+  const servers = config.mcpServers
 
   return Object.entries(servers).map(([name, config]) => ({
     name,
@@ -68,29 +68,26 @@ export function listMcpServers(): McpServerEntry[] {
 }
 
 export function getMcpServer(name: string): McpServerEntry | null {
-  const settings = readClaudeSettings()
-  const config = settings.mcpServers?.[name]
-  if (!config) return null
+  const config = readClaudeSettings()
+  const serverConfig = config.mcpServers[name]
+  if (!serverConfig) return null
 
-  return { name, config, source: 'user' }
+  return { name, config: serverConfig, source: 'user' }
 }
 
-export function upsertMcpServer(name: string, config: McpServerConfig): void {
-  const settings = readClaudeSettings()
-  const servers = settings.mcpServers || {}
-
-  settings.mcpServers = { ...servers, [name]: config }
-  writeClaudeSettings(settings)
+export function upsertMcpServer(name: string, serverConfig: McpServerConfig): void {
+  const config = readClaudeSettings()
+  config.mcpServers[name] = serverConfig
+  writeClaudeSettings(config)
   console.log(`[MCP] 已保存 MCP 服务器: ${name}`)
 }
 
 export function deleteMcpServer(name: string): boolean {
-  const settings = readClaudeSettings()
-  if (!settings.mcpServers?.[name]) return false
+  const config = readClaudeSettings()
+  if (!config.mcpServers[name]) return false
 
-  const { [name]: _, ...rest } = settings.mcpServers
-  settings.mcpServers = rest
-  writeClaudeSettings(settings)
+  delete config.mcpServers[name]
+  writeClaudeSettings(config)
   console.log(`[MCP] 已删除 MCP 服务器: ${name}`)
   return true
 }

@@ -462,24 +462,28 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   // ── Generative UI: MCP config + widget state ──
   let widgetState: WidgetHandlerState | undefined
-  let hasInjectedMcpConfig = false
   if (cliWidgetRuntimeEnabled) {
     try {
-      const mcpConfigPath = writeMcpConfig(taskDir)
-      args.push('--mcp-config', mcpConfigPath)
-      hasInjectedMcpConfig = true
+      const widgetMcpPath = writeMcpConfig(taskDir)
+      const userMcpPath = writeUserMcpConfig(taskDir)
+
+      // 传递 widget MCP 和用户 MCP（如果存在）
+      args.push('--mcp-config', widgetMcpPath)
+      if (userMcpPath) {
+        args.push(userMcpPath)
+      }
+
       widgetState = createWidgetHandlerState()
-      console.log(`[Agent] Generative UI enabled, MCP config: ${mcpConfigPath}`)
+      console.log(`[Agent] Generative UI enabled, MCP configs: ${widgetMcpPath}${userMcpPath ? `, ${userMcpPath}` : ''}`)
     } catch (err) {
       console.error('[Agent] Failed to write MCP config for generative UI:', err)
     }
   } else {
-    // Widget 未启用时，仍然传递用户配置的 MCP 服务器
+    // Widget 未启用时，只传递用户配置的 MCP 服务器
     try {
       const userMcpPath = writeUserMcpConfig(taskDir)
       if (userMcpPath) {
         args.push('--mcp-config', userMcpPath)
-        hasInjectedMcpConfig = true
         console.log(`[Agent] User MCP config injected: ${userMcpPath}`)
       }
     } catch (err) {
@@ -492,7 +496,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     }
   }
 
-  if (hasInjectedMcpConfig) {
+  // 启用 MCP debug 模式
+  if (cliWidgetRuntimeEnabled) {
     args.push('--debug', 'mcp')
   }
 
