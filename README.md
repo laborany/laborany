@@ -19,6 +19,15 @@
   <a href="https://mp.weixin.qq.com/s/wKO2Alkng_JwFcnstolEzw">免费获取API-Key</a>
 </p>
 
+<p align="center">
+  <a href="https://mp.weixin.qq.com/s/jBbg1PzLJo5DjAWZ3N2b1g">
+    <img src="https://img.shields.io/badge/微信公众号-@Agent极客岛-07C160?style=flat-square&logo=wechat&logoColor=white" alt="微信公众号">
+  </a>
+  <a href="https://www.xiaohongshu.com/user/profile/60c762c4000000000101d8b8">
+    <img src="https://img.shields.io/badge/小红书-@问小乖-FF2442?style=flat-square" alt="小红书">
+  </a>
+</p>
+
 ---
 
 ## Why LaborAny
@@ -299,6 +308,22 @@ QQ_DEFAULT_SKILL=__generic__
 
 ## 如何获取 API-Key？
 - **免费**！**最强模型**！请参考 👉[API Key 获取和配置教程](https://mp.weixin.qq.com/s/wKO2Alkng_JwFcnstolEzw).
+
+---
+
+## 关注我们
+
+欢迎加入我们的社交媒体群聊，跟我们交流并获取最新动态和使用技巧：
+
+<p align="center">
+  <img src="docs/assets/wechat-qr.png" width="150" alt="微信公众号二维码">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/assets/xiaohongshu-qr.jpg" width="150" alt="小红书二维码">
+</p>
+
+<p align="center">
+  <em>扫码加入微信（左）& 小红书（右）</em>
+</p>
 
 ---
 
