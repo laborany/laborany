@@ -397,6 +397,8 @@ export default function HomePage() {
         void converse.sendMessage('[请改为文本解释]')
       }}
       onShowWidget={converse.showWidget}
+      onExpandWidget={converse.expandWidget}
+      streamingWidget={converse.streamingWidget}
       onVisualizeMessage={canRenderWidgets
         ? (content) => {
           void converse.sendMessage([
@@ -413,7 +415,6 @@ export default function HomePage() {
           ].join('\n'))
         }
         : undefined}
-      widgetNotice={homeWidgetNotice}
       mcpNotice={converse.mcpNotice}
       onWidgetInteraction={(_widgetId, data) => {
         const text = `[来自组件交互]\n${JSON.stringify(data, null, 2)}`
@@ -555,7 +556,7 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
               <span className="text-xs text-muted-foreground">{backgroundTasks.length} 个</span>
             </div>
             <div className="space-y-2">
-              {backgroundTasks.slice(0, 3).map((task) => (
+              {backgroundTasks.map((task) => (
                 <button
                   key={task.sessionId}
                   type="button"

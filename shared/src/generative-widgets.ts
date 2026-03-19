@@ -34,16 +34,26 @@ export interface GenerativeWidgetSupport {
 }
 
 const OFFICIAL_ANTHROPIC_BASE_URL_RE = /^https?:\/\/(?:[^/]+\.)?anthropic\.com(?:\/|$)/i
-const OPENAI_COMPAT_REASONING_MODEL_RE = /(reasoner|reasoning|(?:^|[-_])r1(?:$|[-_])|(?:^|[-_])o1(?:$|[-_])|(?:^|[-_])o3(?:$|[-_])|qwq|thinking)/i
+// Keep a narrow blocklist here. Real probes show deepseek-reasoner can use
+// CLI-injected widget MCP tools in final_only mode, so generic "reasoning"
+// naming should not disable widgets by itself.
+const OPENAI_COMPAT_TEXT_FIRST_MODEL_RE = /(?:^|[-_])o1(?:$|[-_])|(?:^|[-_])o3(?:$|[-_])|qwq/i
+const EXECUTE_WIDGET_STALL_MODEL_RE = /deepseek.*reasoner|deepseek-reasoner/i
 
 function normalizeGenerativeWidgetInterfaceType(value?: string | ModelInterfaceType): ModelInterfaceType {
   return value === 'openai_compatible' ? 'openai_compatible' : 'anthropic'
 }
 
-function isReasoningFocusedOpenAiModel(model?: string): boolean {
+function isTextFirstOpenAiModel(model?: string): boolean {
   const normalized = (model || '').trim()
   if (!normalized) return false
-  return OPENAI_COMPAT_REASONING_MODEL_RE.test(normalized)
+  return OPENAI_COMPAT_TEXT_FIRST_MODEL_RE.test(normalized)
+}
+
+function isKnownExecuteWidgetStallModel(model?: string): boolean {
+  const normalized = (model || '').trim()
+  if (!normalized) return false
+  return EXECUTE_WIDGET_STALL_MODEL_RE.test(normalized)
 }
 
 function isOfficialAnthropicBaseUrl(baseUrl?: string): boolean {
@@ -87,12 +97,12 @@ export function resolveGenerativeWidgetSupport(input?: GenerativeWidgetTarget | 
   }
 
   if (interfaceType === 'openai_compatible') {
-    if (isReasoningFocusedOpenAiModel(model)) {
+    if (isTextFirstOpenAiModel(model)) {
       return createDisabledSupport({
         requested,
         provider,
         reason: 'unsupported_model',
-        reasonMessage: 'Reasoning-focused OpenAI-compatible models are treated as text-first profiles for now. Use a tool-calling chat model for widgets.',
+        reasonMessage: 'Known text-first OpenAI-compatible models such as o1/o3/QwQ stay in text mode for widgets. Use a profile with stable tool calling for visual rendering.',
       })
     }
 
@@ -139,14 +149,14 @@ export function resolveExecuteGenerativeWidgetSupport(
     }
   }
 
-  if (support.capability !== 'full_stream') {
+  if (support.provider === 'openai_compatible' && isKnownExecuteWidgetStallModel(input?.model)) {
     return {
       ...support,
       enabled: false,
       capability: 'disabled',
       runtime: 'none',
-      reason: 'unsupported_surface',
-      reasonMessage: '当前模型在 execute 页面会退化为文本解释。如需交互式可视化，请在首页对话中使用。',
+      reason: 'unsupported_model',
+      reasonMessage: 'This model stalls on the Claude CLI widget loop in execute. LaborAny keeps execute in text mode for stability.',
     }
   }
 

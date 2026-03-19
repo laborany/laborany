@@ -12,10 +12,13 @@ const frontendDir = path.join(rootDir, 'frontend')
 const apiDir = path.join(rootDir, 'src-api')
 const agentDir = path.join(rootDir, 'agent-service')
 
-const args = new Set(process.argv.slice(2))
+const argv = process.argv.slice(2)
+const args = new Set(argv)
 const forceBuild = args.has('--build')
 const keepRoot = args.has('--keep-root')
 const keepLogs = args.has('--keep-logs')
+const profileArgIndex = argv.indexOf('--profile')
+const forcedProfileSelector = profileArgIndex >= 0 ? (argv[profileArgIndex + 1] || '').trim() : ''
 
 const ports = {
   api: 3726,
@@ -29,6 +32,12 @@ const urls = {
 
 const PLAYWRIGHT_VERSION = '1.52.0'
 const WIDGET_PROMPT = '请不要推荐 skill，也不要写文件。直接用一个交互式组件画出复利计算器，并解释复利增长。'
+const FULL_STREAM_WIDGET_WAIT_MS = 240000
+const FINAL_ONLY_WIDGET_WAIT_MS = 420000
+const FULL_STREAM_TEXT_WAIT_MS = 60000
+const FINAL_ONLY_TEXT_WAIT_MS = 180000
+const FULL_STREAM_PERSIST_WAIT_MS = 120000
+const FINAL_ONLY_PERSIST_WAIT_MS = 300000
 
 function log(message) {
   console.log(`[verify-converse-widget-real] ${message}`)
@@ -117,15 +126,15 @@ function copyModelProfiles(realHome, apiDataDir) {
 }
 
 const OFFICIAL_ANTHROPIC_BASE_URL_RE = /^https?:\/\/(?:[^/]+\.)?anthropic\.com(?:\/|$)/i
-const OPENAI_COMPAT_REASONING_MODEL_RE = /(reasoner|reasoning|(?:^|[-_])r1(?:$|[-_])|(?:^|[-_])o1(?:$|[-_])|(?:^|[-_])o3(?:$|[-_])|qwq|thinking)/i
+const OPENAI_COMPAT_TEXT_FIRST_MODEL_RE = /(?:^|[-_])o1(?:$|[-_])|(?:^|[-_])o3(?:$|[-_])|qwq/i
 
 function normalizeInterfaceType(value) {
   return value === 'openai_compatible' ? 'openai_compatible' : 'anthropic'
 }
 
-function isReasoningFocusedOpenAiModel(model) {
+function isTextFirstOpenAiModel(model) {
   const normalized = typeof model === 'string' ? model.trim() : ''
-  return normalized ? OPENAI_COMPAT_REASONING_MODEL_RE.test(normalized) : false
+  return normalized ? OPENAI_COMPAT_TEXT_FIRST_MODEL_RE.test(normalized) : false
 }
 
 function isOfficialAnthropicBaseUrl(baseUrl) {
@@ -138,7 +147,7 @@ function getWidgetProfileSupport(profile) {
   const model = typeof profile?.model === 'string' ? profile.model.trim().toLowerCase() : ''
 
   if (interfaceType === 'openai_compatible') {
-    if (isReasoningFocusedOpenAiModel(model)) {
+    if (isTextFirstOpenAiModel(model)) {
       return {
         enabled: false,
         capability: 'disabled',
@@ -186,6 +195,16 @@ function pickCliWidgetProfile(profiles) {
   return ranked?.profile || null
 }
 
+function findProfileBySelector(profiles, selector) {
+  const normalized = (selector || '').trim().toLowerCase()
+  if (!normalized) return null
+  return profiles.find((profile) => {
+    const id = typeof profile?.id === 'string' ? profile.id.trim().toLowerCase() : ''
+    const name = typeof profile?.name === 'string' ? profile.name.trim().toLowerCase() : ''
+    return id === normalized || name === normalized
+  }) || null
+}
+
 function pickSecondaryProfile(profiles, primaryProfile) {
   const primaryId = primaryProfile?.id
   if (!primaryId) return null
@@ -226,32 +245,32 @@ function getConverseSupportLabels(profile) {
 
 function getExecuteSupportLabels(profile) {
   const support = getWidgetProfileSupport(profile)
-  if (support.enabled && support.capability === 'full_stream') {
+  if (!support.enabled) {
+    return {
+      short: '文本',
+      full: '执行: 文本模式',
+    }
+  }
+  if (support.capability === 'full_stream') {
     return {
       short: '流式',
       full: '执行: 实时流式',
     }
   }
   return {
-    short: '文本',
-    full: '执行: 文本模式',
+    short: '完成后',
+    full: '执行: 完成后显示',
   }
 }
 
 async function expectActiveProfileUi(page, profile) {
-  const homeCard = page.getByTestId('home-active-profile-card')
-  await homeCard.waitFor({ state: 'visible', timeout: 30000 })
-  const cardText = await homeCard.innerText()
-  assert(cardText.includes(profile.name), `Home active profile card is missing profile name ${profile.name}`)
-  assert(cardText.includes(getConverseSupportLabels(profile).full), `Home active profile card is missing converse support label for ${profile.name}`)
-  assert(cardText.includes(getExecuteSupportLabels(profile).full), `Home active profile card is missing execute support label for ${profile.name}`)
-
   const trigger = page.getByTestId('active-profile-trigger')
   await trigger.waitFor({ state: 'visible', timeout: 30000 })
   const triggerText = await trigger.innerText()
   assert(triggerText.includes(profile.name), `Active profile trigger is missing profile name ${profile.name}`)
-  assert(triggerText.includes(getConverseSupportLabels(profile).short), `Active profile trigger is missing converse short label for ${profile.name}`)
-  assert(triggerText.includes(getExecuteSupportLabels(profile).short), `Active profile trigger is missing execute short label for ${profile.name}`)
+  if (profile.model) {
+    assert(triggerText.includes(profile.model), `Active profile trigger is missing model id ${profile.model}`)
+  }
 }
 
 async function promoteProfileAsCurrentDefault(page, profile) {
@@ -519,7 +538,7 @@ async function findLatestConverseSessionId(baseUrl) {
   }, 10000)
 }
 
-async function waitForPersistedWidget(baseUrl, sessionId) {
+async function waitForPersistedWidget(baseUrl, sessionId, timeoutMs = FULL_STREAM_PERSIST_WAIT_MS) {
   return await waitForCondition('persisted widget session detail', async () => {
     const res = await requestJson(baseUrl, `/api/sessions/${encodeURIComponent(sessionId)}`)
     if (!res.ok) return null
@@ -530,13 +549,14 @@ async function waitForPersistedWidget(baseUrl, sessionId) {
       && typeof item === 'object'
       && item.meta
       && item.meta.widget
+      && item.meta.widget.displayMode === 'inline'
       && typeof item.meta.widget.html === 'string'
       && item.meta.widget.html.length > 100,
     )
     if (!widgetMessage) return null
     if (detail?.status !== 'completed') return null
     return detail
-  }, 120000)
+  }, timeoutMs)
 }
 
 async function fetchSessionDetail(baseUrl, sessionId) {
@@ -568,15 +588,29 @@ async function main() {
 
     seedAgentHome(realHome, agentHome)
     const modelProfiles = seedApiCwd(realHome, apiCwd)
-    const widgetProfile = pickCliWidgetProfile(modelProfiles)
+    const widgetProfile = forcedProfileSelector
+      ? findProfileBySelector(modelProfiles, forcedProfileSelector)
+      : pickCliWidgetProfile(modelProfiles)
     const secondaryProfile = pickSecondaryProfile(modelProfiles, widgetProfile)
     assert(
       widgetProfile?.id,
-      'verify-converse-widget-real requires at least one widget-capable Claude CLI profile in LaborAny settings',
+      forcedProfileSelector
+        ? `verify-converse-widget-real could not find the requested profile: ${forcedProfileSelector}`
+        : 'verify-converse-widget-real requires at least one widget-capable Claude CLI profile in LaborAny settings',
     )
 
     log(`Using isolated test root: ${tempRoot}`)
     log(`Selected profile: ${widgetProfile.name || widgetProfile.id} (${widgetProfile.model || 'unknown model'})`)
+    const widgetProfileSupport = getWidgetProfileSupport(widgetProfile)
+    const widgetRenderWaitMs = widgetProfileSupport.capability === 'full_stream'
+      ? FULL_STREAM_WIDGET_WAIT_MS
+      : FINAL_ONLY_WIDGET_WAIT_MS
+    const liveAssistantWaitMs = widgetProfileSupport.capability === 'full_stream'
+      ? FULL_STREAM_TEXT_WAIT_MS
+      : FINAL_ONLY_TEXT_WAIT_MS
+    const persistedWidgetWaitMs = widgetProfileSupport.capability === 'full_stream'
+      ? FULL_STREAM_PERSIST_WAIT_MS
+      : FINAL_ONLY_PERSIST_WAIT_MS
 
     agentHandle = startChild('agent-service', {
       command: getTsxPath(),
@@ -670,7 +704,7 @@ async function main() {
     await input.fill(WIDGET_PROMPT)
     await input.press('Enter')
 
-    await page.locator('iframe').first().waitFor({ state: 'visible', timeout: 240000 })
+    await page.locator('iframe').first().waitFor({ state: 'visible', timeout: widgetRenderWaitMs })
     await input.waitFor({ state: 'visible', timeout: 30000 })
 
     const liveAssistantText = await waitForCondition('widget explanation prose', async () => {
@@ -679,12 +713,12 @@ async function main() {
       if (count === 0) return null
       const text = (await blocks.last().innerText()).trim()
       return /复利/.test(text) ? text : null
-    }, 60000)
+    }, liveAssistantWaitMs)
     assert(/复利/.test(liveAssistantText), 'Live assistant explanation is missing the compound-interest content')
     log('Widget rendered in live converse page')
 
     const sessionId = await findLatestConverseSessionId(urls.api)
-    const detail = await waitForPersistedWidget(urls.api, sessionId)
+    const detail = await waitForPersistedWidget(urls.api, sessionId, persistedWidgetWaitMs)
     const messages = Array.isArray(detail.messages) ? detail.messages : []
     const widgetMessages = messages.filter(item => item?.meta?.widget)
     assert(widgetMessages.length > 0, 'Persisted session is missing widget metadata')
@@ -702,7 +736,7 @@ async function main() {
     assert(!restoredBodyText.includes('[widget:'), 'Restored converse page showed raw widget placeholder text')
     await input.waitFor({ state: 'visible', timeout: 30000 })
     const restoredAnchorCount = await page.locator('[data-widget-id]').count()
-    assert(restoredAnchorCount >= 1, 'Restored converse page is missing the widget anchor card')
+    assert(restoredAnchorCount === 0, 'Restored converse page should render inline widget instead of anchor card')
     await sleep(3000)
     const restoredDetail = await fetchSessionDetail(urls.api, sessionId)
     assert(
@@ -711,20 +745,16 @@ async function main() {
     )
     log('Widget restored from persisted session')
 
-    await page.evaluate(() => {
-      const closeButton = document.querySelector('[aria-label="Close widget panel"]')
-      if (closeButton instanceof HTMLElement) closeButton.click()
-    })
-    await waitForCondition('widget panel close', async () => {
-      const count = await page.locator('iframe').count()
-      return count === 0 ? true : null
-    }, 10000)
-    await page.locator('[data-widget-id]').first().click({ force: true })
-    await page.locator('iframe').first().waitFor({ state: 'visible', timeout: 10000 })
-    log('Widget close and reopen passed')
+    const expandButton = page.getByRole('button', { name: '展开到面板' }).first()
+    await expandButton.waitFor({ state: 'visible', timeout: 10000 })
+    await expandButton.click()
+    await page.getByLabel('Close widget panel').waitFor({ state: 'visible', timeout: 10000 })
+    await page.getByLabel('Close widget panel').click()
+    await page.getByLabel('Close widget panel').waitFor({ state: 'hidden', timeout: 15000 })
+    log('Widget expand to panel and close passed')
 
-    const widgetId = await page.locator('[data-widget-id]').first().getAttribute('data-widget-id')
-    assert(widgetId, 'Missing widget anchor data-widget-id')
+    const widgetId = widgetMessages[0]?.meta?.widget?.widgetId
+    assert(widgetId, 'Missing persisted widget id')
     const spoofMessageCountBefore = (await fetchSessionDetail(urls.api, sessionId)).messages.length
     await page.evaluate((targetWidgetId) => {
       window.postMessage({

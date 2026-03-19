@@ -7,6 +7,8 @@ export interface ConverseWidgetRuntimePlan {
   reason: string | null
 }
 
+const ALWAYS_ENABLE_WIDGETS = process.env.LABORANY_ALWAYS_ENABLE_WIDGETS === 'true'
+
 const WIDGET_EXPLANATION_PATTERN = /可视化|图解|图表|流程图|示意图|示意|画图|渲染|交互式|计算器|仪表盘|widget|diagram|flow.?chart|chart|visuali[sz]e|interactive|calculator|dashboard|svg/i
 const EXPLANATION_INTENT_PATTERN = /解释|说明|讲解|展示|演示|理解|illustrate|walk me through|explain|teach/i
 const VISUALIZE_REWRITE_PATTERN = /改为可视化组件解释|改成可视化组件解释|改为可视化解释|改成可视化解释|改成一个可视化组件|改为一个可视化组件/i
@@ -71,7 +73,7 @@ export function planConverseWidgetRuntime(
     }
   }
 
-  const shouldEnable = shouldEnableWidgetRuntimeForQuery(query)
+  const shouldEnable = ALWAYS_ENABLE_WIDGETS || shouldEnableWidgetRuntimeForQuery(query)
   const forceDirectMode = shouldForceConverseWidgetDirectMode(query)
 
   if (widgetSupport.runtime === 'claude_cli_mcp' && shouldEnable) {

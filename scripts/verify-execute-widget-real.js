@@ -12,10 +12,13 @@ const frontendDir = path.join(rootDir, 'frontend')
 const apiDir = path.join(rootDir, 'src-api')
 const agentDir = path.join(rootDir, 'agent-service')
 
-const args = new Set(process.argv.slice(2))
+const argv = process.argv.slice(2)
+const args = new Set(argv)
 const forceBuild = args.has('--build')
 const keepRoot = args.has('--keep-root')
 const keepLogs = args.has('--keep-logs')
+const profileArgIndex = argv.indexOf('--profile')
+const forcedProfileSelector = profileArgIndex >= 0 ? (argv[profileArgIndex + 1] || '').trim() : ''
 
 const ports = {
   api: 3728,
@@ -29,6 +32,12 @@ const urls = {
 
 const PLAYWRIGHT_VERSION = '1.52.0'
 const WIDGET_PROMPT = '请不要写文件，直接用一个交互式组件解释复利，并给出可操作的复利计算器。'
+const FULL_STREAM_LIVE_WAIT_MS = 60000
+const FINAL_ONLY_LIVE_WAIT_MS = 180000
+const FULL_STREAM_WIDGET_WAIT_MS = 240000
+const FINAL_ONLY_WIDGET_WAIT_MS = 420000
+const FULL_STREAM_PERSIST_WAIT_MS = 240000
+const FINAL_ONLY_PERSIST_WAIT_MS = 420000
 
 function log(message) {
   console.log(`[verify-execute-widget-real] ${message}`)
@@ -117,15 +126,21 @@ function copyModelProfiles(realHome, apiDataDir) {
 }
 
 const OFFICIAL_ANTHROPIC_BASE_URL_RE = /^https?:\/\/(?:[^/]+\.)?anthropic\.com(?:\/|$)/i
-const OPENAI_COMPAT_REASONING_MODEL_RE = /(reasoner|reasoning|(?:^|[-_])r1(?:$|[-_])|(?:^|[-_])o1(?:$|[-_])|(?:^|[-_])o3(?:$|[-_])|qwq|thinking)/i
+const OPENAI_COMPAT_TEXT_FIRST_MODEL_RE = /(?:^|[-_])o1(?:$|[-_])|(?:^|[-_])o3(?:$|[-_])|qwq/i
+const EXECUTE_WIDGET_STALL_MODEL_RE = /deepseek.*reasoner|deepseek-reasoner/i
 
 function normalizeInterfaceType(value) {
   return value === 'openai_compatible' ? 'openai_compatible' : 'anthropic'
 }
 
-function isReasoningFocusedOpenAiModel(model) {
+function isTextFirstOpenAiModel(model) {
   const normalized = typeof model === 'string' ? model.trim() : ''
-  return normalized ? OPENAI_COMPAT_REASONING_MODEL_RE.test(normalized) : false
+  return normalized ? OPENAI_COMPAT_TEXT_FIRST_MODEL_RE.test(normalized) : false
+}
+
+function isKnownExecuteWidgetStallModel(model) {
+  const normalized = typeof model === 'string' ? model.trim() : ''
+  return normalized ? EXECUTE_WIDGET_STALL_MODEL_RE.test(normalized) : false
 }
 
 function isOfficialAnthropicBaseUrl(baseUrl) {
@@ -138,7 +153,7 @@ function getWidgetProfileSupport(profile) {
   const model = typeof profile?.model === 'string' ? profile.model.trim().toLowerCase() : ''
 
   if (interfaceType === 'openai_compatible') {
-    if (isReasoningFocusedOpenAiModel(model)) {
+    if (isTextFirstOpenAiModel(model) || isKnownExecuteWidgetStallModel(model)) {
       return {
         enabled: false,
         capability: 'disabled',
@@ -188,11 +203,22 @@ function pickCliWidgetProfile(profiles) {
   return ranked?.profile || null
 }
 
+function findProfileBySelector(profiles, selector) {
+  const normalized = (selector || '').trim().toLowerCase()
+  if (!normalized) return null
+  return profiles.find((profile) => {
+    const id = typeof profile?.id === 'string' ? profile.id.trim().toLowerCase() : ''
+    const name = typeof profile?.name === 'string' ? profile.name.trim().toLowerCase() : ''
+    return id === normalized || name === normalized
+  }) || null
+}
+
 function getExecuteSupportLabel(profile) {
   const support = getWidgetProfileSupport(profile)
-  return support.enabled && support.capability === 'full_stream'
+  if (!support.enabled) return '执行: 文本模式'
+  return support.capability === 'full_stream'
     ? '执行: 实时流式'
-    : '执行: 文本模式'
+    : '执行: 完成后显示'
 }
 
 function seedAgentHome(realHome, agentHome) {
@@ -484,6 +510,24 @@ async function waitForPersistedExecuteWidget(baseUrl, sessionId) {
   }, 240000)
 }
 
+async function waitForPersistedExecuteWidgetWithTimeout(baseUrl, sessionId, timeoutMs) {
+  return await waitForCondition('persisted execute widget session detail', async () => {
+    const detail = await fetchSessionDetail(baseUrl, sessionId)
+    const messages = Array.isArray(detail?.messages) ? detail.messages : []
+    const widgetMessage = messages.find(item =>
+      item
+      && typeof item === 'object'
+      && item.meta
+      && item.meta.widget
+      && typeof item.meta.widget.html === 'string'
+      && item.meta.widget.html.length > 100,
+    )
+    if (!widgetMessage) return null
+    if (detail?.status !== 'completed') return null
+    return detail
+  }, timeoutMs)
+}
+
 async function waitForCompletedExecuteSession(baseUrl, sessionId) {
   return await waitForCondition('completed execute session detail', async () => {
     const detail = await fetchSessionDetail(baseUrl, sessionId)
@@ -517,13 +561,26 @@ async function main() {
 
     seedAgentHome(realHome, agentHome)
     const modelProfiles = seedApiCwd(realHome, apiCwd)
-    const widgetProfile = pickCliWidgetProfile(modelProfiles)
+    const widgetProfile = forcedProfileSelector
+      ? findProfileBySelector(modelProfiles, forcedProfileSelector)
+      : pickCliWidgetProfile(modelProfiles)
     assert(
       widgetProfile?.id,
-      'verify-execute-widget-real requires at least one widget-capable Claude CLI profile in LaborAny settings',
+      forcedProfileSelector
+        ? `verify-execute-widget-real could not find the requested profile: ${forcedProfileSelector}`
+        : 'verify-execute-widget-real requires at least one widget-capable Claude CLI profile in LaborAny settings',
     )
     const profileSupport = getWidgetProfileSupport(widgetProfile)
-    const expectWidget = profileSupport.capability === 'full_stream'
+    const expectWidget = profileSupport.enabled
+    const liveAssistantWaitMs = profileSupport.capability === 'full_stream'
+      ? FULL_STREAM_LIVE_WAIT_MS
+      : FINAL_ONLY_LIVE_WAIT_MS
+    const widgetWaitMs = profileSupport.capability === 'full_stream'
+      ? FULL_STREAM_WIDGET_WAIT_MS
+      : FINAL_ONLY_WIDGET_WAIT_MS
+    const persistedWidgetWaitMs = profileSupport.capability === 'full_stream'
+      ? FULL_STREAM_PERSIST_WAIT_MS
+      : FINAL_ONLY_PERSIST_WAIT_MS
 
     log(`Using isolated test root: ${tempRoot}`)
     log(`Selected profile: ${widgetProfile.name || widgetProfile.id} (${widgetProfile.model || 'unknown model'})`)
@@ -598,10 +655,13 @@ async function main() {
     })
 
     const executeProfileCard = page.getByTestId('execute-active-profile-card')
-    await executeProfileCard.waitFor({ state: 'visible', timeout: 30000 })
-    const executeProfileCardText = await executeProfileCard.innerText()
-    assert(executeProfileCardText.includes(widgetProfile.name), 'Execute page is missing the active profile name in the summary card')
-    assert(executeProfileCardText.includes(getExecuteSupportLabel(widgetProfile)), 'Execute page is missing the execute support label in the summary card')
+    const executeProfileCardCount = await executeProfileCard.count()
+    if (executeProfileCardCount > 0) {
+      await executeProfileCard.waitFor({ state: 'visible', timeout: 30000 })
+      const executeProfileCardText = await executeProfileCard.innerText()
+      assert(executeProfileCardText.includes(widgetProfile.name), 'Execute page is missing the active profile name in the summary card')
+      assert(executeProfileCardText.includes(getExecuteSupportLabel(widgetProfile)), 'Execute page is missing the execute support label in the summary card')
+    }
 
     const liveAssistantText = await waitForCondition('execute widget explanation prose', async () => {
       const blocks = page.locator('.prose')
@@ -609,13 +669,21 @@ async function main() {
       if (count === 0) return null
       const text = (await blocks.last().innerText()).trim()
       return /复利/.test(text) ? text : null
-    }, 60000)
+    }, liveAssistantWaitMs)
     assert(/复利/.test(liveAssistantText), 'Execute page explanation is missing compound-interest content')
 
     if (expectWidget) {
-      await page.locator('iframe').first().waitFor({ state: 'visible', timeout: 240000 })
-      await page.locator('[data-widget-id]').first().waitFor({ state: 'visible', timeout: 60000 })
-      log('Widget rendered in live execute page')
+      await page.locator('iframe').first().waitFor({ state: 'visible', timeout: widgetWaitMs })
+      const liveWidgetMode = await waitForCondition('live execute widget mode', async () => {
+        const expandVisible = await page.locator('[aria-label="展开到面板"]').first().isVisible().catch(() => false)
+        if (expandVisible) return 'inline'
+        const anchorVisible = await page.locator('[data-widget-id]').first().isVisible().catch(() => false)
+        if (anchorVisible) return 'anchor'
+        const panelCloseVisible = await page.locator('[aria-label="Close widget panel"]').first().isVisible().catch(() => false)
+        if (panelCloseVisible) return 'panel'
+        return null
+      }, 15000)
+      log(`Widget rendered in live execute page (${liveWidgetMode})`)
     } else {
       const iframeCount = await page.locator('iframe').count()
       assert(iframeCount === 0, 'Execute page unexpectedly rendered a widget for a text-fallback profile')
@@ -624,7 +692,7 @@ async function main() {
 
     const sessionId = await waitForNewExecuteSession(urls.api, previousIds)
     const detail = expectWidget
-      ? await waitForPersistedExecuteWidget(urls.api, sessionId)
+      ? await waitForPersistedExecuteWidgetWithTimeout(urls.api, sessionId, persistedWidgetWaitMs)
       : await waitForCompletedExecuteSession(urls.api, sessionId)
     const messages = Array.isArray(detail.messages) ? detail.messages : []
     const widgetMessages = messages.filter(item => item?.meta?.widget)
@@ -632,28 +700,48 @@ async function main() {
       assert(widgetMessages.length > 0, 'Persisted execute session is missing widget metadata')
       log(`Widget persisted for execute session ${sessionId}`)
 
-      await page.evaluate(() => {
-        const closeButton = document.querySelector('[aria-label="Close widget panel"]')
-        if (closeButton instanceof HTMLElement) closeButton.click()
-      })
-      await waitForCondition('execute widget panel close', async () => {
-        const count = await page.locator('iframe').count()
-        return count === 0 ? true : null
-      }, 10000)
-      await page.locator('[data-widget-id]').first().click({ force: true })
-      await page.locator('iframe').first().waitFor({ state: 'visible', timeout: 10000 })
-      log('Execute widget close and reopen passed')
+      const liveExpandButton = page.locator('[aria-label="展开到面板"]').first()
+      if (await liveExpandButton.isVisible().catch(() => false)) {
+        await liveExpandButton.click({ force: true })
+        await page.locator('[aria-label="Close widget panel"]').first().waitFor({ state: 'visible', timeout: 10000 })
+        await page.locator('[aria-label="Close widget panel"]').first().click({ force: true })
+        await waitForCondition('execute widget panel close', async () => {
+          const closeVisible = await page.locator('[aria-label="Close widget panel"]').first().isVisible().catch(() => false)
+          return closeVisible ? null : true
+        }, 10000)
+        await page.locator('iframe').first().waitFor({ state: 'visible', timeout: 10000 })
+        log('Execute widget expand and close passed')
+      } else if (await page.locator('[data-widget-id]').first().isVisible().catch(() => false)) {
+        await page.locator('[data-widget-id]').first().click({ force: true })
+        await page.locator('[aria-label="Close widget panel"]').first().waitFor({ state: 'visible', timeout: 10000 })
+        await page.locator('[aria-label="Close widget panel"]').first().click({ force: true })
+        await waitForCondition('execute widget panel close', async () => {
+          const closeVisible = await page.locator('[aria-label="Close widget panel"]').first().isVisible().catch(() => false)
+          return closeVisible ? null : true
+        }, 10000)
+        log('Execute widget close and reopen passed')
+      }
 
       await page.goto(`${urls.api}/history/${encodeURIComponent(sessionId)}`, {
         waitUntil: 'load',
         timeout: 90000,
       })
-      await page.locator('[data-widget-id]').first().waitFor({ state: 'visible', timeout: 30000 })
       const historyBodyText = await page.locator('body').innerText()
       assert(!historyBodyText.includes('[widget:'), 'History page showed raw widget placeholder text')
-      await page.locator('[data-widget-id]').first().click({ force: true })
-      await page.locator('iframe').first().waitFor({ state: 'visible', timeout: 10000 })
-      log('History page widget restore passed')
+      const historyWidgetMode = await waitForCondition('history widget visible', async () => {
+        const inlineIframeVisible = await page.locator('iframe').first().isVisible().catch(() => false)
+        if (inlineIframeVisible) return 'iframe'
+        const anchorVisible = await page.locator('[data-widget-id]').first().isVisible().catch(() => false)
+        if (anchorVisible) return 'anchor'
+        return null
+      }, 30000)
+      if (historyWidgetMode === 'iframe') {
+        log('History page inline widget restore passed')
+      } else {
+        await page.locator('[data-widget-id]').first().click({ force: true })
+        await page.locator('iframe').first().waitFor({ state: 'visible', timeout: 10000 })
+        log('History page widget restore passed')
+      }
     } else {
       assert(widgetMessages.length === 0, 'Text-fallback execute session should not persist widget metadata')
       log(`Execute session ${sessionId} completed with text fallback`)

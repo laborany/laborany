@@ -20,7 +20,7 @@ import {
 } from './communication-preferences.js'
 import { normalizeCommunicationStylePreference } from './communication-style-normalizer.js'
 import { isClaudeCliAvailable } from './cli-runner.js'
-import { buildClaudeEnvConfig, resolveClaudeCliLaunch } from '../claude-cli.js'
+import { buildClaudeCliPromptDelivery, buildClaudeEnvConfig, resolveClaudeCliLaunch } from '../claude-cli.js'
 import type { ExtractedFact } from './memcell/index.js'
 import { refreshRuntimeConfig } from '../runtime-config.js'
 
@@ -592,25 +592,35 @@ export class MemoryCliExtractor {
     if (memoryModel) {
       args.push('--model', memoryModel)
     }
-    const spawnArgs = [...cliLaunch.argsPrefix, ...args]
+    const logArgs = [...cliLaunch.argsPrefix, ...args, '<prompt>']
 
     const timeout = this.resolveTimeoutMs(params.timeoutMs)
 
     const runOnce = async (strictJsonOnly = false): Promise<CliExtractResult> => {
+      const prompt = strictJsonOnly ? `${basePrompt}${strictJsonSuffix}` : basePrompt
+      const promptDelivery = buildClaudeCliPromptDelivery(cliLaunch, args, prompt)
+      const spawnArgs = [...cliLaunch.argsPrefix, ...promptDelivery.args]
       const proc = spawn(cliLaunch.command, spawnArgs, {
         env: buildClaudeEnvConfig(),
         shell: cliLaunch.shell,
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: [promptDelivery.useStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       })
 
       let stdout = ''
       let stderr = ''
+      if (!proc.stdout || !proc.stderr) {
+        throw new Error('Claude CLI stdio is unavailable')
+      }
       proc.stdout.on('data', chunk => { stdout += chunk.toString('utf-8') })
       proc.stderr.on('data', chunk => { stderr += chunk.toString('utf-8') })
 
-      const prompt = strictJsonOnly ? `${basePrompt}${strictJsonSuffix}` : basePrompt
-      proc.stdin.write(prompt, 'utf-8')
-      proc.stdin.end()
+      if (promptDelivery.useStdin) {
+        if (!proc.stdin) {
+          throw new Error('Claude CLI stdin is unavailable')
+        }
+        proc.stdin.write(prompt, 'utf-8')
+        proc.stdin.end()
+      }
 
       let timedOut = false
       const timer = setTimeout(() => {
@@ -633,7 +643,7 @@ export class MemoryCliExtractor {
               stage: timedOut ? 'timeout-salvaged' : 'nonzero-salvaged',
               source: cliLaunch.source,
               command: cliLaunch.command,
-              args: spawnArgs,
+              args: logArgs,
               exitCode,
               stderr,
               stdout: outputText,
@@ -648,7 +658,7 @@ export class MemoryCliExtractor {
           stage: 'spawn',
           source: cliLaunch.source,
           command: cliLaunch.command,
-          args: spawnArgs,
+          args: logArgs,
           exitCode,
           stderr,
           stdout,
@@ -664,7 +674,7 @@ export class MemoryCliExtractor {
           stage: 'parse',
           source: cliLaunch.source,
           command: cliLaunch.command,
-          args: spawnArgs,
+          args: logArgs,
           stderr,
           stdout: outputText,
           reason: error,
@@ -680,7 +690,7 @@ export class MemoryCliExtractor {
         stage: 'retry-1',
         source: cliLaunch.source,
         command: cliLaunch.command,
-        args: spawnArgs,
+        args: logArgs,
         reason: firstError,
       }))
       try {
@@ -691,7 +701,7 @@ export class MemoryCliExtractor {
           stage: 'fallback',
           source: cliLaunch.source,
           command: cliLaunch.command,
-          args: spawnArgs,
+          args: logArgs,
           reason: secondError,
         }))
         return this.fallback(params)
@@ -722,22 +732,31 @@ export async function runClaudeCliPrompt(prompt: string, timeoutMs = 30_000): Pr
   ).trim()
   if (memoryModel) args.push('--model', memoryModel)
 
-  const spawnArgs = [...cliLaunch.argsPrefix, ...args]
+  const promptDelivery = buildClaudeCliPromptDelivery(cliLaunch, args, prompt)
+  const spawnArgs = [...cliLaunch.argsPrefix, ...promptDelivery.args]
 
   try {
     const proc = spawn(cliLaunch.command, spawnArgs, {
       env: buildClaudeEnvConfig(),
       shell: cliLaunch.shell,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: [promptDelivery.useStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     })
 
     let stdout = ''
     let stderr = ''
+    if (!proc.stdout || !proc.stderr) {
+      throw new Error('Claude CLI stdio is unavailable')
+    }
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf-8') })
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf-8') })
 
-    proc.stdin.write(prompt, 'utf-8')
-    proc.stdin.end()
+    if (promptDelivery.useStdin) {
+      if (!proc.stdin) {
+        throw new Error('Claude CLI stdin is unavailable')
+      }
+      proc.stdin.write(prompt, 'utf-8')
+      proc.stdin.end()
+    }
 
     let timedOut = false
     const timer = setTimeout(() => {

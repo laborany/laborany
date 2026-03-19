@@ -27,7 +27,7 @@ export interface MessageMeta {
   variantIndex?: number | null
   source?: 'user' | 'llm' | 'rule' | 'system'
   capabilities?: MessageCapabilities
-  widget?: { widgetId: string; title: string; html: string; status: string }
+  widget?: { widgetId: string; title: string; html: string; status: string; displayMode?: 'inline' | 'panel' }
 }
 
 export interface MessageVariant {
@@ -60,6 +60,7 @@ export interface WidgetState {
   html: string
   status: 'loading' | 'ready' | 'error'
   errorMessage?: string
+  displayMode?: 'inline' | 'panel'
 }
 
 export interface HistoryMessage {

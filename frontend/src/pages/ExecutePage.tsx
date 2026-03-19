@@ -124,38 +124,6 @@ export default function ExecutePage() {
       }
     }
 
-    const findSameSession = async (): Promise<{ id: string; isRunning: boolean } | null> => {
-      if (attachmentIds.length > 0) return null
-      if (!token || !skillId) return null
-      try {
-        const res = await fetch(`${API_BASE}/sessions`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (!res.ok) return null
-
-        const list = await res.json() as Array<{
-          id: string
-          skill_id: string
-          query: string
-          status: string
-          created_at?: string
-        }>
-
-        const matched = list.find(item => (
-          item.skill_id === skillId
-          && (item.query || '').trim() === normalizedQuery
-        ))
-
-        if (!matched) return null
-        return {
-          id: matched.id,
-          isRunning: matched.status === 'running',
-        }
-      } catch {
-        return null
-      }
-    }
-
     const bootstrap = async () => {
       let attached = false
       let continuedBySid = false
@@ -168,20 +136,6 @@ export default function ExecutePage() {
           await agent.execute(normalizedQuery, undefined, { attachmentIds })
           continuedBySid = true
           startedNewExecution = true
-        }
-      }
-
-      if (!sid && normalizedQuery && !attached && !continuedBySid) {
-        const matchedSession = await findSameSession()
-        if (matchedSession?.id) {
-          if (matchedSession.isRunning) {
-            attached = await tryAttachRunningSession(matchedSession.id)
-          } else {
-            agent.resumeSession(matchedSession.id)
-            await agent.execute(normalizedQuery, undefined, { attachmentIds })
-            continuedBySid = true
-            startedNewExecution = true
-          }
         }
       }
 
@@ -329,6 +283,19 @@ export default function ExecutePage() {
         respondToQuestion={agent.respondToQuestion}
         placeholder={placeholder}
         headerSlot={header}
+        activeWidget={agent.activeWidget}
+        streamingWidget={agent.streamingWidget}
+        onCloseWidget={() => agent.setActiveWidget(null)}
+        onWidgetInteraction={(_widgetId, data) => {
+          const text = `[来自组件交互]\n${JSON.stringify(data, null, 2)}`
+          void agent.execute(text)
+        }}
+        onWidgetFallbackToText={() => {
+          agent.setActiveWidget(null)
+          void agent.execute('[请改为文本解释]')
+        }}
+        onShowWidget={agent.showWidget}
+        onExpandWidget={agent.showWidget}
       />
 
       {/* ════════════════════════════════════════════════════════════════════

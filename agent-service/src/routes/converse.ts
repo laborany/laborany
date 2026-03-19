@@ -86,7 +86,7 @@ interface ConverseMessageMeta {
     canCopy: boolean
     canRegenerate: boolean
   }
-  widget?: { widgetId: string; title: string; html: string; status: string }
+  widget?: { widgetId: string; title: string; html: string; status: string; displayMode?: 'inline' | 'panel' }
 }
 
 interface StoredConverseMessage {
@@ -2205,6 +2205,9 @@ router.post('/', async (req: Request, res: Response) => {
     const memoryCtx = memoryInjector.buildContext({
       skillId: '__converse__',
       userQuery: query,
+      // Direct widget explanation rounds are latency-sensitive and do not
+      // benefit from injecting the full long-form memory handbook.
+      tokenBudget: widgetRuntimePlan.forceDirectMode ? 1200 : undefined,
     })
     const systemPrompt = buildConverseSystemPrompt(memoryCtx, effectiveRuntimeContext, {
       forceWidgetDirectMode: widgetRuntimePlan.forceDirectMode,
@@ -2482,6 +2485,7 @@ router.post('/', async (req: Request, res: Response) => {
             title: cw.title,
             html: cw.html,
             status: 'ready',
+            displayMode: 'inline',
           },
         },
       )

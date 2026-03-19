@@ -13,7 +13,6 @@ import {
   DropdownMenuItem,
 } from '../ui'
 import { useModelProfile } from '../../contexts/ModelProfileContext'
-import { ModelWidgetSupportSummary } from './ModelWidgetSupportSummary'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           常量定义                                        │
@@ -83,12 +82,9 @@ export default function ChatInput({
           <span className="block truncate text-sm font-medium leading-tight">
             {activeProfile.name || '默认模型'}
           </span>
-          <ModelWidgetSupportSummary
-            profile={activeProfile}
-            compact
-            labelMode="short"
-            className="pt-1"
-          />
+          <span className="block truncate pt-1 font-mono text-[11px] text-muted-foreground">
+            {activeProfile.model || '未配置模型'}
+          </span>
         </span>
         {withChevron && (
           <svg className="w-3.5 h-3.5 shrink-0 opacity-70 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -392,9 +388,6 @@ export default function ChatInput({
 
                           <span className="min-w-0 truncate text-left font-mono text-[11px] text-muted-foreground">
                             {p.model || '未配置模型'}
-                          </span>
-                          <span className="col-start-2 min-w-0 pt-0.5">
-                            <ModelWidgetSupportSummary profile={p} compact />
                           </span>
                         </span>
                       </DropdownMenuItem>

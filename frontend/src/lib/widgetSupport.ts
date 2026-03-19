@@ -63,7 +63,7 @@ export function getConverseWidgetSupportDisplay(
       label: '对话: 实时流式',
       shortLabel: '流式',
       tone: 'success',
-      detail: '首页对话支持流式 widget 渲染。',
+      detail: '首页对话支持内联流式 widget 渲染。',
     }
   }
 
@@ -71,7 +71,7 @@ export function getConverseWidgetSupportDisplay(
     label: '对话: 完成后显示',
     shortLabel: '完成后',
     tone: 'warning',
-    detail: '首页对话支持 widget，但通常会在生成完成后一次性提交。',
+    detail: '首页对话支持内联 widget，但兼容 profile 往往只会在生成后集中提交。',
   }
 }
 
@@ -89,11 +89,20 @@ export function getExecuteWidgetSupportDisplay(
     }
   }
 
+  if (support.capability === 'full_stream') {
+    return {
+      label: '执行: 实时流式',
+      shortLabel: '流式',
+      tone: 'success',
+      detail: 'execute 页面支持流式 widget 渲染。',
+    }
+  }
+
   return {
-    label: '执行: 实时流式',
-    shortLabel: '流式',
-    tone: 'success',
-    detail: 'execute 页面支持流式 widget 渲染。',
+    label: '执行: 完成后显示',
+    shortLabel: '完成后',
+    tone: 'warning',
+    detail: 'execute 页面支持 widget，但兼容 profile 通常会在生成完成后集中提交。',
   }
 }
 
@@ -104,11 +113,15 @@ export function getProfileWidgetSupportDescription(
   const execute = getExecuteGenerativeWidgetSupport(profile)
 
   if (converse.enabled && converse.capability === 'full_stream' && execute.enabled) {
-    return '首页对话和 execute 页面都可使用流式 widget。'
+    return '首页对话和 execute 页面都可使用内联流式 widget。'
+  }
+
+  if (converse.enabled && execute.enabled) {
+    return '首页对话和 execute 页面都支持 widget；兼容 profile 通常会在生成完成后显示。'
   }
 
   if (converse.enabled) {
-    return '首页对话可以使用 widget；为了稳定性，当前 execute 页面会自动退化为文本解释。'
+    return '首页对话支持内联 widget；当前 execute 页面按文本模式运行。'
   }
 
   return converse.reasonMessage || execute.reasonMessage || '当前 profile 暂按文本模式运行。'
@@ -133,8 +146,12 @@ export function getHomeWidgetRuntimeNotice(
     return null
   }
 
+  if (converse.enabled && execute.enabled) {
+    return null
+  }
+
   return {
     tone: 'warning',
-    message: `当前模型 ${profile.name} 在首页对话支持可视化，但通常会在生成完成后出现；execute 页面会退化为文本解释。`,
+    message: `当前模型 ${profile.name} 支持首页对话内联可视化；当前 execute 页面仍以文本解释为主。`,
   }
 }

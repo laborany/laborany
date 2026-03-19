@@ -37,6 +37,8 @@ import {
 } from './generative-ui/handler.js'
 import {
   isWidgetTool,
+  TOOL_LOAD_GUIDELINES,
+  TOOL_SHOW_WIDGET,
   writeMcpConfig,
   writeUserMcpConfig,
 } from './generative-ui/tools.js'
@@ -804,8 +806,6 @@ const WIDGET_EXPLANATION_PATTERN = /可视化|图解|图表|流程图|示意图|
 const EXPLANATION_INTENT_PATTERN = /解释|说明|讲解|展示|演示|理解|compare|comparison|illustrate|walk me through|explain|teach/i
 const NO_FILE_PATTERN = /不要写文件|不要创建文件|不要生成文件|不要落地文件|不要改代码|不要实现|直接回答|直接解释|直接用|just explain|do not write files?|don't write files?/i
 const EXECUTION_ARTIFACT_PATTERN = /修复|实现|重构|写代码|编程|代码|项目|仓库|repo|repository|脚本|命令|测试|提交|commit|build|fix|implement|refactor|create file|write file|edit file/i
-const MODEL_TOOL_LOAD_GUIDELINES = 'load_guidelines'
-const MODEL_TOOL_SHOW_WIDGET = 'show_widget'
 const MISSING_PRINT_INPUT_RE = /Input must be provided either through stdin or as a prompt argument when using --print/i
 
 function formatClaudeCliExitError(code: number | null, stderrSnippet: string): string {
@@ -859,8 +859,8 @@ function buildDirectWidgetExecutionSkillPrompt(widgetSupport: GenerativeWidgetSu
       ? '- The current widget runtime may stream partial widget updates before the final render.'
       : '- The current widget runtime may only commit the widget after the tool call finishes.'
     lines.push(
-      `- The widget tool names exposed to you are ${MODEL_TOOL_LOAD_GUIDELINES} and ${MODEL_TOOL_SHOW_WIDGET}.`,
-      `- If widget tools are available, silently call ${MODEL_TOOL_LOAD_GUIDELINES} before your first widget, then call ${MODEL_TOOL_SHOW_WIDGET}.`,
+      `- The widget tool names exposed to you are ${TOOL_LOAD_GUIDELINES} and ${TOOL_SHOW_WIDGET}.`,
+      `- If widget tools are available, silently call ${TOOL_LOAD_GUIDELINES} before your first widget, then call ${TOOL_SHOW_WIDGET}.`,
       '- Call those widget tools directly. Do not wrap them inside the built-in Skill tool.',
       runtimeHint,
       '- After rendering the widget, continue with concise natural-language explanation.',
@@ -889,7 +889,7 @@ function buildDirectWidgetExecutionUserPrompt(
 
   if (widgetSupport.enabled) {
     lines.push(
-      `- If a widget helps, call ${MODEL_TOOL_LOAD_GUIDELINES} first and then ${MODEL_TOOL_SHOW_WIDGET}.`,
+      `- If a widget helps, call ${TOOL_LOAD_GUIDELINES} first and then ${TOOL_SHOW_WIDGET}.`,
       '- If widget generation does not succeed, skip it and continue with a concise text explanation.',
     )
   } else {
@@ -914,9 +914,9 @@ function buildWidgetExecutionPrompt(
       '',
       'Generative UI guidance:',
       '- When a visual explanation, chart, diagram, calculator, or interactive widget would materially help, prefer using the widget tools.',
-      `- Before your first widget in this conversation, call ${MODEL_TOOL_LOAD_GUIDELINES} with the relevant modules.`,
-      `- Then call ${MODEL_TOOL_SHOW_WIDGET} with a complete HTML fragment in widget_code.`,
-      `- Use the widget tool names exactly as written: ${MODEL_TOOL_LOAD_GUIDELINES} and ${MODEL_TOOL_SHOW_WIDGET}.`,
+      `- Before your first widget in this conversation, call ${TOOL_LOAD_GUIDELINES} with the relevant modules.`,
+      `- Then call ${TOOL_SHOW_WIDGET} with a complete HTML fragment in widget_code.`,
+      `- Use the widget tool names exactly as written: ${TOOL_LOAD_GUIDELINES} and ${TOOL_SHOW_WIDGET}.`,
       '- Do not use the built-in Skill tool as a proxy for widget rendering.',
       '- Do not mention guideline loading to the user.',
       '- Do not write standalone HTML files when an inline widget is a better fit.',
@@ -1099,11 +1099,12 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       // 传递 widget MCP 和用户 MCP（如果存在）
       args.push('--mcp-config', widgetMcpPath)
       if (userMcpPath) {
-        args.push(userMcpPath)
+        args.push('--mcp-config', userMcpPath)
       }
 
       widgetState = createWidgetHandlerState()
       console.log(`[Agent] Generative UI enabled, MCP configs: ${widgetMcpPath}${userMcpPath ? `, ${userMcpPath}` : ''}`)
+      args.push('--debug', 'mcp')
     } catch (error) {
       console.error('[Agent] Failed to initialize Generative UI MCP config:', error)
     }
@@ -1126,9 +1127,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   /* ═══════════════════════════════════════════════════════════════════════════
    * 构建 prompt（系统提示词已写入 CLAUDE.md，这里只传用户查询）
    * ═══════════════════════════════════════════════════════════════════════════ */
-  const prompt = forceDirectMode
-    ? buildDirectWidgetExecutionUserPrompt(userQuery, executeWidgetSupport)
-    : userQuery
+  const prompt = userQuery
 
   if (!prompt.trim()) {
     emitEvent({
@@ -1144,12 +1143,14 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   // 根据配置选择启动方式
   let proc
   if (claudeConfig.useBundled) {
-    // 使用内置 Bundle：node cli.js [args]
-    const bundledArgs = [claudeConfig.cliPath!, ...args]
+    const usePromptArg = executeWidgetSupport.enabled
+    const bundledArgs = usePromptArg
+      ? [claudeConfig.cliPath!, ...args, prompt]
+      : [claudeConfig.cliPath!, ...args]
     proc = spawn(claudeConfig.nodePath!, bundledArgs, {
       cwd: taskDir,
       env: buildEnvConfig(modelOverride),
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: [usePromptArg ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     })
   } else {
     // 使用系统安装的 claude 命令
@@ -1161,8 +1162,10 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     })
   }
 
-  proc.stdin.write(prompt)
-  proc.stdin.end()
+  if (proc.stdin) {
+    proc.stdin.write(prompt, 'utf-8')
+    proc.stdin.end()
+  }
 
   let lineBuffer = ''
   let agentResponse = ''  // 收集 Agent 的文本输出
@@ -1180,6 +1183,10 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const streamCtx: ParseStreamContext | undefined = widgetState
     ? { widgetState, onWidgetEvent }
     : undefined
+
+  if (!proc.stdout || !proc.stderr) {
+    throw new Error('Claude CLI stdio is unavailable')
+  }
 
   proc.stdout.on('data', (data: Buffer) => {
     lineBuffer += data.toString('utf-8')

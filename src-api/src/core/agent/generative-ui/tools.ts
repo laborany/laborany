@@ -116,9 +116,7 @@ function buildGuidelines(modules) {
 }
 
 function writeMessage(message) {
-  const body = Buffer.from(JSON.stringify(message), 'utf8');
-  process.stdout.write('Content-Length: ' + body.length + '\\r\\n\\r\\n');
-  process.stdout.write(body);
+  process.stdout.write(JSON.stringify(message) + '\\n');
 }
 
 function sendResponse(id, result) {
@@ -220,23 +218,15 @@ function handleMessage(message) {
   }
 }
 
-let buffer = Buffer.alloc(0);
+let textBuffer = '';
 process.stdin.on('data', (chunk) => {
-  buffer = Buffer.concat([buffer, chunk]);
+  textBuffer += chunk.toString('utf8');
   while (true) {
-    const headerEnd = buffer.indexOf('\\r\\n\\r\\n');
-    if (headerEnd === -1) return;
-    const header = buffer.slice(0, headerEnd).toString('utf8');
-    const match = /Content-Length:\\s*(\\d+)/i.exec(header);
-    if (!match) {
-      buffer = buffer.slice(headerEnd + 4);
-      continue;
-    }
-    const bodyLength = Number(match[1]);
-    const totalLength = headerEnd + 4 + bodyLength;
-    if (buffer.length < totalLength) return;
-    const body = buffer.slice(headerEnd + 4, totalLength).toString('utf8');
-    buffer = buffer.slice(totalLength);
+    const newlineIndex = textBuffer.indexOf('\\n');
+    if (newlineIndex === -1) return;
+    const body = textBuffer.slice(0, newlineIndex).trim();
+    textBuffer = textBuffer.slice(newlineIndex + 1);
+    if (!body) continue;
     try {
       handleMessage(JSON.parse(body));
     } catch (error) {

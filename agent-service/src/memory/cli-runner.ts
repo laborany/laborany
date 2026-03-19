@@ -1,5 +1,10 @@
 import { spawn } from 'child_process'
-import { buildClaudeEnvConfig, checkRuntimeDependencies, resolveClaudeCliLaunch } from '../claude-cli.js'
+import {
+  buildClaudeCliPromptDelivery,
+  buildClaudeEnvConfig,
+  checkRuntimeDependencies,
+  resolveClaudeCliLaunch,
+} from '../claude-cli.js'
 
 interface ClaudePromptOptions {
   prompt: string
@@ -78,23 +83,28 @@ export async function runClaudePrompt(options: ClaudePromptOptions): Promise<Cla
     }
   }
 
-  const args = [...cli.argsPrefix, '--print', '--dangerously-skip-permissions']
+  const args = ['--print', '--dangerously-skip-permissions']
   if (options.model) {
     args.push('--model', options.model)
   }
+  const promptDelivery = buildClaudeCliPromptDelivery(cli, args, options.prompt)
+  const spawnArgs = [...cli.argsPrefix, ...promptDelivery.args]
 
   const timeoutMs = options.timeoutMs ?? 20_000
 
   try {
-    const proc = spawn(cli.command, args, {
+    const proc = spawn(cli.command, spawnArgs, {
       env: buildClaudeEnvConfig(),
       shell: cli.shell,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: [promptDelivery.useStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
 
     let stdout = ''
     let stderr = ''
+    if (!proc.stdout || !proc.stderr) {
+      throw new Error('Claude CLI stdio is unavailable')
+    }
 
     proc.stdout.on('data', chunk => {
       stdout += chunk.toString('utf-8')
@@ -103,8 +113,13 @@ export async function runClaudePrompt(options: ClaudePromptOptions): Promise<Cla
       stderr += chunk.toString('utf-8')
     })
 
-    proc.stdin.write(options.prompt, 'utf-8')
-    proc.stdin.end()
+    if (promptDelivery.useStdin) {
+      if (!proc.stdin) {
+        throw new Error('Claude CLI stdin is unavailable')
+      }
+      proc.stdin.write(options.prompt, 'utf-8')
+      proc.stdin.end()
+    }
 
     const timer = setTimeout(() => {
       proc.kill('SIGTERM')

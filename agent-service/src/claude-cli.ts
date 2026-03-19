@@ -20,6 +20,11 @@ export interface ClaudeCliLaunchConfig {
   source: 'bundled' | 'system' | 'env'
 }
 
+export interface ClaudeCliPromptDelivery {
+  args: string[]
+  useStdin: boolean
+}
+
 export interface DependencyIssue {
   code: 'DEPENDENCY_MISSING_GIT' | 'DEPENDENCY_MISSING_GIT_BASH'
   message: string
@@ -273,6 +278,24 @@ export function resolveClaudeCliLaunch(): ClaudeCliLaunchConfig | undefined {
     argsPrefix: [],
     shell: isCmdShim,
     source: isEnvPath ? 'env' : 'system',
+  }
+}
+
+export function buildClaudeCliPromptDelivery(
+  cli: ClaudeCliLaunchConfig,
+  args: string[],
+  prompt: string,
+): ClaudeCliPromptDelivery {
+  if (cli.source === 'bundled') {
+    return {
+      args: [...args, prompt],
+      useStdin: false,
+    }
+  }
+
+  return {
+    args,
+    useStdin: true,
   }
 }
 

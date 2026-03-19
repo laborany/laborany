@@ -61,6 +61,9 @@ interface OpenAiProviderCapabilities {
   supportsThinkingConfig: boolean
 }
 
+const OPENAI_BRIDGE_DEFAULT_TIMEOUT_MS = 120_000
+const OPENAI_BRIDGE_SLOW_REASONING_TIMEOUT_MS = 240_000
+
 function detectOpenAiProviderCapabilities(baseUrl?: string, model?: string): OpenAiProviderCapabilities {
   const normalizedBaseUrl = normalizeOpenAiBaseUrl(baseUrl).toLowerCase()
   const normalizedModel = (model || '').trim().toLowerCase()
@@ -93,6 +96,19 @@ function detectOpenAiProviderCapabilities(baseUrl?: string, model?: string): Ope
     requireReasoningContentForToolCalls: false,
     supportsThinkingConfig: false,
   }
+}
+
+function getOpenAiUpstreamTimeoutMs(
+  provider: OpenAiProviderCapabilities,
+  model?: string,
+): number {
+  const normalizedModel = (model || '').trim().toLowerCase()
+
+  if (provider.kind === 'deepseek' && normalizedModel.includes('reasoner')) {
+    return OPENAI_BRIDGE_SLOW_REASONING_TIMEOUT_MS
+  }
+
+  return OPENAI_BRIDGE_DEFAULT_TIMEOUT_MS
 }
 
 function getAnthropicThinkingMode(thinking: unknown): 'enabled' | 'disabled' | 'unset' {
@@ -620,6 +636,7 @@ router.post('/anthropic/v1/messages', async (c) => {
   }
 
   const upstreamUrl = buildOpenAiChatCompletionsUrl(upstreamBaseUrl)
+  const upstreamTimeoutMs = getOpenAiUpstreamTimeoutMs(provider, model)
 
   let upstreamResponse: Response
   try {
@@ -630,7 +647,7 @@ router.post('/anthropic/v1/messages', async (c) => {
         Authorization: `Bearer ${upstreamApiKey}`,
       },
       body: JSON.stringify(openAiRequest),
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(upstreamTimeoutMs),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'upstream request failed'

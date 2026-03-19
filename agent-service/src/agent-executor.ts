@@ -18,7 +18,13 @@ import {
 } from 'laborany-shared'
 import { memoryFileManager, memoryOrchestrator, memoryAsyncQueue } from './memory/index.js'
 import { communicationPreferenceManager } from './memory/communication-preferences.js'
-import { buildClaudeEnvConfig, checkRuntimeDependencies, resolveClaudeCliLaunch, type ModelOverride } from './claude-cli.js'
+import {
+  buildClaudeCliPromptDelivery,
+  buildClaudeEnvConfig,
+  checkRuntimeDependencies,
+  resolveClaudeCliLaunch,
+  type ModelOverride,
+} from './claude-cli.js'
 import { APP_HOME_DIR, TASKS_DIR, UPLOADS_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
 import {
@@ -470,7 +476,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       // 传递 widget MCP 和用户 MCP（如果存在）
       args.push('--mcp-config', widgetMcpPath)
       if (userMcpPath) {
-        args.push(userMcpPath)
+        args.push('--mcp-config', userMcpPath)
       }
 
       widgetState = createWidgetHandlerState()
@@ -535,17 +541,23 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   console.log(`[Agent] Args: ${args.join(' ')}`)
 
-  const spawnArgs = [...cliLaunch.argsPrefix, ...args]
+  const promptDelivery = buildClaudeCliPromptDelivery(cliLaunch, args, prompt)
+  const spawnArgs = [...cliLaunch.argsPrefix, ...promptDelivery.args]
 
   const proc = spawn(cliLaunch.command, spawnArgs, {
     cwd: taskDir,
     env: buildClaudeEnvConfig(modelOverride),
     shell: cliLaunch.shell,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: [promptDelivery.useStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
   })
 
-  proc.stdin.write(prompt)
-  proc.stdin.end()
+  if (promptDelivery.useStdin) {
+    if (!proc.stdin) {
+      throw new Error('Claude CLI stdin is unavailable')
+    }
+    proc.stdin.write(prompt, 'utf-8')
+    proc.stdin.end()
+  }
 
   let lineBuffer = ''
   let agentResponse = ''  // 收集 Agent 的文本输出
@@ -597,6 +609,10 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       lastProgressAt = Date.now()
       idleWarningSent = false
     }
+  }
+
+  if (!proc.stdout || !proc.stderr) {
+    throw new Error('Claude CLI stdio is unavailable')
   }
 
   proc.stdout.on('data', (data: Buffer) => {

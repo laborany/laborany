@@ -70,12 +70,14 @@ export interface UseConverseReturn {
   error: string | null
   regeneratingMessageId: string | null
   activeWidget: WidgetState | null
+  streamingWidget: WidgetState | null
   mcpNotice: {
     tone: 'warning' | 'neutral' | 'success'
     message: string
   } | null
   setActiveWidget: React.Dispatch<React.SetStateAction<WidgetState | null>>
   showWidget: (widgetId: string) => void
+  expandWidget: (widgetId: string) => void
   reset: () => void
 }
 
@@ -399,6 +401,7 @@ export function useConverse(): UseConverseReturn {
   const [error, setError] = useState<string | null>(null)
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<string | null>(null)
   const [activeWidget, setActiveWidget] = useState<WidgetState | null>(null)
+  const [streamingWidget, setStreamingWidget] = useState<WidgetState | null>(null)
   const [mcpNotice, setMcpNotice] = useState<UseConverseReturn['mcpNotice']>(null)
 
   const sessionIdRef = useRef<string | null>(null)
@@ -464,8 +467,9 @@ export function useConverse(): UseConverseReturn {
     committedWidgetsRef.current = collectCommittedWidgets(nextMessages)
 
     // Restore widget state from persisted messages
+    // Only auto-open panel for legacy widgets (no displayMode); inline widgets render in-flow
     const lastWidgetMsg = [...nextMessages].reverse().find((m) => m.meta?.widget)
-    if (lastWidgetMsg?.meta?.widget) {
+    if (lastWidgetMsg?.meta?.widget && lastWidgetMsg.meta.widget.displayMode !== 'inline') {
       const w = lastWidgetMsg.meta.widget
       setActiveWidget({ widgetId: w.widgetId, title: w.title, html: w.html, status: w.status as WidgetState['status'] })
     } else {
@@ -648,7 +652,7 @@ export function useConverse(): UseConverseReturn {
       }
 
       if (eventType === 'widget_start') {
-        setActiveWidget({
+        setStreamingWidget({
           widgetId: data.widgetId as string,
           title: (data.title as string) || 'Loading...',
           html: '',
@@ -668,7 +672,7 @@ export function useConverse(): UseConverseReturn {
             const pending = pendingDeltaRef.current
             if (pending !== null) {
               pendingDeltaRef.current = null
-              setActiveWidget((prev) => prev ? { ...prev, html: pending } : null)
+              setStreamingWidget((prev) => prev ? { ...prev, html: pending } : null)
             }
           })
         }
@@ -681,12 +685,12 @@ export function useConverse(): UseConverseReturn {
         const html = (data.html as string) || ''
         const widgetState: WidgetState = { widgetId, title, html, status: 'ready' }
         committedWidgetsRef.current.set(widgetId, widgetState)
-        setActiveWidget(widgetState)
-        // Insert anchor card into messages
+        setStreamingWidget(null)
+        // Insert inline widget message (replaces old anchor card approach)
         setMessages((prev) => [
           ...prev,
           {
-            id: `widget_anchor_${widgetId}`,
+            id: `widget_inline_${widgetId}`,
             type: 'assistant' as const,
             content: '',
             timestamp: new Date(),
@@ -695,6 +699,7 @@ export function useConverse(): UseConverseReturn {
             meta: {
               sessionMode: 'converse',
               source: 'llm',
+              widget: { widgetId, title, html, status: 'ready', displayMode: 'inline' },
             },
           },
         ])
@@ -702,7 +707,7 @@ export function useConverse(): UseConverseReturn {
       }
 
       if (eventType === 'widget_error') {
-        setActiveWidget((prev) => prev ? {
+        setStreamingWidget((prev) => prev ? {
           ...prev,
           status: 'error',
           errorMessage: (data.message as string) || 'Widget rendering failed',
@@ -1059,6 +1064,11 @@ export function useConverse(): UseConverseReturn {
     if (widget) setActiveWidget(widget)
   }, [])
 
+  const expandWidget = useCallback((widgetId: string) => {
+    const widget = committedWidgetsRef.current.get(widgetId)
+    if (widget) setActiveWidget(widget)
+  }, [])
+
   const reset = useCallback(() => {
     stop()
     if (deltaRafRef.current !== null) {
@@ -1076,6 +1086,7 @@ export function useConverse(): UseConverseReturn {
     setError(null)
     setRegeneratingMessageId(null)
     setActiveWidget(null)
+    setStreamingWidget(null)
     setMcpNotice(null)
     messagesRef.current = []
     sessionIdRef.current = null
@@ -1099,9 +1110,11 @@ export function useConverse(): UseConverseReturn {
     error,
     regeneratingMessageId,
     activeWidget,
+    streamingWidget,
     mcpNotice,
     setActiveWidget,
     showWidget,
+    expandWidget,
     reset,
   }
 }

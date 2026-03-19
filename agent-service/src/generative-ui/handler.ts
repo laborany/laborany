@@ -248,6 +248,7 @@ export function buildWidgetMeta(state: WidgetHandlerState): Record<string, unkno
       title: state.lastCommittedWidget.title,
       html: state.lastCommittedWidget.html,
       status: 'ready',
+      displayMode: 'inline',
     },
   }
 }

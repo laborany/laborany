@@ -67,10 +67,12 @@ export interface ExecutionPanelProps {
 
   /* Widget 面板 */
   activeWidget?: WidgetState | null
+  streamingWidget?: WidgetState | null
   onCloseWidget?: () => void
   onWidgetInteraction?: (widgetId: string, data: unknown) => void
   onWidgetFallbackToText?: () => void
   onShowWidget?: (widgetId: string) => void
+  onExpandWidget?: (widgetId: string) => void
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -132,10 +134,12 @@ export function ExecutionPanel({
   compositeSteps,
   currentCompositeStep,
   activeWidget,
+  streamingWidget,
   onCloseWidget,
   onWidgetInteraction,
   onWidgetFallbackToText,
   onShowWidget,
+  onExpandWidget,
 }: ExecutionPanelProps) {
   /* ── 预览状态 ── */
   const [isPreviewVisible, setIsPreviewVisible] = useState(false)
@@ -232,6 +236,10 @@ export function ExecutionPanel({
         compositeSteps={compositeSteps}
         currentCompositeStep={currentCompositeStep}
         onShowWidget={onShowWidget}
+        onExpandWidget={onExpandWidget}
+        streamingWidget={streamingWidget}
+        onWidgetInteraction={onWidgetInteraction}
+        onWidgetFallbackToText={onWidgetFallbackToText}
       />
 
       {/* ════════════════════════════════════════════════════════════════════
@@ -316,6 +324,10 @@ interface ChatPanelProps {
   compositeSteps?: CompositeStepUI[]
   currentCompositeStep?: number
   onShowWidget?: (widgetId: string) => void
+  onExpandWidget?: (widgetId: string) => void
+  streamingWidget?: WidgetState | null
+  onWidgetInteraction?: (widgetId: string, data: unknown) => void
+  onWidgetFallbackToText?: () => void
 }
 
 function ChatPanel({
@@ -334,6 +346,10 @@ function ChatPanel({
   compositeSteps,
   currentCompositeStep,
   onShowWidget,
+  onExpandWidget,
+  streamingWidget,
+  onWidgetInteraction,
+  onWidgetFallbackToText,
 }: ChatPanelProps) {
   return (
     <div
@@ -363,7 +379,15 @@ function ChatPanel({
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto mb-4 min-h-0">
         {messages.length === 0 ? <EmptyState isRunning={isRunning} connectionStatus={connectionStatus} /> : (
-          <MessageList messages={messages} isRunning={isRunning} onShowWidget={onShowWidget} />
+          <MessageList
+            messages={messages}
+            isRunning={isRunning}
+            onShowWidget={onShowWidget}
+            onExpandWidget={onExpandWidget}
+            streamingWidget={streamingWidget}
+            onWidgetInteraction={onWidgetInteraction}
+            onWidgetFallbackToText={onWidgetFallbackToText}
+          />
         )}
       </div>
 

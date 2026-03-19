@@ -61,6 +61,25 @@ interface AgentState {
   }>
   currentCompositeStep: number
   activeWidget: WidgetState | null
+  streamingWidget: WidgetState | null
+}
+
+interface SessionDetailMessageMetaWidget {
+  widgetId?: string
+  title?: string
+  html?: string
+  status?: string
+  displayMode?: 'inline' | 'panel'
+}
+
+interface SessionDetailMessage {
+  meta?: {
+    widget?: SessionDetailMessageMetaWidget
+  } | null
+}
+
+interface SessionDetailResponse {
+  messages?: SessionDetailMessage[]
 }
 
 const EXECUTE_DEDUPE_WINDOW_MS = 1200
@@ -355,6 +374,7 @@ export function useAgent(skillId: string) {
     compositeSteps: [],
     currentCompositeStep: -1,
     activeWidget: null,
+    streamingWidget: null,
   })
 
   const abortRef = useRef<AbortController | null>(null)
@@ -475,9 +495,14 @@ export function useAgent(skillId: string) {
     currentTextRef.current = ''
     isReplayingRef.current = false
     pendingTextFlushRef.current = false
+    pendingWidgetDeltaRef.current = null
     if (textFlushRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
       window.cancelAnimationFrame(textFlushRafRef.current)
       textFlushRafRef.current = null
+    }
+    if (widgetDeltaRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(widgetDeltaRafRef.current)
+      widgetDeltaRafRef.current = null
     }
     terminalEventRef.current = false
 
@@ -496,6 +521,7 @@ export function useAgent(skillId: string) {
       compositeSteps: [],
       currentCompositeStep: -1,
       activeWidget: null,
+      streamingWidget: null,
     })
 
     prevSkillIdRef.current = skillId
@@ -507,6 +533,11 @@ export function useAgent(skillId: string) {
         window.cancelAnimationFrame(textFlushRafRef.current)
       }
       textFlushRafRef.current = null
+      if (widgetDeltaRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(widgetDeltaRafRef.current)
+      }
+      widgetDeltaRafRef.current = null
+      pendingWidgetDeltaRef.current = null
       pendingTextFlushRef.current = false
       isReplayingRef.current = false
     }
@@ -780,7 +811,7 @@ export function useAgent(skillId: string) {
         case 'widget_start':
           setState((s) => ({
             ...s,
-            activeWidget: {
+            streamingWidget: {
               widgetId: event.widgetId as string,
               title: (event.title as string) || (event.widgetTitle as string) || 'Loading...',
               html: '',
@@ -799,7 +830,7 @@ export function useAgent(skillId: string) {
               const pending = pendingWidgetDeltaRef.current
               if (pending !== null) {
                 pendingWidgetDeltaRef.current = null
-                setState((s) => s.activeWidget ? { ...s, activeWidget: { ...s.activeWidget, html: pending } } : s)
+                setState((s) => s.streamingWidget ? { ...s, streamingWidget: { ...s.streamingWidget, html: pending } } : s)
               }
             })
           }
@@ -810,20 +841,25 @@ export function useAgent(skillId: string) {
           const widgetId = event.widgetId as string
           const title = (event.title as string) || (event.widgetTitle as string) || 'Widget'
           const html = (event.html as string) || (event.widgetHtml as string) || ''
-          const widgetState: WidgetState = { widgetId, title, html, status: 'ready' }
+          const widgetState: WidgetState = { widgetId, title, html, status: 'ready', displayMode: 'inline' }
           committedWidgetsRef.current.set(widgetId, widgetState)
           setState((s) => ({
             ...s,
-            activeWidget: widgetState,
+            streamingWidget: null,
             messages: [
               ...s.messages,
               {
-                id: `widget_anchor_${widgetId}`,
+                id: `widget_inline_${widgetId}`,
                 type: 'assistant' as const,
                 content: '',
                 timestamp: new Date(),
                 widgetId,
                 widgetTitle: title,
+                meta: {
+                  sessionMode: 'execution',
+                  source: 'llm',
+                  widget: { widgetId, title, html, status: 'ready', displayMode: 'inline' },
+                },
               },
             ],
           }))
@@ -831,10 +867,10 @@ export function useAgent(skillId: string) {
         }
 
         case 'widget_error':
-          setState((s) => s.activeWidget ? {
+          setState((s) => s.streamingWidget ? {
             ...s,
-            activeWidget: {
-              ...s.activeWidget,
+            streamingWidget: {
+              ...s.streamingWidget,
               status: 'error',
               errorMessage: (event.message as string) || (event.content as string) || 'Widget rendering failed',
             },
@@ -898,6 +934,9 @@ export function useAgent(skillId: string) {
           isReplayingRef.current = false
           terminalEventRef.current = true
           forgetActiveSessionId((event.sessionId as string | undefined) || sessionIdRef.current)
+          if (eventType === 'done' && sessionIdRef.current) {
+            void hydrateLatestPersistedWidget(sessionIdRef.current)
+          }
           setState((s) => ({
             ...s,
             runCompletedAt: new Date().toISOString(),
@@ -906,7 +945,13 @@ export function useAgent(skillId: string) {
           break
       }
     },
-    [flushAssistantText, forgetActiveSessionId, rememberActiveSessionId, scheduleAssistantTextFlush],
+    [
+      flushAssistantText,
+      forgetActiveSessionId,
+      hydrateLatestPersistedWidget,
+      rememberActiveSessionId,
+      scheduleAssistantTextFlush,
+    ],
   )
 
   const readSseStream = useCallback(
@@ -1156,6 +1201,8 @@ export function useAgent(skillId: string) {
         connectionStatus: null,
         createdCapability: null,
         pendingQuestion: null,
+        activeWidget: null,
+        streamingWidget: null,
       }))
 
       terminalEventRef.current = false
@@ -1168,9 +1215,14 @@ export function useAgent(skillId: string) {
       assistantIdRef.current = crypto.randomUUID()
       currentTextRef.current = ''
       pendingTextFlushRef.current = false
+      pendingWidgetDeltaRef.current = null
       if (textFlushRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
         window.cancelAnimationFrame(textFlushRafRef.current)
         textFlushRafRef.current = null
+      }
+      if (widgetDeltaRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(widgetDeltaRafRef.current)
+        widgetDeltaRafRef.current = null
       }
 
       abortRef.current = new AbortController()
@@ -1341,6 +1393,7 @@ export function useAgent(skillId: string) {
       compositeSteps: [],
       currentCompositeStep: -1,
       activeWidget: null,
+      streamingWidget: null,
     })
   }, [forgetActiveSessionId])
 
@@ -1380,6 +1433,75 @@ export function useAgent(skillId: string) {
     [state.sessionId, state.filesVersion],
   )
 
+  async function hydrateLatestPersistedWidget(targetSessionId: string) {
+    if (!targetSessionId) return
+
+    const token = localStorage.getItem('token')
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(targetSessionId)}`, {
+        headers: createAuthHeaders(token),
+      })
+      if (!res.ok) return
+
+      const detail = await res.json() as SessionDetailResponse
+      const messages = Array.isArray(detail.messages) ? detail.messages : []
+      const widgetMeta = [...messages]
+        .reverse()
+        .map((message) => message?.meta?.widget || null)
+        .find((widget): widget is SessionDetailMessageMetaWidget => Boolean(
+          widget
+          && typeof widget.widgetId === 'string'
+          && typeof widget.html === 'string'
+          && widget.html.length > 0,
+        ))
+
+      if (!widgetMeta?.widgetId || !widgetMeta.html) return
+
+      const widgetState: WidgetState = {
+        widgetId: widgetMeta.widgetId,
+        title: (widgetMeta.title || 'Widget').trim() || 'Widget',
+        html: widgetMeta.html,
+        status: widgetMeta.status === 'error' ? 'error' : 'ready',
+        displayMode: widgetMeta.displayMode,
+      }
+
+      committedWidgetsRef.current.set(widgetState.widgetId, widgetState)
+
+      setState((s) => {
+        const hasWidgetMessage = s.messages.some((message) => message.widgetId === widgetState.widgetId)
+        return {
+          ...s,
+          messages: hasWidgetMessage
+            ? s.messages
+            : [
+                ...s.messages,
+                {
+                  id: `widget_inline_${widgetState.widgetId}`,
+                  type: 'assistant',
+                  content: '',
+                  timestamp: new Date(),
+                  widgetId: widgetState.widgetId,
+                  widgetTitle: widgetState.title,
+                  meta: {
+                    sessionMode: 'execution',
+                    source: 'llm',
+                    widget: {
+                      widgetId: widgetState.widgetId,
+                      title: widgetState.title,
+                      html: widgetState.html,
+                      status: widgetState.status,
+                      displayMode: widgetState.displayMode || 'inline',
+                    },
+                  },
+                },
+              ],
+        }
+      })
+    } catch (err) {
+      console.warn('[useAgent] 恢复持久化 widget 失败:', err)
+    }
+  }
+
   // 响应用户问题
   const respondToQuestion = useCallback(
     async (_questionId: string, answers: Record<string, string>) => {
@@ -1401,8 +1523,9 @@ export function useAgent(skillId: string) {
 
   const showWidget = useCallback((widgetId: string) => {
     const widget = committedWidgetsRef.current.get(widgetId)
+      || (state.streamingWidget?.widgetId === widgetId ? state.streamingWidget : null)
     if (widget) setState((s) => ({ ...s, activeWidget: widget }))
-  }, [])
+  }, [state.streamingWidget])
 
   const setActiveWidget = useCallback((widget: WidgetState | null) => {
     setState((s) => ({ ...s, activeWidget: widget }))
@@ -1437,7 +1560,7 @@ export function useAgent(skillId: string) {
       const matchedTrackedSessions = trackedSessionIds.filter((sessionId) => runningSessionSet.has(sessionId))
       if (matchedTrackedSessions.length > 0) {
         writeTrackedSessionIds(skillId, matchedTrackedSessions)
-        return matchedTrackedSessions[0]
+        return matchedTrackedSessions.length === 1 ? matchedTrackedSessions[0] : null
       }
 
       if (!runningData) {
@@ -1468,6 +1591,8 @@ export function useAgent(skillId: string) {
         sessionId: targetSessionId,
         error: null,
         connectionStatus: null,
+        activeWidget: null,
+        streamingWidget: null,
       }))
 
       sessionIdRef.current = targetSessionId
@@ -1477,10 +1602,15 @@ export function useAgent(skillId: string) {
       assistantIdRef.current = crypto.randomUUID()
       currentTextRef.current = ''
       pendingTextFlushRef.current = false
+      pendingWidgetDeltaRef.current = null
       isReplayingRef.current = true
       if (textFlushRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
         window.cancelAnimationFrame(textFlushRafRef.current)
         textFlushRafRef.current = null
+      }
+      if (widgetDeltaRafRef.current !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(widgetDeltaRafRef.current)
+        widgetDeltaRafRef.current = null
       }
 
       try {

@@ -207,10 +207,12 @@ export function SkillExecutingView({ agent, execCtx, displayTitle, phase, onPhas
         respondToQuestion={agent.respondToQuestion}
         placeholder="继续对话..."
         activeWidget={activeWidget}
+        streamingWidget={agent.streamingWidget}
         onCloseWidget={onCloseWidget}
         onWidgetInteraction={onWidgetInteraction}
         onWidgetFallbackToText={onWidgetFallbackToText}
         onShowWidget={onShowWidget}
+        onExpandWidget={onShowWidget}
         headerSlot={
           <ExecutionHeader
             title={displayTitle}

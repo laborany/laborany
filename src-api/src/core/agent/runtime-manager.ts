@@ -192,6 +192,10 @@ interface SubscribeOptions {
   includeSession?: boolean
 }
 
+function shouldInferPlainTextWaitingInput(source: RuntimeTaskSource): boolean {
+  return source === 'feishu' || source === 'qq'
+}
+
 class RuntimeTaskManager {
   private tasks = new Map<string, RuntimeTask>()
   private cleanupTimer: ReturnType<typeof setInterval> | null = null
@@ -751,7 +755,12 @@ class RuntimeTaskManager {
         : null
       if (trailingQuestion) {
         this.markTaskWaitingInput(task, trailingQuestion)
-      } else if (!task.awaitingInput && !task.hasError && looksLikeWaitingInputMessage(task.assistantContent)) {
+      } else if (
+        !task.awaitingInput
+        && !task.hasError
+        && shouldInferPlainTextWaitingInput(task.source)
+        && looksLikeWaitingInputMessage(task.assistantContent)
+      ) {
         task.awaitingInput = true
       }
       task.assistantContent = stripQuestionCallMarkers(task.assistantContent)
@@ -809,6 +818,7 @@ class RuntimeTaskManager {
                 title: widget.title,
                 html: widget.html,
                 status: 'ready',
+                displayMode: 'inline',
               },
             }),
           ],

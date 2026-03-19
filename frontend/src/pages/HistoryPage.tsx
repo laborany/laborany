@@ -965,6 +965,10 @@ export function SessionDetailPage() {
       status: w.status as WidgetState['status'],
     })
   }, [allMessages])
+  const handleWidgetInteraction = useCallback((data: unknown) => {
+    const text = `[来自组件交互]\n${JSON.stringify(data, null, 2)}`
+    void handleContinue(text)
+  }, [handleContinue])
   const chatIsRunning = isConverseSession ? converse.isThinking : agent.isRunning
   const activePendingQuestion = isConverseSession
     ? converse.pendingQuestion
@@ -1088,6 +1092,10 @@ export function SessionDetailPage() {
             onSelectVariant={isConverseSession && converse.messages.length > 0 ? converse.selectVariant : undefined}
             regeneratingMessageId={isConverseSession && converse.messages.length > 0 ? converse.regeneratingMessageId : null}
             onShowWidget={handleShowWidget}
+            onExpandWidget={handleShowWidget}
+            streamingWidget={isConverseSession ? converse.streamingWidget : undefined}
+            onWidgetInteraction={isConverseSession ? (_widgetId, data) => { handleWidgetInteraction(data) } : undefined}
+            onWidgetFallbackToText={isConverseSession ? () => { void handleContinue('[请改为文本解释]') } : undefined}
           />
         </div>
 
@@ -1130,6 +1138,8 @@ export function SessionDetailPage() {
           <WidgetPanel
             widget={viewingWidget}
             onClose={() => setViewingWidget(null)}
+            onWidgetInteraction={isConverseSession ? (_widgetId, data) => { handleWidgetInteraction(data) } : undefined}
+            onFallbackToText={isConverseSession ? () => { void handleContinue('[请改为文本解释]') } : undefined}
           />
         </div>
       )}

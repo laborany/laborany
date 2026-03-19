@@ -9,9 +9,10 @@ import {
 } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { AgentMessage, MessageMeta } from '../../types'
+import type { AgentMessage, MessageMeta, WidgetState } from '../../types'
 import { getLatestRegeneratableMessageId } from '../../lib/messageVariants'
 import { ThinkingIndicator } from './ThinkingIndicator'
+import { InlineWidget } from '../widget/InlineWidget'
 
 interface MessageListProps {
   messages: AgentMessage[]
@@ -23,6 +24,10 @@ interface MessageListProps {
   regeneratingMessageId?: string | null
   onShowWidget?: (widgetId: string) => void
   onVisualizeMessage?: (content: string) => void
+  streamingWidget?: WidgetState | null
+  onExpandWidget?: (widgetId: string) => void
+  onWidgetInteraction?: (widgetId: string, data: unknown) => void
+  onWidgetFallbackToText?: () => void
 }
 
 type TextBlock = {
@@ -47,6 +52,14 @@ type ErrorBlock = { type: 'error'; content: string }
 type ThinkingStatusBlock = { type: 'thinking' }
 type ThinkingContentBlock = { type: 'thinking_content'; content: string }
 type WidgetAnchorBlock = { type: 'widget_anchor'; widgetId: string; title: string }
+type InlineWidgetBlock = {
+  type: 'inline_widget'
+  widgetId: string
+  title: string
+  html: string
+  status: 'loading' | 'ready' | 'error'
+  errorMessage?: string
+}
 
 type ToolEntry = { name: string; input?: Record<string, unknown> }
 type RenderBlock =
@@ -57,6 +70,7 @@ type RenderBlock =
   | ThinkingStatusBlock
   | ThinkingContentBlock
   | WidgetAnchorBlock
+  | InlineWidgetBlock
 
 type AssistantSegment =
   | { type: 'text'; content: string }
@@ -188,6 +202,10 @@ export default function MessageList({
   regeneratingMessageId,
   onShowWidget,
   onVisualizeMessage,
+  streamingWidget,
+  onExpandWidget,
+  onWidgetInteraction,
+  onWidgetFallbackToText,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLElement | null>(null)
@@ -273,8 +291,21 @@ export default function MessageList({
   }, [messages, isRunning])
 
   const blocks = useMemo(
-    () => buildRenderBlocks(messages, isRunning),
-    [messages, isRunning],
+    () => {
+      const base = buildRenderBlocks(messages, isRunning)
+      if (streamingWidget) {
+        base.push({
+          type: 'inline_widget',
+          widgetId: streamingWidget.widgetId,
+          title: streamingWidget.title,
+          html: streamingWidget.html,
+          status: streamingWidget.status,
+          errorMessage: streamingWidget.errorMessage,
+        })
+      }
+      return base
+    },
+    [messages, isRunning, streamingWidget],
   )
   const messageMap = useMemo(
     () => new Map(messages.map((message) => [message.id, message])),
@@ -302,6 +333,9 @@ export default function MessageList({
           regeneratingMessageId={regeneratingMessageId}
           onShowWidget={onShowWidget}
           onVisualizeMessage={onVisualizeMessage}
+          onExpandWidget={onExpandWidget}
+          onWidgetInteraction={onWidgetInteraction}
+          onWidgetFallbackToText={onWidgetFallbackToText}
         />
       ))}
       <div ref={bottomRef} />
@@ -334,11 +368,24 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
 
     if (message.type === 'assistant' && message.widgetId) {
       flushTools(true)
-      blocks.push({
-        type: 'widget_anchor',
-        widgetId: message.widgetId,
-        title: message.widgetTitle || 'Widget',
-      })
+      const widgetMeta = message.meta?.widget
+      // New data with displayMode='inline' and full widget data → inline rendering
+      if (widgetMeta?.displayMode === 'inline' && widgetMeta.html) {
+        blocks.push({
+          type: 'inline_widget',
+          widgetId: message.widgetId,
+          title: message.widgetTitle || 'Widget',
+          html: widgetMeta.html,
+          status: (widgetMeta.status as 'loading' | 'ready' | 'error') || 'ready',
+        })
+      } else {
+        // Legacy data or panel mode → keep anchor card
+        blocks.push({
+          type: 'widget_anchor',
+          widgetId: message.widgetId,
+          title: message.widgetTitle || 'Widget',
+        })
+      }
       continue
     }
 
@@ -424,6 +471,9 @@ function BlockRenderer({
   regeneratingMessageId,
   onShowWidget,
   onVisualizeMessage,
+  onExpandWidget,
+  onWidgetInteraction,
+  onWidgetFallbackToText,
 }: {
   block: RenderBlock
   message?: AgentMessage
@@ -433,6 +483,9 @@ function BlockRenderer({
   regeneratingMessageId?: string | null
   onShowWidget?: (widgetId: string) => void
   onVisualizeMessage?: (content: string) => void
+  onExpandWidget?: (widgetId: string) => void
+  onWidgetInteraction?: (widgetId: string, data: unknown) => void
+  onWidgetFallbackToText?: () => void
 }) {
   switch (block.type) {
     case 'user':
@@ -463,6 +516,19 @@ function BlockRenderer({
       return <ThinkingContentView content={block.content} />
     case 'widget_anchor':
       return <WidgetAnchorCard widgetId={block.widgetId} title={block.title} onClick={onShowWidget} />
+    case 'inline_widget':
+      return (
+        <InlineWidget
+          widgetId={block.widgetId}
+          title={block.title}
+          html={block.html}
+          status={block.status}
+          errorMessage={block.errorMessage}
+          onExpand={onExpandWidget}
+          onInteraction={onWidgetInteraction}
+          onFallbackToText={onWidgetFallbackToText}
+        />
+      )
   }
 }
 
