@@ -137,6 +137,15 @@ function normalizePathForPrompt(path: string): string {
   return path.replace(/\\/g, '/')
 }
 
+function resolveMcpNodeCommand(nodePath?: string): string {
+  if (nodePath) return nodePath
+  const execPath = process.execPath.toLowerCase()
+  if (execPath.endsWith('/node') || execPath.endsWith('/node.exe') || execPath.endsWith('\\node') || execPath.endsWith('\\node.exe')) {
+    return process.execPath
+  }
+  return 'node'
+}
+
 function getRuntimePlatformLabel(): string {
   if (platform() === 'win32') return 'Windows'
   if (platform() === 'darwin') return 'macOS'
@@ -470,7 +479,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   let widgetState: WidgetHandlerState | undefined
   if (cliWidgetRuntimeEnabled) {
     try {
-      const widgetMcpPath = writeMcpConfig(taskDir)
+      const mcpNodeCommand = resolveMcpNodeCommand(cliLaunch.source === 'bundled' ? cliLaunch.command : undefined)
+      const widgetMcpPath = writeMcpConfig(taskDir, mcpNodeCommand)
       const userMcpPath = writeUserMcpConfig(taskDir)
 
       // 传递 widget MCP 和用户 MCP（如果存在）

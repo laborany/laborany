@@ -57,20 +57,27 @@ interface TaskFile {
   stepName?: string     // 复合技能步骤名称
 }
 
+const TASK_INTERNAL_IGNORE_LIST = new Set(['history.txt', '.git', 'node_modules', '__pycache__', 'CLAUDE.md'])
+
+function shouldIgnoreTaskEntry(name: string): boolean {
+  if (!name) return true
+  if (TASK_INTERNAL_IGNORE_LIST.has(name)) return true
+  if (name.startsWith('.')) return true
+  if (name.startsWith('history-') && name.endsWith('.txt')) return true
+  return false
+}
+
+function isInternalTaskPath(filePath: string): boolean {
+  return filePath
+    .split('/')
+    .filter(Boolean)
+    .some(segment => shouldIgnoreTaskEntry(segment))
+}
+
 async function listTaskFiles(baseDir: string, relativePath: string): Promise<TaskFile[]> {
   const fullPath = relativePath ? join(baseDir, relativePath) : baseDir
   const entries = await readdir(fullPath, { withFileTypes: true })
   const files: TaskFile[] = []
-
-  /* ┌────────────────────────────────────────────────────────────────────────┐
-   * │  过滤系统文件和内部文件                                                  │
-   * └────────────────────────────────────────────────────────────────────────┘ */
-  const ignoreList = new Set(['history.txt', '.git', 'node_modules', '__pycache__', 'CLAUDE.md'])
-  const shouldIgnore = (name: string): boolean => {
-    if (ignoreList.has(name)) return true
-    if (name.startsWith('history-') && name.endsWith('.txt')) return true
-    return false
-  }
 
   /* ┌────────────────────────────────────────────────────────────────────────┐
    * │  解析复合技能步骤目录：step-N-名称                                       │
@@ -83,7 +90,7 @@ async function listTaskFiles(baseDir: string, relativePath: string): Promise<Tas
   }
 
   for (const entry of entries) {
-    if (shouldIgnore(entry.name)) continue
+    if (shouldIgnoreTaskEntry(entry.name)) continue
 
     const entryPath = relativePath ? `${relativePath}/${entry.name}` : entry.name
 
@@ -185,6 +192,10 @@ async function handleFileDownload(c: any, pathPrefix: string) {
   // 安全检查
   if (!fullPath.startsWith(taskDir)) {
     return c.json({ error: '禁止访问' }, 403)
+  }
+
+  if (isInternalTaskPath(filePath)) {
+    return c.json({ error: '文件不存在', fullPath }, 404)
   }
 
   if (!existsSync(fullPath)) {
