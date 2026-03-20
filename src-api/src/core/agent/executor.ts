@@ -1143,14 +1143,12 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   // 根据配置选择启动方式
   let proc
   if (claudeConfig.useBundled) {
-    const usePromptArg = executeWidgetSupport.enabled
-    const bundledArgs = usePromptArg
-      ? [claudeConfig.cliPath!, ...args, prompt]
-      : [claudeConfig.cliPath!, ...args]
+    // 统一使用 stdin 传递 prompt，避免 CLI arg 长度限制或特殊字符问题
+    const bundledArgs = [claudeConfig.cliPath!, ...args]
     proc = spawn(claudeConfig.nodePath!, bundledArgs, {
       cwd: taskDir,
       env: buildEnvConfig(modelOverride),
-      stdio: [usePromptArg ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     })
   } else {
     // 使用系统安装的 claude 命令
