@@ -715,6 +715,22 @@ export function useConverse(): UseConverseReturn {
         return
       }
 
+      if (eventType === 'warning') {
+        const content = (data.content as string) || ''
+        if (content) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `warning_${Date.now()}`,
+              type: 'error' as const,
+              content,
+              timestamp: new Date(),
+            },
+          ])
+        }
+        return
+      }
+
       if (eventType === 'error') {
         setError((data.message as string) || '对话服务异常')
         return

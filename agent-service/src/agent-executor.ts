@@ -483,6 +483,10 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       console.log(`[Agent] Generative UI enabled, MCP configs: ${widgetMcpPath}${userMcpPath ? `, ${userMcpPath}` : ''}`)
     } catch (err) {
       console.error('[Agent] Failed to write MCP config for generative UI:', err)
+      onEvent({
+        type: 'warning',
+        content: `可视化组件初始化失败: ${err instanceof Error ? err.message : String(err)}`,
+      })
     }
   } else {
     // Widget 未启用时，只传递用户配置的 MCP 服务器

@@ -2269,6 +2269,11 @@ router.post('/', async (req: Request, res: Response) => {
             return
           }
 
+          if (event.type === 'warning' && event.content) {
+            sseWrite(res, 'warning', { content: event.content })
+            return
+          }
+
           if (event.type === 'tool_use') {
             if (/^AskU(?:ser|er)Question$/i.test(event.toolName || '')) {
               const questionPayload = normalizeQuestionPayload(

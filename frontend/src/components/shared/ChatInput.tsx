@@ -75,16 +75,14 @@ export default function ChatInput({
 
     return (
       <>
-        <svg className="w-4 h-4 shrink-0 self-start mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-4 h-4 shrink-0 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-2" />
         </svg>
-        <span className="min-w-0 flex-1 text-left">
-          <span className="block truncate text-sm font-medium leading-tight">
-            {activeProfile.name || '默认模型'}
-          </span>
-          <span className="block truncate pt-1 font-mono text-[11px] text-muted-foreground">
-            {activeProfile.model || '未配置模型'}
-          </span>
+        <span className="min-w-0 flex-1 truncate text-left text-sm font-medium leading-tight">
+          {activeProfile.name || '默认模型'}
+          {activeProfile.model && (
+            <span className="font-mono text-[11px] text-muted-foreground"> · {activeProfile.model}</span>
+          )}
         </span>
         {withChevron && (
           <svg className="w-3.5 h-3.5 shrink-0 opacity-70 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -350,7 +348,7 @@ export default function ChatInput({
                 <DropdownMenuTrigger asChild>
                   <button
                     data-testid="active-profile-trigger"
-                    className="flex min-h-11 items-start gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 max-w-[260px] sm:max-w-[320px]"
+                    className="flex min-h-11 items-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50 max-w-[260px] sm:max-w-[320px]"
                     disabled={isRunning}
                     title={activeProfile.name}
                   >
@@ -398,7 +396,7 @@ export default function ChatInput({
             ) : (
               <div
                 data-testid="active-profile-trigger"
-                className="flex min-h-11 items-start gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm text-muted-foreground max-w-[260px] sm:max-w-[320px]"
+                className="flex min-h-11 items-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm text-muted-foreground max-w-[260px] sm:max-w-[320px]"
                 title={activeProfile.name}
               >
                 {renderProfileTriggerContent(false)}
