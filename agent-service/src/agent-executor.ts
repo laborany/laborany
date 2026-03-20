@@ -480,6 +480,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       }
 
       widgetState = createWidgetHandlerState()
+      // Keep execute on plain MCP wiring: `--print` + `--debug mcp` makes
+      // Claude CLI drop stdin prompts and fail the whole skill run.
       console.log(`[Agent] Generative UI enabled, MCP configs: ${widgetMcpPath}${userMcpPath ? `, ${userMcpPath}` : ''}`)
     } catch (err) {
       console.error('[Agent] Failed to write MCP config for generative UI:', err)
@@ -504,11 +506,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
         || (widgetSupport.enabled ? 'Current execute surface only supports the Claude CLI widget runtime.' : 'unknown reason')
       console.log(`[Agent] Generative UI requested but disabled: ${disableReason}`)
     }
-  }
-
-  // 启用 MCP debug 模式
-  if (cliWidgetRuntimeEnabled) {
-    args.push('--debug', 'mcp')
   }
 
   communicationPreferenceManager.applyFromUserText(userQuery, userQuery)

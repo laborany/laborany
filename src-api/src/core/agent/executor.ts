@@ -1103,8 +1103,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       }
 
       widgetState = createWidgetHandlerState()
+      // Keep execute on plain MCP wiring: `--print` + `--debug mcp` makes
+      // Claude CLI drop stdin prompts and fail the whole skill run.
       console.log(`[Agent] Generative UI enabled, MCP configs: ${widgetMcpPath}${userMcpPath ? `, ${userMcpPath}` : ''}`)
-      args.push('--debug', 'mcp')
     } catch (error) {
       console.error('[Agent] Failed to initialize Generative UI MCP config:', error)
     }

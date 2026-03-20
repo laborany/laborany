@@ -282,22 +282,14 @@ export function resolveClaudeCliLaunch(): ClaudeCliLaunchConfig | undefined {
 }
 
 export function buildClaudeCliPromptDelivery(
-  cli: ClaudeCliLaunchConfig,
+  _cli: ClaudeCliLaunchConfig,
   args: string[],
-  prompt: string,
+  _prompt: string,
 ): ClaudeCliPromptDelivery {
-  // 即使是 bundled CLI，当 prompt 过长时也使用 stdin 传递，
-  // 避免 OS 参数长度限制或 Claude Code 将长参数误解为文件路径（ENAMETOOLONG）
-  const MAX_ARG_PROMPT_BYTES = 4096
-  const promptByteLength = Buffer.byteLength(prompt, 'utf-8')
-
-  if (cli.source === 'bundled' && promptByteLength <= MAX_ARG_PROMPT_BYTES) {
-    return {
-      args: [...args, prompt],
-      useStdin: false,
-    }
-  }
-
+  // Keep prompt delivery consistent across all launch modes.
+  // Passing prompts as argv is fragile with Claude Code: long inputs can hit
+  // OS limits, and short inputs can be misparsed when flags such as
+  // `--mcp-config` or widget debug options are present.
   return {
     args,
     useStdin: true,
