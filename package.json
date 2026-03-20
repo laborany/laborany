@@ -89,6 +89,13 @@
         "to": "api/frontend"
       },
       {
+        "from": "agent-service/dist/generative-ui",
+        "to": "agent/generative-ui",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "skills",
         "to": "skills"
       },
