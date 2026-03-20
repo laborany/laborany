@@ -79,7 +79,9 @@ function main() {
     if (existsSync(genUiSrc)) {
       const resolvedOutput = join(agentDir, output)
       const genUiDest = join(dirname(resolvedOutput), 'generative-ui')
-      cpSync(genUiSrc, genUiDest, { recursive: true })
+      if (genUiSrc !== genUiDest) {
+        cpSync(genUiSrc, genUiDest, { recursive: true })
+      }
     }
   } finally {
     if (hasNativeBinary && existsSync(backupPath)) {
