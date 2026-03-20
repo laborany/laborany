@@ -7,7 +7,7 @@
  * ║  2) 构建后恢复开发环境当前的 better-sqlite3，避免污染本地 dev             ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-const { copyFileSync, existsSync, unlinkSync, mkdirSync } = require('fs')
+const { copyFileSync, cpSync, existsSync, unlinkSync, mkdirSync } = require('fs')
 const { dirname, join, resolve } = require('path')
 const { tmpdir } = require('os')
 const { spawnSync } = require('child_process')
@@ -72,6 +72,14 @@ function main() {
       const sidecarPath = join(dirname(resolvedOutput), 'better_sqlite3.node')
       mkdirSync(dirname(sidecarPath), { recursive: true })
       copyFileSync(nativeBinaryPath, sidecarPath)
+    }
+
+    // Copy generative-ui sidecar (MCP server + guidelines)
+    const genUiSrc = join(agentDir, 'dist', 'generative-ui')
+    if (existsSync(genUiSrc)) {
+      const resolvedOutput = join(agentDir, output)
+      const genUiDest = join(dirname(resolvedOutput), 'generative-ui')
+      cpSync(genUiSrc, genUiDest, { recursive: true })
     }
   } finally {
     if (hasNativeBinary && existsSync(backupPath)) {

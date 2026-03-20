@@ -282,9 +282,19 @@ export function getGuidelines(modules: string[]): string {
 }
 
 function resolveMcpServerPath(): string {
+  // Dev mode: MODULE_DIR is src/generative-ui/
   const preferred = join(MODULE_DIR, 'mcp-server.mjs')
   if (existsSync(preferred)) return preferred
 
+  // Bundled mode: MODULE_DIR is dist/, server is at dist/generative-ui/
+  const bundled = join(MODULE_DIR, 'generative-ui', 'mcp-server.mjs')
+  if (existsSync(bundled)) return bundled
+
+  // Packaged binary mode: sidecar next to the executable
+  const sidecar = join(dirname(process.execPath), 'generative-ui', 'mcp-server.mjs')
+  if (existsSync(sidecar)) return sidecar
+
+  // Dev mode fallback: spike directory
   const spikeFallback = join(MODULE_DIR, 'spike', 'mcp-server.mjs')
   if (existsSync(spikeFallback)) return spikeFallback
 
