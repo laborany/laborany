@@ -210,7 +210,8 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "LaborAny"
+      "shortcutName": "LaborAny",
+      "include": "build/installer.nsh"
     }
   },
   "devDependencies": {
