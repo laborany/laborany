@@ -54,11 +54,11 @@ interface RunningTaskBrief {
 }
 
 function getTaskSourceLabel(source?: RunningTaskBrief['source']): string {
-  if (source === 'cron') return '定时任务'
+  if (source === 'cron') return '日历安排'
   if (source === 'feishu') return '飞书'
   if (source === 'qq') return 'QQ'
-  if (source === 'converse') return '首页对话'
-  return '桌面任务'
+  if (source === 'converse') return '助理会话'
+  return '桌面工作'
 }
 
 export default function HomePage() {
@@ -288,7 +288,7 @@ export default function HomePage() {
   const handleCronConfirm = useCallback(async (next: CronPending) => {
     const targetId = (next.targetId || '').trim() || '__generic__'
     await createJob({
-      name: next.name || next.targetQuery.slice(0, 50) || '定时任务',
+      name: next.name || next.targetQuery.slice(0, 50) || '日历安排',
       description: next.targetQuery,
       schedule: next.schedule,
       target: { type: 'skill', id: targetId, query: next.targetQuery },
@@ -538,22 +538,50 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
   backgroundTasks: RunningTaskBrief[]
   onResumeTask: (task: RunningTaskBrief) => void
 }) {
+  const todayWorkCount = backgroundTasks.length + (cronPending ? 1 : 0)
+
   return (
     <div className="min-h-screen p-6">
       <div className="max-w-5xl mx-auto space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground mb-1">
-            {userName || '用户'}，有什么可以帮你？
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            直接描述你的任务，我来帮你完成。
-          </p>
+        <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+          <div className="rounded-2xl border border-border bg-card p-6">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary/80 mb-3">
+              老板办公桌
+            </p>
+            <h1 className="text-3xl font-bold text-foreground mb-2">
+              {userName || '老板'}，今天想让公司先处理什么事？
+            </h1>
+            <p className="text-muted-foreground text-sm leading-6">
+              直接把需求交给个人助理。简单的事务助理会自己处理，复杂或更专业的工作会先帮你确认清楚，再安排给合适的同事执行。
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-primary/20 bg-primary/5 p-6">
+            <p className="text-sm font-semibold text-foreground mb-4">今日概览</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-border bg-background px-4 py-3">
+                <p className="text-xs text-muted-foreground">进行中的工作</p>
+                <p className="mt-1 text-2xl font-bold text-foreground">{backgroundTasks.length}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-background px-4 py-3">
+                <p className="text-xs text-muted-foreground">今日安排</p>
+                <p className="mt-1 text-2xl font-bold text-foreground">{todayWorkCount}</p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-xl border border-dashed border-primary/30 bg-background/60 px-4 py-3">
+              <p className="text-xs text-muted-foreground">助理提示</p>
+              <p className="mt-1 text-sm text-foreground">
+                尽量一次把目标、截止时间、参考材料和你希望看到的结果说清楚，助理会更容易一次性安排到位。
+              </p>
+            </div>
+          </div>
         </div>
+
         {backgroundTasks.length > 0 && (
           <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
             <div className="mb-2 flex items-center justify-between">
-              <p className="text-sm font-medium text-foreground">后台仍有运行中的任务</p>
-              <span className="text-xs text-muted-foreground">{backgroundTasks.length} 个</span>
+              <p className="text-sm font-medium text-foreground">公司里还有同事正在处理工作</p>
+              <span className="text-xs text-muted-foreground">{backgroundTasks.length} 项</span>
             </div>
             <div className="space-y-2">
               {backgroundTasks.map((task) => (
@@ -567,7 +595,7 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
                     {task.skillName || task.query || task.skillId}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {`${getTaskSourceLabel(task.source)} · 会话 ${task.sessionId.slice(0, 12)}... · 点击继续`}
+                    {`${getTaskSourceLabel(task.source)} · 工单 ${task.sessionId.slice(0, 12)}... · 点击查看进展`}
                   </p>
                 </button>
               ))}
@@ -584,8 +612,8 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
           isRunning={false}
           variant="home"
           placeholder={selectedCase
-            ? `向 ${selectedCase.name} 描述你的任务...`
-            : '描述你想完成的任务...'
+            ? `把这项工作交给助理，助理会安排：${selectedCase.name}`
+            : '直接告诉个人助理：你想让公司帮你完成什么工作...'
           }
           autoFocus
         />

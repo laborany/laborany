@@ -26,12 +26,12 @@ export function ScenarioCards({ selectedId, onSelect }: ScenarioCardsProps) {
        * 标题栏
        * ═══════════════════════════════════════════════════════════════════════ */}
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-foreground">快速开始</h2>
+        <h2 className="text-lg font-semibold text-foreground">常安排的工作</h2>
         <button
           onClick={() => setIsEditing(!isEditing)}
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
-          {isEditing ? '完成' : '自定义'}
+          {isEditing ? '完成' : '调整'}
           {isCustomized && !isEditing && (
             <span className="ml-1 text-xs text-primary">•</span>
           )}
@@ -71,7 +71,7 @@ function ScenarioCard({
   selected: boolean
   onSelect?: (item: QuickStartItem) => void
 }) {
-  const typeLabel = '技能'
+  const typeLabel = '员工分工'
 
   return (
     <button

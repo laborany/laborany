@@ -7,28 +7,28 @@ const STORAGE_KEY = 'guide-banner-dismissed'
 const CONCEPTS = [
   {
     icon: <LaborAnyLogo size={24} />,
-    title: '技能单元 = AI 助手',
-    desc: '每个技能单元专注一类任务。',
-    example: '例如：写文档、做 PPT、分析数据。',
+    title: '员工 = 一位数字同事',
+    desc: '每位员工专注一类工作，擅长处理固定类型的任务。',
+    example: '例如：写文档、做 PPT、分析数据、做调研。',
   },
   {
-    icon: '🧩',
-    title: '复合技能 = 分步骤自动执行',
-    desc: '多个技能单元串联，按步骤自动完成。',
-    example: '例如：一键生成周报并发送邮件。',
+    icon: '🧑‍💼',
+    title: '个人助理 = 老板的默认对话对象',
+    desc: '助理先理解老板需求，简单的事直接处理，复杂的事安排给合适的同事。',
+    example: '例如：先帮老板明确目标，再把任务一次性交给专业员工。',
   },
   {
     icon: '⏰',
-    title: '定时任务 = 自动触发',
-    desc: '设定时间后，自动执行技能或复合技能。',
-    example: '例如：每周一自动生成周报。',
+    title: '日历安排 = 提前排班做事',
+    desc: '把工作安排进日历，到时间后员工会自动执行。',
+    example: '例如：每周一早上自动生成周报。',
   },
 ]
 
 const QUICK_LINKS = [
-  { label: '查看全部技能', path: '/skills' },
-  { label: '创建技能单元', path: '/create' },
-  { label: '创建复合技能', path: '/create' },
+  { label: '查看通讯录', path: '/skills' },
+  { label: '联系 HR', path: '/create' },
+  { label: '打开日历', path: '/cron' },
 ] as const
 
 export function GuideBanner() {
@@ -69,7 +69,7 @@ export function GuideBanner() {
 
       <div className="flex items-center justify-between flex-wrap gap-3 pt-3 border-t border-indigo-100/50 dark:border-indigo-800/30">
         <p className="text-xs text-indigo-600/80 dark:text-indigo-400/80">
-          试试下面的快捷入口，或直接在首页输入框描述你的任务。
+          你可以直接把事情交给个人助理，也可以从下面的快捷入口开始安排工作。
         </p>
         <div className="flex items-center gap-2">
           {QUICK_LINKS.map(({ label, path }) => (
@@ -86,4 +86,3 @@ export function GuideBanner() {
     </div>
   )
 }
-
