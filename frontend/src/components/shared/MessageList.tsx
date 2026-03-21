@@ -491,6 +491,9 @@ function BlockRenderer({
     case 'user':
       return <UserBubble content={block.content} meta={block.meta} />
     case 'text':
+      if (message?.meta?.messageKind === 'action_summary') {
+        return <AssistantHandoffCard content={block.content} />
+      }
       return (
         <TextBlockView
           content={block.content}
@@ -530,6 +533,24 @@ function BlockRenderer({
         />
       )
   }
+}
+
+function AssistantHandoffCard({ content }: { content: string }) {
+  return (
+    <div className="animate-in slide-in-from-bottom-1 duration-200 fade-in">
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary">
+            ✓
+          </span>
+          <p className="text-sm font-medium text-foreground">个人助理已完成任务整理</p>
+        </div>
+        <div className="prose prose-sm max-w-none dark:prose-invert">
+          <MarkdownView content={content} />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function UserBubble({ content, meta }: { content: string; meta?: MessageMeta | null }) {

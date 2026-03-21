@@ -19,8 +19,8 @@ export interface PlanReviewPanelProps {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const ACTIONS = [
   { key: 'cancel',  label: '取消',     style: 'bg-muted text-foreground hover:bg-muted/80' },
-  { key: 'edit',    label: '修改计划', style: 'bg-secondary text-secondary-foreground hover:bg-secondary/80' },
-  { key: 'approve', label: '批准执行', style: 'bg-primary text-primary-foreground hover:bg-primary/90' },
+  { key: 'edit',    label: '调整安排', style: 'bg-secondary text-secondary-foreground hover:bg-secondary/80' },
+  { key: 'approve', label: '确认安排', style: 'bg-primary text-primary-foreground hover:bg-primary/90' },
 ] as const
 
 /* ╔══════════════════════════════════════════════════════════════════════════╗
@@ -34,9 +34,12 @@ export function PlanReviewPanel({ planSteps, onApprove, onEdit, onCancel }: Plan
       {/* 顶部标题栏 */}
       <header className="shrink-0 px-6 py-4 border-b border-border flex items-center gap-3">
         <button onClick={onCancel} className="text-muted-foreground hover:text-foreground text-sm">
-          &larr; 返回
+          &larr; 返回办公桌
         </button>
-        <h1 className="text-lg font-semibold text-foreground">执行计划</h1>
+        <div>
+          <h1 className="text-lg font-semibold text-foreground">助理拟定的工作安排</h1>
+          <p className="text-xs text-muted-foreground mt-1">确认后，个人助理会按这份安排开始执行或分派给同事。</p>
+        </div>
       </header>
 
       {/* 步骤列表 */}

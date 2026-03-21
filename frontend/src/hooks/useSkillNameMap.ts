@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { API_BASE } from '../config'
 import type { Skill } from '../types'
+import { getEmployeeDirectoryProfile } from '../lib/employeeDirectory'
 
 export function useSkillNameMap() {
   const [nameMap, setNameMap] = useState<Record<string, string>>({})
@@ -27,8 +28,9 @@ export function useSkillNameMap() {
         const map = Object.fromEntries(
           ((data.skills || []) as Skill[])
             .filter(s => s.id)
-            .map(s => [s.id, s.name || s.id]),
+            .map((s) => [s.id, getEmployeeDirectoryProfile(s).displayName || s.name || s.id]),
         )
+        map.__converse__ = '个人助理'
         setNameMap(map)
       } catch {
         if (!cancelled) setNameMap({})

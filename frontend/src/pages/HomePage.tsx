@@ -19,6 +19,8 @@ import { PlanReviewPanel } from '../components/home/PlanReviewPanel'
 import { CandidateConfirmView, FallbackBanner, ErrorView } from '../components/home/DispatchViews'
 import { buildExecutePath, stripAttachmentMarkers, uploadAttachments } from '../lib/attachments'
 import { supportsGenerativeWidgets } from '../lib/widgetSupport'
+import { getAssistantPhaseHint, isAssistantExecutionPhase } from '../lib/assistantFlow'
+import { buildAssistantHandoffQuery } from '../lib/assistantHandoff'
 
 interface CandidateInfo {
   variant: 'recommend' | 'create'
@@ -119,7 +121,15 @@ export default function HomePage() {
     if (targetId) {
       try {
         const attachmentIds = await uploadAttachments(files || [], localStorage.getItem('token'))
-        navigate(buildExecutePath(targetId, query, attachmentIds))
+        const handoffQuery = buildAssistantHandoffQuery({
+          bossRequest: query,
+          assigneeName: getCapabilityName(targetId),
+          mode: 'employee',
+          preparedTask: query,
+        })
+        navigate(buildExecutePath(targetId, query, attachmentIds), {
+          state: { handoffQuery, originQuery: query },
+        })
       } catch (error) {
         setErrorMsg(error instanceof Error ? error.message : '文件上传失败')
         setPhase('error')
@@ -128,7 +138,7 @@ export default function HomePage() {
     }
     setPhase('analyzing')
     void converse.sendMessage(query, files)
-  }, [navigate, converse.sendMessage])
+  }, [navigate, converse.sendMessage, getCapabilityName])
 
   useEffect(() => {
     if (!converse.action || converse.pendingQuestion) return
@@ -160,7 +170,18 @@ export default function HomePage() {
         setGenericPlan({ query, originQuery, attachmentIds, planSteps: action.planSteps })
         setPhase('plan_review')
       } else {
-        setExecCtx({ type: 'skill', id: '__generic__', query, originQuery, attachmentIds })
+        setExecCtx({
+          type: 'skill',
+          id: '__generic__',
+          query: originQuery,
+          originQuery,
+          attachmentIds,
+          handoffQuery: buildAssistantHandoffQuery({
+            bossRequest: originQuery,
+            mode: 'assistant',
+            preparedTask: query,
+          }),
+        })
         setPhase('fallback_general')
       }
       return
@@ -255,32 +276,54 @@ export default function HomePage() {
     if (!candidate) return
 
     if (candidate.variant === 'recommend' && candidate.targetId) {
-      // converse 的 sessionId 不是 runtime 任务会话，不应作为执行页 sid 传入。
-      navigate(buildExecutePath(candidate.targetId, candidate.query, candidate.attachmentIds))
+      const bossRequest = latestUserQueryRef.current || candidate.query
+      const handoffQuery = buildAssistantHandoffQuery({
+        bossRequest,
+        assigneeName: getCapabilityName(candidate.targetId),
+        mode: 'employee',
+        reason: candidate.reason,
+        preparedTask: candidate.query,
+      })
+      navigate(buildExecutePath(candidate.targetId, bossRequest, candidate.attachmentIds), {
+        state: { handoffQuery, originQuery: bossRequest },
+      })
       return
     }
 
     if (candidate.variant === 'create') {
+      const bossRequest = latestUserQueryRef.current || candidate.query
       setExecCtx({
         type: 'skill',
         id: 'skill-creator',
-        query: candidate.query,
-        originQuery: latestUserQueryRef.current || candidate.query,
+        query: bossRequest,
+        originQuery: bossRequest,
         attachmentIds: candidate.attachmentIds,
+        handoffQuery: buildAssistantHandoffQuery({
+          bossRequest,
+          mode: 'hr',
+          reason: candidate.reason,
+          preparedTask: candidate.query,
+        }),
       })
       setPhase('creating_proposal')
     }
-  }, [candidate, navigate])
+  }, [candidate, navigate, getCapabilityName])
 
   const handleCandidateReject = useCallback(() => {
     const query = stripAttachmentMarkers(candidate?.query || '')
+    const bossRequest = latestUserQueryRef.current || query
     setCandidate(null)
     setExecCtx({
       type: 'skill',
       id: '__generic__',
-      query,
-      originQuery: latestUserQueryRef.current || query,
+      query: bossRequest,
+      originQuery: bossRequest,
       attachmentIds: candidate?.attachmentIds || [],
+      handoffQuery: buildAssistantHandoffQuery({
+        bossRequest,
+        mode: 'assistant',
+        preparedTask: query,
+      }),
     })
     setPhase('fallback_general')
   }, [candidate])
@@ -312,13 +355,7 @@ export default function HomePage() {
   const handleBackFromExecution = useCallback(() => {
     // 任务启动期也要允许返回首页并继续后台运行；尚未拿到 sessionId 时避免提前中断。
     const hasSession = Boolean(agent.sessionId)
-    const isExecutionPhase =
-      phase === 'executing'
-      || phase === 'fallback_general'
-      || phase === 'creating_proposal'
-      || phase === 'creating_confirm'
-      || phase === 'installing'
-      || phase === 'routing'
+    const isExecutionPhase = isAssistantExecutionPhase(phase)
     const launchingWithoutSession = !hasSession && (agent.isRunning || isExecutionPhase)
 
     if (agent.isRunning && hasSession) {
@@ -360,8 +397,18 @@ export default function HomePage() {
         },
       }))
     }
-    navigate(buildExecutePath(created.id, query, execCtx?.attachmentIds || []))
-  }, [execCtx?.attachmentIds, execCtx?.originQuery, execCtx?.query, navigate])
+    navigate(buildExecutePath(created.id, query, execCtx?.attachmentIds || []), {
+      state: {
+        handoffQuery: buildAssistantHandoffQuery({
+          bossRequest: query,
+          assigneeName: getCapabilityName(created.id),
+          mode: 'employee',
+          preparedTask: query,
+        }),
+        originQuery: query,
+      },
+    })
+  }, [execCtx?.attachmentIds, execCtx?.originQuery, execCtx?.query, navigate, getCapabilityName])
 
   if (phase === 'idle') {
     return <IdleView
@@ -420,13 +467,14 @@ export default function HomePage() {
         const text = `[来自组件交互]\n${JSON.stringify(data, null, 2)}`
         void converse.sendMessage(text)
       }}
+      assistantHint={getAssistantPhaseHint(phase)}
     />
   }
 
   if (phase === 'candidate_found' && candidate) {
     const displayName = candidate.variant === 'recommend' && candidate.targetId
       ? getCapabilityName(candidate.targetId)
-      : '创建新技能'
+      : '联系 HR 招聘新同事'
     return <CandidateConfirmView
       targetName={displayName}
       reason={candidate.reason}
@@ -458,9 +506,15 @@ export default function HomePage() {
         setExecCtx({
           type: 'skill',
           id: '__generic__',
-          query: stripAttachmentMarkers(executionQuery),
+          query: genericPlan.originQuery,
           originQuery: genericPlan.originQuery,
           attachmentIds: genericPlan.attachmentIds,
+          handoffQuery: buildAssistantHandoffQuery({
+            bossRequest: genericPlan.originQuery,
+            mode: 'assistant',
+            planSteps: genericPlan.planSteps,
+            preparedTask: stripAttachmentMarkers(executionQuery),
+          }),
         })
         setPhase('executing')
         setGenericPlan(null)
@@ -486,7 +540,7 @@ export default function HomePage() {
       <div className="h-[calc(100vh-64px)] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
-          <span className="text-sm text-muted-foreground">正在安装新能力...</span>
+          <span className="text-sm text-muted-foreground">正在为公司办理新同事入职...</span>
         </div>
       </div>
     )

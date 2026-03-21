@@ -7,7 +7,7 @@
  * ║  3. 页面级关注点 —— URL 参数、对话框、导航栏                                ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
+import { useParams, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAgent } from '../hooks/useAgent'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
@@ -30,6 +30,7 @@ const ATTACHMENT_ONLY_EXECUTION_QUERY = '请先查看我上传的文件，并根
 export default function ExecutePage() {
   const { skillId } = useParams<{ skillId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const agent = useAgent(skillId || '')
   const { getSkillName } = useSkillNameMap()
@@ -73,10 +74,16 @@ export default function ExecutePage() {
     const sid = searchParams.get('sid')
     const query = searchParams.get('q')
     const attachmentIds = parseAttachmentIdsParam(searchParams.get('attachments'))
+    const explicitOriginQuery = typeof (location.state as { originQuery?: unknown } | null)?.originQuery === 'string'
+      ? ((location.state as { originQuery?: string }).originQuery || '').trim()
+      : ''
+    const handoffQuery = typeof (location.state as { handoffQuery?: unknown } | null)?.handoffQuery === 'string'
+      ? ((location.state as { handoffQuery?: string }).handoffQuery || '').trim()
+      : ''
     if (!sid && !query && attachmentIds.length === 0) return
 
     const normalizedQuery = query?.trim() || (attachmentIds.length > 0 ? ATTACHMENT_ONLY_EXECUTION_QUERY : '')
-    const bootstrapKey = `${skillId || ''}|${sid || ''}|${normalizedQuery}|${attachmentIds.join(',')}`
+    const bootstrapKey = `${skillId || ''}|${sid || ''}|${normalizedQuery}|${attachmentIds.join(',')}|${handoffQuery}`
     if (lastBootstrapKeyRef.current === bootstrapKey) return
     lastBootstrapKeyRef.current = bootstrapKey
 
@@ -133,14 +140,22 @@ export default function ExecutePage() {
         attached = await tryAttachRunningSession(sid)
         if (!attached && normalizedQuery && await canContinueSession(sid)) {
           agent.resumeSession(sid)
-          await agent.execute(normalizedQuery, undefined, { attachmentIds })
+          await agent.execute(normalizedQuery, undefined, {
+            attachmentIds,
+            requestQuery: handoffQuery || undefined,
+            originQuery: explicitOriginQuery || normalizedQuery,
+          })
           continuedBySid = true
           startedNewExecution = true
         }
       }
 
       if (normalizedQuery && !attached && !continuedBySid) {
-        await agent.execute(normalizedQuery, undefined, { attachmentIds })
+        await agent.execute(normalizedQuery, undefined, {
+          attachmentIds,
+          requestQuery: handoffQuery || undefined,
+          originQuery: explicitOriginQuery || normalizedQuery,
+        })
         startedNewExecution = true
       }
 
@@ -158,7 +173,7 @@ export default function ExecutePage() {
     }
 
     void bootstrap()
-  }, [searchParams, setSearchParams, agent.execute, agent.attachToSession, agent.resumeSession, skillId])
+  }, [searchParams, setSearchParams, agent.execute, agent.attachToSession, agent.resumeSession, skillId, location.state])
 
   useEffect(() => {
     if (skillId !== 'skill-creator') return

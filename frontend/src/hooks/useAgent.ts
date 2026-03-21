@@ -1140,7 +1140,7 @@ export function useAgent(skillId: string) {
   )
 
   const execute = useCallback(
-    async (query: string, files?: File[], options?: { originQuery?: string; attachmentIds?: string[] }) => {
+    async (query: string, files?: File[], options?: { originQuery?: string; attachmentIds?: string[]; requestQuery?: string; assistantHandoffText?: string }) => {
       if (executeInFlightRef.current) {
         console.warn('[useAgent] 忽略重复执行：已有请求在进行中')
         return
@@ -1161,11 +1161,16 @@ export function useAgent(skillId: string) {
         return
       }
 
+      const visibleUserQuery = (options?.requestQuery || '').trim() || normalizedQuery
+
       const fingerprint = JSON.stringify({
         query: normalizedQuery,
+        requestQuery: options?.requestQuery || '',
+        visibleUserQuery,
         sessionId: sessionIdRef.current || '',
         files: (files || []).map((file) => `${file.name}:${file.size}:${file.lastModified}`).join('|'),
         originQuery: options?.originQuery || '',
+        assistantHandoffText: options?.assistantHandoffText || '',
         attachmentIds: (options?.attachmentIds || []).join('|'),
       })
       const now = Date.now()
@@ -1188,13 +1193,32 @@ export function useAgent(skillId: string) {
       const userMessage: AgentMessage = {
         id: crypto.randomUUID(),
         type: 'user',
-        content: normalizedQuery,
+        content: visibleUserQuery,
         timestamp: new Date(),
       }
+      const assistantHandoffMessage: AgentMessage | null = options?.assistantHandoffText
+        ? {
+          id: crypto.randomUUID(),
+          type: 'assistant',
+          content: options.assistantHandoffText,
+          timestamp: new Date(),
+          meta: {
+            sessionMode: 'execution',
+            messageKind: 'action_summary',
+            source: 'system',
+            capabilities: {
+              canCopy: true,
+              canRegenerate: false,
+            },
+          },
+        }
+        : null
 
       setState((s) => ({
         ...s,
-        messages: [...s.messages, userMessage],
+        messages: assistantHandoffMessage
+          ? [...s.messages, userMessage, assistantHandoffMessage]
+          : [...s.messages, userMessage],
         isRunning: true,
         runCompletedAt: null,
         error: null,
@@ -1249,14 +1273,19 @@ export function useAgent(skillId: string) {
           )
         }
 
+        const requestQuery = (options?.requestQuery || '').trim() || normalizedQuery
+
         headers['Content-Type'] = 'application/json'
         body = JSON.stringify({
           skill_id: executionSkillId,
-          query: normalizedQuery,
-          originQuery: options?.originQuery,
+          query: requestQuery,
+          originQuery: options?.originQuery || normalizedQuery,
           attachmentIds: fileIds,
           sessionId: currentSessionId,
           modelProfileId: activeProfileId || undefined,
+          sourceMeta: options?.assistantHandoffText
+            ? { assistantHandoffText: options.assistantHandoffText }
+            : undefined,
         })
 
         const res = await fetchWithRetry(

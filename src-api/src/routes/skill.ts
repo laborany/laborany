@@ -49,8 +49,17 @@ interface ResolvedModelSelection extends SessionModelMeta {
   warning?: string
 }
 
+interface AssistantSourceMeta {
+  assistantHandoffText?: string
+}
+
 const skill = new Hono()
 const ATTACHMENT_ONLY_EXECUTION_QUERY = '请先查看当前上传的文件，并根据文件内容继续处理。'
+
+function readAssistantHandoffText(sourceMeta?: Record<string, unknown>): string {
+  const text = (sourceMeta as AssistantSourceMeta | undefined)?.assistantHandoffText
+  return typeof text === 'string' ? text.trim() : ''
+}
 
 function ensureRunningSession(
   sessionId: string,
@@ -469,6 +478,10 @@ skill.post('/execute', async (c) => {
   if (!cleanQuery) {
     return c.json({ error: '请输入任务内容，或上传文件后再试' }, 400)
   }
+  const assistantHandoffText = readAssistantHandoffText(sourceMeta)
+  const visibleUserQuery = assistantHandoffText
+    ? cleanQuery
+    : ((originQuery || cleanQuery).trim() || cleanQuery)
 
   const installSourceQuery = (originQuery || cleanQuery).trim() || cleanQuery
   const provisionResolution = skillId === 'skill-creator'
@@ -487,7 +500,7 @@ skill.post('/execute', async (c) => {
     ensureRunningSession(
       sessionId,
       skillId,
-      cleanQuery,
+      visibleUserQuery,
       workDir,
       modelSelection,
       source,
@@ -496,7 +509,7 @@ skill.post('/execute', async (c) => {
 
     dbHelper.run(
       `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-      [sessionId, 'user', cleanQuery]
+      [sessionId, 'user', visibleUserQuery]
     )
 
     return streamSSE(c, async (stream) => {
@@ -535,7 +548,7 @@ skill.post('/execute', async (c) => {
     ensureRunningSession(
       sessionId,
       skillId,
-      cleanQuery,
+      visibleUserQuery,
       workDir,
       modelSelection,
       source,
@@ -544,7 +557,7 @@ skill.post('/execute', async (c) => {
 
     dbHelper.run(
       `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-      [sessionId, 'user', cleanQuery]
+      [sessionId, 'user', visibleUserQuery]
     )
 
     return streamSSE(c, async (stream) => {
@@ -686,12 +699,26 @@ skill.post('/execute', async (c) => {
   }
 
   const workDir = taskDir
-
   // 保存用户消息
   dbHelper.run(
     `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-    [sessionId, 'user', cleanQuery]
+    [sessionId, 'user', visibleUserQuery]
   )
+
+  if (assistantHandoffText) {
+    dbHelper.run(
+      `INSERT INTO messages (session_id, type, content, meta) VALUES (?, ?, ?, ?)`,
+      [sessionId, 'assistant', assistantHandoffText, JSON.stringify({
+        sessionMode: 'execution',
+        messageKind: 'action_summary',
+        source: 'system',
+        capabilities: {
+          canCopy: true,
+          canRegenerate: false,
+        },
+      })]
+    )
+  }
 
   runtimeTaskManager.startTask({
     sessionId,

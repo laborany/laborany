@@ -43,7 +43,7 @@ export function CandidateConfirmView({ targetName, reason, confidence, matchType
         <div className="rounded-lg border border-border bg-card p-5 space-y-4">
           <div className="space-y-1">
             <p className="text-sm font-medium text-foreground">
-              匹配到已有能力
+              个人助理建议安排这位同事负责
             </p>
             <p className="text-lg font-semibold text-foreground">{targetName}</p>
           </div>
@@ -64,13 +64,13 @@ export function CandidateConfirmView({ targetName, reason, confidence, matchType
               onClick={onConfirm}
               className="flex-1 px-4 py-2 rounded-lg text-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              使用这个能力
+              好，就交给他
             </button>
             <button
               onClick={onReject}
               className="flex-1 px-4 py-2 rounded-lg text-sm bg-muted text-foreground hover:bg-muted/80 transition-colors"
             >
-              不使用
+              先别安排
             </button>
           </div>
         </div>
@@ -85,7 +85,7 @@ export function CandidateConfirmView({ targetName, reason, confidence, matchType
 export function FallbackBanner() {
   return (
     <div className="rounded-md border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950 px-4 py-2 text-sm text-blue-700 dark:text-blue-300">
-      已切换到通用助手模式 — 可自动调用已有能力完成子任务
+      这项工作先由个人助理直接处理，如有需要会再协调其他同事配合。
     </div>
   )
 }

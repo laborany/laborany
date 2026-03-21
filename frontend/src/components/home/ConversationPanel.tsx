@@ -49,6 +49,7 @@ interface ConversationPanelProps {
   onVisualizeMessage?: (content: string) => void
   streamingWidget?: WidgetState | null
   onExpandWidget?: (widgetId: string) => void
+  assistantHint?: string
   widgetNotice?: {
     tone: 'warning' | 'neutral'
     message: string
@@ -81,6 +82,7 @@ export function ConversationPanel({
   onVisualizeMessage,
   streamingWidget,
   onExpandWidget,
+  assistantHint,
 }: ConversationPanelProps) {
   const hasWidget = activeWidget != null
 
@@ -91,22 +93,28 @@ export function ConversationPanel({
       {/* ── Header ── */}
       <div className="shrink-0 px-6 py-4 border-b border-border">
         <div className="flex items-center justify-between">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            <span className="text-sm">返回</span>
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={onBack}
+              className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              <span className="text-sm">返回办公桌</span>
+            </button>
+            <div className="hidden sm:block">
+              <p className="text-sm font-medium text-foreground">个人助理</p>
+              {assistantHint && <p className="text-xs text-muted-foreground mt-0.5">{assistantHint}</p>}
+            </div>
+          </div>
           {isThinking && onStop && (
             <button
               type="button"
               onClick={onStop}
               className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm transition-colors"
             >
-              停止
+              暂停当前工作
             </button>
           )}
         </div>
@@ -152,7 +160,7 @@ export function ConversationPanel({
             onSubmit={(q, files) => onSend(q, files)}
             onStop={onStop || (() => {})}
             isRunning={isThinking}
-            placeholder="输入消息..."
+            placeholder="继续把要求交给个人助理..."
           />
         </div>
       </div>
