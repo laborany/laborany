@@ -17,7 +17,7 @@ import { useModelProfile } from '../contexts/ModelProfileContext'
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 function StatusBadge({ status }: { status: CronJob['lastStatus'] }) {
-  if (!status) return <span className="text-muted-foreground text-xs">未执行</span>
+  if (!status) return <span className="text-muted-foreground text-xs">未安排执行</span>
 
   const styles = {
     ok: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
@@ -88,18 +88,18 @@ function JobCard({
             </p>
           )}
           <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-            <span title="调度规则">⏰ {describeSchedule(schedule)}</span>
-            <span title="目标">
-              🧪 {targetName}
+            <span title="安排规则">🗓️ {describeSchedule(schedule)}</span>
+            <span title="负责人">
+              👤 {targetName}
             </span>
             <span title="模型">
               🤖 {modelLabel}
             </span>
             <span title="来源">
-              📍 {job.sourceChannel === 'feishu' ? '飞书' : '桌面'}
+              📍 {job.sourceChannel === 'feishu' ? '飞书安排' : '老板安排'}
             </span>
             <span title="通知">
-              🔔 {job.notifyChannel === 'feishu_dm' ? '飞书私聊' : '应用内'}
+              🔔 {job.notifyChannel === 'feishu_dm' ? '飞书私聊' : '应用内提醒'}
             </span>
           </div>
         </div>
@@ -110,7 +110,7 @@ function JobCard({
             <button
               onClick={(e) => { e.stopPropagation(); onTrigger() }}
               className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-              title="立即执行"
+              title="立即安排执行"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -120,7 +120,7 @@ function JobCard({
             <button
               onClick={(e) => { e.stopPropagation(); onEdit() }}
               className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-              title="编辑"
+              title="编辑安排"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -129,7 +129,7 @@ function JobCard({
             <button
               onClick={(e) => { e.stopPropagation(); onDelete() }}
               className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-muted-foreground hover:text-red-600"
-              title="删除"
+              title="删除安排"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -141,7 +141,7 @@ function JobCard({
 
       {job.nextRunAtMs && (
         <div className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground">
-          下次执行: {formatTime(job.nextRunAtMs)}
+          下次安排时间：{formatTime(job.nextRunAtMs)}
         </div>
       )}
     </div>
@@ -170,7 +170,7 @@ function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
   if (runs.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
-        暂无执行记录
+        这项安排还没有执行记录
       </div>
     )
   }
@@ -178,7 +178,7 @@ function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
   return (
     <div className="space-y-2">
       <h3 className="font-medium text-foreground mb-3">
-        {jobName} - 执行历史
+        {jobName} · 执行记录
       </h3>
       {runs.map((run) => (
         <div
@@ -191,7 +191,7 @@ function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
                 run.status === 'ok' ? 'bg-green-500' : 'bg-red-500'
               }`} />
               <span className="text-sm text-foreground">
-                {run.status === 'ok' ? '执行成功' : '执行失败'}
+                {run.status === 'ok' ? '本次安排执行成功' : '本次安排执行失败'}
               </span>
             </div>
             <span className="text-xs text-muted-foreground">
@@ -211,7 +211,7 @@ function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
               to={`/history/${run.sessionId}`}
               className="mt-2 text-xs text-primary hover:underline inline-flex items-center gap-1"
             >
-              查看详情 →
+              查看工作记录 →
             </Link>
           )}
         </div>
@@ -274,20 +274,23 @@ export default function CronPage() {
     <div className="min-h-screen bg-background">
       {/* 头部 */}
       <header className="h-14 border-b border-border bg-card flex items-center justify-between pl-6 pr-40">
-        <h1 className="text-lg font-semibold text-foreground">定时任务</h1>
+        <div>
+          <h1 className="text-lg font-semibold text-foreground">日历</h1>
+          <p className="text-xs text-muted-foreground">把工作安排进日历，到时间后由对应同事自动执行。</p>
+        </div>
         <button
           onClick={() => setShowForm(true)}
           disabled={degraded}
           className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary"
-          title={degraded ? '定时任务存储暂不可用，当前不能新建任务' : '新建任务'}
+          title={degraded ? '当前无法创建新的日历安排' : '新建安排'}
         >
-          + 新建任务
+          + 新建安排
         </button>
       </header>
 
       {/* 内容区 */}
       <div className="flex h-[calc(100vh-3.5rem)]">
-        {/* 左侧：任务列表 */}
+        {/* 左侧：安排列表 */}
         <div className="w-1/2 border-r border-border p-6 overflow-y-auto">
           {error && (
             <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
@@ -297,27 +300,27 @@ export default function CronPage() {
 
           {degraded && (
             <div className="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-              定时任务存储当前不可用，列表已降级为空结果。通常是本地原生依赖未就绪，恢复后刷新即可。
+              日历安排存储当前不可用，列表已降级为空结果。通常是本地原生依赖未就绪，恢复后刷新即可。
             </div>
           )}
 
           {jobs.length === 0 ? (
             <div className="text-center py-12">
-              <div className="text-4xl mb-4">⏰</div>
+              <div className="text-4xl mb-4">🗓️</div>
               <h3 className="text-lg font-medium text-foreground mb-2">
-                {degraded ? '定时任务暂不可用' : '还没有定时任务'}
+                {degraded ? '日历暂不可用' : '还没有安排任何工作'}
               </h3>
               <p className="text-sm text-muted-foreground mb-4">
                 {degraded
-                  ? '当前环境无法读取定时任务存储，修复后刷新页面即可恢复。'
-                  : '创建定时任务，让 AI 自动为你工作'}
+                  ? '当前环境无法读取日历安排存储，修复后刷新页面即可恢复。'
+                  : '把重复或固定时间要做的工作安排进日历，让同事自动处理。'}
               </p>
               {!degraded && (
                 <button
                   onClick={() => setShowForm(true)}
                   className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium"
                 >
-                  创建第一个任务
+                  创建第一个安排
                 </button>
               )}
             </div>
@@ -344,13 +347,13 @@ export default function CronPage() {
           )}
         </div>
 
-        {/* 右侧：执行历史 */}
+        {/* 右侧：执行记录 */}
         <div className="w-1/2 p-6 overflow-y-auto">
           {selectedJob ? (
             <RunsPanel jobId={selectedJob.id} jobName={selectedJob.name} />
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground">
-              选择一个任务查看执行历史
+              选择一项安排查看执行记录
             </div>
           )}
         </div>

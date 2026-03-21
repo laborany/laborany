@@ -23,6 +23,7 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
   const [schedule, setSchedule] = useState<Schedule>({ kind: 'every', everyMs: 3600000 })
   const [target, setTarget] = useState<ExecutionTarget>({ type: 'skill', id: '', query: '' })
   const [modelProfileId, setModelProfileId] = useState<string>('')
+  const [deliveryChannel, setDeliveryChannel] = useState<'app' | 'email' | 'feishu' | 'qq'>('app')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { profiles } = useModelProfile()
@@ -88,7 +89,7 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
         {/* 头部 */}
         <div className="flex items-center justify-between p-4 border-b border-border">
           <h2 className="text-lg font-semibold text-foreground">
-            {job ? '编辑定时任务' : '新建定时任务'}
+            {job ? '编辑日历安排' : '新建日历安排'}
           </h2>
           <button
             onClick={onCancel}
@@ -111,42 +112,42 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
           {/* 任务名称 */}
           <div>
             <label className="block text-sm font-medium text-foreground mb-1.5">
-              任务名称 <span className="text-red-500">*</span>
+              安排名称 <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="例如：每日股票分析"
+              placeholder="例如：每周一早会前生成投研简报"
               className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
           </div>
 
-          {/* 任务描述 */}
+          {/* 安排说明 */}
           <div>
             <label className="block text-sm font-medium text-foreground mb-1.5">
-              描述（可选）
+              安排说明（可选）
             </label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="简要描述这个任务的用途"
+              placeholder="补充说明这项安排的用途、场景或背景"
               rows={2}
               className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
             />
           </div>
 
-          {/* 调度配置 */}
+          {/* 日历规则 */}
           <ScheduleInput value={schedule} onChange={setSchedule} />
 
-          {/* 执行目标 */}
+          {/* 负责人和工作内容 */}
           <TargetInput value={target} onChange={setTarget} />
 
           {/* 执行模型 */}
           {profiles.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-foreground mb-1.5">
-                执行模型
+                负责同事的工作模型
               </label>
               <select
                 value={modelProfileId}
@@ -163,6 +164,45 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
             </div>
           )}
 
+          {/* 结果送达方式（前端预设） */}
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              结果送达方式
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { value: 'app', label: '应用内', desc: '在工作记录和通知里查看' },
+                { value: 'email', label: '邮箱', desc: '结果发到老板邮箱' },
+                { value: 'feishu', label: '飞书', desc: '结果发到飞书机器人' },
+                { value: 'qq', label: 'QQ', desc: '结果发到 QQ Bot' },
+              ].map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => setDeliveryChannel(item.value as typeof deliveryChannel)}
+                  className={`rounded-full border px-3 py-1.5 text-left transition-colors ${
+                    deliveryChannel === item.value
+                      ? 'border-primary bg-primary/5 text-primary'
+                      : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'
+                  }`}
+                >
+                  <div className="text-xs font-medium">{item.label}</div>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              当前先用于安排预设。真实送达通道会在后续重构 phase 接入。
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {({
+                app: '结果会保留在应用内查看。',
+                email: '后续将支持把结果发到老板邮箱。',
+                feishu: '后续将支持把结果发到飞书。',
+                qq: '后续将支持把结果发到 QQ。',
+              } as const)[deliveryChannel]}
+            </p>
+          </div>
+
           {/* 启用状态 */}
           <div className="flex items-center gap-2">
             <input
@@ -173,7 +213,7 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
               className="w-4 h-4 rounded border-border text-primary focus:ring-primary/50"
             />
             <label htmlFor="enabled" className="text-sm text-foreground">
-              启用任务
+              启用这项安排
             </label>
           </div>
 
@@ -191,7 +231,7 @@ export function CronJobForm({ job, onSubmit, onCancel }: Props) {
               disabled={submitting}
               className="px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
-              {submitting ? '提交中...' : job ? '保存' : '创建'}
+              {submitting ? '提交中...' : job ? '保存安排' : '创建安排'}
             </button>
           </div>
         </form>
