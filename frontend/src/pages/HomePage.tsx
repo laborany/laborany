@@ -284,8 +284,14 @@ export default function HomePage() {
         reason: candidate.reason,
         preparedTask: candidate.query,
       })
-      navigate(buildExecutePath(candidate.targetId, bossRequest, candidate.attachmentIds), {
-        state: { handoffQuery, originQuery: bossRequest },
+      navigate(buildExecutePath(candidate.targetId, bossRequest, candidate.attachmentIds, {
+        converseSid: converse.sessionId || undefined,
+      }), {
+        state: {
+          handoffQuery,
+          originQuery: bossRequest,
+          converseSessionId: converse.sessionId || undefined,
+        },
       })
       return
     }
@@ -309,24 +315,24 @@ export default function HomePage() {
     }
   }, [candidate, navigate, getCapabilityName])
 
-  const handleCandidateReject = useCallback(() => {
-    const query = stripAttachmentMarkers(candidate?.query || '')
-    const bossRequest = latestUserQueryRef.current || query
+  const handleCandidateReject = useCallback(async () => {
+    const rejectInstruction = '这次先不要安排给其他同事。请你先自己分析并直接给我一个结果；如果后续我补充了新的要求，或者任务发生变化，你再判断是否需要继续分派。'
+
     setCandidate(null)
-    setExecCtx({
-      type: 'skill',
-      id: '__generic__',
-      query: bossRequest,
-      originQuery: bossRequest,
-      attachmentIds: candidate?.attachmentIds || [],
-      handoffQuery: buildAssistantHandoffQuery({
-        bossRequest,
-        mode: 'assistant',
-        preparedTask: query,
-      }),
-    })
-    setPhase('fallback_general')
-  }, [candidate])
+    setExecCtx(null)
+    setGenericPlan(null)
+    setCronPending(null)
+    setErrorMsg('')
+    handledActionRef.current = null
+    setPhase('analyzing')
+
+    try {
+      await converse.sendMessage(rejectInstruction)
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : '服务异常，请稍后重试')
+      setPhase('error')
+    }
+  }, [candidate, converse.sendMessage])
 
   const handleCronConfirm = useCallback(async (next: CronPending) => {
     const targetId = (next.targetId || '').trim() || '__generic__'
@@ -397,7 +403,9 @@ export default function HomePage() {
         },
       }))
     }
-    navigate(buildExecutePath(created.id, query, execCtx?.attachmentIds || []), {
+    navigate(buildExecutePath(created.id, query, execCtx?.attachmentIds || [], {
+      converseSid: converse.sessionId || undefined,
+    }), {
       state: {
         handoffQuery: buildAssistantHandoffQuery({
           bossRequest: query,
@@ -406,9 +414,10 @@ export default function HomePage() {
           preparedTask: query,
         }),
         originQuery: query,
+        converseSessionId: converse.sessionId || undefined,
       },
     })
-  }, [execCtx?.attachmentIds, execCtx?.originQuery, execCtx?.query, navigate, getCapabilityName])
+  }, [converse.sessionId, execCtx?.attachmentIds, execCtx?.originQuery, execCtx?.query, navigate, getCapabilityName])
 
   if (phase === 'idle') {
     return <IdleView

@@ -6,8 +6,8 @@
  * ║  优化：使用 React.lazy 实现路由级别代码分割                                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import { useState, useEffect, Suspense, lazy } from 'react'
-import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
+import { useState, useEffect, Suspense, lazy, useMemo, useCallback } from 'react'
+import { Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { NotificationBell } from './components/notification/NotificationBell'
 import { RunningTasksIndicator } from './components/notification/RunningTasksIndicator'
@@ -15,6 +15,9 @@ import { API_BASE } from './config'
 import { LaborAnyLogo } from './components/ui/LaborAnyLogo'
 import { ModelProfileProvider } from './contexts/ModelProfileContext'
 import { COMPANY_APP_COPY, getCompanyNavLabel } from './lib/companySemantics'
+import { useSkillNameMap } from './hooks/useSkillNameMap'
+import type { Session } from './types'
+import { buildWorkRecordItems, findWorkRecordBySessionId } from './lib/workRecords'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           懒加载页面组件                                   │
@@ -92,13 +95,150 @@ function AppLayout({
   profileName: string
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sessions, setSessions] = useState<Session[]>([])
+  const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null)
+  const [workSearch, setWorkSearch] = useState('')
+  const [workSectionCollapsed, setWorkSectionCollapsed] = useState(false)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { getSkillName } = useSkillNameMap()
+
+  const refreshWorkRecords = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/sessions`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!res.ok) return
+      const data = await res.json() as Session[]
+      setSessions(data)
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshWorkRecords()
+    const timer = window.setInterval(() => { void refreshWorkRecords() }, 15000)
+    return () => window.clearInterval(timer)
+  }, [refreshWorkRecords])
+
+  useEffect(() => {
+    void refreshWorkRecords()
+  }, [location.pathname, refreshWorkRecords])
+
+  const workRecords = useMemo(
+    () => buildWorkRecordItems(sessions, getSkillName).slice(0, 10),
+    [sessions, getSkillName],
+  )
+
+  const selectedRecordId = useMemo(() => {
+    const match = location.pathname.match(/^\/history\/([^/]+)/)
+    if (!match) return null
+    const record = findWorkRecordBySessionId(sessions, decodeURIComponent(match[1]), getSkillName)
+    return record?.id || null
+  }, [location.pathname, sessions, getSkillName])
+
+  const getOwnerTagLabel = useCallback((record: ReturnType<typeof buildWorkRecordItems>[number]) => {
+    if (record.collaborationLabel) {
+      return record.collaborationLabel.replace(' -> ', ' | ')
+    }
+    return getSkillName(record.currentOwnerSkillId)
+  }, [getSkillName])
+
+  const getStatusTagLabel = useCallback((status: string) => {
+    if (status === 'running') return '运行中'
+    if (status === 'waiting_input') return '待补充'
+    if (status === 'completed') return '已完成'
+    if (status === 'failed') return '失败'
+    return '已中止'
+  }, [])
+
+  const getStatusIcon = useCallback((status: string) => {
+    if (status === 'running') {
+      return (
+        <svg className="h-4 w-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      )
+    }
+    if (status === 'waiting_input') {
+      return (
+        <svg className="h-4 w-4 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-4 4v-4z" />
+        </svg>
+      )
+    }
+    if (status === 'completed') {
+      return (
+        <svg className="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      )
+    }
+    if (status === 'failed') {
+      return (
+        <svg className="h-4 w-4 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      )
+    }
+    return (
+      <svg className="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    )
+  }, [])
+
+  const filteredWorkRecords = useMemo(() => {
+    const keyword = workSearch.trim().toLowerCase()
+    if (!keyword) return workRecords
+    return workRecords.filter((record) => {
+      const owner = getOwnerTagLabel(record).toLowerCase()
+      return record.title.toLowerCase().includes(keyword) || owner.includes(keyword)
+    })
+  }, [workRecords, workSearch, getOwnerTagLabel])
+
+  const handleDeleteRecord = useCallback(async (record: ReturnType<typeof buildWorkRecordItems>[number], event: React.MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const confirmText = record.sessionCount > 1
+      ? '确定要删除这条协作工作记录吗？这会删除该工作下的个人助理和员工执行会话，此操作无法撤销。'
+      : '确定要删除这条工作记录吗？此操作无法撤销。'
+    if (!confirm(confirmText)) return
+
+    setDeletingRecordId(record.id)
+    try {
+      const token = localStorage.getItem('token')
+      const sessionIds = record.sessions.map((session) => session.id)
+      for (const sessionId of sessionIds) {
+        const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+          method: 'DELETE',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error((data as { error?: string }).error || '删除失败')
+        }
+      }
+      setSessions((prev) => prev.filter((session) => !sessionIds.includes(session.id)))
+      if (selectedRecordId === record.id) {
+        navigate('/history')
+      }
+    } catch {
+      alert('删除失败，请稍后重试')
+    } finally {
+      setDeletingRecordId(null)
+    }
+  }, [navigate, selectedRecordId])
 
   return (
     <div className="min-h-screen bg-background flex">
       {/* 左侧边栏 */}
       <aside
         className={`fixed left-0 top-0 h-full bg-card border-r border-border flex flex-col transition-all duration-300 z-40 ${
-          sidebarCollapsed ? 'w-16' : 'w-56'
+          sidebarCollapsed ? 'w-16' : 'w-64'
         }`}
       >
           {/* Logo */}
@@ -132,7 +272,8 @@ function AppLayout({
           </div>
 
           {/* 导航菜单 */}
-          <nav className="flex-1 p-3 space-y-1">
+          <div className="border-b border-border/60 p-3">
+          <nav className="space-y-1">
             <NavItem
               to="/"
               icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -158,14 +299,6 @@ function AppLayout({
               isCollapsed={sidebarCollapsed}
             />
             <NavItem
-              to="/history"
-              icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>}
-              label={getCompanyNavLabel('history', sidebarCollapsed)}
-              isCollapsed={sidebarCollapsed}
-            />
-            <NavItem
               to="/memory"
               icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
@@ -183,6 +316,100 @@ function AppLayout({
               isCollapsed={sidebarCollapsed}
             />
           </nav>
+          </div>
+
+          {!sidebarCollapsed && (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-b border-border/60 px-3 py-3">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  工作记录
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setWorkSectionCollapsed((value) => !value)}
+                  className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  title={workSectionCollapsed ? '展开工作记录' : '折叠工作记录'}
+                >
+                  <svg className={`h-4 w-4 transition-transform ${workSectionCollapsed ? '-rotate-90' : 'rotate-0'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+              {!workSectionCollapsed && (
+                <>
+                  <div className="shrink-0 pb-3">
+                    <input
+                      value={workSearch}
+                      onChange={(event) => setWorkSearch(event.target.value)}
+                      placeholder="搜索工作记录"
+                      className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-[13px] outline-none transition-colors placeholder:text-[13px] placeholder:text-muted-foreground/70 focus:border-primary/40"
+                    />
+                  </div>
+              <div className="mt-2 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1 pb-40 pt-1">
+                {filteredWorkRecords.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-border px-3 py-4 text-xs text-muted-foreground">
+                    {workSearch.trim() ? '没有匹配的工作记录' : '暂无工作记录'}
+                  </div>
+                ) : (
+                  filteredWorkRecords.map((record) => {
+                    const isActive = selectedRecordId === record.id
+                    return (
+                      <button
+                        key={record.id}
+                        type="button"
+                        onClick={() => navigate(`/history/${record.primarySessionId}`)}
+                        className={`group relative w-full rounded-2xl border px-3 pb-4 pt-3 text-left transition-all ${
+                          isActive
+                            ? 'border-primary/40 bg-primary/8 shadow-sm ring-1 ring-primary/15'
+                            : 'border-border bg-background hover:border-primary/20 hover:bg-accent/20'
+                        }`}
+                      >
+                        {isActive && (
+                          <span className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-primary" />
+                        )}
+                        <div className="relative pl-1">
+                          <p className="line-clamp-2 pr-8 text-[15px] font-semibold leading-6 text-foreground">
+                            {record.title}
+                          </p>
+                          <div className="absolute right-1 top-0 flex h-6 w-6 items-center justify-center">
+                            <span title={getStatusTagLabel(record.status)}>
+                              {getStatusIcon(record.status)}
+                            </span>
+                          </div>
+                          <div className="mt-2 pr-8">
+                            <span className="inline-flex max-w-[calc(100%-2rem)] items-center overflow-hidden whitespace-nowrap rounded-full bg-slate-100 px-2.5 py-1 text-[11px] leading-none text-slate-700 text-ellipsis">
+                              {getOwnerTagLabel(record)}
+                            </span>
+                          </div>
+                          <div className="absolute bottom-0 right-1 flex h-6 w-6 items-center justify-center">
+                            <button
+                              type="button"
+                              onClick={(event) => { void handleDeleteRecord(record, event) }}
+                              disabled={deletingRecordId === record.id}
+                              className="rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                              title={record.sessionCount > 1 ? '删除整条协作工作记录' : '删除这条工作记录'}
+                            >
+                              {deletingRecordId === record.id ? (
+                                <svg className="h-4 w-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                              ) : (
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+                </>
+              )}
+            </div>
+          )}
 
           <div className="border-t border-border p-3">
             <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-1'} mb-3`}>
@@ -206,7 +433,7 @@ function AppLayout({
 
       {/* 主内容区 */}
       <main
-        className={`flex-1 transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-56'}`}
+        className={`flex-1 transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-64'}`}
       >
         {children}
       </main>

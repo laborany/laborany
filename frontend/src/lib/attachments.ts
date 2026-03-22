@@ -73,13 +73,23 @@ export function applyAttachmentIdsToParams(params: URLSearchParams, attachmentId
   params.delete('attachments')
 }
 
-export function buildExecutePath(skillId: string, query: string, attachmentIds: string[]): string {
+export function buildExecutePath(
+  skillId: string,
+  query: string,
+  attachmentIds: string[],
+  options?: {
+    converseSid?: string
+  },
+): string {
   const params = new URLSearchParams()
   const normalizedQuery = stripAttachmentMarkers(query)
   if (normalizedQuery) {
     params.set('q', normalizedQuery)
   }
   applyAttachmentIdsToParams(params, attachmentIds)
+  if (options?.converseSid?.trim()) {
+    params.set('converseSid', options.converseSid.trim())
+  }
   const search = params.toString()
   return `/execute/${skillId}${search ? `?${search}` : ''}`
 }

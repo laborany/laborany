@@ -33,11 +33,12 @@ import {
   normalizeQuestionContext,
 } from '../lib/question-response'
 import { WidgetPanel } from '../components/widget/WidgetPanel'
+import { findWorkRecordBySessionId, isControlInstructionText } from '../lib/workRecords'
+import { CollaborationTabs } from '../components/shared/CollaborationTabs'
+import { ConversationWorkspaceView } from '../components/shared/ConversationWorkspaceView'
 
 export default function HistoryPage() {
-  const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchSessions()
@@ -49,95 +50,12 @@ export default function HistoryPage() {
       const res = await fetch(`${API_BASE}/sessions`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      const data = await res.json()
-      setSessions(data)
+      await res.json()
     } catch {
       // 忽略错误
     } finally {
       setLoading(false)
     }
-  }
-
-  async function deleteSession(sessionId: string, event: React.MouseEvent) {
-    event.preventDefault()
-    event.stopPropagation()
-
-    if (!confirm('确定要删除这条会话记录吗？此操作无法撤销。')) {
-      return
-    }
-
-    setDeletingId(sessionId)
-    try {
-      const token = localStorage.getItem('token')
-      const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-
-      if (res.ok) {
-        setSessions(prev => prev.filter(s => s.id !== sessionId))
-      } else {
-        const data = await res.json()
-        alert(data.error || '删除失败')
-      }
-    } catch {
-      alert('删除失败，请稍后重试')
-    } finally {
-      setDeletingId(null)
-    }
-  }
-
-  function formatDate(dateStr: string) {
-    return parseUTCDate(dateStr).toLocaleString('zh-CN')
-  }
-
-  function getStatusBadge(status: string) {
-    const styles: Record<string, string> = {
-      running: 'badge-primary',
-      waiting_input: 'badge-warning',
-      completed: 'badge-success',
-      failed: 'badge-error',
-      stopped: 'bg-secondary text-secondary-foreground',
-      aborted: 'bg-secondary text-secondary-foreground',
-    }
-    const labels: Record<string, string> = {
-      running: '运行中',
-      waiting_input: '待回复',
-      completed: '已完成',
-      failed: '失败',
-      stopped: '已中止',
-      aborted: '已中止',
-    }
-    return (
-      <span className={`badge ${styles[status] || styles.stopped}`}>
-        {labels[status] || status}
-      </span>
-    )
-  }
-
-  function getSourceBadge(source: Session['source'] | undefined, sessionId: string, skillId: string) {
-    const inferred = source
-      || (sessionId.startsWith('cron-') || sessionId.startsWith('cron-manual-')
-        ? 'cron'
-        : (sessionId.startsWith('feishu-') || sessionId.startsWith('feishu-conv-')
-          ? 'feishu'
-          : (sessionId.startsWith('qq-') || sessionId.startsWith('qq-conv-')
-            ? 'qq'
-            : (skillId === '__converse__' ? 'converse' : 'desktop'))))
-
-    const sourceText: Record<'desktop' | 'converse' | 'cron' | 'feishu' | 'qq', string> = {
-      desktop: '桌面',
-      converse: '首页对话',
-      cron: '定时任务',
-      feishu: '飞书',
-      qq: 'QQ',
-    }
-
-    return (
-      <span className="badge bg-secondary text-secondary-foreground">
-        {sourceText[inferred]}
-      </span>
-    )
   }
 
   if (loading) {
@@ -154,67 +72,29 @@ export default function HistoryPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="flex items-center gap-4 mb-6">
-        <Link to="/" className="text-muted-foreground hover:text-foreground transition-colors">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </Link>
-        <h2 className="text-2xl font-bold text-foreground">历史会话</h2>
+    <div className="flex h-[calc(100vh-64px)] min-w-0 flex-1 flex-col">
+      <div className="border-b border-border px-6 py-5">
+        <div className="space-y-1">
+          <h2 className="text-2xl font-bold text-foreground">工作记录</h2>
+          <p className="text-sm text-muted-foreground">
+            左侧常驻展示最近工作，点击任意一项后，可在这里查看完整协作过程、交付结果与后续动作。
+          </p>
+        </div>
       </div>
 
-      {sessions.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
-            <svg className="w-8 h-8 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+      <div className="flex min-h-0 flex-1 items-center justify-center px-8">
+        <div className="max-w-md text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+            <svg className="h-8 w-8 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-6a2 2 0 012-2h6m0 0V3m0 6l-7 7-4-4" />
             </svg>
           </div>
-          <p className="text-muted-foreground">暂无历史会话</p>
+          <h3 className="text-lg font-semibold text-foreground">选择一项工作</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            从左侧最近工作中选择一条记录，这里会显示该工作的协作过程、负责人、产物和可继续推进的会话。
+          </p>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {sessions.map((session) => (
-            <Link
-              key={session.id}
-              to={`/history/${session.id}`}
-              className="block card-hover p-4"
-            >
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <p className="font-medium text-foreground line-clamp-2">
-                    {session.query}
-                  </p>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {formatDate(session.created_at)}
-                  </p>
-                </div>
-                <div className="ml-4 flex items-center gap-2">
-                  {getSourceBadge(session.source, session.id, session.skill_id)}
-                  {getStatusBadge(session.status)}
-                  <button
-                    onClick={(e) => deleteSession(session.id, e)}
-                    disabled={deletingId === session.id}
-                    className="p-1.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50"
-                    title="删除会话"
-                  >
-                    {deletingId === session.id ? (
-                      <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
-      )}
+      </div>
     </div>
   )
 }
@@ -533,7 +413,12 @@ export function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
   const { getSkillName } = useSkillNameMap()
+  const assistantLabel = '个人助理'
+  const [activeTab, setActiveTab] = useState<'employee' | 'assistant'>('employee')
   const [session, setSession] = useState<SessionDetail | null>(null)
+  const [assistantSession, setAssistantSession] = useState<SessionDetail | null>(null)
+  const [relatedRecordSessionIds, setRelatedRecordSessionIds] = useState<string[]>([])
+  const [workTitle, setWorkTitle] = useState('')
   const [liveStatus, setLiveStatus] = useState<SessionLiveStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [continuing, setContinuing] = useState(false)
@@ -596,6 +481,9 @@ export function SessionDetailPage() {
     attachedSessionRef.current = null
     prevConverseThinkingRef.current = false
     converse.reset()
+    setAssistantSession(null)
+    setRelatedRecordSessionIds([])
+    setActiveTab('employee')
     if (sessionId) {
       fetchSessionDetail()
     }
@@ -617,6 +505,13 @@ export function SessionDetailPage() {
       cancelled = true
     }
   }, [sessionId, isConverseSession, converse.resumeSession])
+
+  useEffect(() => {
+    if (isConverseSession) return
+    const assistantSessionId = (assistantSession?.id || '').trim()
+    if (!assistantSessionId) return
+    void converse.resumeSession(assistantSessionId)
+  }, [assistantSession?.id, isConverseSession, converse.resumeSession])
 
   useEffect(() => {
     if (!sessionId || !session || isConverseSession) return
@@ -686,6 +581,42 @@ export function SessionDetailPage() {
       setLoading(false)
     }
   }, [sessionId])
+
+  const fetchRelatedWorkRecord = useCallback(async (targetSessionId: string, currentSession: SessionDetail) => {
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/sessions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return
+
+      const allSessions = await res.json() as Session[]
+      const record = findWorkRecordBySessionId(allSessions, targetSessionId, getSkillName)
+      if (!record) return
+
+      setWorkTitle(record.title)
+      setRelatedRecordSessionIds(record.sessions.map((item) => item.id))
+
+      const assistant = record.sessions.find((item) => item.skill_id === '__converse__')
+      const hasEmployeeSession = record.sessions.some((item) => item.skill_id !== '__converse__')
+      if (!assistant || !hasEmployeeSession || assistant.id === currentSession.id) return
+
+      const detailRes = await fetch(`${API_BASE}/sessions/${assistant.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!detailRes.ok) return
+
+      const assistantDetail = await detailRes.json() as SessionDetail
+      setAssistantSession(assistantDetail)
+    } catch {
+      // 忽略错误
+    }
+  }, [getSkillName])
+
+  useEffect(() => {
+    if (!sessionId || !session) return
+    void fetchRelatedWorkRecord(sessionId, session)
+  }, [sessionId, session, fetchRelatedWorkRecord])
 
   const syncConverseSnapshot = useCallback(async () => {
     if (!sessionId) return
@@ -838,24 +769,33 @@ export function SessionDetailPage() {
   async function handleDeleteSession() {
     if (!sessionId) return
 
-    if (!confirm('确定要删除这条会话记录吗？此操作无法撤销。')) {
+    const targetSessionIds = relatedRecordSessionIds.length > 1
+      ? relatedRecordSessionIds
+      : [sessionId]
+    const confirmText = targetSessionIds.length > 1
+      ? '确定要删除这条协作工作记录吗？这会删除该工作下的个人助理和员工执行会话，此操作无法撤销。'
+      : '确定要删除这条工作记录吗？此操作无法撤销。'
+
+    if (!confirm(confirmText)) {
       return
     }
 
     setDeleting(true)
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      for (const targetSessionId of targetSessionIds) {
+        const res = await fetch(`${API_BASE}/sessions/${targetSessionId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        })
 
-      if (res.ok) {
-        navigate('/history')
-      } else {
-        const data = await res.json()
-        alert(data.error || '删除失败')
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error((data as { error?: string }).error || '删除失败')
+        }
       }
+
+      navigate('/history')
     } catch {
       alert('删除失败，请稍后重试')
     } finally {
@@ -978,6 +918,21 @@ export function SessionDetailPage() {
     : (agent.pendingQuestion ? agent.respondToQuestion : handleQuestionSubmit)
   const stopHandler = isConverseSession ? converse.stop : agent.stop
   const showResizeHandle = isPreviewVisible || isRightSidebarVisible || Boolean(viewingWidget)
+  const assistantMessages = useMemo(
+    () => convertMessages(assistantSession),
+    [assistantSession],
+  )
+  const hasAssistantTab = Boolean(
+    assistantSession
+    && relatedRecordSessionIds.length > 1
+    && session?.skill_id !== '__converse__',
+  )
+  const employeeRoleLabel = getSkillName(session?.skill_id)
+  const activeRoleLabel = activeTab === 'assistant' ? assistantLabel : employeeRoleLabel
+  const fallbackSessionTitle = session?.query && !isControlInstructionText(session.query)
+    ? session.query
+    : ''
+  const displayWorkTitle = workTitle || fallbackSessionTitle || '这项工作'
 
   if (loading) {
     return (
@@ -1000,8 +955,64 @@ export function SessionDetailPage() {
     )
   }
 
+  if (hasAssistantTab && activeTab === 'assistant') {
+    return (
+      <div className="flex h-[calc(100vh-64px)]">
+        <div className="mx-auto flex h-full max-w-4xl flex-1 flex-col px-4 py-6">
+        <div className="mb-4 shrink-0 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Link to="/history" className="text-muted-foreground hover:text-foreground transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </Link>
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-semibold text-foreground">{displayWorkTitle}</h2>
+                <p className="text-sm text-muted-foreground">当前视角：{activeRoleLabel}</p>
+              </div>
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {parseUTCDate(session.created_at).toLocaleString('zh-CN')}
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded-2xl border border-border bg-card/60 px-4 py-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                协作视角
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                按处理顺序查看这项工作的不同阶段，默认先打开当前执行中的角色。
+              </p>
+            </div>
+            <CollaborationTabs
+              tabs={[
+                { id: 'assistant', label: assistantLabel },
+                { id: 'employee', label: employeeRoleLabel },
+              ]}
+              activeTab={activeTab}
+              onChange={(tabId) => setActiveTab(tabId as 'employee' | 'assistant')}
+            />
+          </div>
+        </div>
+        <ConversationWorkspaceView
+          messages={converse.messages.length > 0 ? converse.messages : assistantMessages}
+          isRunning={converse.isThinking}
+          pendingQuestion={converse.pendingQuestion}
+          respondToQuestion={converse.respondToQuestion}
+          onSubmit={converse.sendMessage}
+          onStop={converse.stop}
+          placeholder="继续把要求交给个人助理..."
+          emptyText="暂无助理会话记录"
+        />
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="flex h-[calc(100vh-64px)]">
+    <div className="h-[calc(100vh-64px)]">
+      <div className="flex h-full">
       {/* 左侧：聊天面板 */}
       <div
         className="flex flex-col px-4 py-6 overflow-hidden"
@@ -1019,9 +1030,12 @@ export function SessionDetailPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </Link>
-            <h2 className="text-lg font-semibold text-foreground">
-              {getSkillName(session.skill_id)}
-            </h2>
+            <div className="min-w-0">
+              <h2 className="truncate text-lg font-semibold text-foreground">
+                {displayWorkTitle}
+              </h2>
+              <p className="text-sm text-muted-foreground">当前视角：{activeRoleLabel}</p>
+            </div>
             <span className={effectiveStatusBadgeClass}>
               {renderStatusLabel(effectiveStatus)}
             </span>
@@ -1061,7 +1075,9 @@ export function SessionDetailPage() {
                 onClick={handleDeleteSession}
                 disabled={deleting || effectiveStatus === 'running'}
                 className="p-1.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title={effectiveStatus === 'running' ? '无法删除正在运行的会话' : '删除会话'}
+                title={effectiveStatus === 'running'
+                  ? '无法删除正在运行的会话'
+                  : (relatedRecordSessionIds.length > 1 ? '删除整条协作工作记录' : '删除这条工作记录')}
               >
                 {deleting ? (
                   <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1080,6 +1096,26 @@ export function SessionDetailPage() {
             </div>
           </div>
         </div>
+        {hasAssistantTab && (
+          <div className="mb-4 flex items-center justify-between rounded-2xl border border-border bg-card/60 px-4 py-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                协作视角
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                按处理顺序查看这项工作的不同阶段，默认先打开当前执行中的角色。
+              </p>
+            </div>
+            <CollaborationTabs
+              tabs={[
+                { id: 'assistant', label: assistantLabel },
+                { id: 'employee', label: employeeRoleLabel },
+              ]}
+              activeTab={activeTab}
+              onChange={(tabId) => setActiveTab(tabId as 'employee' | 'assistant')}
+            />
+          </div>
+        )}
 
         {/* 消息列表 */}
         <div className="flex-1 overflow-y-auto mb-4 min-h-0">
@@ -1197,6 +1233,7 @@ export function SessionDetailPage() {
           />
         </div>
       )}
+      </div>
     </div>
   )
 }
