@@ -46,7 +46,7 @@ function withDetail(fallback: string, error: unknown): string {
 }
 
 function isSourceChannel(value: unknown): value is JobSourceChannel {
-  return value === 'desktop' || value === 'feishu' || value === 'qq'
+  return value === 'desktop' || value === 'feishu' || value === 'qq' || value === 'wechat'
 }
 
 function formatNextWakeAt(nextWakeAt: number | null): string {
@@ -61,26 +61,32 @@ function rearmCronTimer(reason: string): void {
 
 function validateSource(source: JobSource | undefined): string | null {
   if (!source) return null
-  if (!isSourceChannel(source.channel)) return 'source.channel 必须是 desktop / feishu / qq'
+  if (!isSourceChannel(source.channel)) return 'source.channel 必须是 desktop / feishu / qq / wechat'
   if (source.channel === 'feishu' && !source.feishuOpenId?.trim()) {
     return 'source.channel=feishu 时必须提供 source.feishuOpenId'
   }
   if (source.channel === 'qq' && !source.qqOpenId?.trim()) {
     return 'source.channel=qq 时必须提供 source.qqOpenId'
   }
+  if (source.channel === 'wechat' && !source.wechatUserId?.trim()) {
+    return 'source.channel=wechat 时必须提供 source.wechatUserId'
+  }
   return null
 }
 
 function validateNotify(notify: JobNotify | undefined): string | null {
   if (!notify) return null
-  if (notify.channel !== 'app' && notify.channel !== 'feishu_dm' && notify.channel !== 'qq_dm') {
-    return 'notify.channel 必须是 app / feishu_dm / qq_dm'
+  if (notify.channel !== 'app' && notify.channel !== 'feishu_dm' && notify.channel !== 'qq_dm' && notify.channel !== 'wechat_dm') {
+    return 'notify.channel 必须是 app / feishu_dm / qq_dm / wechat_dm'
   }
   if (notify.channel === 'feishu_dm' && !notify.feishuOpenId?.trim()) {
     return 'notify.channel=feishu_dm 时必须提供 notify.feishuOpenId'
   }
   if (notify.channel === 'qq_dm' && !notify.qqOpenId?.trim()) {
     return 'notify.channel=qq_dm 时必须提供 notify.qqOpenId'
+  }
+  if (notify.channel === 'wechat_dm' && !notify.wechatUserId?.trim()) {
+    return 'notify.channel=wechat_dm 时必须提供 notify.wechatUserId'
   }
   return null
 }
@@ -124,12 +130,14 @@ function validateScheduleInput(schedule: Schedule | undefined): string | null {
 router.get('/jobs', (req: Request, res: Response) => {
   try {
     const sourceOpenId = typeof req.query.sourceOpenId === 'string' ? req.query.sourceOpenId.trim() : ''
+    const sourceWechatUserId = typeof req.query.sourceWechatUserId === 'string' ? req.query.sourceWechatUserId.trim() : ''
     const sourceChannel = typeof req.query.sourceChannel === 'string' ? req.query.sourceChannel.trim() : ''
+    const sourceIdentity = sourceWechatUserId || sourceOpenId
 
-    let jobs = sourceOpenId ? listJobsBySourceOpenId(sourceOpenId, sourceChannel || undefined) : listJobs()
+    let jobs = sourceIdentity ? listJobsBySourceOpenId(sourceIdentity, sourceChannel || undefined) : listJobs()
     if (sourceChannel) {
       if (!isSourceChannel(sourceChannel)) {
-        res.status(400).json({ error: 'sourceChannel 必须是 desktop / feishu / qq' })
+        res.status(400).json({ error: 'sourceChannel 必须是 desktop / feishu / qq / wechat' })
         return
       }
       jobs = jobs.filter(job => job.sourceChannel === sourceChannel)

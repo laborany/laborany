@@ -1,6 +1,6 @@
 {
   "name": "laborany",
-  "version": "0.4.3",
+  "version": "0.4.5",
   "description": "LaborAny - AI-powered desktop assistant with Claude Code integration",
   "author": {
     "name": "FunAmiAI",
@@ -59,7 +59,9 @@
     "verify:converse-ui-real": "node scripts/verify-converse-ui-real.js",
     "verify:converse-widget-real": "node scripts/verify-converse-widget-real.js",
     "verify:execute-widget-real": "node scripts/verify-execute-widget-real.js",
+    "verify:task-file-manifest": "npm --prefix src-api exec tsx ./src-api/scripts/verify-task-file-manifest.ts",
     "verify:remote-bot-flow": "npm --prefix agent-service exec tsx ./scripts/verify-remote-bot-flow.ts",
+    "verify:wechat-media": "npm --prefix agent-service exec tsx ./scripts/verify-wechat-media.ts",
     "test:dispatch": "concurrently -k -s first -n AGENT,API,E2E -c yellow,blue,green \"tmp-debug\\run-agent-e2e.cmd\" \"tmp-debug\\run-api-e2e.cmd\" \"tmp-debug\\run-e2e-dispatch.cmd\"",
     "build:electron": "npm run bundle:all:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && npm run fix:native:win && node ./scripts/run-local-bin.js electron-builder --win --publish never",
     "build:electron:mac": "npm run bundle:all:mac-universal && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && npm run fix:native:mac-x64 && node ./scripts/run-local-bin.js electron-builder --mac --publish never",

@@ -1,6 +1,6 @@
 {
   "name": "laborany-api",
-  "version": "0.4.3",
+  "version": "0.4.5",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -11,7 +11,7 @@
     "build:mac-arm64": "npm run build:bundle && npm run build:pkg:mac-arm64",
     "build:linux": "npm run build:bundle && npm run build:pkg:linux",
     "build:bundle": "node build.cjs",
-    "build:pkg": "node ../scripts/patch-pkg-fetch.js src-api && node ../scripts/run-local-bin.js pkg dist/bundle.cjs --targets node20-win-x64 --output dist/laborany-api --config pkg.json",
+    "build:pkg": "node ../scripts/run-platform-pkg.js src-api",
     "build:pkg:win": "node ../scripts/patch-pkg-fetch.js src-api && node ../scripts/run-local-bin.js pkg dist/bundle.cjs --targets node20-win-x64 --output dist/laborany-api --config pkg.json",
     "build:pkg:mac": "node ../scripts/patch-pkg-fetch.js src-api && node ../scripts/run-local-bin.js pkg dist/bundle.cjs --targets node20-macos-x64 --output dist/laborany-api-mac --config pkg.json",
     "build:pkg:mac-x64": "node ../scripts/patch-pkg-fetch.js src-api && node ../scripts/run-local-bin.js pkg dist/bundle.cjs --targets node20-macos-x64 --output dist/laborany-api-mac --config pkg.json",

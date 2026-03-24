@@ -34,6 +34,20 @@ function StatusBadge({ status }: { status: CronJob['lastStatus'] }) {
   )
 }
 
+function getJobSourceLabel(job: CronJob): string {
+  if (job.sourceChannel === 'feishu') return '飞书'
+  if (job.sourceChannel === 'qq') return 'QQ'
+  if (job.sourceChannel === 'wechat') return '微信'
+  return '桌面'
+}
+
+function getJobNotifyLabel(job: CronJob): string {
+  if (job.notifyChannel === 'feishu_dm') return '飞书私聊'
+  if (job.notifyChannel === 'qq_dm') return 'QQ 私聊'
+  if (job.notifyChannel === 'wechat_dm') return '微信私聊'
+  return '应用内'
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           任务卡片                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -96,10 +110,10 @@ function JobCard({
               🤖 {modelLabel}
             </span>
             <span title="来源">
-              📍 {job.sourceChannel === 'feishu' ? '飞书' : '桌面'}
+              📍 {getJobSourceLabel(job)}
             </span>
             <span title="通知">
-              🔔 {job.notifyChannel === 'feishu_dm' ? '飞书私聊' : '应用内'}
+              🔔 {getJobNotifyLabel(job)}
             </span>
           </div>
         </div>

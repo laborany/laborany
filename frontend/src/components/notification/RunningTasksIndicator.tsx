@@ -18,7 +18,7 @@ interface RunningTask {
   skillId: string
   skillName: string
   startedAt: string
-  source?: 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq'
+  source?: 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq' | 'wechat'
   query?: string
 }
 
@@ -28,6 +28,7 @@ function getTaskSourceLabel(source?: RunningTask['source']): string {
   if (source === 'cron') return '定时'
   if (source === 'feishu') return '飞书'
   if (source === 'qq') return 'QQ'
+  if (source === 'wechat') return '微信'
   if (source === 'converse') return '首页'
   return '桌面'
 }

@@ -11,6 +11,7 @@ export { createCapabilitiesRouter } from './capabilities.js'
 export { converseRouter } from './converse.js'
 export { feishuRouter } from './feishu.js'
 export { default as qqRouter } from './qq.js'
+export { wechatRouter } from './wechat.js'
 export { runtimeRouter } from './runtime.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

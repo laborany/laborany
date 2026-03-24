@@ -10,6 +10,8 @@ import { createNotification } from './store.js'
 import type { CronJob } from './types.js'
 import { sendTextToOpenId, sendArtifactsToOpenId } from '../feishu/push.js'
 import { sendTextToTarget, sendArtifactsToTarget } from '../qq/push.js'
+import { loadWechatConfig } from '../wechat/config.js'
+import { queueWechatPendingText, sendWechatTextChunks } from '../wechat/push.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           配置读取                                        │
@@ -166,6 +168,45 @@ export async function notifyJobComplete(
       await sendTextToTarget(job.notifyQqOpenId, 'c2c', followup)
     }
     return
+  }
+
+  if (job.notifyChannel === 'wechat_dm' && job.notifyWechatUserId) {
+    const summary = buildWechatSummaryText(job, status, sessionId, error)
+    const wechatConfig = loadWechatConfig()
+    if (!wechatConfig) {
+      createNotification({
+        type: isSuccess ? 'cron_success' : 'cron_error',
+        title: `${title}（微信未连接）`,
+        content,
+        jobId: job.id,
+        sessionId,
+      })
+      return
+    }
+
+    try {
+      await sendWechatTextChunks(wechatConfig, job.notifyWechatUserId, summary, {
+        accountId: wechatConfig.accountId || 'env-token',
+      })
+      return
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      const shouldQueue = detail.includes('context_token')
+
+      if (shouldQueue) {
+        queueWechatPendingText(wechatConfig.accountId || 'env-token', job.notifyWechatUserId, summary)
+      }
+
+      console.warn(`[Notifier] 微信摘要推送失败: job=${job.id}`, err)
+      createNotification({
+        type: isSuccess ? 'cron_success' : 'cron_error',
+        title: `${title}（${shouldQueue ? '微信待补发' : '微信推送失败'}）`,
+        content: shouldQueue ? `${content}\n微信摘要会在用户下次主动发消息时补发。` : content,
+        jobId: job.id,
+        sessionId,
+      })
+      return
+    }
   }
 
   // 默认通知渠道：写入 app 内通知
@@ -376,6 +417,24 @@ function buildFeishuSummaryText(
 }
 
 function buildQqSummaryText(
+  job: CronJob,
+  status: 'ok' | 'error' | 'aborted',
+  sessionId: string,
+  error?: string,
+): string {
+  const statusLabel = status === 'ok' ? '执行成功' : status === 'aborted' ? '已中止' : '执行失败'
+  const when = new Date().toLocaleString('zh-CN')
+  const lines = [
+    `【LaborAny 定时任务】${statusLabel}`,
+    `任务：${job.name}`,
+    `时间：${when}`,
+    `会话：${sessionId}`,
+  ]
+  if (error) lines.push(`错误：${error}`)
+  return lines.join('\n')
+}
+
+function buildWechatSummaryText(
   job: CronJob,
   status: 'ok' | 'error' | 'aborted',
   sessionId: string,

@@ -24,10 +24,13 @@ import {
   smartRouter,
   feishuRouter,
   qqRouter,
+  wechatRouter,
   runtimeRouter,
 } from './routes/index.js'
 import { isFeishuEnabled, startFeishuBot, stopFeishuBot } from './feishu/index.js'
 import { isQQEnabled, startQQBot, stopQQBot } from './qq/index.js'
+import { isWechatEnabled } from './wechat/config.js'
+import { startWechatBot, stopWechatBot } from './wechat/index.js'
 
 initAgentLogger({
   defaultSource: 'agent',
@@ -63,6 +66,7 @@ app.use(createExecuteRouter(sessionManager, taskManager))
 app.use(createCapabilitiesRouter(sessionManager))
 app.use('/feishu', feishuRouter)
 app.use('/qq', qqRouter)
+app.use('/wechat', wechatRouter)
 app.use('/runtime', runtimeRouter)
 
 if (!existsSync(DATA_DIR)) {
@@ -89,6 +93,10 @@ server.once('listening', () => {
   if (isQQEnabled()) {
     startQQBot().catch(err => console.error('[QQ] 启动失败:', err))
   }
+
+  if (isWechatEnabled()) {
+    startWechatBot().catch(err => console.error('[WeChat] 启动失败:', err))
+  }
 })
 
 let shuttingDown = false
@@ -100,6 +108,7 @@ async function gracefulShutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
   try {
     stopFeishuBot()
     stopQQBot()
+    stopWechatBot()
     console.log(`[Agent Service] Received ${signal}, draining memory queue...`)
     const result = await memoryAsyncQueue.drain(5000)
     if (result.drained) {

@@ -29,7 +29,7 @@ import {
 } from './index.js'
 import { QQStreamingSession } from './streaming.js'
 import { sendArtifactsToTarget, sendFileToTarget } from './push.js'
-import { stripAttachmentMarkers } from 'laborany-shared'
+import { normalizeAttachmentIds, stripAttachmentMarkers } from 'laborany-shared'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     配置与常量                                           │
@@ -44,6 +44,7 @@ function getAgentServiceUrl(): string {
 }
 
 const PROCESSED_MESSAGE_TTL_MS = 10 * 60 * 1000
+const ATTACHMENT_ONLY_EXECUTION_QUERY = '请先查看当前上传的文件，并根据文件内容继续处理。'
 const MAX_ARTIFACT_BYTES = 20 * 1024 * 1024
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg'])
 const QQ_DEFAULT_CRON_TZ = 'Asia/Shanghai'
@@ -99,11 +100,20 @@ interface SseEvent {
   everyMs?: number
   tz?: string
   name?: string
+  attachmentIds?: string[]
   seedQuery?: string
   capabilityId?: string
   filePaths?: string[]
   questions?: unknown[]
   toolName?: string
+}
+
+function buildExecutionQueryWithAttachments(baseQuery: string, attachmentIds?: string[]): string {
+  const normalizedAttachmentIds = normalizeAttachmentIds(attachmentIds)
+  const cleanQuery = stripAttachmentMarkers(baseQuery || '').trim()
+  if (normalizedAttachmentIds.length === 0) return cleanQuery
+  const nextQuery = cleanQuery || ATTACHMENT_ONLY_EXECUTION_QUERY
+  return `${nextQuery}\n\n[LABORANY_FILE_IDS: ${normalizedAttachmentIds.join(', ')}]`
 }
 
 type MessageType = 'c2c'
@@ -1414,6 +1424,7 @@ async function dispatchAction(
   const resolvedTargetId = (event.targetId || '').trim()
   const fallbackQuery = (userText || converseText || '').trim()
   const query = (event.query || fallbackQuery).trim()
+  const executionQuery = buildExecutionQueryWithAttachments(query, event.attachmentIds)
 
   if (action === 'send_file') {
     const rawPaths = Array.isArray(event.filePaths) ? event.filePaths : []
@@ -1432,12 +1443,23 @@ async function dispatchAction(
     const resolved = await resolveExecutableSkillId(resolvedTargetId, config.defaultSkillId)
     const state = getUserState(stateKey)
     const sessionId = buildExecuteSessionId(resolved.skillId, state.activeSkillId, state.executeSessionId)
-    await executeSkill(client, null, targetType, targetId, stateKey, resolved.skillId, query || '请执行该技能', sessionId, config, replyCtx)
+    await executeSkill(
+      client,
+      null,
+      targetType,
+      targetId,
+      stateKey,
+      resolved.skillId,
+      executionQuery || '请执行该技能',
+      sessionId,
+      config,
+      replyCtx,
+    )
   } else if (action === 'execute_generic' && query) {
     const resolved = await resolveExecutableSkillId(config.defaultSkillId, '__generic__')
     const state = getUserState(stateKey)
     const sessionId = buildExecuteSessionId(resolved.skillId, state.activeSkillId, state.executeSessionId)
-    await executeSkill(client, null, targetType, targetId, stateKey, resolved.skillId, query, sessionId, config, replyCtx)
+    await executeSkill(client, null, targetType, targetId, stateKey, resolved.skillId, executionQuery, sessionId, config, replyCtx)
   } else if (action === 'create_capability') {
     const seedQuery = (event.seedQuery || query || fallbackQuery).trim()
     if (!seedQuery) {
@@ -1635,7 +1657,11 @@ async function executeSkill(
             markSkillAwaitingInput(stateKey, pendingQuestionText || stripQuestionMarkers(accumulatedText))
           }
         } else if (phase === 'completed') {
-          roundPhase = 'completed'
+          // Some runtimes emit a trailing completed state after a question event.
+          // Once we have entered waiting_input, keep that phase until the user replies.
+          if (roundPhase !== 'waiting_input') {
+            roundPhase = 'completed'
+          }
         } else if (phase === 'failed') {
           roundPhase = 'failed'
         } else if (phase === 'aborted') {

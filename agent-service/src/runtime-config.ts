@@ -17,6 +17,7 @@ const RESETTABLE_KEYS = [
 ] as const
 
 const RUNTIME_OWNED_PREFIXES = [
+  'WECHAT_',
   'FEISHU_',
   'QQ_',
   'SMTP_',

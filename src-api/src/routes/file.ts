@@ -58,6 +58,7 @@ interface TaskFile {
 }
 
 const TASK_INTERNAL_IGNORE_LIST = new Set(['history.txt', '.git', 'node_modules', '__pycache__', 'CLAUDE.md'])
+const TASK_INTERNAL_DOWNLOAD_ALLOW_LIST = new Set(['.laborany-input-files.json'])
 
 function shouldIgnoreTaskEntry(name: string): boolean {
   if (!name) return true
@@ -68,10 +69,15 @@ function shouldIgnoreTaskEntry(name: string): boolean {
 }
 
 function isInternalTaskPath(filePath: string): boolean {
-  return filePath
+  const segments = filePath
     .split('/')
     .filter(Boolean)
-    .some(segment => shouldIgnoreTaskEntry(segment))
+
+  if (segments.length === 1 && TASK_INTERNAL_DOWNLOAD_ALLOW_LIST.has(segments[0])) {
+    return false
+  }
+
+  return segments.some(segment => shouldIgnoreTaskEntry(segment))
 }
 
 async function listTaskFiles(baseDir: string, relativePath: string): Promise<TaskFile[]> {

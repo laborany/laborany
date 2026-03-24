@@ -1,13 +1,13 @@
 {
   "name": "laborany-agent-service",
-  "version": "0.4.3",
+  "version": "0.4.5",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "node ../scripts/run-local-bin.js tsc",
     "backfill:longterm-audit": "tsx src/scripts/backfill-longterm-audit.ts",
     "build:bundle": "node build.cjs",
-    "build:pkg": "node ../scripts/build-agent-pkg.js win x64 node20-win-x64 dist/laborany-agent",
+    "build:pkg": "node ../scripts/run-platform-pkg.js agent-service",
     "build:pkg:win": "node ../scripts/build-agent-pkg.js win x64 node20-win-x64 dist/laborany-agent",
     "build:pkg:mac": "node ../scripts/build-agent-pkg.js mac x64 node20-macos-x64 dist/laborany-agent-mac",
     "build:pkg:mac-arm64": "node ../scripts/build-agent-pkg.js mac arm64 node20-macos-arm64 dist/laborany-agent-mac",
@@ -15,8 +15,8 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
     "@larksuiteoapi/node-sdk": "^1.59.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "better-sqlite3": "^12.6.2",
     "cors": "^2.8.5",
     "croner": "^10.0.1",
@@ -25,6 +25,7 @@
     "laborany-shared": "file:../shared",
     "nodemailer": "^7.0.13",
     "qq-bot-sdk": "^1.10.1",
+    "qrcode": "^1.5.4",
     "uuid": "^9.0.1",
     "yaml": "^2.3.4",
     "zod": "^4.3.5"
@@ -35,6 +36,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^20.10.0",
     "@types/nodemailer": "^7.0.9",
+    "@types/qrcode": "^1.5.6",
     "@types/uuid": "^9.0.7",
     "@yao-pkg/pkg": "^5.15.0",
     "esbuild": "^0.27.2",

@@ -39,18 +39,22 @@ export interface ExecutionTarget {
   query: string
 }
 
-export type JobSourceChannel = 'desktop' | 'feishu'
-export type JobNotifyChannel = 'app' | 'feishu_dm'
+export type JobSourceChannel = 'desktop' | 'feishu' | 'qq' | 'wechat'
+export type JobNotifyChannel = 'app' | 'feishu_dm' | 'qq_dm' | 'wechat_dm'
 
 export interface JobSource {
   channel: JobSourceChannel
   feishuOpenId?: string
   feishuChatId?: string
+  qqOpenId?: string
+  wechatUserId?: string
 }
 
 export interface JobNotify {
   channel: JobNotifyChannel
   feishuOpenId?: string
+  qqOpenId?: string
+  wechatUserId?: string
 }
 
 export interface CronJob {
@@ -70,8 +74,12 @@ export interface CronJob {
   sourceChannel: JobSourceChannel
   sourceFeishuOpenId?: string
   sourceFeishuChatId?: string
+  sourceQqOpenId?: string
+  sourceWechatUserId?: string
   notifyChannel: JobNotifyChannel
   notifyFeishuOpenId?: string
+  notifyQqOpenId?: string
+  notifyWechatUserId?: string
   nextRunAtMs?: number
   lastRunAtMs?: number
   lastStatus?: 'ok' | 'error' | 'running' | null

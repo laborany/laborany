@@ -116,21 +116,30 @@ export default function HistoryPage() {
   }
 
   function getSourceBadge(source: Session['source'] | undefined, sessionId: string, skillId: string) {
-    const inferred = source
-      || (sessionId.startsWith('cron-') || sessionId.startsWith('cron-manual-')
-        ? 'cron'
-        : (sessionId.startsWith('feishu-') || sessionId.startsWith('feishu-conv-')
-          ? 'feishu'
-          : (sessionId.startsWith('qq-') || sessionId.startsWith('qq-conv-')
-            ? 'qq'
-            : (skillId === '__converse__' ? 'converse' : 'desktop'))))
+    let inferred: Session['source'] = source
+    if (!inferred) {
+      if (sessionId.startsWith('cron-') || sessionId.startsWith('cron-manual-')) {
+        inferred = 'cron'
+      } else if (sessionId.startsWith('feishu-') || sessionId.startsWith('feishu-conv-')) {
+        inferred = 'feishu'
+      } else if (sessionId.startsWith('qq-') || sessionId.startsWith('qq-conv-')) {
+        inferred = 'qq'
+      } else if (sessionId.startsWith('wechat-') || sessionId.startsWith('wechat-conv-')) {
+        inferred = 'wechat'
+      } else if (skillId === '__converse__') {
+        inferred = 'converse'
+      } else {
+        inferred = 'desktop'
+      }
+    }
 
-    const sourceText: Record<'desktop' | 'converse' | 'cron' | 'feishu' | 'qq', string> = {
+    const sourceText: Record<'desktop' | 'converse' | 'cron' | 'feishu' | 'qq' | 'wechat', string> = {
       desktop: '桌面',
       converse: '首页对话',
       cron: '定时任务',
       feishu: '飞书',
       qq: 'QQ',
+      wechat: '微信',
     }
 
     return (
