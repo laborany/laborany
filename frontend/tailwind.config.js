@@ -1,3 +1,5 @@
+import typography from '@tailwindcss/typography'
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
@@ -111,7 +113,31 @@ export default {
         grid: '40px 40px',
         dot: '20px 20px',
       },
+      typography: {
+        DEFAULT: {
+          css: {
+            '--tw-prose-body': 'var(--foreground)',
+            '--tw-prose-headings': 'var(--foreground)',
+            '--tw-prose-links': 'var(--primary)',
+            '--tw-prose-bold': 'var(--foreground)',
+            '--tw-prose-code': 'var(--foreground)',
+            '--tw-prose-td-borders': 'var(--border)',
+            '--tw-prose-th-borders': 'var(--border)',
+          },
+        },
+        invert: {
+          css: {
+            '--tw-prose-body': 'var(--foreground)',
+            '--tw-prose-headings': 'var(--foreground)',
+            '--tw-prose-links': 'var(--primary)',
+            '--tw-prose-bold': 'var(--foreground)',
+            '--tw-prose-code': 'var(--foreground)',
+            '--tw-prose-td-borders': 'var(--border)',
+            '--tw-prose-th-borders': 'var(--border)',
+          },
+        },
+      },
     },
   },
-  plugins: [],
+  plugins: [typography],
 }

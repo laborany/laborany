@@ -568,6 +568,35 @@ function MarkdownView({ content }: { content: string }) {
           return <pre className="m-0 bg-transparent p-0">{children}</pre>
         },
         a: LinkRenderer,
+        table({ children }) {
+          return (
+            <div className="my-4 overflow-x-auto rounded-lg border border-border">
+              <table className="min-w-full divide-y divide-border text-sm">
+                {children}
+              </table>
+            </div>
+          )
+        },
+        thead({ children }) {
+          return <thead className="bg-muted/50">{children}</thead>
+        },
+        th({ children }) {
+          return (
+            <th className="px-3 py-2 text-left text-xs font-semibold text-foreground">
+              {children}
+            </th>
+          )
+        },
+        td({ children }) {
+          return (
+            <td className="px-3 py-2 text-foreground/90">
+              {children}
+            </td>
+          )
+        },
+        tr({ children }) {
+          return <tr className="border-b border-border/50 last:border-0">{children}</tr>
+        },
       }}
     >
       {content}
