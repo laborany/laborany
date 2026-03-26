@@ -302,6 +302,7 @@ session.get('/:sessionId', (c) => {
           toolName: null,
           toolInput: null,
           toolResult: null,
+          meta: null,
           createdAt: runtimeSnapshot.startedAt,
         })
       }
@@ -321,6 +322,7 @@ session.get('/:sessionId', (c) => {
           toolName: null,
           toolInput: null,
           toolResult: null,
+          meta: null,
           createdAt: runtimeSnapshot.lastEventAt || runtimeSnapshot.startedAt,
         })
       }
