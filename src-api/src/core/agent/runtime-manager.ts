@@ -722,6 +722,7 @@ class RuntimeTaskManager {
           sessionId: task.sessionId,
           signal: task.controller.signal,
           modelOverride: options.modelOverride,
+          modelProfileId: options.modelProfileId,
           enableWidgets: shouldEnableDesktopWidgetsForTask(task.source, options.modelOverride),
           onEvent: (event) => this.handleAgentEvent(task, event),
         })
@@ -949,6 +950,7 @@ class RuntimeTaskManager {
         signal: task.controller.signal,
         workDir: options.workDir,
         modelOverride: options.modelOverride,
+        modelProfileId: task.modelProfileId,
         enableWidgets: shouldEnableDesktopWidgetsForTask(task.source, options.modelOverride),
         onEvent: (event) => {
           if (event.type === 'text' && event.content) {

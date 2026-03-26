@@ -83,6 +83,15 @@ function main() {
         cpSync(genUiSrc, genUiDest, { recursive: true })
       }
     }
+
+    const webResearchSrc = join(agentDir, 'dist', 'web-research')
+    if (existsSync(webResearchSrc)) {
+      const resolvedOutput = join(agentDir, output)
+      const webResearchDest = join(dirname(resolvedOutput), 'web-research')
+      if (webResearchSrc !== webResearchDest) {
+        cpSync(webResearchSrc, webResearchDest, { recursive: true })
+      }
+    }
   } finally {
     if (hasNativeBinary && existsSync(backupPath)) {
       copyFileSync(backupPath, nativeBinaryPath)

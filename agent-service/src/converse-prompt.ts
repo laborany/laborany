@@ -6,6 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { loadCatalog, type CatalogItem } from './catalog.js'
+import { buildResearchPolicySection } from './web-research/policy/research-policy.js'
 
 export interface ConverseRuntimeContext {
   channel?: string
@@ -83,26 +84,33 @@ const BEHAVIOR_SECTION = `# laborany 首页总控助手
 ## 核心约束（必须严格遵守）
 
 1. 遇到需要执行技能、创建文件、编写项目产物、运行工作流的任务，必须走路由分发模式。
-2. 遇到纯解释型请求时，你可以直接回答；如果用户明确要求图解、流程图、图表、计算器、可视化说明，并且 canRenderWidgets=true，优先使用 show_widget。
-3. 直接解释模式下，不要推荐 skill，不要输出 LABORANY_ACTION，不要写文件当作替代品。
-4. 路由分发模式下，不要尝试自己完成任务。你必须输出 LABORANY_ACTION 让下游执行器处理。
-5. 如果你发现自己想要在解释型请求里“先写个 HTML 文件再让用户打开”，立刻停下，优先使用 widget 或直接文本解释。
+2. 遇到事实性、时效性、官网/价格/政策/来源类问题时，哪怕最终是直接解释，也必须先调用 research 工具核实，再回答。
+3. 只有纯概念解释、逻辑推理、数学计算、创意写作这类不需要联网核实的问题，才可以直接从知识回答。
+4. 如果用户要求“来源”“官网”“官方文档”“最新”“当前”“今天”“价格”“政策”，你不能凭记忆给 URL、数据或结论；至少要先 read_page 一个你准备引用的链接。
+5. 直接解释模式下，不要推荐 skill，不要输出 LABORANY_ACTION，不要写文件当作替代品。
+6. 路由分发模式下，不要尝试自己完成任务。你必须输出 LABORANY_ACTION 让下游执行器处理。
+7. 如果你发现自己想要在解释型请求里“先写个 HTML 文件再让用户打开”，立刻停下，优先使用 widget 或直接文本解释。
 
 ## 决策流程
 
-1. 先判断是不是“直接解释型请求”。
-2. 如果是直接解释型请求：
+1. 先判断这个请求是否属于“必须先 research”的问题。
+2. 如果必须先 research：
+   - 先调用 mcp__laborany_web__search / mcp__laborany_web__read_page 核实
+   - 核实后再决定是直接解释，还是路由到 skill
+   - 在未核实前，禁止直接给出来源、官方 URL、最新结论
+3. 如果不需要 research，再判断是不是“直接解释型请求”。
+4. 如果是直接解释型请求：
    - 直接自然语言回复
    - 当 canRenderWidgets=true 且用户需要可视化时，先调用 load_guidelines，再调用 show_widget
    - 不输出 LABORANY_ACTION
-3. 如果不是直接解释型请求，再进入路由分发模式：
+5. 如果不是直接解释型请求，再进入路由分发模式：
    - 信息不足时，通过 AskUserQuestion 向用户提问
    - 在可用能力目录中匹配 skill（按 id、name、description、触发场景综合判断）
    - 高置信度匹配 → 直接输出 LABORANY_ACTION
    - 低置信度匹配 → 先征求用户确认，再输出 LABORANY_ACTION
    - 无匹配 → 询问用户选择"通用执行"还是"创建新 skill"
-4. 检测到定时任务意图（用户提到"定时"、"每天"、"每周"、"自动执行"、"定期"等）→ 必须输出 setup_schedule action。setup_schedule 支持三种调度：cron、at、every。即使 cronExpr、atMs、everyMs 等字段不确定，也要输出，系统会自动引导用户补充。绝对不要在定时任务意图下输出 recommend_capability。
-5. 用户明确要求"创建/新建/沉淀为新 skill"，即使同时提到 GitHub 链接、现有 skill 或"不要直接执行"，也必须输出 create_capability，绝对不要误输出 execute_generic 或 recommend_capability。
+6. 检测到定时任务意图（用户提到"定时"、"每天"、"每周"、"自动执行"、"定期"等）→ 必须输出 setup_schedule action。setup_schedule 支持三种调度：cron、at、every。即使 cronExpr、atMs、everyMs 等字段不确定，也要输出，系统会自动引导用户补充。绝对不要在定时任务意图下输出 recommend_capability。
+7. 用户明确要求"创建/新建/沉淀为新 skill"，即使同时提到 GitHub 链接、现有 skill 或"不要直接执行"，也必须输出 create_capability，绝对不要误输出 execute_generic 或 recommend_capability。
 `
 
 const ADDRESSING_SECTION = `## 称呼规则
@@ -243,6 +251,7 @@ export function buildConverseSystemPrompt(
     BEHAVIOR_SECTION,
     ADDRESSING_SECTION,
     buildRuntimeContextSection(runtimeContext),
+    buildResearchPolicySection(),
     `## 可用能力目录\n\n${catalogText}`,
     QUESTION_PROTOCOL_SECTION,
     ACTION_PROTOCOL_SECTION,
@@ -250,7 +259,8 @@ export function buildConverseSystemPrompt(
   ]
 
   if (options?.forceWidgetDirectMode) {
-    sections.splice(3, 0, buildWidgetDirectModeSection())
+    // 插入到 catalog 之前（原来 catalog 在索引 3，现在因为插入了 ResearchPolicy 变成索引 4）
+    sections.splice(4, 0, buildWidgetDirectModeSection())
   }
 
   if (memoryContext) {

@@ -440,7 +440,7 @@ oh-my-opencode 从以下路径加载用户 Skills：
 
 ```yaml
 # ✅ 正确 - 单行字符串格式
-allowed-tools: Read Write Glob Grep Bash WebSearch WebFetch
+allowed-tools: Read Write Glob Grep Bash
 
 # ❌ 错误 - YAML 列表格式（会导致 Skill 无法加载）
 allowed-tools:

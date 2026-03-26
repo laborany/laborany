@@ -27,7 +27,6 @@ import {
   getRuntimeTasksDir,
   getRuntimeUploadsDir,
 } from 'laborany-shared'
-import { isZhipuApi, buildZhipuMcpServers, injectMcpServers } from './mcp/index.js'
 import { getAppHomeDir, isPackagedRuntime } from '../../lib/app-home.js'
 import {
   createWidgetHandlerState,
@@ -42,6 +41,7 @@ import {
   writeMcpConfig,
   writeUserMcpConfig,
 } from './generative-ui/tools.js'
+import { buildResearchPolicySection, writeWebResearchMcpConfig } from './web-research.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -166,6 +166,7 @@ interface ExecuteOptions {
   onEvent: (event: AgentEvent) => void
   workDir?: string  // 可选的工作目录，用于复合技能共享目录
   modelOverride?: ModelOverride
+  modelProfileId?: string
   enableWidgets?: boolean
 }
 
@@ -245,6 +246,10 @@ async function writeClaudeMdWithMemory(
 ): Promise<void> {
   const claudeMdPath = join(targetDir, 'CLAUDE.md')
   const runtimeContext = buildLaborAnyRuntimeContext(targetDir, skillId)
+  const sections = [runtimeContext]
+  if (!skillSystemPrompt.includes('## 联网调研策略')) {
+    sections.push(buildResearchPolicySection())
+  }
 
   try {
     // 从 agent-service 获取 Memory 上下文（传入 userQuery 用于智能检索）
@@ -254,7 +259,7 @@ async function writeClaudeMdWithMemory(
       const memoryContext = result.data?.context || ''
 
       // 组合完整系统提示词：运行上下文 + Memory + Skill Prompt
-      const fullPrompt = [runtimeContext, memoryContext, skillSystemPrompt]
+      const fullPrompt = [...sections, memoryContext, skillSystemPrompt]
         .filter(Boolean)
         .join('\n\n---\n\n')
 
@@ -262,7 +267,7 @@ async function writeClaudeMdWithMemory(
       console.log(`[Agent] 已写入 CLAUDE.md（含 Memory 上下文）: ${claudeMdPath}`)
     } else {
       // 如果获取 Memory 失败，仍写入运行上下文 + skill 系统提示词
-      writeFileSync(claudeMdPath, `${runtimeContext}\n\n---\n\n${skillSystemPrompt}`, 'utf-8')
+      writeFileSync(claudeMdPath, [...sections, skillSystemPrompt].join('\n\n---\n\n'), 'utf-8')
       console.warn(
         `[Agent] Memory context request failed: status=${result.status} body=${result.rawText.slice(0, 240)}`,
       )
@@ -270,7 +275,7 @@ async function writeClaudeMdWithMemory(
     }
   } catch (err) {
     // 网络错误时，仍写入运行上下文 + skill 系统提示词
-    writeFileSync(claudeMdPath, `${runtimeContext}\n\n---\n\n${skillSystemPrompt}`, 'utf-8')
+    writeFileSync(claudeMdPath, [...sections, skillSystemPrompt].join('\n\n---\n\n'), 'utf-8')
     console.warn(`[Agent] 获取 Memory 上下文失败，已写入基础 CLAUDE.md: ${err}`)
   }
 }
@@ -951,7 +956,7 @@ function buildEffectiveSkillPrompt(
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, workDir, modelOverride, enableWidgets } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, workDir, modelOverride, modelProfileId, enableWidgets } = options
 
   let lastProgressAt = Date.now()
   let idleWarningSent = false
@@ -1053,16 +1058,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     return
   }
 
-  /* ┌────────────────────────────────────────────────────────────────────────┐
-   * │  智谱 MCP 自动注入                                                      │
-   * │  当使用智谱 API 时，自动将智谱 MCP 服务器配置注入 settings.json          │
-   * └────────────────────────────────────────────────────────────────────────┘ */
-  if (interfaceType !== 'openai_compatible' && isZhipuApi(effectiveBaseUrl)) {
-    const zhipuServers = buildZhipuMcpServers(effectiveApiKey)
-    injectMcpServers(zhipuServers)
-    console.log('[Agent] 检测到智谱 API，已注入 MCP 服务器配置')
-  }
-
   if (claudeConfig.useBundled) {
     console.log(`[Agent] Node: ${claudeConfig.nodePath}`)
     console.log(`[Agent] CLI: ${claudeConfig.cliPath}`)
@@ -1123,6 +1118,18 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     if (enableWidgets) {
       console.log(`[Agent] Generative UI requested but disabled: ${executeWidgetSupport.reasonMessage || 'unknown reason'}`)
     }
+  }
+
+  try {
+    const webMcpPath = writeWebResearchMcpConfig(taskDir, {
+      agentServiceBaseUrl: getAgentServiceUrl(),
+      nodePath: resolveMcpNodeCommand(claudeConfig.useBundled ? claudeConfig.nodePath : undefined),
+      modelProfileId,
+    })
+    args.push('--mcp-config', webMcpPath)
+    console.log(`[Agent] Web Research MCP injected: ${webMcpPath}`)
+  } catch (error) {
+    console.error('[Agent] Failed to inject web research MCP:', error)
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════

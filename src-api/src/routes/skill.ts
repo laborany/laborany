@@ -909,6 +909,7 @@ skill.post('/:skillId/optimize', async (c) => {
         sessionId,
         signal: abortController.signal,
         modelOverride: modelSelection.modelOverride,
+        modelProfileId: modelSelection.modelProfileId,
         onEvent: (event) => {
           if (event.type === 'error') {
             hasErrorEvent = true

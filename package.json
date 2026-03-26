@@ -1,6 +1,6 @@
 {
   "name": "laborany",
-  "version": "0.4.5",
+  "version": "0.5.0",
   "description": "LaborAny - AI-powered desktop assistant with Claude Code integration",
   "author": {
     "name": "FunAmiAI",
@@ -93,6 +93,13 @@
       {
         "from": "agent-service/dist/generative-ui",
         "to": "agent/generative-ui",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "agent-service/dist/web-research",
+        "to": "agent/web-research",
         "filter": [
           "**/*"
         ]

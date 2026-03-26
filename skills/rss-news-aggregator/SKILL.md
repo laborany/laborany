@@ -149,7 +149,7 @@ final_score = quality_score * 0.6 + relevance_score * 100 * 0.4
 
 | 特性 | topic-collector | rss-news-aggregator |
 |-----|----------------|---------------------|
-| **数据源** | WebSearch 搜索引擎 | RSS feeds 直接订阅 |
+| **数据源** | mcp__laborany_web__search 搜索引擎 | RSS feeds 直接订阅 |
 | **时效性** | 依赖搜索引擎索引 | 实时 RSS 更新（分钟级） |
 | **覆盖面** | 广泛但不稳定 | 精选高质量源（92 个） |
 | **过滤能力** | 手动整理 | 自动化多维过滤 |

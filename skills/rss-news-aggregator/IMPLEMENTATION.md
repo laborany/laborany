@@ -145,7 +145,7 @@ python3 scripts/filter_content.py \
 
 | Feature | topic-collector | rss-news-aggregator |
 |---------|----------------|---------------------|
-| Data source | WebSearch API | Direct RSS feeds |
+| Data source | mcp__laborany_web__search API | Direct RSS feeds |
 | Timeliness | Search index lag | Real-time (minutes) |
 | Coverage | Broad, unstable | Curated, stable (92) |
 | Filtering | Manual | Automated multi-dimension |

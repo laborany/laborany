@@ -6,6 +6,8 @@ const { resolve, join } = require('path')
 const distDir = resolve(__dirname, 'dist')
 const srcGenUiDir = resolve(__dirname, 'src/generative-ui')
 const distGenUiDir = join(distDir, 'generative-ui')
+const srcWebResearchDir = resolve(__dirname, 'src/web-research')
+const distWebResearchDir = join(distDir, 'web-research')
 
 async function main() {
   // 1. Bundle main agent service
@@ -32,9 +34,36 @@ async function main() {
     banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
   })
 
+  await esbuild.build({
+    entryPoints: [join(srcWebResearchDir, 'mcp', 'mcp-server.mjs')],
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
+    format: 'esm',
+    outfile: join(distWebResearchDir, 'mcp', 'mcp-server.mjs'),
+    banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
+  })
+
+  await esbuild.build({
+    entryPoints: [join(srcWebResearchDir, 'browser', 'cdp-proxy.mjs')],
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
+    format: 'esm',
+    outfile: join(distWebResearchDir, 'browser', 'cdp-proxy.mjs'),
+    banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
+  })
+
   // 3. Copy guidelines to dist
   mkdirSync(join(distGenUiDir, 'guidelines'), { recursive: true })
   cpSync(join(srcGenUiDir, 'guidelines'), join(distGenUiDir, 'guidelines'), { recursive: true })
+
+  mkdirSync(join(distWebResearchDir, 'knowledge', 'builtin-patterns'), { recursive: true })
+  cpSync(
+    join(srcWebResearchDir, 'knowledge', 'builtin-patterns'),
+    join(distWebResearchDir, 'knowledge', 'builtin-patterns'),
+    { recursive: true },
+  )
 }
 
 main().catch(() => process.exit(1))

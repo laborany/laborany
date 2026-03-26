@@ -88,6 +88,21 @@ const TOOL_DISPLAY_MAP: Record<string, string> = {
   Grep: '搜索内容',
   WebFetch: '获取网页',
   WebSearch: '网络搜索',
+  mcp__laborany_web__search: '联网搜索',
+  mcp__laborany_web__read_page: '读取网页',
+  mcp__laborany_web__screenshot: '页面截图',
+  mcp__laborany_web__get_site_info: '站点经验',
+  mcp__laborany_web__save_site_pattern: '保存站点经验',
+  mcp__laborany_web__list_site_pattern_candidates: '候选经验列表',
+  mcp__laborany_web__review_site_pattern_candidate: '评审站点经验',
+  mcp__laborany_web__verify: '事实核实',
+  mcp__laborany_web__browser_open: '打开标签页',
+  mcp__laborany_web__browser_navigate: '页面跳转',
+  mcp__laborany_web__browser_eval: '页面提取',
+  mcp__laborany_web__browser_click: '点击页面',
+  mcp__laborany_web__browser_scroll: '滚动页面',
+  mcp__laborany_web__browser_screenshot: '标签页截图',
+  mcp__laborany_web__browser_close: '关闭标签页',
   AskUserQuestion: '询问用户',
   execution_result: '执行结果',
   '执行结果': '执行结果',
@@ -1029,7 +1044,7 @@ function ToolIcon({ name }: { name: string }) {
     )
   }
 
-  if (['Glob', 'Grep', 'WebSearch'].includes(name)) {
+  if (['Glob', 'Grep', 'WebSearch', 'mcp__laborany_web__search', 'mcp__laborany_web__get_site_info', 'mcp__laborany_web__list_site_pattern_candidates'].includes(name)) {
     return (
       <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1050,7 +1065,7 @@ function ToolIcon({ name }: { name: string }) {
     )
   }
 
-  if (name === 'WebFetch') {
+  if (['WebFetch', 'mcp__laborany_web__read_page', 'mcp__laborany_web__screenshot', 'mcp__laborany_web__browser_open', 'mcp__laborany_web__browser_navigate', 'mcp__laborany_web__browser_screenshot'].includes(name)) {
     return (
       <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
@@ -1107,18 +1122,53 @@ function getToolDescription(name: string, input?: Record<string, unknown>): stri
       const pattern = input.pattern as string
       return pattern ? `查找 "${pattern}"` : ''
     }
-    case 'WebSearch': {
+    case 'WebSearch':
+    case 'mcp__laborany_web__search': {
       const query = input.query as string
       return query ? `搜索 "${query}"` : ''
     }
-    case 'WebFetch': {
+    case 'WebFetch':
+    case 'mcp__laborany_web__read_page':
+    case 'mcp__laborany_web__screenshot':
+    case 'mcp__laborany_web__browser_open':
+    case 'mcp__laborany_web__browser_navigate':
+    case 'mcp__laborany_web__browser_screenshot': {
       const url = input.url as string
-      if (!url) return ''
+      if (!url) {
+        const filePath = input.file_path as string
+        return filePath ? `输出 ${filePath.split(/[/\\]/).pop() || filePath}` : ''
+      }
       try {
         return `获取 ${new URL(url).hostname}`
       } catch {
         return url.slice(0, 40)
       }
+    }
+    case 'mcp__laborany_web__get_site_info':
+    case 'mcp__laborany_web__save_site_pattern':
+    case 'mcp__laborany_web__review_site_pattern_candidate': {
+      const domain = input.domain as string
+      return domain ? `站点 ${domain}` : ''
+    }
+    case 'mcp__laborany_web__verify': {
+      const claim = input.claim as string
+      return claim ? `核实 "${claim}"` : ''
+    }
+    case 'mcp__laborany_web__browser_eval': {
+      const expression = input.expression as string
+      return expression ? `提取页面内容` : ''
+    }
+    case 'mcp__laborany_web__browser_click': {
+      const selector = input.selector as string
+      return selector ? `点击 ${selector}` : ''
+    }
+    case 'mcp__laborany_web__browser_scroll': {
+      const direction = input.direction as string
+      return direction ? `滚动 ${direction}` : '滚动页面'
+    }
+    case 'mcp__laborany_web__browser_close': {
+      const targetId = input.target_id as string
+      return targetId ? `关闭 ${targetId}` : '关闭标签页'
     }
     default:
       return ''

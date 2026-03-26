@@ -8,7 +8,7 @@ description: >
   "讨论一下"、"deep dialogue"、"深度思考"时触发。
 icon: 💬
 category: 工具
-allowed-tools: Read Write Glob Grep Bash WebSearch WebFetch
+allowed-tools: Read Write Glob Grep Bash
 ---
 
 # 深度对话思考
@@ -46,8 +46,8 @@ allowed-tools: Read Write Glob Grep Bash WebSearch WebFetch
 
 这是核心阶段，持续进行直到用户结束：
 - 每轮回复都要有实质性内容（分析、反驳、补充、新角度）
-- 遇到事实性声明，用 `mcp__web-search-prime__webSearchPrime` 搜索验证
-- 遇到需要深入了解的内容，用 `mcp__web-reader__webReader` 阅读原文
+- 遇到事实性声明，用 `mcp__laborany_web__search` 搜索验证
+- 遇到需要深入了解的内容，用 `mcp__laborany_web__read_page` 阅读原文
 - 主动提问，引导对话深入
 - 在发现有价值洞察时自然表达出来（触发 skill evolution 记录）
 
@@ -71,9 +71,8 @@ allowed-tools: Read Write Glob Grep Bash WebSearch WebFetch
 - 技术细节和版本信息
 
 搜索工具：
-- 广度搜索：`mcp__web-search-prime__webSearchPrime`
-- 深度阅读：`mcp__web-reader__webReader`
-- 备用搜索：`WebSearch`、`WebFetch`
+- 广度搜索：`mcp__laborany_web__search`
+- 深度阅读：`mcp__laborany_web__read_page`
 
 ### 文件操作
 - 读取用户提供的参考资料：`Read`
@@ -90,6 +89,15 @@ allowed-tools: Read Write Glob Grep Bash WebSearch WebFetch
 6. 承认边界：承认自己的认知边界，不装懂
 7. 自然深入：不要急于总结，让对话自然展开
 8. 控制节奏：每轮回复控制在合理长度，留空间给用户
+
+## 并行调研
+
+当研究包含多个独立子课题时，可以使用子 Agent 并行执行搜索：
+- 每个子 Agent 独立使用 `mcp__laborany_web__search` 和 `mcp__laborany_web__read_page`
+- 主 Agent 负责分配子课题和汇总结果
+- 子 Agent 的浏览器操作在独立 tab 中进行，互不干扰
+- 适合：多个独立来源的采集、多平台定向搜索
+- 不适合：有前后依赖的串行搜索
 
 ## 自我进化
 

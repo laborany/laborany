@@ -31,6 +31,7 @@ import { isFeishuEnabled, startFeishuBot, stopFeishuBot } from './feishu/index.j
 import { isQQEnabled, startQQBot, stopQQBot } from './qq/index.js'
 import { isWechatEnabled } from './wechat/config.js'
 import { startWechatBot, stopWechatBot } from './wechat/index.js'
+import { initWebResearchRuntime, getWebResearchRouter, shutdownWebResearchRuntime } from './web-research/index.js'
 
 initAgentLogger({
   defaultSource: 'agent',
@@ -86,6 +87,16 @@ server.once('listening', () => {
   console.log(`[Agent Service] 数据目录: ${DATA_DIR}`)
   startCronTimer()
 
+  // Web Research Runtime 初始化 + 内部路由挂载
+  initWebResearchRuntime()
+    .then(() => {
+      app.use('/_internal/web-research', getWebResearchRouter())
+      console.log('[Server] Web Research internal routes mounted')
+    })
+    .catch(err => {
+      console.error('[Server] Failed to initialize web research runtime:', err)
+    })
+
   if (isFeishuEnabled()) {
     startFeishuBot().catch(err => console.error('[Feishu] 启动失败:', err))
   }
@@ -109,6 +120,7 @@ async function gracefulShutdown(signal: 'SIGINT' | 'SIGTERM'): Promise<void> {
     stopFeishuBot()
     stopQQBot()
     stopWechatBot()
+    await shutdownWebResearchRuntime()
     console.log(`[Agent Service] Received ${signal}, draining memory queue...`)
     const result = await memoryAsyncQueue.drain(5000)
     if (result.drained) {

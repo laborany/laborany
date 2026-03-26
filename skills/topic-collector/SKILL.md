@@ -61,7 +61,7 @@ python skills/topic-collector/scripts/collect.py
 
 输出示例：
 ```
-🔍 搜索查询列表（请使用 WebSearch 工具执行）
+🔍 搜索查询列表（请使用 mcp__laborany_web__search 工具执行）
 ============================================================
 
 🧑‍💻 **AI博主/KOL**
@@ -77,7 +77,7 @@ python skills/topic-collector/scripts/collect.py
 
 ### 第二步：执行搜索
 
-使用 WebSearch 工具执行上述查询，每个分类独立搜索。
+使用 mcp__laborany_web__search 工具执行上述查询，每个分类独立搜索。
 
 ### 第三步：整理结果
 
