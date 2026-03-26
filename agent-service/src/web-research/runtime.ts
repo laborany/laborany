@@ -24,7 +24,7 @@ import type {
   ResearchObservation,
   ResearchRequestContext,
 } from './backends/types.js'
-import { collectRequestedSites, filterSearchResultsBySites } from './backends/search-utils.js'
+import { collectRequestedSites, filterSearchResultsBySites, hasExplicitSiteConstraint } from './backends/search-utils.js'
 import { DATA_DIR } from '../paths.js'
 import { extractDomain } from './knowledge/pattern-matcher.js'
 
@@ -130,6 +130,7 @@ export class WebResearchRuntime {
     dataDir: string
     sitePatternsRoot: string
     sitePatternsVerified: string
+    sitePatternsCandidate: string
     builtinPatternsDir: string
   } {
     const paths = this.siteKnowledge.getPaths()
@@ -138,6 +139,7 @@ export class WebResearchRuntime {
       dataDir: DATA_DIR,
       sitePatternsRoot: paths.rootDir,
       sitePatternsVerified: paths.verifiedDir,
+      sitePatternsCandidate: paths.candidateDir,
       builtinPatternsDir: paths.builtinDir,
     }
   }
@@ -149,7 +151,7 @@ export class WebResearchRuntime {
   async getDetailedStatus(): Promise<{
     browser: { available: boolean; port: number }
     zhipu: { available: boolean }
-    sitePatterns: { count: number; builtinCount: number; userCount: number }
+    sitePatterns: { count: number; builtinCount: number; userCount: number; candidateCount: number }
     paths: ReturnType<WebResearchRuntime['getPaths']>
     mode: 'full' | 'api' | 'degraded'
     nodeVersion: string
@@ -176,6 +178,7 @@ export class WebResearchRuntime {
         count: stats.totalCount,
         builtinCount: stats.builtinCount,
         userCount: stats.userCount,
+        candidateCount: stats.candidateCount,
       },
       paths: this.getPaths(),
       mode,
@@ -205,15 +208,17 @@ export class WebResearchRuntime {
   }> {
     const searchQuery = this.buildSearchQuery(query, options)
     const requestedSites = collectRequestedSites(searchQuery, options)
-    const siteMatch = this.siteKnowledge.matchQuery(searchQuery)
+    const explicitSiteConstraint = hasExplicitSiteConstraint(searchQuery, options)
+    const siteMatch = this.siteKnowledge.matchQueryHint(searchQuery)
     const activeZhipuAdapter = this.resolveZhipuAdapter(context)
-    const forceBrowserEngine = options?.engine === 'google' || options?.engine === 'bing'
+    const forceBrowserEngine = !explicitSiteConstraint
+      && (options?.engine === 'google' || options?.engine === 'bing')
     const reasons: string[] = []
     let attemptedStrategy: string | undefined = forceBrowserEngine ? options?.engine : undefined
 
     // ── Step 1: site pattern 短路 ──
     // 如果 access_strategy == cdp_only，跳过 API 直接走 CDP
-    const skipApi = siteMatch?.accessStrategy === 'cdp_only' || forceBrowserEngine
+    const skipApi = siteMatch?.accessStrategy === 'cdp_only' || forceBrowserEngine || explicitSiteConstraint
 
     // ── Step 2: 智谱搜索 ──
     if (!skipApi && activeZhipuAdapter) {
@@ -240,6 +245,8 @@ export class WebResearchRuntime {
     } else if (skipApi) {
       if (forceBrowserEngine) {
         reasons.push(`已按请求跳过 API 搜索，直接使用浏览器搜索引擎（${options?.engine}）`)
+      } else if (explicitSiteConstraint) {
+        reasons.push(`已按请求跳过 API 搜索，改为直接在指定站点内检索（${requestedSites.join(', ') || '未识别站点'}）`)
       } else {
         reasons.push(`已根据站点经验跳过 API 搜索（${siteMatch?.domain} 需要浏览器访问）`)
       }
@@ -257,6 +264,7 @@ export class WebResearchRuntime {
             cdpResult.strategy,
             filteredResults,
             cdpResult.observations,
+            requestedSites,
           )
           return {
             results: filteredResults,
@@ -306,37 +314,71 @@ export class WebResearchRuntime {
     strategy: string | undefined,
     results: SearchResult[],
     observations?: ResearchObservation[],
+    requestedSites: string[] = [],
   ): Promise<void> {
-    const relevantObservation = observations?.find((item) => (
+    const relevantObservations = (observations || []).filter((item) => (
       item.kind === 'site_search_success' || item.kind === 'site_search_fallback'
     ))
 
-    const domain = (relevantObservation?.domain
-      || (strategy?.startsWith('site:') ? strategy.slice('site:'.length).trim().toLowerCase() : ''))
-      .trim()
-    if (!domain) return
+    const observationMap = new Map<string, ResearchObservation>()
+    for (const observation of relevantObservations) {
+      const domain = observation.domain?.trim().toLowerCase()
+      if (!domain || observationMap.has(domain)) continue
+      observationMap.set(domain, observation)
+    }
 
-    const matchedResult = results.find((result) => {
-      const resultDomain = extractDomain(result.url)
-      return Boolean(
-        resultDomain
-        && (resultDomain === domain
-          || resultDomain.endsWith(`.${domain}`)
-          || domain.endsWith(`.${resultDomain}`)),
-      )
-    })
+    if (observationMap.size === 0) {
+      const fallbackDomain = (requestedSites.length === 1 ? requestedSites[0] : '')
+        || (strategy?.startsWith('site:') ? strategy.slice('site:'.length).trim().toLowerCase() : '')
+      if (fallbackDomain) {
+        observationMap.set(fallbackDomain, {
+          kind: 'site_search_success',
+          domain: fallbackDomain,
+          strategy,
+        })
+      }
+    }
 
-    await this.siteKnowledge
-      .recordSuccess(domain, {
-        method: relevantObservation?.kind === 'site_search_fallback' ? 'search_fallback' : 'cdp_search',
-        url: relevantObservation?.url || matchedResult?.url || results[0]?.url,
-        observations: relevantObservation
-          ? [formatSearchObservationLine(relevantObservation, matchedResult?.url || results[0]?.url)]
-          : undefined,
+    for (const [domain, relevantObservation] of observationMap.entries()) {
+      const matchedResult = results.find((result) => {
+        const resultDomain = extractDomain(result.url)
+        return Boolean(
+          resultDomain
+          && (resultDomain === domain
+            || resultDomain.endsWith(`.${domain}`)
+            || domain.endsWith(`.${resultDomain}`)),
+        )
       })
-      .catch((err) => {
-        console.log(`${LOG_PREFIX} Failed to record search success for ${domain}:`, err)
-      })
+
+      const successMethod = relevantObservation.kind === 'site_search_success'
+        ? 'cdp_search'
+        : 'search_fallback'
+      const characteristics = relevantObservation.characteristics
+        || (relevantObservation.kind === 'site_search_success'
+          ? '- 已验证浏览器站内搜索或浏览器定向搜索可稳定获取该站点结果'
+          : '- 已验证可通过搜索引擎稳定发现该站点结果')
+
+      await this.siteKnowledge
+        .recordSuccess(domain, {
+          method: successMethod,
+          url: relevantObservation.url || matchedResult?.url || results[0]?.url,
+          accessStrategy: relevantObservation.accessStrategy
+            || (relevantObservation.kind === 'site_search_success' ? 'cdp_preferred' : 'static_ok'),
+          aliases: relevantObservation.aliases,
+          automation: relevantObservation.automation || null,
+          characteristics,
+          knownPitfalls: relevantObservation.knownPitfalls,
+          observations: [
+            formatSearchObservationLine(
+              relevantObservation,
+              matchedResult?.url || results[0]?.url,
+            ),
+          ],
+        })
+        .catch((err) => {
+          console.log(`${LOG_PREFIX} Failed to record search success for ${domain}:`, err)
+        })
+    }
   }
 
   /* ════════════════════════════════════════════════════════════════════════════
@@ -349,7 +391,7 @@ export class WebResearchRuntime {
    *  成功走 CDP 后 → recordSuccess
    * ════════════════════════════════════════════════════════════════════════════ */
   async readPage(url: string, format?: 'text' | 'markdown' | 'html'): Promise<PageContent> {
-    const siteMatch = this.siteKnowledge.matchUrl(url)
+    const siteMatch = this.siteKnowledge.matchUrlHint(url)
     const outputFormat = format ?? 'markdown'
     const failedBackends: string[] = []
 
@@ -427,8 +469,17 @@ export class WebResearchRuntime {
           if (domain) {
             await this.siteKnowledge
               .recordSuccess(domain, {
-                method: 'cdp',
+                method: observations.some(item => item.kind === 'structured_read')
+                  ? 'structured_read'
+                  : observations.some(item => item.kind === 'browser_fallback')
+                    ? 'browser_fallback'
+                    : 'cdp',
                 url,
+                accessStrategy: siteMatch?.accessStrategy || 'cdp_preferred',
+                automation: siteMatch?.automation || buildReadAutomationCandidate(),
+                characteristics: failedBackends.length > 0
+                  ? `- ${humanizeBackendChain(failedBackends.join('+'))} 不稳定，浏览器方式可成功提取内容`
+                  : undefined,
                 observations: observationLines.length > 0 ? observationLines : undefined,
               })
               .catch((err) => {
@@ -493,11 +544,22 @@ export class WebResearchRuntime {
    *  站点信息
    * ════════════════════════════════════════════════════════════════════════════ */
   getSiteInfo(domain: string): Record<string, unknown> {
-    const pattern = this.siteKnowledge.getPattern(domain)
+    const pattern = this.siteKnowledge.getDecisionPattern(domain)
+    const verifiedPattern = this.siteKnowledge.getPattern(domain)
+    const candidate = this.siteKnowledge.getCandidatePattern(domain)
     if (!pattern) {
       return {
         domain,
         info: null,
+        candidate: candidate
+          ? {
+            domain: candidate.domain,
+            access_strategy: candidate.accessStrategy,
+            verified_at: candidate.verifiedAt,
+            evidence_count: candidate.evidenceCount,
+            markdown: this.siteKnowledge.getCandidatePatternMarkdown(domain),
+          }
+          : null,
       }
     }
 
@@ -505,15 +567,41 @@ export class WebResearchRuntime {
       domain: pattern.domain,
       access_strategy: pattern.accessStrategy,
       aliases: pattern.aliases,
-      source: pattern.source,
+      source: verifiedPattern ? verifiedPattern.source : 'candidate',
       verified_at: pattern.verifiedAt,
       evidence_count: pattern.evidenceCount,
       characteristics: pattern.characteristics || null,
       patterns: pattern.effectivePatterns || null,
       pitfalls: pattern.knownPitfalls || null,
       automation: pattern.automation || null,
-      markdown: this.siteKnowledge.getPatternMarkdown(domain),
+      markdown: verifiedPattern ? this.siteKnowledge.getPatternMarkdown(domain) : null,
+      candidate: candidate
+        ? {
+          domain: candidate.domain,
+          access_strategy: candidate.accessStrategy,
+          verified_at: candidate.verifiedAt,
+          evidence_count: candidate.evidenceCount,
+          markdown: this.siteKnowledge.getCandidatePatternMarkdown(domain),
+        }
+        : null,
     }
+  }
+
+  listCandidateSitePatterns(): Array<Record<string, unknown>> {
+    return this.siteKnowledge
+      .getAllCandidatePatterns()
+      .sort((a, b) => (
+        (b.evidenceCount - a.evidenceCount)
+        || a.domain.localeCompare(b.domain)
+      ))
+      .map((pattern) => ({
+        domain: pattern.domain,
+        access_strategy: pattern.accessStrategy,
+        verified_at: pattern.verifiedAt,
+        evidence_count: pattern.evidenceCount,
+        source: pattern.source,
+        markdown: this.siteKnowledge.getCandidatePatternMarkdown(pattern.domain),
+      }))
   }
 
   getGlobalNotes(): string {
@@ -685,9 +773,16 @@ export class WebResearchRuntime {
 
   async importSitePattern(
     content: string,
-    options?: { filename?: string },
+    options?: { filename?: string; scope?: 'verified' | 'candidate' },
   ) {
     return this.siteKnowledge.importPattern(content, options)
+  }
+
+  async reviewCandidateSitePattern(
+    domain: string,
+    action: 'approve' | 'reject',
+  ) {
+    return this.siteKnowledge.reviewCandidate(domain, action)
   }
 
   private resolveZhipuAdapter(context?: ResearchRequestContext): ZhipuSearchAdapter | null {
@@ -797,4 +892,15 @@ function humanizeBackendChain(chain: string): string {
     .split('+')
     .map(part => labels[part] || part)
     .join(' + ')
+}
+
+function buildReadAutomationCandidate() {
+  return {
+    read: {
+      mode: 'generic' as const,
+      readySelector: 'article, main, [role="main"]',
+      rootSelectors: ['article', 'main', '[role="main"]'],
+      removeSelectors: ['script', 'style', 'nav', 'footer', 'iframe', 'noscript', 'aside'],
+    },
+  }
 }

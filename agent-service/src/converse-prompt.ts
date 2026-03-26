@@ -21,6 +21,54 @@ export interface ConverseRuntimeContext {
 
 export interface ConversePromptOptions {
   forceWidgetDirectMode?: boolean
+  latestUserQuery?: string
+}
+
+const EXPLICIT_DOMAIN_RE = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b/ig
+const MUST_RESEARCH_QUERY_RE = /最新|最近|当前|官网|官方|文档|来源|出处|链接|价格|政策|法规|对比|推荐|哪个好|which|compare|pricing|official|documentation|source|latest|current|today|site:/i
+
+function extractExplicitDomains(query: string): string[] {
+  const matches = query.match(EXPLICIT_DOMAIN_RE) || []
+  const unique = new Set<string>()
+  for (const match of matches) {
+    const normalized = match.trim().replace(/[),.]+$/, '').toLowerCase()
+    if (normalized) unique.add(normalized)
+  }
+  return Array.from(unique).slice(0, 3)
+}
+
+function shouldForceResearchTurn(query: string): boolean {
+  if (!query.trim()) return false
+  return MUST_RESEARCH_QUERY_RE.test(query) || extractExplicitDomains(query).length > 0
+}
+
+function buildForcedResearchTurnSection(query?: string): string {
+  const normalizedQuery = query?.trim() || ''
+  if (!shouldForceResearchTurn(normalizedQuery)) return ''
+
+  const domains = extractExplicitDomains(normalizedQuery)
+  const lines = [
+    '## 本轮强制调研执行令（最高优先级）',
+    '',
+    '系统已判定：这条用户请求必须联网调研后才能回答。',
+    '你在输出任何面向用户的自然语言之前，必须先产生至少一次真实的 research tool use。',
+    '如果你没有先调用 tool，就直接回答、复述、猜测、或写出“根据结果”“基于站点信息”之类的话，这一轮回答视为失败。',
+    '',
+    '本轮最低执行要求：',
+  ]
+
+  if (domains.length > 0) {
+    const domainList = domains.join(', ')
+    lines.push(`- 用户已明确指定站点/域名：${domainList}`)
+    lines.push(`- 你的第一步必须是对这些域名执行 research，而不是直接凭记忆回答。优先调用 mcp__laborany_web__search，并传 site / sites 参数限定到 ${domainList}。`)
+  } else {
+    lines.push('- 你的第一步必须是调用 mcp__laborany_web__search 获取线索，而不是直接回答。')
+  }
+
+  lines.push('- 当你准备给出链接、来源、官方说法、文档页时，至少必须再调用一次 mcp__laborany_web__read_page 读取其中一个你将引用的 URL。')
+  lines.push('- 在完成 tool use 之前，禁止输出最终答案。')
+
+  return lines.join('\n')
 }
 
 function formatCatalog(items: CatalogItem[]): string {
@@ -251,6 +299,7 @@ export function buildConverseSystemPrompt(
     BEHAVIOR_SECTION,
     ADDRESSING_SECTION,
     buildRuntimeContextSection(runtimeContext),
+    buildForcedResearchTurnSection(options?.latestUserQuery),
     buildResearchPolicySection(),
     `## 可用能力目录\n\n${catalogText}`,
     QUESTION_PROTOCOL_SECTION,

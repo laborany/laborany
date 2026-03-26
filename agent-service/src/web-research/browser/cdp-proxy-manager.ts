@@ -30,6 +30,7 @@ export class CdpProxyManager {
   private process: ChildProcess | null = null
   private port: number
   private starting = false
+  private stopping = false
   private restartAttempts = 0
   private lastRestartTime = 0
 
@@ -64,7 +65,12 @@ export class CdpProxyManager {
 
   /** Gracefully stop the CDP Proxy child process */
   async stop(): Promise<void> {
-    this.killProcess()
+    if (!this.process || this.process.killed) {
+      this.stopping = false
+      return
+    }
+    this.stopping = true
+    this.killProcess({ preserveReferenceUntilExit: true })
   }
 
   /**
@@ -169,6 +175,10 @@ export class CdpProxyManager {
       child.on('exit', (code, signal) => {
         console.log(`[CdpProxyManager] Process exited (code=${code}, signal=${signal})`)
         this.process = null
+        if (this.stopping) {
+          this.stopping = false
+          return
+        }
         this.maybeAutoRestart()
       })
 
@@ -211,14 +221,16 @@ export class CdpProxyManager {
     })
   }
 
-  private killProcess(): void {
+  private killProcess(options?: { preserveReferenceUntilExit?: boolean }): void {
     if (this.process && !this.process.killed) {
       try {
         this.process.kill('SIGTERM')
       } catch {
         // Process may have already exited
       }
-      this.process = null
+      if (!options?.preserveReferenceUntilExit) {
+        this.process = null
+      }
     }
   }
 

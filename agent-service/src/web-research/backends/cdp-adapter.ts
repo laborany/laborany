@@ -17,6 +17,7 @@ import type {
 import {
   collectRequestedSites,
   filterSearchResultsBySites,
+  hasExplicitSiteConstraint,
   scoreSearchResults,
   shouldTryAlternateSearchEngine,
 } from './search-utils.js'
@@ -44,6 +45,39 @@ const CDP_TIMEOUT_MS = 30_000
 const SEARCH_LOAD_WAIT_MS = 5_000
 const SEARCH_POLL_INTERVAL_MS = 300
 const PAGE_LOAD_WAIT_MS = 3_000
+const GENERIC_SITE_RESULT_SELECTOR = [
+  '.DocSearch-Container a[href]',
+  '.DocSearch-Modal a[href]',
+  '[role="dialog"] a[href]',
+  '[aria-modal="true"] a[href]',
+  '[role="listbox"] a[href]',
+  '[role="option"] a[href]',
+  'main a[href]',
+  '[role="main"] a[href]',
+  'article a[href]',
+  'section a[href]',
+  'li a[href]',
+].join(', ')
+const GENERIC_SITE_TITLE_SELECTORS = ['h1', 'h2', 'h3', 'a']
+const GENERIC_SITE_SNIPPET_SELECTORS = ['p', 'time', '[class*="summary"]', '[class*="excerpt"]', '[class*="desc"]']
+const GENERIC_SITE_SNIPPET_FIELDS: SiteSnippetField[] = [
+  { selector: 'p' },
+  { selector: 'time', prefix: 'time ' },
+  { selector: '[class*="summary"]' },
+  { selector: '[class*="excerpt"]' },
+  { selector: '[class*="desc"]' },
+]
+const GENERIC_DISMISS_SELECTORS = [
+  'button[aria-label*="close" i]',
+  'button[aria-label*="dismiss" i]',
+  'button[aria-label*="accept" i]',
+  'button[aria-label*="agree" i]',
+  'button[aria-label*="同意" i]',
+  'button[aria-label*="关闭" i]',
+  'button[id*="accept" i]',
+  'button[class*="accept" i]',
+  'button[class*="consent" i]',
+]
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     CDP Proxy 响应类型                                    │
@@ -60,6 +94,29 @@ interface CdpEvalResponse {
 
 interface CdpHealthResponse {
   status: string
+}
+
+interface GenericSiteSearchAttempt {
+  results: SearchResult[]
+  reason?: string
+  observation?: ResearchObservation
+}
+
+interface DirectUrlSearchCandidate {
+  label: string
+  domain: string
+  entryUrl: string
+  queryParam: string
+  searchUrl: string
+}
+
+interface DiscoveredSiteForm {
+  entryUrl: string
+  openSelector?: string
+  inputSelector: string
+  submitSelector?: string
+  submitMethod: 'click' | 'enter' | 'form' | 'typeahead'
+  searchPageUrl?: string
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -212,11 +269,11 @@ const XIAOHONGSHU_EXTRACT_SCRIPT = `
 export class CdpBrowserAdapter implements SearchBackend, PageReader {
   readonly name = 'cdp'
   private readonly baseUrl: string
-  private readonly siteKnowledge?: Pick<SiteKnowledge, 'getPattern' | 'matchQuery'>
+  private readonly siteKnowledge?: Pick<SiteKnowledge, 'getDecisionPattern' | 'matchQueryHint'>
 
   constructor(
     cdpProxyPort: number = DEFAULT_CDP_PROXY_PORT,
-    siteKnowledge?: Pick<SiteKnowledge, 'getPattern' | 'matchQuery'>,
+    siteKnowledge?: Pick<SiteKnowledge, 'getDecisionPattern' | 'matchQueryHint'>,
   ) {
     this.baseUrl = `http://127.0.0.1:${cdpProxyPort}`
     this.siteKnowledge = siteKnowledge
@@ -255,8 +312,9 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
     observations?: ResearchObservation[]
   }> {
     const requestedSites = collectRequestedSites(query, options)
+    const explicitSiteConstraint = hasExplicitSiteConstraint(query, options)
     const siteSearchPattern = this.resolveSiteSearchPattern(query, requestedSites)
-    const forcedEngine = options?.engine === 'google' || options?.engine === 'bing'
+    const forcedEngine = !explicitSiteConstraint && (options?.engine === 'google' || options?.engine === 'bing')
       ? options.engine
       : 'auto'
     let googleReason: string | undefined
@@ -264,7 +322,7 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
     let normalizedGoogle: SearchResult[] = []
     let siteSearchAttempted = false
 
-    if (siteSearchPattern && forcedEngine === 'auto') {
+    if (siteSearchPattern && forcedEngine === 'auto' && !explicitSiteConstraint) {
       try {
         siteSearchAttempted = true
         const results = await this.searchWithConfiguredSiteSearch(
@@ -292,6 +350,55 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
       }
     }
 
+    if (explicitSiteConstraint && forcedEngine === 'auto') {
+      const directSiteResult = await this.searchExplicitSitesDirect(query, requestedSites, options)
+      const missingSites = collectMissingRequestedSites(requestedSites, directSiteResult.results)
+      if (directSiteResult.results.length > 0 && missingSites.length === 0) {
+        return directSiteResult
+      }
+
+      const fallbackSites = missingSites.length > 0 ? missingSites : requestedSites
+      const fallbackResult = await this.searchExplicitSitesWithFallbackEngines(
+        query,
+        fallbackSites,
+        options,
+        directSiteResult.reason,
+      )
+
+      if (fallbackResult.results.length > 0) {
+        return {
+          results: mergeSearchResults([
+            directSiteResult.results,
+            fallbackResult.results,
+          ]).slice(0, options?.maxResults ?? 10),
+          strategy: directSiteResult.results.length > 0
+            ? `${directSiteResult.strategy}+${fallbackResult.strategy}`
+            : fallbackResult.strategy,
+          observations: [
+            ...(directSiteResult.observations || []),
+            ...(fallbackResult.observations || []),
+          ],
+        }
+      }
+
+      if (directSiteResult.results.length > 0) {
+        return {
+          ...directSiteResult,
+          reason: fallbackResult.reason || directSiteResult.reason,
+        }
+      }
+
+      return {
+        results: [],
+        reason: fallbackResult.reason || directSiteResult.reason || '指定站点内检索未返回结果',
+        strategy: directSiteResult.strategy,
+        observations: [
+          ...(directSiteResult.observations || []),
+          ...(fallbackResult.observations || []),
+        ],
+      }
+    }
+
     if (forcedEngine === 'google') {
       try {
         googleResults = await this.searchWithGoogle(query, options)
@@ -300,13 +407,21 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
           return {
             results: normalizedGoogle,
             strategy: 'google',
-            observations: buildSiteSearchFallbackObservations(
-              siteSearchPattern,
-              siteSearchAttempted,
-              'google',
-              normalizedGoogle,
-              googleReason,
-            ),
+            observations: explicitSiteConstraint
+              ? buildExplicitSiteFallbackObservations(
+                requestedSites,
+                'google',
+                normalizedGoogle,
+                googleReason,
+                this.siteKnowledge,
+              )
+              : buildSiteSearchFallbackObservations(
+                siteSearchPattern,
+                siteSearchAttempted,
+                'google',
+                normalizedGoogle,
+                googleReason,
+              ),
           }
         }
         return {
@@ -331,13 +446,21 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
           return {
             results: normalizedBing,
             strategy: 'bing',
-            observations: buildSiteSearchFallbackObservations(
-              siteSearchPattern,
-              siteSearchAttempted,
-              'bing',
-              normalizedBing,
-              googleReason,
-            ),
+            observations: explicitSiteConstraint
+              ? buildExplicitSiteFallbackObservations(
+                requestedSites,
+                'bing',
+                normalizedBing,
+                googleReason,
+                this.siteKnowledge,
+              )
+              : buildSiteSearchFallbackObservations(
+                siteSearchPattern,
+                siteSearchAttempted,
+                'bing',
+                normalizedBing,
+                googleReason,
+              ),
           }
         }
         return {
@@ -362,13 +485,21 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
         return {
           results: normalizedGoogle,
           strategy: 'google',
-          observations: buildSiteSearchFallbackObservations(
-            siteSearchPattern,
-            siteSearchAttempted,
-            'google',
-            normalizedGoogle,
-            googleReason,
-          ),
+          observations: explicitSiteConstraint
+            ? buildExplicitSiteFallbackObservations(
+              requestedSites,
+              'google',
+              normalizedGoogle,
+              googleReason,
+              this.siteKnowledge,
+            )
+            : buildSiteSearchFallbackObservations(
+              siteSearchPattern,
+              siteSearchAttempted,
+              'google',
+              normalizedGoogle,
+              googleReason,
+            ),
         }
       }
       googleReason = describeInsufficientSearchResults('Google', googleResults, normalizedGoogle, requestedSites, query)
@@ -390,13 +521,21 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
         return {
           results: trimmed,
           strategy: primaryStrategy,
-          observations: buildSiteSearchFallbackObservations(
-            siteSearchPattern,
-            siteSearchAttempted,
-            primaryStrategy,
-            trimmed,
-            googleReason,
-          ),
+          observations: explicitSiteConstraint
+            ? buildExplicitSiteFallbackObservations(
+              requestedSites,
+              primaryStrategy,
+              trimmed,
+              googleReason,
+              this.siteKnowledge,
+            )
+            : buildSiteSearchFallbackObservations(
+              siteSearchPattern,
+              siteSearchAttempted,
+              primaryStrategy,
+              trimmed,
+              googleReason,
+            ),
         }
       }
 
@@ -478,6 +617,10 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
         linkSelector: 'h2 a',
         snippetSelectors: ['p.b_lineclamp2', 'div.b_caption p', 'p'],
         blockedPatterns: [
+          '请解决以下挑战以继续',
+          '請解決以下挑戰以繼續',
+          '請完成下列驗證後繼續',
+          '请完成下列验证后继续',
           '请解决以下难题以继续',
           'solve the following puzzle to continue',
           'verify you are human',
@@ -547,6 +690,683 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
     }
   }
 
+  private async searchExplicitSitesDirect(
+    query: string,
+    requestedSites: string[],
+    options?: SearchOptions,
+  ): Promise<{
+    results: SearchResult[]
+    reason?: string
+    strategy: string
+    observations?: ResearchObservation[]
+  }> {
+    if (requestedSites.length === 0) {
+      return {
+        results: [],
+        reason: '已检测到显式站点约束，但未能识别目标站点',
+        strategy: 'site:strict',
+      }
+    }
+
+    const merged: SearchResult[] = []
+    const seen = new Set<string>()
+    const reasons: string[] = []
+    const observations: ResearchObservation[] = []
+    const maxResults = options?.maxResults ?? 10
+    const perSiteLimit = requestedSites.length > 1
+      ? Math.max(3, Math.ceil(maxResults / requestedSites.length))
+      : maxResults
+
+    for (const site of requestedSites) {
+      try {
+        const attempt = await this.searchSingleExplicitSite(site, query, {
+          ...options,
+          maxResults: perSiteLimit,
+        })
+        if (attempt.results.length > 0) {
+          for (const result of attempt.results) {
+            const key = result.url.trim()
+            if (!key || seen.has(key)) continue
+            seen.add(key)
+            merged.push(result)
+          }
+          if (attempt.observation) {
+            observations.push(attempt.observation)
+          }
+        } else if (attempt.reason) {
+          reasons.push(`${site}: ${attempt.reason}`)
+        }
+      } catch (err) {
+        reasons.push(`${site}: ${describeSearchError(err, '站内直搜失败')}`)
+      }
+    }
+
+    return {
+      results: merged.slice(0, maxResults),
+      reason: merged.length > 0 ? undefined : reasons.join('；') || '指定站点内检索未返回结果',
+      strategy: requestedSites.length === 1
+        ? `site:${requestedSites[0]}`
+        : `site:${requestedSites.join(',')}`,
+      observations: observations.length > 0 ? observations : undefined,
+    }
+  }
+
+  private async searchExplicitSitesWithFallbackEngines(
+    query: string,
+    requestedSites: string[],
+    options?: SearchOptions,
+    previousReason?: string,
+  ): Promise<{
+    results: SearchResult[]
+    reason?: string
+    strategy: string
+    observations?: ResearchObservation[]
+  }> {
+    if (requestedSites.length === 0) {
+      return {
+        results: [],
+        reason: previousReason || '没有可用于 fallback 的目标站点',
+        strategy: 'site:fallback',
+      }
+    }
+
+    const maxResults = options?.maxResults ?? 10
+    const perSiteLimit = requestedSites.length > 1
+      ? Math.max(3, Math.ceil(maxResults / requestedSites.length))
+      : maxResults
+    const merged: SearchResult[] = []
+    const seen = new Set<string>()
+    const reasons: string[] = previousReason ? [previousReason] : []
+    const observations: ResearchObservation[] = []
+    const strategyParts = new Set<string>()
+
+    for (const site of requestedSites) {
+      const singleQuery = buildSingleSiteConstrainedQuery(query, site)
+      const attempt = await this.searchSingleExplicitSiteWithFallbackEngines(
+        site,
+        singleQuery,
+        { ...options, maxResults: perSiteLimit },
+      )
+
+      if (attempt.results.length > 0) {
+        strategyParts.add(attempt.strategy)
+        for (const result of attempt.results) {
+          const key = result.url.trim()
+          if (!key || seen.has(key)) continue
+          seen.add(key)
+          merged.push(result)
+        }
+        if (attempt.observations?.length) {
+          observations.push(...attempt.observations)
+        }
+      } else if (attempt.reason) {
+        reasons.push(`${site}: ${attempt.reason}`)
+      }
+    }
+
+    return {
+      results: merged.slice(0, maxResults),
+      reason: merged.length > 0 ? undefined : reasons.join('；') || '指定站点 fallback 未返回结果',
+      strategy: strategyParts.size > 0 ? Array.from(strategyParts).join('+') : 'site:fallback',
+      observations: observations.length > 0 ? observations : undefined,
+    }
+  }
+
+  private async searchSingleExplicitSiteWithFallbackEngines(
+    site: string,
+    query: string,
+    options?: SearchOptions,
+  ): Promise<{
+    results: SearchResult[]
+    reason?: string
+    strategy: string
+    observations?: ResearchObservation[]
+  }> {
+    const requestedSites = [site]
+    const explicitEngine = options?.engine
+    let googleReason: string | undefined
+    let normalizedGoogle: SearchResult[] = []
+
+    if (explicitEngine === 'google') {
+      try {
+        const googleResults = await this.searchWithGoogle(query, options)
+        const normalizedGoogle = filterSearchResultsBySites(googleResults, requestedSites)
+        if (normalizedGoogle.length > 0) {
+          return {
+            results: normalizedGoogle,
+            strategy: 'google',
+            observations: buildExplicitSiteFallbackObservations(
+              requestedSites,
+              'google',
+              normalizedGoogle,
+              googleReason,
+              this.siteKnowledge,
+            ),
+          }
+        }
+        return {
+          results: [],
+          reason: describeInsufficientSearchResults('Google', googleResults, normalizedGoogle, requestedSites, query),
+          strategy: 'google',
+        }
+      } catch (err) {
+        return {
+          results: [],
+          reason: describeSearchError(err, 'Google 搜索失败'),
+          strategy: 'google',
+        }
+      }
+    }
+
+    if (explicitEngine === 'bing') {
+      try {
+        const bingResults = await this.searchWithBing(query, options)
+        const normalizedBing = filterSearchResultsBySites(bingResults, requestedSites)
+        if (normalizedBing.length > 0) {
+          return {
+            results: normalizedBing,
+            strategy: 'bing',
+            observations: buildExplicitSiteFallbackObservations(
+              requestedSites,
+              'bing',
+              normalizedBing,
+              googleReason,
+              this.siteKnowledge,
+            ),
+          }
+        }
+        return {
+          results: [],
+          reason: describeInsufficientSearchResults('Bing', bingResults, normalizedBing, requestedSites, query),
+          strategy: 'bing',
+        }
+      } catch (err) {
+        return {
+          results: [],
+          reason: describeSearchError(err, 'Bing 搜索失败'),
+          strategy: 'bing',
+        }
+      }
+    }
+
+    try {
+      const googleResults = await this.searchWithGoogle(query, options)
+      normalizedGoogle = filterSearchResultsBySites(googleResults, requestedSites)
+      if (!shouldTryAlternateSearchEngine(normalizedGoogle, query, requestedSites)) {
+        return {
+          results: normalizedGoogle,
+          strategy: 'google',
+          observations: buildExplicitSiteFallbackObservations(
+            requestedSites,
+            'google',
+            normalizedGoogle,
+            googleReason,
+            this.siteKnowledge,
+          ),
+        }
+      }
+      googleReason = describeInsufficientSearchResults('Google', googleResults, normalizedGoogle, requestedSites, query)
+    } catch (err) {
+      googleReason = describeSearchError(err, 'Google 搜索失败')
+      console.log(`${LOG_PREFIX} Google fallback failed for explicit site ${site}, falling back to Bing:`, err)
+    }
+
+    try {
+      const bingResults = await this.searchWithBing(query, options)
+      const normalizedBing = filterSearchResultsBySites(bingResults, requestedSites)
+      const merged = mergeSearchResults(
+        rankResultSets(query, requestedSites, normalizedGoogle, normalizedBing),
+      )
+      if (merged.length > 0) {
+        const primaryStrategy = normalizedGoogle.length > 0
+          ? (normalizedBing.length > 0 ? 'google+bing' : 'google')
+          : 'bing'
+        return {
+          results: merged,
+          strategy: primaryStrategy,
+          observations: buildExplicitSiteFallbackObservations(
+            requestedSites,
+            primaryStrategy,
+            merged,
+            googleReason,
+            this.siteKnowledge,
+          ),
+        }
+      }
+
+      return {
+        results: [],
+        reason: [
+          googleReason,
+          describeInsufficientSearchResults('Bing', bingResults, normalizedBing, requestedSites, query),
+        ].filter(Boolean).join('；') || '显式站点 fallback 未返回结果',
+        strategy: 'google+bing',
+      }
+    } catch (err) {
+      const bingReason = describeSearchError(err, 'Bing 搜索失败')
+      return {
+        results: [],
+        reason: [googleReason, bingReason].filter(Boolean).join('；') || '显式站点 fallback 失败',
+        strategy: 'google+bing',
+      }
+    }
+  }
+
+  private async searchSingleExplicitSite(
+    site: string,
+    query: string,
+    options?: SearchOptions,
+  ): Promise<GenericSiteSearchAttempt> {
+    const normalizedSite = site.trim().toLowerCase()
+    const pattern = this.siteKnowledge?.getDecisionPattern(normalizedSite) ?? null
+    const aliasCandidates = [
+      normalizedSite,
+      ...buildInferredSiteAliases(normalizedSite),
+      ...(pattern?.aliases || []),
+    ]
+    const keyword = extractSiteSearchKeyword(query, aliasCandidates)
+    if (!keyword) {
+      return { results: [], reason: '未能提取有效的站内搜索关键词' }
+    }
+
+    const reasons: string[] = []
+
+    if (pattern?.automation?.search) {
+      try {
+        const configuredResults = await this.searchWithConfiguredSiteSearch(pattern, query, options)
+        if (configuredResults.length > 0) {
+          return {
+            results: configuredResults,
+            observation: buildSiteSearchSuccessObservation(
+              pattern.domain,
+              `site:${pattern.domain}`,
+              configuredResults,
+              pattern.automation || null,
+              pattern.accessStrategy,
+              pattern.aliases,
+              '- 已验证站点内置自动化配置可稳定返回站内搜索结果',
+            ),
+          }
+        }
+        reasons.push(`${pattern.domain} 已有站内搜索配置未返回结果`)
+      } catch (err) {
+        reasons.push(describeSearchError(err, `${pattern.domain} 已有站内搜索配置失败`))
+      }
+    }
+
+    const directUrlAttempt = await this.searchWithDiscoveredSearchUrl(normalizedSite, keyword, options)
+    if (directUrlAttempt.results.length > 0) {
+      return directUrlAttempt
+    }
+    if (directUrlAttempt.reason) reasons.push(directUrlAttempt.reason)
+
+    const siteFormAttempt = await this.searchWithDiscoveredSiteForm(normalizedSite, keyword, options)
+    if (siteFormAttempt.results.length > 0) {
+      return siteFormAttempt
+    }
+    if (siteFormAttempt.reason) reasons.push(siteFormAttempt.reason)
+
+    return {
+      results: [],
+      reason: reasons.join('；') || `${normalizedSite} 站内直搜未返回结果`,
+    }
+  }
+
+  private async searchWithDiscoveredSearchUrl(
+    domain: string,
+    keyword: string,
+    options?: SearchOptions,
+  ): Promise<GenericSiteSearchAttempt> {
+    const candidates = buildDirectUrlSearchCandidates(domain, keyword, options)
+    const reasons: string[] = []
+
+    for (const candidate of candidates) {
+      let targetId: string | null = null
+      try {
+        console.log(`${LOG_PREFIX} Trying direct search URL for ${domain}: ${candidate.searchUrl}`)
+        targetId = await this.openTab(candidate.searchUrl)
+        await sleep(1_200)
+        await this.dismissSelectors(targetId, GENERIC_DISMISS_SELECTORS)
+
+        const results = await this.extractGenericSiteSearchResultsWithPolling(
+          targetId,
+          domain,
+          keyword,
+          options,
+        )
+
+        if (results.length > 0) {
+          const automation = buildGenericSearchEngineAutomationCandidate(candidate, results)
+          return {
+            results,
+            observation: buildSiteSearchSuccessObservation(
+              domain,
+              `site:${domain}`,
+              results,
+              { search: automation },
+              'cdp_preferred',
+              buildInferredSiteAliases(domain),
+              '- 已验证可通过站点搜索 URL 直接获得站内结果',
+            ),
+          }
+        }
+
+        reasons.push(`${candidate.label} 未返回可用站内结果`)
+      } catch (err) {
+        reasons.push(describeSearchError(err, `${candidate.label} 失败`))
+      } finally {
+        if (targetId) {
+          await this.closeTab(targetId).catch(() => {})
+        }
+      }
+    }
+
+    return {
+      results: [],
+      reason: reasons.join('；') || `${domain} 站点搜索 URL 直达未命中`,
+    }
+  }
+
+  private async searchWithDiscoveredSiteForm(
+    domain: string,
+    keyword: string,
+    options?: SearchOptions,
+  ): Promise<GenericSiteSearchAttempt> {
+    const visited = new Set<string>()
+    const queue = [`https://${domain}`]
+    const reasons: string[] = []
+
+    while (queue.length > 0 && visited.size < 3) {
+      const entryUrl = queue.shift()
+      if (!entryUrl || visited.has(entryUrl)) continue
+      visited.add(entryUrl)
+
+      let targetId: string | null = null
+      try {
+        console.log(`${LOG_PREFIX} Trying site form discovery for ${domain}: ${entryUrl}`)
+        targetId = await this.openTab(entryUrl)
+        await sleep(1_200)
+        await this.dismissSelectors(targetId, GENERIC_DISMISS_SELECTORS)
+
+        let discovery = await this.discoverSiteFormOnPage(targetId, domain)
+        if (!discovery) {
+          reasons.push(`${entryUrl} 未发现可用搜索入口`)
+          continue
+        }
+
+        if (discovery.openSelector) {
+          await this.openDiscoveredSearchSurface(targetId, discovery.openSelector)
+          const rediscovered = await this.discoverSiteFormOnPage(targetId, domain)
+          if (rediscovered) {
+            discovery = {
+              ...discovery,
+              ...rediscovered,
+              openSelector: rediscovered.openSelector || discovery.openSelector,
+            }
+          }
+        }
+
+        if (discovery.searchPageUrl && !discovery.inputSelector && !visited.has(discovery.searchPageUrl)) {
+          queue.push(discovery.searchPageUrl)
+          reasons.push(`${entryUrl} 仅发现搜索页入口，继续尝试 ${discovery.searchPageUrl}`)
+          continue
+        }
+
+        if (!discovery.inputSelector) {
+          reasons.push(`${entryUrl} 未发现可用搜索输入框`)
+          continue
+        }
+
+        const beforeUrl = await this.getCurrentUrl(targetId)
+        const attempt = await this.executeDiscoveredSiteFormSearch(
+          targetId,
+          domain,
+          keyword,
+          discovery,
+          beforeUrl,
+          options,
+        )
+
+        if (attempt.results.length > 0) {
+          const automationCandidate = buildGenericSiteFormAutomationCandidate(
+            {
+              ...discovery,
+              entryUrl: discovery.entryUrl || entryUrl,
+              submitMethod: attempt.submitMethod,
+            },
+            attempt.afterUrl,
+            attempt.results,
+          )
+          return {
+            results: attempt.results,
+            observation: buildSiteSearchSuccessObservation(
+              domain,
+              `site:${domain}`,
+              attempt.results,
+              { search: automationCandidate },
+              'cdp_preferred',
+              buildInferredSiteAliases(domain),
+              '- 已验证可通过站点原生搜索框直接获得站内结果',
+            ),
+          }
+        }
+
+        reasons.push(attempt.reason || `${entryUrl} 搜索提交成功但未提取到结果`)
+      } catch (err) {
+        reasons.push(describeSearchError(err, `${entryUrl} 站内搜索失败`))
+      } finally {
+        if (targetId) {
+          await this.closeTab(targetId).catch(() => {})
+        }
+      }
+    }
+
+    return {
+      results: [],
+      reason: reasons.join('；') || `${domain} 未发现可复用的站内搜索入口`,
+    }
+  }
+
+  private async openDiscoveredSearchSurface(targetId: string, selector: string): Promise<void> {
+    try {
+      await this.evalInTab(
+        targetId,
+        `
+          (() => {
+            const node = document.querySelector(${JSON.stringify(selector)});
+            if (!node) return false;
+            node.click();
+            return true;
+          })()
+        `,
+      )
+      await sleep(700)
+    } catch {
+      // Continue with the original surface if the opener is not clickable.
+    }
+  }
+
+  private async executeDiscoveredSiteFormSearch(
+    targetId: string,
+    domain: string,
+    keyword: string,
+    discovery: DiscoveredSiteForm,
+    beforeUrl: string,
+    options?: SearchOptions,
+  ): Promise<{
+    results: SearchResult[]
+    afterUrl: string
+    submitMethod: DiscoveredSiteForm['submitMethod']
+    reason?: string
+  }> {
+    const candidateMethods = buildCandidateSubmitMethods(discovery)
+    const reasons: string[] = []
+
+    for (const submitMethod of candidateMethods) {
+      const automation = buildGenericSiteFormAutomationCandidate({
+        ...discovery,
+        submitMethod,
+      })
+      const triggerScript = buildSiteSearchTriggerScript(automation, keyword)
+      const triggerResult = await this.evalInTab(targetId, triggerScript)
+      if (triggerResult && typeof triggerResult === 'object' && 'error' in triggerResult) {
+        reasons.push(`${submitMethod}: ${String(triggerResult.error)}`)
+        continue
+      }
+
+      await this.waitForGenericSiteSearchOutcome(
+        targetId,
+        domain,
+        beforeUrl,
+        automation.waitSelector,
+      )
+
+      const results = await this.extractGenericSiteSearchResultsWithPolling(
+        targetId,
+        domain,
+        keyword,
+        options,
+      )
+      const afterUrl = await this.getCurrentUrl(targetId)
+      if (results.length > 0) {
+        return {
+          results,
+          afterUrl,
+          submitMethod,
+        }
+      }
+
+      reasons.push(`${submitMethod}: 未提取到结果`)
+    }
+
+    return {
+      results: [],
+      afterUrl: await this.getCurrentUrl(targetId),
+      submitMethod: discovery.submitMethod,
+      reason: reasons.join('；') || '搜索提交后未提取到结果',
+    }
+  }
+
+  private async discoverSiteFormOnPage(
+    targetId: string,
+    domain: string,
+  ): Promise<DiscoveredSiteForm | null> {
+    const evalResult = await this.evalInTab(targetId, buildSiteSearchDiscoveryScript(domain))
+    if (!evalResult || typeof evalResult !== 'string') return null
+
+    try {
+      const parsed = JSON.parse(evalResult) as Partial<DiscoveredSiteForm>
+      if (!parsed || typeof parsed !== 'object') return null
+
+      return {
+        entryUrl: typeof parsed.entryUrl === 'string' && parsed.entryUrl
+          ? parsed.entryUrl
+          : '',
+        openSelector: typeof parsed.openSelector === 'string' && parsed.openSelector
+          ? parsed.openSelector
+          : undefined,
+        inputSelector: typeof parsed.inputSelector === 'string' ? parsed.inputSelector : '',
+        submitSelector: typeof parsed.submitSelector === 'string' ? parsed.submitSelector : undefined,
+        submitMethod: parsed.submitMethod === 'enter'
+          || parsed.submitMethod === 'form'
+          || parsed.submitMethod === 'typeahead'
+          ? parsed.submitMethod
+          : 'click',
+        searchPageUrl: typeof parsed.searchPageUrl === 'string' && parsed.searchPageUrl
+          ? parsed.searchPageUrl
+          : undefined,
+      }
+    } catch {
+      console.log(`${LOG_PREFIX} Failed to parse discovered site form JSON for ${domain}`)
+      return null
+    }
+  }
+
+  private async extractGenericSiteSearchResultsWithPolling(
+    targetId: string,
+    domain: string,
+    keyword: string,
+    options?: SearchOptions,
+  ): Promise<SearchResult[]> {
+    const deadline = Date.now() + SEARCH_LOAD_WAIT_MS
+    let best: SearchResult[] = []
+
+    while (Date.now() < deadline) {
+      const results = await this.extractGenericSiteSearchResults(targetId, domain, keyword)
+      if (results.length > best.length) {
+        best = results
+      }
+      if (results.length >= 2) {
+        return results.slice(0, options?.maxResults ?? 10)
+      }
+      await sleep(SEARCH_POLL_INTERVAL_MS)
+    }
+
+    return best.slice(0, options?.maxResults ?? 10)
+  }
+
+  private async extractGenericSiteSearchResults(
+    targetId: string,
+    domain: string,
+    keyword: string,
+  ): Promise<SearchResult[]> {
+    const evalResult = await this.evalInTab(targetId, buildGenericSiteSearchExtractScript(domain, keyword))
+    if (typeof evalResult !== 'string') return []
+
+    try {
+      const parsed = JSON.parse(evalResult) as Array<{ title: string; url: string; snippet: string }>
+      return parsed
+        .map((item) => ({
+          title: item.title,
+          url: item.url,
+          snippet: item.snippet,
+          source: domain,
+        }))
+        .filter((item) => Boolean(item.url))
+    } catch {
+      console.log(`${LOG_PREFIX} Failed to parse generic site search results for ${domain}`)
+      return []
+    }
+  }
+
+  private async waitForGenericSiteSearchOutcome(
+    targetId: string,
+    domain: string,
+    beforeUrl: string,
+    waitSelector?: string,
+  ): Promise<void> {
+    const start = Date.now()
+    while (Date.now() - start < 8_000) {
+      try {
+        const currentUrl = await this.getCurrentUrl(targetId)
+        if (currentUrl && currentUrl !== beforeUrl) {
+          return
+        }
+        if (waitSelector) {
+          const found = await this.evalInTab(
+            targetId,
+            `Boolean(document.querySelector(${JSON.stringify(waitSelector)}))`,
+          )
+          if (found === true) {
+            return
+          }
+        }
+
+        const count = await this.evalInTab(
+          targetId,
+          buildGenericSiteSearchCountScript(domain),
+        )
+        if (typeof count === 'number' && count > 0) {
+          return
+        }
+      } catch {
+        // Ignore transient navigation errors while polling.
+      }
+
+      await sleep(SEARCH_POLL_INTERVAL_MS)
+    }
+  }
+
   private resolveSiteSearchPattern(
     query: string,
     requestedSites: string[],
@@ -554,13 +1374,13 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
     if (requestedSites.length > 1) return null
 
     const fromRequestedSites = requestedSites
-      .map(site => this.siteKnowledge?.getPattern(site) ?? null)
+      .map(site => this.siteKnowledge?.getDecisionPattern(site) ?? null)
       .filter((pattern): pattern is SitePattern => Boolean(pattern))
       .find(pattern => Boolean(pattern.automation?.search))
 
     if (fromRequestedSites) return fromRequestedSites
 
-    const fromQuery = this.siteKnowledge?.matchQuery(query) ?? null
+    const fromQuery = this.siteKnowledge?.matchQueryHint(query) ?? null
     if (fromQuery && fromQuery.automation?.search) {
       return fromQuery
     }
@@ -580,7 +1400,7 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
     try {
       console.log(`${LOG_PREFIX} Searching via ${source}: "${query}"`)
 
-      const pattern = this.siteKnowledge?.getPattern(domain) ?? null
+      const pattern = this.siteKnowledge?.getDecisionPattern(domain) ?? null
       const automation = pattern?.automation?.search
       const config = isSiteSearchEngineAutomation(automation)
         ? automation
@@ -718,6 +1538,11 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
     throw new Error(`Timed out waiting for URL to include "${fragment}"`)
   }
 
+  private async getCurrentUrl(targetId: string): Promise<string> {
+    const currentUrl = await this.evalInTab(targetId, 'location.href')
+    return typeof currentUrl === 'string' ? currentUrl : ''
+  }
+
   private async waitForSelector(
     targetId: string,
     selector: string,
@@ -797,6 +1622,26 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
     source: string,
   ): Promise<string | null> {
     try {
+      const challengeUiDetected = await this.evalInTab(
+        targetId,
+        `(() => {
+          const selectors = [
+            '#turnstile-widget',
+            '.captcha',
+            '.captcha_header',
+            '.captcha_text',
+            '[id*="turnstile"]',
+            '[class*="captcha"]',
+            'iframe[src*="turnstile"]',
+            'iframe[src*="captcha"]',
+          ];
+          return selectors.some((selector) => Boolean(document.querySelector(selector)));
+        })()`,
+      )
+      if (challengeUiDetected === true) {
+        return `${source} 搜索页被反爬拦截`
+      }
+
       const pageText = await this.evalInTab(targetId, SEARCH_PAGE_TEXT_SCRIPT)
       if (typeof pageText !== 'string') return null
 
@@ -821,7 +1666,7 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
     try {
       console.log(`${LOG_PREFIX} Reading page: ${url}`)
       const hostname = extractHostname(url)
-      const pattern = this.siteKnowledge?.getPattern(hostname) ?? null
+      const pattern = this.siteKnowledge?.getDecisionPattern(hostname) ?? null
       const readAutomation = pattern?.automation?.read ?? null
       const outputFormat = format ?? 'text'
       const extractionStrategy = getReadExtractionStrategy(readAutomation, outputFormat)
@@ -972,7 +1817,21 @@ export class CdpBrowserAdapter implements SearchBackend, PageReader {
     })
 
     if (!response.ok) {
-      throw new Error(`CDP /eval failed with ${response.status}: ${response.statusText}`)
+      let errorDetail = response.statusText
+      try {
+        const errorText = await response.text()
+        if (errorText) {
+          try {
+            const parsed = JSON.parse(errorText) as { error?: string }
+            errorDetail = parsed.error || errorText
+          } catch {
+            errorDetail = errorText
+          }
+        }
+      } catch {
+        // Ignore response body parsing errors and fall back to status text.
+      }
+      throw new Error(`CDP /eval failed with ${response.status}: ${errorDetail}`)
     }
 
     const data = (await response.json()) as CdpEvalResponse
@@ -1040,6 +1899,18 @@ function mergeSearchResults(resultSets: SearchResult[][]): SearchResult[] {
   }
 
   return merged
+}
+
+function collectMissingRequestedSites(
+  requestedSites: string[],
+  results: SearchResult[],
+): string[] {
+  return requestedSites.filter(site => !findResultUrlForDomain(results, site))
+}
+
+function buildSingleSiteConstrainedQuery(query: string, site: string): string {
+  const baseQuery = query.replace(/(?:^|\s)site:[^\s]+/gi, ' ').replace(/\s+/g, ' ').trim()
+  return `${baseQuery} site:${site}`.trim()
 }
 
 function extractSiteSearchKeyword(query: string, siteAliases: string[]): string {
@@ -1133,6 +2004,12 @@ function buildSiteSearchTriggerScript(
 ): string {
   return `
     (async () => {
+      const isVisible = (node) => {
+        if (!(node instanceof Element)) return false;
+        const style = window.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      };
       const dismissSelectors = ${JSON.stringify(config.dismissSelectors || [])};
       for (const selector of dismissSelectors) {
         const node = document.querySelector(selector);
@@ -1142,7 +2019,17 @@ function buildSiteSearchTriggerScript(
         }
       }
 
-      const input = document.querySelector(${JSON.stringify(config.inputSelector)});
+      const openSelector = ${JSON.stringify(config.openSelector || '')};
+      let input = document.querySelector(${JSON.stringify(config.inputSelector)});
+      if ((!input || !isVisible(input)) && openSelector) {
+        const opener = document.querySelector(openSelector);
+        if (opener) {
+          opener.click();
+          await new Promise(resolve => setTimeout(resolve, 600));
+          input = document.querySelector(${JSON.stringify(config.inputSelector)});
+        }
+      }
+
       if (!input) {
         return { error: '未找到站内搜索输入框' };
       }
@@ -1156,13 +2043,306 @@ function buildSiteSearchTriggerScript(
       input.dispatchEvent(new Event('change', { bubbles: true }));
       await new Promise(resolve => setTimeout(resolve, 250));
 
-      const trigger = document.querySelector(${JSON.stringify(config.submitSelector)});
-      if (!trigger) {
-        return { error: '未找到站内搜索提交按钮' };
+      const submitMethod = ${JSON.stringify(config.submitMethod || 'click')};
+      if (submitMethod === 'typeahead') {
+        return { ok: true, keyword: ${JSON.stringify(keyword)}, url: location.href, submitMethod };
+      }
+      if (submitMethod === 'enter') {
+        ['keydown', 'keypress', 'keyup'].forEach(type => {
+          input.dispatchEvent(new KeyboardEvent(type, {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true,
+          }));
+        });
+      } else if (submitMethod === 'form') {
+        const form = input.form || input.closest('form');
+        if (!form) {
+          return { error: '未找到可提交的搜索表单' };
+        }
+        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      } else {
+        const triggerSelector = ${JSON.stringify(config.submitSelector || '')};
+        const trigger = triggerSelector ? document.querySelector(triggerSelector) : null;
+        if (!trigger) {
+          return { error: '未找到站内搜索提交按钮' };
+        }
+        trigger.click();
       }
 
-      trigger.click();
       return { ok: true, keyword: ${JSON.stringify(keyword)}, url: location.href };
+    })()
+  `
+}
+
+function buildSiteSearchDiscoveryScript(domain: string): string {
+  return `
+    (() => {
+      const cleanText = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+      const isVisible = (node) => {
+        if (!(node instanceof Element)) return false;
+        const style = window.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      };
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const searchTerms = ['search', 'query', 'keyword', 'q', '搜索', '查找', '搜'];
+      const containsSearchHint = (value) => {
+        const normalized = cleanText(value).toLowerCase();
+        if (!normalized) return false;
+        return searchTerms.some(term => normalized.includes(term));
+      };
+      const escapeCssValue = (value) => String(value).replace(/\\\\/g, '\\\\\\\\').replace(/"/g, '\\\\\\"');
+      const buildSelector = (node) => {
+        if (!(node instanceof Element)) return '';
+        if (node.id) return '#' + CSS.escape(node.id);
+        const attrNames = ['data-testid', 'data-test', 'data-qa', 'aria-label', 'placeholder', 'name', 'title'];
+        for (const attr of attrNames) {
+          const value = node.getAttribute(attr);
+          if (value && value.length < 80) {
+            return node.tagName.toLowerCase() + '[' + attr + '="' + escapeCssValue(value) + '"]';
+          }
+        }
+        const classes = Array.from(node.classList).filter(Boolean).slice(0, 3);
+        if (classes.length > 0) {
+          return node.tagName.toLowerCase() + '.' + classes.map(item => CSS.escape(item)).join('.');
+        }
+        const parent = node.parentElement;
+        if (parent) {
+          const siblings = Array.from(parent.children).filter(item => item.tagName === node.tagName);
+          const index = siblings.indexOf(node);
+          if (index >= 0) {
+            const parentSelector = buildSelector(parent);
+            if (parentSelector) {
+              return parentSelector + ' > ' + node.tagName.toLowerCase() + ':nth-of-type(' + (index + 1) + ')';
+            }
+          }
+        }
+        return node.tagName.toLowerCase();
+      };
+      const normalizeUrl = (href) => {
+        if (!href) return '';
+        try {
+          return new URL(href, location.href).href;
+        } catch {
+          return '';
+        }
+      };
+      const isSearchHref = (href) => {
+        if (!href) return false;
+        const normalized = href.toLowerCase();
+        return normalized.includes('/search')
+          || normalized.includes('?q=')
+          || normalized.includes('?query=')
+          || normalized.includes('?keyword=')
+          || normalized.includes('?s=');
+      };
+      const isDialogInput = (node) => Boolean(
+        node.closest('.DocSearch-Container, .DocSearch-Modal, [role="dialog"], [aria-modal="true"], [role="listbox"]')
+      );
+      const isTypeaheadInput = (node) => isDialogInput(node)
+        || Boolean(node.getAttribute('aria-autocomplete'))
+        || Boolean(node.getAttribute('role') === 'combobox')
+        || Boolean(node.id && node.id.toLowerCase().includes('search'));
+
+      const searchControl = Array.from(document.querySelectorAll('a[href], button, [role="button"]'))
+        .filter(node => isVisible(node))
+        .find(node => {
+          const href = normalizeUrl(node.getAttribute && node.getAttribute('href') || '');
+          const text = cleanText(node.textContent || '');
+          const label = cleanText(node.getAttribute && node.getAttribute('aria-label') || '');
+          return isSearchHref(href) || containsSearchHint(text) || containsSearchHint(label);
+        });
+
+      const inputs = Array.from(document.querySelectorAll('input, textarea'))
+        .filter(node => isVisible(node))
+        .map(node => {
+          const type = cleanText(node.getAttribute('type') || 'text').toLowerCase();
+          if (['hidden', 'password', 'email', 'tel', 'number', 'date', 'file'].includes(type)) {
+            return null;
+          }
+          const rect = node.getBoundingClientRect();
+          const score = [
+            type === 'search' ? 5 : 0,
+            containsSearchHint(node.getAttribute('name')) ? 3 : 0,
+            containsSearchHint(node.getAttribute('placeholder')) ? 4 : 0,
+            containsSearchHint(node.getAttribute('aria-label')) ? 4 : 0,
+            containsSearchHint(node.getAttribute('title')) ? 2 : 0,
+            node.closest('form, [role="search"]') ? 2 : 0,
+            isDialogInput(node) ? 8 : 0,
+            isTypeaheadInput(node) ? 4 : 0,
+            rect.y <= viewportHeight ? 2 : 0,
+          ].reduce((sum, item) => sum + item, 0);
+          if (score <= 0) return null;
+
+          const container = node.closest('form, [role="search"], header, nav, main, section, div');
+          const submit = container
+            ? container.querySelector('button[type="submit"], input[type="submit"], button[aria-label*="search" i], button[aria-label*="搜索" i], button[class*="search" i], [role="button"][aria-label*="search" i]')
+            : null;
+          const submitSelector = submit && submit !== node ? buildSelector(submit) : '';
+          const submitMethod = isTypeaheadInput(node)
+            ? 'typeahead'
+            : submitSelector
+              ? 'click'
+              : (node.closest('form') ? 'form' : 'enter');
+
+          return {
+            score,
+            entryUrl: location.href,
+            openSelector: searchControl && !searchControl.getAttribute('href') ? buildSelector(searchControl) : '',
+            inputSelector: buildSelector(node),
+            submitSelector,
+            submitMethod,
+            searchPageUrl: '',
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.score - a.score);
+
+      if (inputs.length > 0) {
+        const best = inputs[0];
+        if (searchControl) {
+          const maybeUrl = normalizeUrl(searchControl.getAttribute && searchControl.getAttribute('href') || '');
+          if (maybeUrl && maybeUrl !== location.href) {
+            best.searchPageUrl = maybeUrl;
+          }
+        }
+        return JSON.stringify(best);
+      }
+
+      if (searchControl) {
+        return JSON.stringify({
+          entryUrl: location.href,
+          openSelector: !searchControl.getAttribute('href') ? buildSelector(searchControl) : '',
+          inputSelector: '',
+          submitSelector: '',
+          submitMethod: 'click',
+          searchPageUrl: normalizeUrl(searchControl.getAttribute && searchControl.getAttribute('href') || ''),
+        });
+      }
+
+      return JSON.stringify(null);
+    })()
+  `
+}
+
+function buildGenericSiteSearchCountScript(domain: string): string {
+  return `
+    (() => {
+      const targetDomain = ${JSON.stringify(domain)};
+      const cleanHost = (href) => {
+        try {
+          return new URL(href, location.href).hostname.replace(/^www\\./i, '').toLowerCase();
+        } catch {
+          return '';
+        }
+      };
+      const root = document.querySelector('.DocSearch-Container, .DocSearch-Modal, [role="dialog"], [aria-modal="true"], [role="listbox"]')
+        || document.querySelector('main, [role="main"], article')
+        || document.body
+        || document.documentElement;
+      const anchors = Array.from(root.querySelectorAll('a[href]'));
+      return anchors.filter(anchor => {
+        const href = anchor.getAttribute('href') || '';
+        if (!href || href.startsWith('#') || href.startsWith('javascript:')) return false;
+        const hostname = cleanHost(href);
+        return hostname === targetDomain || hostname.endsWith('.' + targetDomain);
+      }).length;
+    })()
+  `
+}
+
+function buildGenericSiteSearchExtractScript(domain: string, keyword: string): string {
+  return `
+    (() => {
+      const targetDomain = ${JSON.stringify(domain)};
+      const rawKeyword = ${JSON.stringify(keyword)};
+      const cleanText = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+      const normalizeUrl = (href) => {
+        if (!href) return '';
+        try {
+          return new URL(href, location.href).href;
+        } catch {
+          return '';
+        }
+      };
+      const normalizeHost = (href) => {
+        try {
+          return new URL(href, location.href).hostname.replace(/^www\\./i, '').toLowerCase();
+        } catch {
+          return '';
+        }
+      };
+      const keywordTerms = Array.from(new Set(
+        rawKeyword
+          .toLowerCase()
+          .split(/[\\s,.;:!?()[\\]{}"'/\\\\|]+/)
+          .map(item => item.trim())
+          .filter(item => item.length >= 2)
+          .concat(rawKeyword.trim() ? [rawKeyword.toLowerCase()] : [])
+      ));
+      const root = document.querySelector('.DocSearch-Container, .DocSearch-Modal, [role="dialog"], [aria-modal="true"], [role="listbox"]')
+        || document.querySelector('main, [role="main"], article')
+        || document.body
+        || document.documentElement;
+      const stopTerms = ['login', 'sign in', 'signup', 'register', 'privacy', 'terms', 'help', 'about', 'contact', 'search', '搜索'];
+      const results = [];
+      const seen = new Set();
+      const anchors = Array.from(root.querySelectorAll('a[href]'));
+
+      for (const anchor of anchors) {
+        const href = normalizeUrl(anchor.getAttribute('href') || anchor.href || '');
+        if (!href || seen.has(href)) continue;
+        if (href.startsWith('javascript:') || href.endsWith('#')) continue;
+
+        const hostname = normalizeHost(href);
+        if (!(hostname === targetDomain || hostname.endsWith('.' + targetDomain))) continue;
+
+        const pathname = (() => {
+          try {
+            return new URL(href).pathname.toLowerCase();
+          } catch {
+            return '';
+          }
+        })();
+        if (!pathname || pathname === '/' || pathname === '/search') continue;
+        if (stopTerms.some(term => pathname.includes(term))) continue;
+
+        const container = anchor.closest('article, li, section, div') || anchor.parentElement || anchor;
+        const title = cleanText(
+          (container.querySelector('h1, h2, h3, h4')?.textContent)
+          || anchor.textContent
+          || container.getAttribute('aria-label')
+          || ''
+        );
+        if (!title || title.length < 2) continue;
+
+        const snippetCandidates = Array.from(container.querySelectorAll('p, time, span, div'))
+          .map(node => cleanText(node.textContent || ''))
+          .filter(text => Boolean(text && text !== title && text.length >= 8));
+        const snippet = snippetCandidates.find(text => text.length >= 12) || snippetCandidates[0] || '';
+
+        const haystack = (title + ' ' + snippet + ' ' + href).toLowerCase();
+        const keywordMatches = keywordTerms.filter(term => haystack.includes(term)).length;
+        const pathDepth = pathname.split('/').filter(Boolean).length;
+        const score = keywordMatches * 8 + Math.min(pathDepth, 4) * 2 + Math.min(title.length, 120) / 40 + Math.min(snippet.length, 180) / 90;
+        if (keywordTerms.length > 0 && keywordMatches === 0) continue;
+
+        seen.add(href);
+        results.push({
+          title,
+          url: href,
+          snippet,
+          score,
+        });
+      }
+
+      results.sort((a, b) => b.score - a.score);
+      return JSON.stringify(results.slice(0, 12).map(({ score, ...item }) => item));
     })()
   `
 }
@@ -1546,6 +2726,216 @@ function buildStructuredVideoExtractionScript(
   `
 }
 
+function buildDirectUrlSearchCandidates(
+  domain: string,
+  keyword: string,
+  options?: SearchOptions,
+): DirectUrlSearchCandidate[] {
+  const templates = [
+    { path: '/search', queryParam: 'q', label: 'search?q' },
+    { path: '/search/', queryParam: 'q', label: 'search/?q' },
+    { path: '/search', queryParam: 'query', label: 'search?query' },
+    { path: '/search/', queryParam: 'query', label: 'search/?query' },
+    { path: '/search', queryParam: 'keyword', label: 'search?keyword' },
+    { path: '/search/', queryParam: 'keyword', label: 'search/?keyword' },
+    { path: '/search', queryParam: 'wd', label: 'search?wd' },
+    { path: '/search/', queryParam: 'wd', label: 'search/?wd' },
+    { path: '/', queryParam: 's', label: '?s' },
+  ]
+
+  return templates.map((template) => {
+    const entryUrl = `https://${domain}${template.path}`
+    const config: SiteSearchEngineAutomation = {
+      mode: 'search_engine',
+      entryUrl,
+      queryParam: template.queryParam,
+      waitSelector: GENERIC_SITE_RESULT_SELECTOR,
+      resultSelector: GENERIC_SITE_RESULT_SELECTOR,
+      titleSelectors: GENERIC_SITE_TITLE_SELECTORS,
+      linkSelector: 'a[href]',
+      snippetSelectors: GENERIC_SITE_SNIPPET_SELECTORS,
+    }
+    return {
+      label: template.label,
+      domain,
+      entryUrl,
+      queryParam: template.queryParam,
+      searchUrl: buildSearchEngineUrl(config, keyword, options),
+    }
+  })
+}
+
+function buildGenericSearchEngineAutomationCandidate(
+  candidate: DirectUrlSearchCandidate,
+  results: SearchResult[],
+): SiteSearchEngineAutomation {
+  const { resultSelector, linkSelector } = inferSearchResultSelectors(candidate.domain, results)
+  return {
+    mode: 'search_engine',
+    entryUrl: candidate.entryUrl,
+    queryParam: candidate.queryParam,
+    waitSelector: resultSelector,
+    resultSelector,
+    titleSelectors: GENERIC_SITE_TITLE_SELECTORS,
+    linkSelector,
+    snippetSelectors: GENERIC_SITE_SNIPPET_SELECTORS,
+  }
+}
+
+function buildGenericSiteFormAutomationCandidate(
+  discovery: DiscoveredSiteForm,
+  finalUrl?: string,
+  results: SearchResult[] = [],
+): SiteSearchFormAutomation {
+  const domain = extractHostname(finalUrl || discovery.entryUrl)
+  const { resultSelector, linkSelector } = inferSearchResultSelectors(domain, results)
+  return {
+    mode: 'site_form',
+    entryUrl: discovery.entryUrl,
+    openSelector: discovery.openSelector,
+    inputSelector: discovery.inputSelector,
+    submitSelector: discovery.submitSelector,
+    submitMethod: discovery.submitMethod,
+    waitUrlIncludes: resolveWaitUrlFragment(discovery.entryUrl, finalUrl),
+    waitSelector: resultSelector,
+    postSubmitDelayMs: 1_200,
+    resultSelector,
+    titleSelectors: GENERIC_SITE_TITLE_SELECTORS,
+    linkSelector,
+    snippetFields: GENERIC_SITE_SNIPPET_FIELDS,
+  }
+}
+
+function resolveWaitUrlFragment(entryUrl: string, finalUrl?: string): string | undefined {
+  if (!entryUrl || !finalUrl) return undefined
+
+  try {
+    const entry = new URL(entryUrl)
+    const final = new URL(finalUrl)
+    if (entry.origin !== final.origin) return undefined
+    if (entry.pathname !== final.pathname && final.pathname !== '/') {
+      return final.pathname
+    }
+    if (entry.search !== final.search && final.search) {
+      const firstParam = Array.from(final.searchParams.keys())[0]
+      return firstParam ? `?${firstParam}=` : final.search
+    }
+  } catch {
+    return undefined
+  }
+
+  return undefined
+}
+
+function buildInferredSiteAliases(domain: string): string[] {
+  const aliases = new Set<string>()
+  const parts = domain.split('.').filter(Boolean)
+  if (parts.length > 0) {
+    const label = parts[0]
+    if (label && label !== 'www' && label.length >= 2) {
+      aliases.add(label)
+      aliases.add(label.replace(/-/g, ' '))
+    }
+  }
+  return Array.from(aliases).filter(Boolean)
+}
+
+function inferSearchResultSelectors(
+  domain: string,
+  results: SearchResult[],
+): { resultSelector: string; linkSelector: string } {
+  const dominantPathFragment = inferDominantPathFragment(domain, results)
+  if (!dominantPathFragment) {
+    return {
+      resultSelector: GENERIC_SITE_RESULT_SELECTOR,
+      linkSelector: 'a[href]',
+    }
+  }
+
+  const selector = [
+    `.DocSearch-Container a[href*="${dominantPathFragment}"]`,
+    `.DocSearch-Modal a[href*="${dominantPathFragment}"]`,
+    `[role="dialog"] a[href*="${dominantPathFragment}"]`,
+    `[aria-modal="true"] a[href*="${dominantPathFragment}"]`,
+    `[role="listbox"] a[href*="${dominantPathFragment}"]`,
+    `main a[href*="${dominantPathFragment}"]`,
+    `[role="main"] a[href*="${dominantPathFragment}"]`,
+    `article a[href*="${dominantPathFragment}"]`,
+    `section a[href*="${dominantPathFragment}"]`,
+    `li a[href*="${dominantPathFragment}"]`,
+  ].join(', ')
+
+  return {
+    resultSelector: selector,
+    linkSelector: `a[href*="${dominantPathFragment}"]`,
+  }
+}
+
+function inferDominantPathFragment(domain: string, results: SearchResult[]): string | null {
+  const counts = new Map<string, number>()
+
+  for (const result of results) {
+    try {
+      const parsed = new URL(result.url)
+      const hostname = parsed.hostname.replace(/^www\./i, '').toLowerCase()
+      if (!(hostname === domain || hostname.endsWith(`.${domain}`) || domain.endsWith(`.${hostname}`))) {
+        continue
+      }
+
+      const segments = parsed.pathname.split('/').filter(Boolean)
+      if (segments.length === 0) continue
+      const firstSegment = segments[0].toLowerCase()
+      if (!firstSegment || ['search', 'tag', 'tags', 'category', 'categories'].includes(firstSegment)) {
+        continue
+      }
+
+      const fragment = `/${firstSegment}/`
+      counts.set(fragment, (counts.get(fragment) || 0) + 1)
+    } catch {
+      continue
+    }
+  }
+
+  let winner: string | null = null
+  let winnerCount = 0
+  for (const [fragment, count] of counts.entries()) {
+    if (count > winnerCount) {
+      winner = fragment
+      winnerCount = count
+    }
+  }
+
+  if (!winner || winnerCount < 2) return null
+  return winner
+}
+
+function buildCandidateSubmitMethods(
+  discovery: DiscoveredSiteForm,
+): DiscoveredSiteForm['submitMethod'][] {
+  const ordered = new Set<DiscoveredSiteForm['submitMethod']>()
+
+  if (discovery.submitMethod) {
+    ordered.add(discovery.submitMethod)
+  }
+
+  if (discovery.submitMethod === 'typeahead') {
+    ordered.add('enter')
+    if (discovery.submitSelector) ordered.add('click')
+    if (!discovery.submitSelector) ordered.add('form')
+  } else if (discovery.submitMethod === 'click') {
+    ordered.add('enter')
+    ordered.add('form')
+  } else if (discovery.submitMethod === 'form') {
+    ordered.add('enter')
+    if (discovery.submitSelector) ordered.add('click')
+  } else if (discovery.submitMethod === 'enter') {
+    ordered.add('form')
+    if (discovery.submitSelector) ordered.add('click')
+  }
+
+  return Array.from(ordered)
+}
+
 function isSiteSearchEngineAutomation(
   config: SiteSearchAutomation | undefined,
 ): config is SiteSearchEngineAutomation {
@@ -1574,6 +2964,10 @@ function buildSiteSearchSuccessObservation(
   domain: string,
   strategy: string,
   results: SearchResult[],
+  automation?: SitePattern['automation'] | null,
+  accessStrategy?: SitePattern['accessStrategy'],
+  aliases?: string[],
+  characteristics?: string,
 ): ResearchObservation {
   return {
     kind: 'site_search_success',
@@ -1581,6 +2975,10 @@ function buildSiteSearchSuccessObservation(
     strategy,
     url: findResultUrlForDomain(results, domain) || results[0]?.url,
     message: `${domain} 站内搜索自动化成功返回结果`,
+    automation: automation || null,
+    accessStrategy,
+    aliases,
+    characteristics,
   }
 }
 
@@ -1607,6 +3005,42 @@ function buildSiteSearchFallbackObservations(
         : `${pattern.domain} 站内搜索之后，${humanizeSearchStrategy(strategy)} fallback 成功`,
     },
   ]
+}
+
+function buildExplicitSiteFallbackObservations(
+  requestedSites: string[],
+  strategy: string,
+  results: SearchResult[],
+  failureReason?: string,
+  siteKnowledge?: Pick<SiteKnowledge, 'getDecisionPattern'>,
+): ResearchObservation[] | undefined {
+  if (requestedSites.length === 0 || results.length === 0) return undefined
+
+  const observations: ResearchObservation[] = []
+
+  for (const site of requestedSites) {
+    const domain = site.trim().toLowerCase()
+    if (!domain) continue
+
+    const matchedUrl = findResultUrlForDomain(results, domain)
+    if (!matchedUrl) continue
+
+    const pattern = siteKnowledge?.getDecisionPattern(domain) ?? null
+    observations.push({
+      kind: 'site_search_fallback',
+      domain,
+      strategy,
+      url: matchedUrl,
+      message: failureReason
+        ? `${domain} 站内直搜未命中后，${humanizeSearchStrategy(strategy)} fallback 成功`
+        : `${domain} 通过 ${humanizeSearchStrategy(strategy)} 获取到受站点约束的结果`,
+      accessStrategy: pattern?.accessStrategy,
+      aliases: pattern?.aliases,
+      characteristics: '- 已验证可通过搜索引擎稳定发现该站点结果',
+    })
+  }
+
+  return observations.length > 0 ? observations : undefined
 }
 
 function findResultUrlForDomain(results: SearchResult[], domain: string): string | undefined {

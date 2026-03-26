@@ -227,11 +227,42 @@ function formatSiteInfo(data) {
   if (data.markdown) {
     parts.push(`\n### Pattern Markdown\n${data.markdown}`)
   }
+  if (data.candidate) {
+    parts.push('\n### Candidate Pattern')
+    if (data.candidate.access_strategy) {
+      parts.push(`Candidate strategy: ${data.candidate.access_strategy}`)
+    }
+    if (data.candidate.evidence_count !== undefined) {
+      parts.push(`Candidate evidence count: ${data.candidate.evidence_count}`)
+    }
+    if (data.candidate.markdown) {
+      parts.push(`${data.candidate.markdown}`)
+    }
+  }
   if (data.raw) {
     parts.push(`\n${data.raw}`)
   }
 
   return parts.join('\n')
+}
+
+function formatCandidateList(data) {
+  const candidates = data.candidates || []
+  if (candidates.length === 0) {
+    return 'No site-pattern candidates pending review.'
+  }
+
+  const lines = [`Found ${candidates.length} candidate pattern(s):\n`]
+  candidates.forEach((candidate, index) => {
+    lines.push(`${index + 1}. ${candidate.domain}`)
+    lines.push(`   Strategy: ${candidate.access_strategy || 'unknown'}`)
+    lines.push(`   Evidence: ${candidate.evidence_count ?? 0}`)
+    if (candidate.markdown) {
+      lines.push('   Markdown available')
+    }
+    lines.push('')
+  })
+  return lines.join('\n')
 }
 
 /**
@@ -500,8 +531,8 @@ server.tool(
 server.tool(
   'save_site_pattern',
   'Save or import a site pattern Markdown document into the local knowledge base. ' +
-    'Patterns are saved directly and take effect immediately. ' +
     'Use for persisting discovered access rules, pitfalls, and selectors for future sessions. ' +
+    'Prefer scope=candidate unless the pattern has been verified by a successful run. ' +
     'CRITICAL: If a pattern already exists for the domain, you MUST retrieve it using get_site_info first, ' +
     'then incrementally update its content (add new points, remove obsolete ones) before saving. ' +
     'Keep each section (characteristics, effective patterns, pitfalls) concise (max 8-10 points).',
@@ -513,18 +544,24 @@ server.tool(
       .string()
       .optional()
       .describe('Optional filename, e.g. "xiaohongshu.com.md".'),
+    scope: z
+      .enum(['verified', 'candidate'])
+      .optional()
+      .describe('verified becomes a formal pattern; candidate stays reviewable but still participates in runtime decisions.'),
   },
-  async ({ content, filename }) => {
+  async ({ content, filename, scope }) => {
     try {
+      const targetScope = scope || 'candidate'
       const data = await callInternal('POST', '/_internal/web-research/site-patterns/import', {
         content,
         filename,
+        scope: targetScope,
       })
       return {
         content: [
           {
             type: 'text',
-            text: `Saved site pattern for ${data.pattern?.domain || filename || 'unknown domain'}. Pattern is now active.`,
+            text: `Saved site pattern for ${data.pattern?.domain || filename || 'unknown domain'} (${data.pattern?.scope || targetScope}).`,
           },
         ],
       }
@@ -534,6 +571,64 @@ server.tool(
           {
             type: 'text',
             text: `Failed to save site pattern: ${err.message}`,
+          },
+        ],
+        isError: true,
+      }
+    }
+  },
+)
+
+server.tool(
+  'list_site_pattern_candidates',
+  'List candidate site patterns that were auto-observed or imported and are waiting for review.',
+  {},
+  async () => {
+    try {
+      const data = await callInternal('GET', '/_internal/web-research/site-patterns/candidates')
+      return { content: [{ type: 'text', text: formatCandidateList(data) }] }
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Failed to list site pattern candidates: ${err.message}`,
+          },
+        ],
+        isError: true,
+      }
+    }
+  },
+)
+
+server.tool(
+  'review_site_pattern',
+  'Approve or reject a candidate site pattern after manual review.',
+  {
+    domain: z.string().describe('Domain to review, e.g. "xiaohongshu.com".'),
+    action: z.enum(['approve', 'reject']).describe('approve moves candidate to verified; reject deletes the candidate.'),
+  },
+  async ({ domain, action }) => {
+    try {
+      const data = await callInternal('POST', '/_internal/web-research/site-patterns/review', {
+        domain,
+        action,
+      })
+      const status = action === 'approve' ? 'approved and promoted to verified' : 'rejected and removed'
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Candidate site pattern for ${data.domain || domain} ${status}.`,
+          },
+        ],
+      }
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Failed to review site pattern: ${err.message}`,
           },
         ],
         isError: true,

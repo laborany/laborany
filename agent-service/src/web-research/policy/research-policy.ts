@@ -19,6 +19,7 @@ export function buildResearchPolicySection(): string {
 - 搜索做发现，不做证明。搜索结果是线索入口，不是最终答案。
 - 一手来源优于二手转述。找到官网、官方文档、原始出处再给结论。
 - 对产品、API、公司功能、价格、政策这类“官方信息”问题，优先用 site / sites 限定到明显的官方域名后再搜。
+- 当用户已经明确指定站点时，优先直接使用该站点自身的搜索/访问经验，不要再改用 Google/Bing 搜索引擎兜一圈。
 - 找不到一手源时，明确告知用户来源局限性。
 - 使用 mcp__laborany_web__search 搜索，mcp__laborany_web__read_page 深度阅读。
 - mcp__laborany_web__search 默认优先走 Google，必要时回退到 Bing；若明确需要指定搜索引擎，可传 engine: "google" 或 engine: "bing"。

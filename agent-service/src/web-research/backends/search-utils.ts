@@ -32,6 +32,14 @@ export function collectRequestedSites(query: string, options?: SearchOptions): s
   return Array.from(new Set([...fromQuery, ...fromOptions].filter((site): site is string => Boolean(site))))
 }
 
+export function hasExplicitSiteConstraint(query: string, options?: SearchOptions): boolean {
+  if (typeof options?.site === 'string' && options.site.trim()) return true
+  if (Array.isArray(options?.sites) && options.sites.some(site => typeof site === 'string' && site.trim())) {
+    return true
+  }
+  return /(?:^|\s)site:[^\s]+/i.test(query)
+}
+
 export function doesUrlMatchAnySite(url: string, sites: string[]): boolean {
   if (sites.length === 0) return true
 

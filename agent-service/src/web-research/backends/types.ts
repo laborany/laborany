@@ -1,3 +1,5 @@
+import type { AccessStrategy, SiteAutomation } from '../knowledge/types.js'
+
 /* ╔══════════════════════════════════════════════════════════════════════════╗
  * ║                 Web Research Backend — 统一接口定义                       ║
  * ║                                                                        ║
@@ -44,6 +46,11 @@ export interface ResearchObservation {
   url?: string
   strategy?: string
   message?: string
+  accessStrategy?: AccessStrategy
+  aliases?: string[]
+  automation?: SiteAutomation | null
+  characteristics?: string
+  knownPitfalls?: string
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

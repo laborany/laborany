@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir } from 'fs/promises'
+import { readdir, readFile, writeFile, mkdir, unlink } from 'fs/promises'
 import { join } from 'path'
 import type {
   SitePattern,
@@ -157,15 +157,18 @@ function serializePattern(pattern: SitePattern): string {
  * - userDataDir: 用户经验（可写，运行时数据）
  *
  * 加载时合并，用户经验优先覆盖同名内置经验。
- * 所有自动保存和导入的经验直接写入 verified/ 目录，立即生效。
+ * 自动观察先进入 candidate，review 通过后再进入 verified。
  */
 export class SiteKnowledge {
   private userDataDir: string
   private builtinPatternsDir: string
   private userVerifiedDir: string
+  private userCandidateDir: string
   private patterns: Map<string, SitePattern> = new Map()
+  private candidatePatterns: Map<string, SitePattern> = new Map()
   private builtinCount = 0
   private userCount = 0
+  private candidateCount = 0
 
   constructor(
     userDataDir: string,
@@ -174,44 +177,56 @@ export class SiteKnowledge {
     this.userDataDir = userDataDir
     this.builtinPatternsDir = builtinPatternsDir
     this.userVerifiedDir = join(userDataDir, 'verified')
+    this.userCandidateDir = join(userDataDir, 'candidate')
   }
 
-  /**
-   * 初始化：创建用户数据目录结构，加载内置 + 用户 patterns
-   */
   async init(): Promise<void> {
-    // 创建用户数据目录结构
     await mkdir(this.userVerifiedDir, { recursive: true })
-
-    // 加载所有 patterns（内置 + 用户）
+    await mkdir(this.userCandidateDir, { recursive: true })
     await this.loadPatterns()
   }
 
-  /**
-   * 加载所有站点经验文件
-   * 先加载内置经验，再加载用户经验（覆盖同名内置经验）
-   */
   private async loadPatterns(): Promise<void> {
     this.patterns.clear()
+    this.candidatePatterns.clear()
 
-    // 1. 加载内置经验
     this.builtinCount = await this.loadFromDir(
       this.builtinPatternsDir,
       'builtin',
     )
-
-    // 2. 加载用户经验（覆盖同名内置经验）
     this.userCount = await this.loadFromDir(this.userVerifiedDir, 'user')
+    this.candidateCount = await this.loadCandidatePatterns()
 
     console.log(
-      `${LOG_PREFIX} Initialized with ${this.patterns.size} active patterns (${this.builtinCount} builtin, ${this.userCount} user)`,
+      `${LOG_PREFIX} Initialized with ${this.patterns.size} active patterns (${this.builtinCount} builtin, ${this.userCount} user, ${this.candidateCount} candidate)`,
     )
   }
 
-  /**
-   * 从指定目录加载 .md 格式的站点经验文件
-   * @returns 成功加载的文件数量
-   */
+  private async loadCandidatePatterns(): Promise<number> {
+    let files: string[]
+    try {
+      files = await readdir(this.userCandidateDir)
+    } catch {
+      return 0
+    }
+
+    let loaded = 0
+    for (const file of files.filter(f => f.endsWith('.md'))) {
+      try {
+        const content = await readFile(join(this.userCandidateDir, file), 'utf-8')
+        const pattern = parsePatternFile(content, 'user')
+        if (!pattern) continue
+        const merged = mergeUserPattern(this.patterns.get(pattern.domain.toLowerCase()) || null, pattern)
+        this.candidatePatterns.set(merged.domain.toLowerCase(), merged)
+        loaded++
+      } catch (err) {
+        console.log(`${LOG_PREFIX} Error reading candidate pattern file ${file}:`, err)
+      }
+    }
+
+    return loaded
+  }
+
   private async loadFromDir(
     dir: string,
     source: PatternSource,
@@ -221,9 +236,7 @@ export class SiteKnowledge {
       files = await readdir(dir)
     } catch {
       if (source === 'builtin') {
-        console.log(
-          `${LOG_PREFIX} Builtin patterns directory not found: ${dir}`,
-        )
+        console.log(`${LOG_PREFIX} Builtin patterns directory not found: ${dir}`)
       }
       return 0
     }
@@ -252,100 +265,133 @@ export class SiteKnowledge {
     return loaded
   }
 
-  /**
-   * 匹配 URL，返回对应的 SitePattern
-   */
   matchUrl(url: string): SitePattern | null {
     const result = matchByUrl(url, Array.from(this.patterns.values()))
     return result ? result.pattern : null
   }
 
-  /**
-   * 匹配查询文本，返回对应的 SitePattern
-   */
   matchQuery(query: string): SitePattern | null {
     const result = matchByQuery(query, Array.from(this.patterns.values()))
     return result ? result.pattern : null
   }
 
-  /**
-   * 直接按域名获取 SitePattern
-   */
+  matchUrlHint(url: string): SitePattern | null {
+    const result = matchByUrl(url, this.getDecisionPatterns())
+    return result ? result.pattern : null
+  }
+
+  matchQueryHint(query: string): SitePattern | null {
+    const result = matchByQuery(query, this.getDecisionPatterns())
+    return result ? result.pattern : null
+  }
+
   getPattern(domain: string): SitePattern | null {
     return this.patterns.get(domain.toLowerCase()) || null
   }
 
-  /**
-   * 获取所有 patterns
-   */
+  getDecisionPattern(domain: string): SitePattern | null {
+    const normalizedDomain = domain.toLowerCase()
+    const verified = this.patterns.get(normalizedDomain) || null
+    const candidate = this.candidatePatterns.get(normalizedDomain) || null
+    if (verified && candidate) {
+      return mergeUserPattern(verified, candidate)
+    }
+    return candidate || verified
+  }
+
+  getCandidatePattern(domain: string): SitePattern | null {
+    return this.candidatePatterns.get(domain.toLowerCase()) || null
+  }
+
   getAllPatterns(): SitePattern[] {
     return Array.from(this.patterns.values())
   }
 
-  /**
-   * 记录成功操作 — 直接保存到 verified/ 目录并立即生效
-   * - 已有 pattern：增加 evidenceCount，更新 effectivePatterns
-   * - 无 pattern 且 method 是 'cdp'：自动创建新 pattern
-   */
+  getAllCandidatePatterns(): SitePattern[] {
+    return Array.from(this.candidatePatterns.values())
+  }
+
   async recordSuccess(
     domain: string,
-    evidence: { method: string; url?: string; observations?: string[] },
+    evidence: {
+      method: string
+      url?: string
+      observations?: string[]
+      accessStrategy?: AccessStrategy
+      aliases?: string[]
+      automation?: SitePattern['automation']
+      characteristics?: string
+      knownPitfalls?: string
+    },
   ): Promise<void> {
     const normalizedDomain = domain.toLowerCase()
     const existing = this.patterns.get(normalizedDomain)
+    const existingCandidate = this.candidatePatterns.get(normalizedDomain)
     const observationLines = resolveObservationLines(evidence)
 
-    if (existing) {
-      const updated = buildObservedPattern(existing, evidence, normalizedDomain)
-      updated.evidenceCount += 1
-      updated.verifiedAt = new Date().toISOString().slice(0, 10)
-      updated.source = 'user'
-      for (const line of observationLines) {
-        updated.effectivePatterns = appendObservationLine(
-          updated.effectivePatterns,
-          line,
-        )
+    if (existing || existingCandidate) {
+      const candidate = existingCandidate
+        ? { ...existingCandidate }
+        : buildObservedCandidate(existing!, evidence, normalizedDomain)
+      candidate.evidenceCount += 1
+      candidate.verifiedAt = new Date().toISOString().slice(0, 10)
+      candidate.source = 'user'
+      candidate.aliases = mergeAliases(candidate.aliases, evidence.aliases)
+      candidate.accessStrategy = mergeAccessStrategy(candidate.accessStrategy, evidence.accessStrategy)
+      candidate.automation = mergeAutomationConfig(candidate.automation || null, evidence.automation || null)
+      if (evidence.characteristics) {
+        candidate.characteristics = appendKnowledgeLine(candidate.characteristics, evidence.characteristics)
       }
-      this.patterns.set(normalizedDomain, updated)
-      await this.savePattern(updated)
-      console.log(
-        `${LOG_PREFIX} Updated pattern for ${normalizedDomain}: count=${updated.evidenceCount}`,
-      )
-    } else if (evidence.method === 'cdp') {
+      if (evidence.knownPitfalls) {
+        candidate.knownPitfalls = appendKnowledgeLine(candidate.knownPitfalls, evidence.knownPitfalls)
+      }
+      for (const line of observationLines) {
+        candidate.effectivePatterns = appendObservationLine(candidate.effectivePatterns, line)
+      }
+      this.candidatePatterns.set(normalizedDomain, candidate)
+      await this.saveCandidatePattern(candidate)
+      console.log(`${LOG_PREFIX} Updated candidate evidence for ${normalizedDomain}: count=${candidate.evidenceCount}`)
+    } else if (shouldAutoCreateCandidate(evidence)) {
       const newPattern: SitePattern = {
         domain: normalizedDomain,
-        aliases: [],
-        accessStrategy: 'cdp_preferred',
+        aliases: mergeAliases([], evidence.aliases),
+        accessStrategy: evidence.accessStrategy || inferAccessStrategyFromMethod(evidence.method),
         verifiedAt: new Date().toISOString().slice(0, 10),
         evidenceCount: 1,
-        characteristics: '- 需要浏览器动态渲染才能获取完整内容',
-        effectivePatterns: observationLines.join('\n').trim()
-          || '- [auto-observation] 通过 CDP 浏览器成功读取页面',
-        knownPitfalls: '',
+        characteristics: evidence.characteristics || inferCharacteristicsFromMethod(evidence.method),
+        effectivePatterns: observationLines.join('\n').trim() || formatObservationLine(evidence),
+        knownPitfalls: evidence.knownPitfalls || '',
         source: 'user',
+        automation: evidence.automation || null,
       }
-      this.patterns.set(normalizedDomain, newPattern)
-      await this.savePattern(newPattern)
-      console.log(
-        `${LOG_PREFIX} Auto-created pattern for ${normalizedDomain} (cdp_preferred)`,
-      )
+      this.candidatePatterns.set(normalizedDomain, newPattern)
+      await this.saveCandidatePattern(newPattern)
+      console.log(`${LOG_PREFIX} Auto-created candidate pattern for ${normalizedDomain} (${newPattern.accessStrategy})`)
     }
   }
 
-  /**
-   * 将 pattern 保存到用户数据目录的 verified/ 下（不修改内置文件）
-   */
   private async savePattern(pattern: SitePattern): Promise<void> {
     const filePath = join(this.userVerifiedDir, `${pattern.domain}.md`)
-    const content = serializePattern(pattern)
-    await writeFile(filePath, content, 'utf-8')
+    await writeFile(filePath, serializePattern(pattern), 'utf-8')
     this.userCount = await this.countMarkdownFiles(this.userVerifiedDir)
   }
 
-  /**
-   * 返回人类可读的站点经验信息（给模型看的）
-   * 包含来源标识（内置 vs 用户自定义）
-   */
+  private async saveCandidatePattern(pattern: SitePattern): Promise<void> {
+    const filePath = join(this.userCandidateDir, `${pattern.domain}.md`)
+    await writeFile(filePath, serializePattern(pattern), 'utf-8')
+    this.candidateCount = await this.countMarkdownFiles(this.userCandidateDir)
+  }
+
+  private async removeCandidatePattern(domain: string): Promise<void> {
+    try {
+      await unlink(join(this.userCandidateDir, `${domain}.md`))
+    } catch {
+      // ignore if already gone
+    }
+    this.candidatePatterns.delete(domain.toLowerCase())
+    this.candidateCount = await this.countMarkdownFiles(this.userCandidateDir)
+  }
+
   getFormattedInfo(domain: string): string {
     const pattern = this.getPattern(domain)
     if (!pattern) {
@@ -353,7 +399,6 @@ export class SiteKnowledge {
     }
 
     const sourceLabel = pattern.source === 'builtin' ? '内置' : '用户自定义'
-
     const lines: string[] = [
       `# ${pattern.domain} 站点经验`,
       '',
@@ -383,33 +428,43 @@ export class SiteKnowledge {
     return serializePattern(pattern)
   }
 
+  getCandidatePatternMarkdown(domain: string): string | null {
+    const pattern = this.getCandidatePattern(domain)
+    if (!pattern) return null
+    return serializePattern(pattern)
+  }
+
   getStats(): {
     totalCount: number
     builtinCount: number
     userCount: number
+    candidateCount: number
   } {
     return {
       totalCount: this.patterns.size,
       builtinCount: this.builtinCount,
       userCount: this.userCount,
+      candidateCount: this.candidateCount,
     }
   }
 
   getPaths(): {
     rootDir: string
     verifiedDir: string
+    candidateDir: string
     builtinDir: string
   } {
     return {
       rootDir: this.userDataDir,
       verifiedDir: this.userVerifiedDir,
+      candidateDir: this.userCandidateDir,
       builtinDir: this.builtinPatternsDir,
     }
   }
 
   async importPattern(
     content: string,
-    options?: { filename?: string },
+    options?: { filename?: string; scope?: 'verified' | 'candidate' },
   ): Promise<SitePattern> {
     const parsedPattern = parsePatternFile(content, 'user')
     if (!parsedPattern) {
@@ -420,14 +475,49 @@ export class SiteKnowledge {
       parsedPattern,
     )
 
+    const scope = options?.scope === 'verified' ? 'verified' : 'candidate'
     const fileName = sanitizePatternFileName(options?.filename || `${pattern.domain}.md`)
-    await writeFile(join(this.userVerifiedDir, fileName), serializePattern(pattern), 'utf-8')
+    const targetDir = scope === 'candidate' ? this.userCandidateDir : this.userVerifiedDir
+    await writeFile(join(targetDir, fileName), serializePattern(pattern), 'utf-8')
 
-    this.patterns.set(pattern.domain.toLowerCase(), pattern)
-    this.userCount = await this.countMarkdownFiles(this.userVerifiedDir)
+    if (scope === 'verified') {
+      this.patterns.set(pattern.domain.toLowerCase(), pattern)
+      this.userCount = await this.countMarkdownFiles(this.userVerifiedDir)
+      if (this.candidatePatterns.has(pattern.domain.toLowerCase())) {
+        await this.removeCandidatePattern(pattern.domain.toLowerCase())
+      }
+    } else {
+      this.candidatePatterns.set(pattern.domain.toLowerCase(), pattern)
+      this.candidateCount = await this.countMarkdownFiles(this.userCandidateDir)
+    }
 
-    console.log(`${LOG_PREFIX} Imported pattern for ${pattern.domain}`)
+    console.log(`${LOG_PREFIX} Imported pattern for ${pattern.domain} into ${scope}`)
     return pattern
+  }
+
+  async reviewCandidate(
+    domain: string,
+    action: 'approve' | 'reject',
+  ): Promise<SitePattern | null> {
+    const normalizedDomain = domain.toLowerCase()
+    const candidate = this.candidatePatterns.get(normalizedDomain)
+    if (!candidate) {
+      throw new Error(`未找到 ${domain} 的 candidate pattern`)
+    }
+
+    if (action === 'reject') {
+      await this.removeCandidatePattern(normalizedDomain)
+      console.log(`${LOG_PREFIX} Rejected candidate pattern for ${normalizedDomain}`)
+      return null
+    }
+
+    const merged = mergeUserPattern(this.patterns.get(normalizedDomain) || null, candidate)
+    merged.source = 'user'
+    await this.savePattern(merged)
+    this.patterns.set(normalizedDomain, merged)
+    await this.removeCandidatePattern(normalizedDomain)
+    console.log(`${LOG_PREFIX} Approved candidate pattern for ${normalizedDomain}`)
+    return merged
   }
 
   private async countMarkdownFiles(dir: string): Promise<number> {
@@ -437,6 +527,21 @@ export class SiteKnowledge {
     } catch {
       return 0
     }
+  }
+
+  private getDecisionPatterns(): SitePattern[] {
+    const merged = new Map<string, SitePattern>()
+
+    for (const [domain, pattern] of this.patterns.entries()) {
+      merged.set(domain, pattern)
+    }
+
+    for (const [domain, candidate] of this.candidatePatterns.entries()) {
+      const existing = merged.get(domain)
+      merged.set(domain, existing ? mergeUserPattern(existing, candidate) : candidate)
+    }
+
+    return Array.from(merged.values())
   }
 }
 
@@ -473,7 +578,7 @@ function mergeUserPattern(
   }
 }
 
-function buildObservedPattern(
+function buildObservedCandidate(
   basePattern: SitePattern,
   evidence: { method: string; url?: string; observations?: string[] },
   normalizedDomain: string,
@@ -483,6 +588,7 @@ function buildObservedPattern(
     domain: normalizedDomain,
     source: 'user',
     verifiedAt: new Date().toISOString().slice(0, 10),
+    evidenceCount: 0,
     effectivePatterns: resolveObservationLines(evidence).reduce(
       (section, line) => appendObservationLine(section, line),
       basePattern.effectivePatterns,
@@ -496,56 +602,40 @@ function appendObservationLine(section: string, line: string): string {
   if (normalized.includes(line)) return normalized
 
   const combined = `${normalized}\n${line}`.trim()
-
-  // Cap auto-observation lines to prevent unbounded growth.
-  // Manual (non-auto-observation) lines are kept intact.
-  const MAX_AUTO_OBSERVATIONS = 10
+  const maxAutoObservations = 10
   const lines = combined.split('\n')
   const manualLines: string[] = []
   const autoLines: string[] = []
 
-  for (const l of lines) {
-    if (l.includes('[auto-observation]')) {
-      autoLines.push(l)
+  for (const currentLine of lines) {
+    if (currentLine.includes('[auto-observation]')) {
+      autoLines.push(currentLine)
     } else {
-      manualLines.push(l)
+      manualLines.push(currentLine)
     }
   }
 
-  // Keep only the highest scored auto-observation lines
-  const trimmedAutoLines = autoLines.length > MAX_AUTO_OBSERVATIONS
+  const trimmedAutoLines = autoLines.length > maxAutoObservations
     ? autoLines
-        .map(line => ({ line, score: scoreObservation(line) }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, MAX_AUTO_OBSERVATIONS)
-        .map(item => item.line)
+      .map(currentLine => ({ line: currentLine, score: scoreObservation(currentLine) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, maxAutoObservations)
+      .map(item => item.line)
     : autoLines
 
   return [...manualLines, ...trimmedAutoLines].join('\n').trim()
 }
 
-/**
- * 启发式评估自动观察记录的价值得分
- * @param line 自动观察日志文本
- * @returns 0-100 的得分，分数越高越有价值
- */
 function scoreObservation(line: string): number {
   if (!line) return 0
-
-  // 1. 最高优先级：包含 fallback 降级恢复的 URL
   if (line.includes('fallback')) return 100
-
-  // 2. 高优先级：包含站内搜索交互的 URL
   if (line.includes('站内搜索自动化')) return 80
 
-  // 3. 中等优先级：包含查询参数或特定关键字的 URL
   if (line.includes('?')) {
     let score = 50
-    // 包含搜索相关的关键参数
     if (line.includes('search') || line.includes('query') || line.includes('page') || line.includes('keyword') || line.includes('q=')) {
       score += 10
     }
-    // URL 层级较深，通常是具体的内容页
     const slashCount = (line.match(/\//g) || []).length
     if (slashCount > 4) {
       score += 5
@@ -553,17 +643,24 @@ function scoreObservation(line: string): number {
     return score
   }
 
-  // 4. 最低优先级：普通的短 URL（通常是主域名）
   const urlMatch = line.match(/https?:\/\/[^\s]+/)
   if (urlMatch) {
     const url = urlMatch[0]
-    // 去掉协议后的路径长度
     const pathPart = url.replace(/https?:\/\//, '')
-    if (pathPart.length > 20) return 30 // 有一定深度的普通页面
-    if (pathPart.includes('/')) return 20 // 至少有一个路径
+    if (pathPart.length > 20) return 30
+    if (pathPart.includes('/')) return 20
   }
 
   return 10
+}
+
+function appendKnowledgeLine(section: string, line: string): string {
+  const normalizedLine = line.trim()
+  if (!normalizedLine) return section.trim()
+  const normalizedSection = section.trim()
+  if (!normalizedSection) return normalizedLine
+  if (normalizedSection.includes(normalizedLine)) return normalizedSection
+  return `${normalizedSection}\n${normalizedLine}`.trim()
 }
 
 function resolveObservationLines(evidence: {
@@ -599,6 +696,80 @@ function formatObservationLine(evidence: { method: string; url?: string }): stri
   }
 }
 
+function mergeAliases(currentAliases: string[], nextAliases?: string[]): string[] {
+  const merged = new Set<string>()
+  for (const alias of currentAliases) {
+    const trimmed = alias.trim()
+    if (trimmed) merged.add(trimmed)
+  }
+  for (const alias of nextAliases || []) {
+    const trimmed = alias.trim()
+    if (trimmed) merged.add(trimmed)
+  }
+  return Array.from(merged)
+}
+
+function mergeAccessStrategy(
+  current: AccessStrategy,
+  next?: AccessStrategy,
+): AccessStrategy {
+  if (!next) return current
+
+  const rank: Record<AccessStrategy, number> = {
+    static_ok: 1,
+    cdp_preferred: 2,
+    cdp_only: 3,
+  }
+
+  return rank[next] > rank[current] ? next : current
+}
+
+function shouldAutoCreateCandidate(evidence: {
+  method: string
+  accessStrategy?: AccessStrategy
+  automation?: SitePattern['automation']
+}): boolean {
+  if (evidence.automation) return true
+  if (evidence.accessStrategy) return true
+
+  return [
+    'cdp',
+    'cdp_search',
+    'search_fallback',
+    'structured_read',
+    'browser_fallback',
+  ].includes(evidence.method)
+}
+
+function inferAccessStrategyFromMethod(method: string): AccessStrategy {
+  switch (method) {
+    case 'search_fallback':
+      return 'static_ok'
+    case 'cdp':
+    case 'cdp_search':
+    case 'structured_read':
+    case 'browser_fallback':
+    default:
+      return 'cdp_preferred'
+  }
+}
+
+function inferCharacteristicsFromMethod(method: string): string {
+  switch (method) {
+    case 'search_fallback':
+      return '- 已验证可通过搜索引擎稳定发现该站点结果'
+    case 'cdp_search':
+      return '- 已验证浏览器站内搜索或浏览器定向搜索可稳定获取该站点结果'
+    case 'structured_read':
+      return '- 已验证需要结构化浏览器提取才能稳定获取完整内容'
+    case 'browser_fallback':
+      return '- 静态读取不稳定，浏览器兜底可成功获取内容'
+    case 'cdp':
+    default:
+      return '- 需要浏览器动态渲染才能获取完整内容'
+  }
+}
+
 function mergeAutomationConfig(
   builtinAutomation: SitePattern['automation'],
   userAutomation: SitePattern['automation'],
@@ -627,7 +798,6 @@ function mergeAutomationConfig(
   }
 }
 
-// 导出工具函数供测试使用
 export { parsePatternFile, serializePattern, extractDomain }
 
 function sanitizePatternFileName(fileName: string): string {

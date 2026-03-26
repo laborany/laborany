@@ -2239,6 +2239,7 @@ router.post('/', async (req: Request, res: Response) => {
     })
     const systemPrompt = buildConverseSystemPrompt(memoryCtx, effectiveRuntimeContext, {
       forceWidgetDirectMode: widgetRuntimePlan.forceDirectMode,
+      latestUserQuery: query,
     })
     const skill = {
       meta: { id: '__converse__', name: '对话助手', description: '多轮对话', kind: 'skill' as const },

@@ -42,6 +42,15 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+function isSafeExternalUrl(targetUrl) {
+  try {
+    const parsed = new URL(targetUrl)
+    return ['http:', 'https:', 'mailto:', 'chrome:', 'microsoft-edge:', 'googlechrome:'].includes(parsed.protocol)
+  } catch {
+    return false
+  }
+}
+
 function ensureDirSync(dir) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
@@ -614,25 +623,32 @@ function createWindow() {
     },
   })
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http:') || url.startsWith('https:')) {
-      shell.openExternal(url)
-      return { action: 'deny' }
-    }
-    return { action: 'allow' }
-  })
-
-  /* 安全兜底：拦截 iframe 导航到外部 URL */
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    const currentUrl = mainWindow.webContents.getURL()
-    if (url !== currentUrl && (url.startsWith('http:') || url.startsWith('https:'))) {
-      event.preventDefault()
-      shell.openExternal(url)
-    }
-  })
-
   const url = `http://localhost:${API_PORT}`
+  const appOrigin = new URL(url).origin
   console.log(`[Electron] Loading: ${url}`)
+
+  mainWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
+    if (targetUrl && targetUrl.startsWith(appOrigin)) {
+      return { action: 'allow' }
+    }
+    if (isSafeExternalUrl(targetUrl)) {
+      shell.openExternal(targetUrl).catch((error) => {
+        console.error(`[Electron] Failed to open external URL: ${targetUrl}`, error)
+      })
+    }
+    return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
+    if (!targetUrl || targetUrl === url) return
+    if (targetUrl.startsWith(`http://localhost:${API_PORT}`)) return
+    if (isSafeExternalUrl(targetUrl)) {
+      event.preventDefault()
+      shell.openExternal(targetUrl).catch((error) => {
+        console.error(`[Electron] Failed to redirect navigation externally: ${targetUrl}`, error)
+      })
+    }
+  })
 
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.show()

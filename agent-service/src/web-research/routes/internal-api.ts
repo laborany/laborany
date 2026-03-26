@@ -308,19 +308,21 @@ export function createWebResearchRouter(runtime: WebResearchRuntime): Router {
 
   router.post('/site-patterns/import', async (req, res) => {
     try {
-      const { content, filename } = req.body
+      const { content, filename, scope } = req.body
       if (!content || typeof content !== 'string') {
         res.status(400).json({ error: 'content is required' })
         return
       }
       const imported = await runtime.importSitePattern(content, {
         filename: typeof filename === 'string' ? filename : undefined,
+        scope: scope === 'verified' ? 'verified' : 'candidate',
       })
       res.json({
         ok: true,
         pattern: {
           domain: imported.domain,
           access_strategy: imported.accessStrategy,
+          scope: scope === 'verified' ? 'verified' : 'candidate',
         },
       })
     } catch (err) {
@@ -328,6 +330,52 @@ export function createWebResearchRouter(runtime: WebResearchRuntime): Router {
       const message = err instanceof Error ? err.message : String(err)
       const status = /格式无效|frontmatter/i.test(message) ? 400 : 500
       res.status(status).json({ error: message })
+    }
+  })
+
+  router.get('/site-patterns/candidates', (_req, res) => {
+    try {
+      res.json({
+        candidates: runtime.listCandidateSitePatterns(),
+      })
+    } catch (err) {
+      console.error('[WebResearch:API] /site-patterns/candidates error:', err)
+      res.status(500).json({
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  })
+
+  router.post('/site-patterns/review', async (req, res) => {
+    try {
+      const { domain, action } = req.body
+      if (!domain || typeof domain !== 'string') {
+        res.status(400).json({ error: 'domain is required' })
+        return
+      }
+      if (action !== 'approve' && action !== 'reject') {
+        res.status(400).json({ error: 'action must be approve or reject' })
+        return
+      }
+
+      const result = await runtime.reviewCandidateSitePattern(domain, action)
+      res.json({
+        ok: true,
+        domain,
+        action,
+        pattern: result
+          ? {
+            domain: result.domain,
+            access_strategy: result.accessStrategy,
+            source: result.source,
+          }
+          : null,
+      })
+    } catch (err) {
+      console.error('[WebResearch:API] /site-patterns/review error:', err)
+      res.status(500).json({
+        error: err instanceof Error ? err.message : String(err),
+      })
     }
   })
 
@@ -402,9 +450,9 @@ async function resolveArtifactPath(
 
   if (typeof filePath === 'string' && filePath.trim()) {
     const raw = filePath.trim()
-      const target = isAbsolute(raw)
-        ? raw
-        : taskDir
+    const target = isAbsolute(raw)
+      ? raw
+      : taskDir
         ? join(taskDir, raw)
         : join(baseDir, raw)
     await mkdir(dirname(target), { recursive: true })

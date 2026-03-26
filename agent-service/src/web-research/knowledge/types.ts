@@ -29,8 +29,10 @@ export interface SiteSearchFormAutomation {
   entryUrl: string
   keywordAliases?: string[]
   dismissSelectors?: string[]
+  openSelector?: string
   inputSelector: string
-  submitSelector: string
+  submitSelector?: string
+  submitMethod?: 'click' | 'enter' | 'form' | 'typeahead'
   waitUrlIncludes?: string
   waitSelector?: string
   postSubmitDelayMs?: number

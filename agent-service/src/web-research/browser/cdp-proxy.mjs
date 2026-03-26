@@ -374,8 +374,14 @@ const server = http.createServer(async (req, res) => {
       if (resp.result?.result?.value !== undefined) {
         res.end(JSON.stringify({ value: resp.result.result.value }));
       } else if (resp.result?.exceptionDetails) {
+        const exception = resp.result.exceptionDetails;
+        const error =
+          exception.exception?.description
+          || exception.exception?.value
+          || exception.text
+          || 'Uncaught';
         res.statusCode = 400;
-        res.end(JSON.stringify({ error: resp.result.exceptionDetails.text }));
+        res.end(JSON.stringify({ error }));
       } else {
         res.end(JSON.stringify(resp.result));
       }
