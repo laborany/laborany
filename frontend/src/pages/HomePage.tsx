@@ -140,10 +140,18 @@ export default function HomePage() {
 
     if (action.action === 'recommend_capability' && action.targetId && action.query) {
       const attachmentIds = action.attachmentIds || converse.sessionFileIds
+      const query = stripAttachmentMarkers(action.query)
+
+      // 高置信度匹配：直接跳转执行页，不显示确认弹窗
+      if (typeof action.confidence === 'number' && action.confidence >= 0.85) {
+        navigate(buildExecutePath(action.targetId, query, attachmentIds))
+        return
+      }
+
       setCandidate({
         variant: 'recommend',
         targetId: action.targetId,
-        query: stripAttachmentMarkers(action.query),
+        query,
         attachmentIds,
         reason: action.reason,
         confidence: action.confidence,
