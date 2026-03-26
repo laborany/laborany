@@ -622,6 +622,15 @@ function createWindow() {
     return { action: 'allow' }
   })
 
+  /* 安全兜底：拦截 iframe 导航到外部 URL */
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const currentUrl = mainWindow.webContents.getURL()
+    if (url !== currentUrl && (url.startsWith('http:') || url.startsWith('https:'))) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
+
   const url = `http://localhost:${API_PORT}`
   console.log(`[Electron] Loading: ${url}`)
 

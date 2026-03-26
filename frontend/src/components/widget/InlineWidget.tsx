@@ -112,6 +112,19 @@ export function InlineWidget({
     if (!iframeWindow || event.source !== iframeWindow) return
     if (!isPlainObject(data)) return
 
+    // External link — open in system browser
+    if (
+      data.type === 'external-link'
+      && data.source === 'laborany-widget'
+      && typeof data.url === 'string'
+    ) {
+      const url = data.url as string
+      if (url.startsWith('http:') || url.startsWith('https:')) {
+        window.open(url, '_blank')
+      }
+      return
+    }
+
     // Height resize
     if (
       data.type === 'widget-resize'

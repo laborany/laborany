@@ -495,9 +495,28 @@ export function buildIframeShellDoc(widgetId: string, options?: BuildIframeShell
         }
       });
 
+      function installLinkInterceptor() {
+        document.addEventListener('click', function(e) {
+          var target = e.target;
+          while (target && target.tagName !== 'A') target = target.parentElement;
+          if (!target || !target.href) return;
+          var href = target.href;
+          if (href.startsWith('http:') || href.startsWith('https:')) {
+            e.preventDefault();
+            e.stopPropagation();
+            window.parent.postMessage({
+              type: 'external-link',
+              source: 'laborany-widget',
+              url: href
+            }, '*');
+          }
+        }, true);
+      }
+
       installStorageShim();
       installErrorGuards();
       installAgentBridge();
+      installLinkInterceptor();
     })();
   </script>
 </head>
