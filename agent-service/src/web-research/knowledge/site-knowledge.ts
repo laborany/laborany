@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir, unlink } from 'fs/promises'
+import { readdir, readFile, writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import type {
   SitePattern,
@@ -93,11 +93,11 @@ function parseAutomationSection(body: string): SiteAutomation | null {
   if (!section) return null
 
   const codeBlockMatch = section.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  const candidate = codeBlockMatch?.[1]?.trim() || section.trim()
-  if (!candidate) return null
+  const jsonCandidate = codeBlockMatch?.[1]?.trim() || section.trim()
+  if (!jsonCandidate) return null
 
   try {
-    const parsed = JSON.parse(candidate) as unknown
+    const parsed = JSON.parse(jsonCandidate) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return null
     }
@@ -157,17 +157,15 @@ function serializePattern(pattern: SitePattern): string {
  * - userDataDir: 用户经验（可写，运行时数据）
  *
  * 加载时合并，用户经验优先覆盖同名内置经验。
+ * 所有自动保存和导入的经验直接写入 verified/ 目录，立即生效。
  */
 export class SiteKnowledge {
   private userDataDir: string
   private builtinPatternsDir: string
   private userVerifiedDir: string
-  private userCandidateDir: string
   private patterns: Map<string, SitePattern> = new Map()
-  private candidatePatterns: Map<string, SitePattern> = new Map()
   private builtinCount = 0
   private userCount = 0
-  private candidateCount = 0
 
   constructor(
     userDataDir: string,
@@ -176,7 +174,6 @@ export class SiteKnowledge {
     this.userDataDir = userDataDir
     this.builtinPatternsDir = builtinPatternsDir
     this.userVerifiedDir = join(userDataDir, 'verified')
-    this.userCandidateDir = join(userDataDir, 'candidate')
   }
 
   /**
@@ -185,7 +182,6 @@ export class SiteKnowledge {
   async init(): Promise<void> {
     // 创建用户数据目录结构
     await mkdir(this.userVerifiedDir, { recursive: true })
-    await mkdir(this.userCandidateDir, { recursive: true })
 
     // 加载所有 patterns（内置 + 用户）
     await this.loadPatterns()
@@ -197,7 +193,6 @@ export class SiteKnowledge {
    */
   private async loadPatterns(): Promise<void> {
     this.patterns.clear()
-    this.candidatePatterns.clear()
 
     // 1. 加载内置经验
     this.builtinCount = await this.loadFromDir(
@@ -207,36 +202,10 @@ export class SiteKnowledge {
 
     // 2. 加载用户经验（覆盖同名内置经验）
     this.userCount = await this.loadFromDir(this.userVerifiedDir, 'user')
-    this.candidateCount = await this.loadCandidatePatterns()
 
     console.log(
-      `${LOG_PREFIX} Initialized with ${this.patterns.size} active patterns (${this.builtinCount} builtin, ${this.userCount} user, ${this.candidateCount} candidate)`,
+      `${LOG_PREFIX} Initialized with ${this.patterns.size} active patterns (${this.builtinCount} builtin, ${this.userCount} user)`,
     )
-  }
-
-  private async loadCandidatePatterns(): Promise<number> {
-    let files: string[]
-    try {
-      files = await readdir(this.userCandidateDir)
-    } catch {
-      return 0
-    }
-
-    let loaded = 0
-    for (const file of files.filter(f => f.endsWith('.md'))) {
-      try {
-        const content = await readFile(join(this.userCandidateDir, file), 'utf-8')
-        const pattern = parsePatternFile(content, 'user')
-        if (!pattern) continue
-        const merged = mergeUserPattern(this.patterns.get(pattern.domain.toLowerCase()) || null, pattern)
-        this.candidatePatterns.set(merged.domain.toLowerCase(), merged)
-        loaded++
-      } catch (err) {
-        console.log(`${LOG_PREFIX} Error reading candidate pattern file ${file}:`, err)
-      }
-    }
-
-    return loaded
   }
 
   /**
@@ -306,25 +275,17 @@ export class SiteKnowledge {
     return this.patterns.get(domain.toLowerCase()) || null
   }
 
-  getCandidatePattern(domain: string): SitePattern | null {
-    return this.candidatePatterns.get(domain.toLowerCase()) || null
-  }
-
   /**
-   * 获取所有 verified patterns
+   * 获取所有 patterns
    */
   getAllPatterns(): SitePattern[] {
     return Array.from(this.patterns.values())
   }
 
-  getAllCandidatePatterns(): SitePattern[] {
-    return Array.from(this.candidatePatterns.values())
-  }
-
   /**
-   * 记录成功操作
-   * - 已有 pattern：增加 evidenceCount，写入 candidate 目录
-   * - 无 pattern 且 method 是 'cdp'：自动创建新 candidate pattern
+   * 记录成功操作 — 直接保存到 verified/ 目录并立即生效
+   * - 已有 pattern：增加 evidenceCount，更新 effectivePatterns
+   * - 无 pattern 且 method 是 'cdp'：自动创建新 pattern
    */
   async recordSuccess(
     domain: string,
@@ -332,26 +293,23 @@ export class SiteKnowledge {
   ): Promise<void> {
     const normalizedDomain = domain.toLowerCase()
     const existing = this.patterns.get(normalizedDomain)
-    const existingCandidate = this.candidatePatterns.get(normalizedDomain)
     const observationLines = resolveObservationLines(evidence)
 
     if (existing) {
-      const candidate = existingCandidate
-        ? { ...existingCandidate }
-        : buildObservedCandidate(existing, evidence, normalizedDomain)
-      candidate.evidenceCount += 1
-      candidate.verifiedAt = new Date().toISOString().slice(0, 10)
-      candidate.source = 'user'
+      const updated = buildObservedPattern(existing, evidence, normalizedDomain)
+      updated.evidenceCount += 1
+      updated.verifiedAt = new Date().toISOString().slice(0, 10)
+      updated.source = 'user'
       for (const line of observationLines) {
-        candidate.effectivePatterns = appendObservationLine(
-          candidate.effectivePatterns,
+        updated.effectivePatterns = appendObservationLine(
+          updated.effectivePatterns,
           line,
         )
       }
-      this.candidatePatterns.set(normalizedDomain, candidate)
-      await this.saveCandidatePattern(candidate)
+      this.patterns.set(normalizedDomain, updated)
+      await this.savePattern(updated)
       console.log(
-        `${LOG_PREFIX} Updated candidate evidence for ${normalizedDomain}: count=${candidate.evidenceCount}`,
+        `${LOG_PREFIX} Updated pattern for ${normalizedDomain}: count=${updated.evidenceCount}`,
       )
     } else if (evidence.method === 'cdp') {
       const newPattern: SitePattern = {
@@ -366,10 +324,10 @@ export class SiteKnowledge {
         knownPitfalls: '',
         source: 'user',
       }
-      this.candidatePatterns.set(normalizedDomain, newPattern)
-      await this.saveCandidatePattern(newPattern)
+      this.patterns.set(normalizedDomain, newPattern)
+      await this.savePattern(newPattern)
       console.log(
-        `${LOG_PREFIX} Auto-created candidate pattern for ${normalizedDomain} (cdp_preferred)`,
+        `${LOG_PREFIX} Auto-created pattern for ${normalizedDomain} (cdp_preferred)`,
       )
     }
   }
@@ -382,23 +340,6 @@ export class SiteKnowledge {
     const content = serializePattern(pattern)
     await writeFile(filePath, content, 'utf-8')
     this.userCount = await this.countMarkdownFiles(this.userVerifiedDir)
-  }
-
-  private async saveCandidatePattern(pattern: SitePattern): Promise<void> {
-    const filePath = join(this.userCandidateDir, `${pattern.domain}.md`)
-    const content = serializePattern(pattern)
-    await writeFile(filePath, content, 'utf-8')
-    this.candidateCount = await this.countMarkdownFiles(this.userCandidateDir)
-  }
-
-  private async removeCandidatePattern(domain: string): Promise<void> {
-    try {
-      await unlink(join(this.userCandidateDir, `${domain}.md`))
-    } catch {
-      // ignore if already gone
-    }
-    this.candidatePatterns.delete(domain.toLowerCase())
-    this.candidateCount = await this.countMarkdownFiles(this.userCandidateDir)
   }
 
   /**
@@ -442,43 +383,33 @@ export class SiteKnowledge {
     return serializePattern(pattern)
   }
 
-  getCandidatePatternMarkdown(domain: string): string | null {
-    const pattern = this.getCandidatePattern(domain)
-    if (!pattern) return null
-    return serializePattern(pattern)
-  }
-
   getStats(): {
     totalCount: number
     builtinCount: number
     userCount: number
-    candidateCount: number
   } {
     return {
       totalCount: this.patterns.size,
       builtinCount: this.builtinCount,
       userCount: this.userCount,
-      candidateCount: this.candidateCount,
     }
   }
 
   getPaths(): {
     rootDir: string
     verifiedDir: string
-    candidateDir: string
     builtinDir: string
   } {
     return {
       rootDir: this.userDataDir,
       verifiedDir: this.userVerifiedDir,
-      candidateDir: this.userCandidateDir,
       builtinDir: this.builtinPatternsDir,
     }
   }
 
   async importPattern(
     content: string,
-    options?: { filename?: string; scope?: 'verified' | 'candidate' },
+    options?: { filename?: string },
   ): Promise<SitePattern> {
     const parsedPattern = parsePatternFile(content, 'user')
     if (!parsedPattern) {
@@ -489,46 +420,14 @@ export class SiteKnowledge {
       parsedPattern,
     )
 
-    const scope = options?.scope === 'verified' ? 'verified' : 'candidate'
     const fileName = sanitizePatternFileName(options?.filename || `${pattern.domain}.md`)
-    const targetDir = scope === 'candidate' ? this.userCandidateDir : this.userVerifiedDir
-    await writeFile(join(targetDir, fileName), serializePattern(pattern), 'utf-8')
+    await writeFile(join(this.userVerifiedDir, fileName), serializePattern(pattern), 'utf-8')
 
-    if (scope === 'verified') {
-      this.patterns.set(pattern.domain.toLowerCase(), pattern)
-      this.userCount = await this.countMarkdownFiles(this.userVerifiedDir)
-    } else {
-      this.candidatePatterns.set(pattern.domain.toLowerCase(), pattern)
-      this.candidateCount = await this.countMarkdownFiles(this.userCandidateDir)
-    }
+    this.patterns.set(pattern.domain.toLowerCase(), pattern)
+    this.userCount = await this.countMarkdownFiles(this.userVerifiedDir)
 
-    console.log(`${LOG_PREFIX} Imported pattern for ${pattern.domain} into ${scope}`)
+    console.log(`${LOG_PREFIX} Imported pattern for ${pattern.domain}`)
     return pattern
-  }
-
-  async reviewCandidate(
-    domain: string,
-    action: 'approve' | 'reject',
-  ): Promise<SitePattern | null> {
-    const normalizedDomain = domain.toLowerCase()
-    const candidate = this.candidatePatterns.get(normalizedDomain)
-    if (!candidate) {
-      throw new Error(`未找到 ${domain} 的 candidate pattern`)
-    }
-
-    if (action === 'reject') {
-      await this.removeCandidatePattern(normalizedDomain)
-      console.log(`${LOG_PREFIX} Rejected candidate pattern for ${normalizedDomain}`)
-      return null
-    }
-
-    const merged = mergeUserPattern(this.patterns.get(normalizedDomain) || null, candidate)
-    merged.source = 'user'
-    await this.savePattern(merged)
-    this.patterns.set(normalizedDomain, merged)
-    await this.removeCandidatePattern(normalizedDomain)
-    console.log(`${LOG_PREFIX} Approved candidate pattern for ${normalizedDomain}`)
-    return merged
   }
 
   private async countMarkdownFiles(dir: string): Promise<number> {
@@ -574,7 +473,7 @@ function mergeUserPattern(
   }
 }
 
-function buildObservedCandidate(
+function buildObservedPattern(
   basePattern: SitePattern,
   evidence: { method: string; url?: string; observations?: string[] },
   normalizedDomain: string,
@@ -584,7 +483,6 @@ function buildObservedCandidate(
     domain: normalizedDomain,
     source: 'user',
     verifiedAt: new Date().toISOString().slice(0, 10),
-    evidenceCount: 0,
     effectivePatterns: resolveObservationLines(evidence).reduce(
       (section, line) => appendObservationLine(section, line),
       basePattern.effectivePatterns,
@@ -596,7 +494,76 @@ function appendObservationLine(section: string, line: string): string {
   const normalized = section.trim()
   if (!normalized) return line
   if (normalized.includes(line)) return normalized
-  return `${normalized}\n${line}`.trim()
+
+  const combined = `${normalized}\n${line}`.trim()
+
+  // Cap auto-observation lines to prevent unbounded growth.
+  // Manual (non-auto-observation) lines are kept intact.
+  const MAX_AUTO_OBSERVATIONS = 10
+  const lines = combined.split('\n')
+  const manualLines: string[] = []
+  const autoLines: string[] = []
+
+  for (const l of lines) {
+    if (l.includes('[auto-observation]')) {
+      autoLines.push(l)
+    } else {
+      manualLines.push(l)
+    }
+  }
+
+  // Keep only the highest scored auto-observation lines
+  const trimmedAutoLines = autoLines.length > MAX_AUTO_OBSERVATIONS
+    ? autoLines
+        .map(line => ({ line, score: scoreObservation(line) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, MAX_AUTO_OBSERVATIONS)
+        .map(item => item.line)
+    : autoLines
+
+  return [...manualLines, ...trimmedAutoLines].join('\n').trim()
+}
+
+/**
+ * 启发式评估自动观察记录的价值得分
+ * @param line 自动观察日志文本
+ * @returns 0-100 的得分，分数越高越有价值
+ */
+function scoreObservation(line: string): number {
+  if (!line) return 0
+
+  // 1. 最高优先级：包含 fallback 降级恢复的 URL
+  if (line.includes('fallback')) return 100
+
+  // 2. 高优先级：包含站内搜索交互的 URL
+  if (line.includes('站内搜索自动化')) return 80
+
+  // 3. 中等优先级：包含查询参数或特定关键字的 URL
+  if (line.includes('?')) {
+    let score = 50
+    // 包含搜索相关的关键参数
+    if (line.includes('search') || line.includes('query') || line.includes('page') || line.includes('keyword') || line.includes('q=')) {
+      score += 10
+    }
+    // URL 层级较深，通常是具体的内容页
+    const slashCount = (line.match(/\//g) || []).length
+    if (slashCount > 4) {
+      score += 5
+    }
+    return score
+  }
+
+  // 4. 最低优先级：普通的短 URL（通常是主域名）
+  const urlMatch = line.match(/https?:\/\/[^\s]+/)
+  if (urlMatch) {
+    const url = urlMatch[0]
+    // 去掉协议后的路径长度
+    const pathPart = url.replace(/https?:\/\//, '')
+    if (pathPart.length > 20) return 30 // 有一定深度的普通页面
+    if (pathPart.includes('/')) return 20 // 至少有一个路径
+  }
+
+  return 10
 }
 
 function resolveObservationLines(evidence: {

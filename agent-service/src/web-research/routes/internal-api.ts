@@ -308,21 +308,19 @@ export function createWebResearchRouter(runtime: WebResearchRuntime): Router {
 
   router.post('/site-patterns/import', async (req, res) => {
     try {
-      const { content, filename, scope } = req.body
+      const { content, filename } = req.body
       if (!content || typeof content !== 'string') {
         res.status(400).json({ error: 'content is required' })
         return
       }
       const imported = await runtime.importSitePattern(content, {
         filename: typeof filename === 'string' ? filename : undefined,
-        scope: scope === 'verified' ? 'verified' : 'candidate',
       })
       res.json({
         ok: true,
         pattern: {
           domain: imported.domain,
           access_strategy: imported.accessStrategy,
-          scope: scope === 'verified' ? 'verified' : 'candidate',
         },
       })
     } catch (err) {
@@ -333,46 +331,31 @@ export function createWebResearchRouter(runtime: WebResearchRuntime): Router {
     }
   })
 
-  router.get('/site-patterns/candidates', (_req, res) => {
+  // POST /global-notes
+  router.post('/global-notes', async (req, res) => {
     try {
-      res.json({
-        candidates: runtime.listCandidateSitePatterns(),
-      })
+      const { category, note } = req.body
+      if (!note || typeof note !== 'string') {
+        res.status(400).json({ error: 'note is required' })
+        return
+      }
+      const result = await runtime.saveGlobalNote(category || '调研技巧', note)
+      res.json({ ok: true, ...result })
     } catch (err) {
-      console.error('[WebResearch:API] /site-patterns/candidates error:', err)
+      console.error('[WebResearch:API] /global-notes error:', err)
       res.status(500).json({
         error: err instanceof Error ? err.message : String(err),
       })
     }
   })
 
-  router.post('/site-patterns/review', async (req, res) => {
+  // GET /global-notes
+  router.get('/global-notes', async (_req, res) => {
     try {
-      const { domain, action } = req.body
-      if (!domain || typeof domain !== 'string') {
-        res.status(400).json({ error: 'domain is required' })
-        return
-      }
-      if (action !== 'approve' && action !== 'reject') {
-        res.status(400).json({ error: 'action must be approve or reject' })
-        return
-      }
-
-      const result = await runtime.reviewCandidateSitePattern(domain, action)
-      res.json({
-        ok: true,
-        domain,
-        action,
-        pattern: result
-          ? {
-            domain: result.domain,
-            access_strategy: result.accessStrategy,
-            source: result.source,
-          }
-          : null,
-      })
+      const notes = runtime.getGlobalNotes()
+      res.json({ ok: true, notes })
     } catch (err) {
-      console.error('[WebResearch:API] /site-patterns/review error:', err)
+      console.error('[WebResearch:API] /global-notes error:', err)
       res.status(500).json({
         error: err instanceof Error ? err.message : String(err),
       })

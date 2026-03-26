@@ -86,12 +86,16 @@ async function callInternal(method, path, body) {
 /**
  * Format SearchResult[] into readable text.
  */
-function formatSearchResults(data) {
+function formatSearchResults(data, siteKnowledgeText = '') {
   const results = data.results || []
   if (results.length === 0) {
     const reason = data.reason || 'No results found.'
     const degraded = data.degraded ? ' (degraded mode)' : ''
-    return `No search results found${degraded}.\n${reason}`
+    let out = `No search results found${degraded}.\n${reason}`
+    if (siteKnowledgeText) {
+      out += `\n\n${siteKnowledgeText}`
+    }
+    return out
   }
 
   const lines = [`Found ${results.length} result(s):\n`]
@@ -124,6 +128,10 @@ function formatSearchResults(data) {
   lines.push('- Before answering with facts, sources, or official links, call read_page on at least one URL you plan to cite.')
   lines.push('- Do not cite any URL that is not listed above or that you have not read.')
   lines.push('- If these results are mostly news/blog mirrors and you need primary sources, refine with site/sites and search again.')
+
+  if (siteKnowledgeText) {
+    lines.push(`\n${siteKnowledgeText}`)
+  }
 
   return lines.join('\n')
 }
@@ -219,15 +227,6 @@ function formatSiteInfo(data) {
   if (data.markdown) {
     parts.push(`\n### Pattern Markdown\n${data.markdown}`)
   }
-  if (data.candidate) {
-    parts.push(`\n### Candidate Pattern`)
-    if (data.candidate.evidence_count !== undefined) {
-      parts.push(`Candidate evidence count: ${data.candidate.evidence_count}`)
-    }
-    if (data.candidate.markdown) {
-      parts.push(`${data.candidate.markdown}`)
-    }
-  }
   if (data.raw) {
     parts.push(`\n${data.raw}`)
   }
@@ -274,25 +273,6 @@ function formatVerifyResult(data) {
   }
 
   return parts.join('\n')
-}
-
-function formatCandidateList(data) {
-  const candidates = data.candidates || []
-  if (candidates.length === 0) {
-    return 'No site-pattern candidates pending review.'
-  }
-
-  const lines = [`Found ${candidates.length} candidate pattern(s):\n`]
-  candidates.forEach((candidate, index) => {
-    lines.push(`${index + 1}. ${candidate.domain}`)
-    lines.push(`   Strategy: ${candidate.access_strategy || 'unknown'}`)
-    lines.push(`   Evidence: ${candidate.evidence_count ?? 0}`)
-    if (candidate.markdown) {
-      lines.push(`   Markdown available`)
-    }
-    lines.push('')
-  })
-  return lines.join('\n')
 }
 
 /**
@@ -355,7 +335,53 @@ server.tool(
         sites,
         engine,
       })
-      return { content: [{ type: 'text', text: formatSearchResults(data) }] }
+
+      // Fetch site info for discovered domains to provide automatic experience awareness
+      const domainsToLookUp = new Set()
+      if (site) domainsToLookUp.add(site)
+      if (sites) sites.forEach((s) => domainsToLookUp.add(s))
+      if (data.results) {
+        data.results.forEach((r) => {
+          const d = extractDomain(r.url)
+          if (d) domainsToLookUp.add(d)
+        })
+      }
+
+      let siteKnowledgeText = ''
+      if (domainsToLookUp.size > 0) {
+        const patternsFound = []
+        for (const domain of Array.from(domainsToLookUp).slice(0, 5)) { // Limit lookups
+          try {
+            const siteInfo = await callInternal('GET', `/_internal/web-research/site-info?domain=${encodeURIComponent(domain)}`)
+            if (siteInfo && (siteInfo.access_strategy !== 'static_ok' || siteInfo.characteristics || siteInfo.pitfalls || siteInfo.patterns)) {
+               const patternParts = [`- ${domain}:`]
+               if (siteInfo.access_strategy) patternParts.push(`  Strategy: ${siteInfo.access_strategy}`)
+               if (siteInfo.pitfalls) patternParts.push(`  Pitfalls: ${siteInfo.pitfalls.replace(/\n/g, ' ')}`)
+               if (siteInfo.patterns) patternParts.push(`  Patterns: ${siteInfo.patterns.replace(/\n/g, ' ')}`)
+               if (siteInfo.characteristics) patternParts.push(`  Characteristics: ${siteInfo.characteristics.replace(/\n/g, ' ')}`)
+               patternsFound.push(patternParts.join('\n'))
+            }
+          } catch (e) {
+            // Ignore lookup errors
+          }
+        }
+        if (patternsFound.length > 0) {
+           siteKnowledgeText = `\n---\nSystem Note: Known experiences for these domains:\n${patternsFound.join('\n')}\n(Use get_site_info for more details before interacting with tricky sites.)`
+        }
+      }
+
+      // Fetch global notes
+      try {
+        const globalNotesData = await callInternal('GET', '/_internal/web-research/global-notes')
+        if (globalNotesData?.notes) {
+          const prefix = siteKnowledgeText ? '\n\n' : '\n---\n'
+          siteKnowledgeText += `${prefix}System Note: Global Research Strategies:\n${globalNotesData.notes}`
+        }
+      } catch (e) {
+        // Ignore global notes error
+      }
+
+      return { content: [{ type: 'text', text: formatSearchResults(data, siteKnowledgeText) }] }
     } catch (err) {
       return {
         content: [
@@ -474,8 +500,11 @@ server.tool(
 server.tool(
   'save_site_pattern',
   'Save or import a site pattern Markdown document into the local knowledge base. ' +
+    'Patterns are saved directly and take effect immediately. ' +
     'Use for persisting discovered access rules, pitfalls, and selectors for future sessions. ' +
-    'Prefer scope=candidate unless the pattern has been verified by a successful run.',
+    'CRITICAL: If a pattern already exists for the domain, you MUST retrieve it using get_site_info first, ' +
+    'then incrementally update its content (add new points, remove obsolete ones) before saving. ' +
+    'Keep each section (characteristics, effective patterns, pitfalls) concise (max 8-10 points).',
   {
     content: z
       .string()
@@ -484,24 +513,18 @@ server.tool(
       .string()
       .optional()
       .describe('Optional filename, e.g. "xiaohongshu.com.md".'),
-    scope: z
-      .enum(['verified', 'candidate'])
-      .optional()
-      .describe('verified patterns become active immediately; candidate patterns are stored for later review.'),
   },
-  async ({ content, filename, scope }) => {
+  async ({ content, filename }) => {
     try {
-      const targetScope = scope || 'candidate'
       const data = await callInternal('POST', '/_internal/web-research/site-patterns/import', {
         content,
         filename,
-        scope: targetScope,
       })
       return {
         content: [
           {
             type: 'text',
-            text: `Saved site pattern for ${data.pattern?.domain || filename || 'unknown domain'} (${data.pattern?.scope || targetScope}).`,
+            text: `Saved site pattern for ${data.pattern?.domain || filename || 'unknown domain'}. Pattern is now active.`,
           },
         ],
       }
@@ -519,63 +542,26 @@ server.tool(
   },
 )
 
-server.tool(
-  'list_site_pattern_candidates',
-  'List site pattern candidates that were auto-observed or manually saved for review. ' +
-    'Use this to inspect pending knowledge before promoting it into verified patterns.',
-  {},
-  async () => {
-    try {
-      const data = await callInternal('GET', '/_internal/web-research/site-patterns/candidates')
-      return { content: [{ type: 'text', text: formatCandidateList(data) }] }
-    } catch (err) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Failed to list site pattern candidates: ${err.message}`,
-          },
-        ],
-        isError: true,
-      }
-    }
-  },
-)
+// ── Tool: save_global_note ──
 
 server.tool(
-  'review_site_pattern',
-  'Approve or reject a pending site pattern candidate. ' +
-    'Approve only after verifying the candidate markdown is correct and safe to activate.',
+  'save_global_note',
+  'Save a generic/global research strategy or tip that applies across multiple sites. ' +
+    'Do not use this for site-specific details (use save_site_pattern for those). ' +
+    'Examples of global notes: "For academic papers, search Google Scholar first", "Use English queries for broader results".',
   {
-    domain: z.string().describe('Candidate domain, e.g. "youtube.com"'),
-    action: z.enum(['approve', 'reject']),
+    category: z.string().describe('Category of the note, e.g. "调研技巧" or "搜索策略"'),
+    note: z.string().describe('The note content (one sentence).'),
   },
-  async ({ domain, action }) => {
+  async ({ category, note }) => {
     try {
-      const data = await callInternal('POST', '/_internal/web-research/site-patterns/review', {
-        domain,
-        action,
-      })
-      return {
-        content: [
-          {
-            type: 'text',
-            text: action === 'approve'
-              ? `Approved site pattern candidate for ${domain}.`
-              : `Rejected site pattern candidate for ${domain}.`,
-          },
-        ],
+      const data = await callInternal('POST', '/_internal/web-research/global-notes', { category, note })
+      if (!data.added) {
+        return { content: [{ type: 'text', text: `Note skipped: ${data.reason}` }] }
       }
+      return { content: [{ type: 'text', text: `Saved global note to category "${category}".` }] }
     } catch (err) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Failed to review site pattern candidate: ${err.message}`,
-          },
-        ],
-        isError: true,
-      }
+      return { content: [{ type: 'text', text: `Failed to save global note: ${err.message}` }], isError: true }
     }
   },
 )

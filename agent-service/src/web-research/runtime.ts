@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url'
 import { CdpProxyManager } from './browser/cdp-proxy-manager.js'
 import { TabManager } from './browser/tab-manager.js'
 import { SiteKnowledge } from './knowledge/site-knowledge.js'
+import { GlobalKnowledge } from './knowledge/global-knowledge.js'
 import { ZhipuSearchAdapter } from './backends/zhipu-adapter.js'
 import { JinaReaderAdapter } from './backends/jina-adapter.js'
 import { StaticFetchAdapter } from './backends/static-adapter.js'
@@ -54,6 +55,7 @@ export class WebResearchRuntime {
   private cdpManager: CdpProxyManager
   private tabManager: TabManager
   private siteKnowledge: SiteKnowledge
+  private globalKnowledge: GlobalKnowledge
   private zhipuAdapter: ZhipuSearchAdapter | null = null
   private jinaAdapter: JinaReaderAdapter
   private staticAdapter: StaticFetchAdapter
@@ -68,6 +70,7 @@ export class WebResearchRuntime {
       join(DATA_DIR, 'web-research', 'site-patterns'),
       resolveBuiltinPatternsDir(),
     )
+    this.globalKnowledge = new GlobalKnowledge(DATA_DIR)
     this.jinaAdapter = new JinaReaderAdapter()
     this.staticAdapter = new StaticFetchAdapter()
     this.cdpAdapter = new CdpBrowserAdapter(cdpPort, this.siteKnowledge)
@@ -78,6 +81,7 @@ export class WebResearchRuntime {
 
     // 初始化站点知识
     await this.siteKnowledge.init()
+    await this.globalKnowledge.init()
 
     // 检测智谱 API key
     // 支持两种配置方式：
@@ -126,7 +130,6 @@ export class WebResearchRuntime {
     dataDir: string
     sitePatternsRoot: string
     sitePatternsVerified: string
-    sitePatternsCandidate: string
     builtinPatternsDir: string
   } {
     const paths = this.siteKnowledge.getPaths()
@@ -135,7 +138,6 @@ export class WebResearchRuntime {
       dataDir: DATA_DIR,
       sitePatternsRoot: paths.rootDir,
       sitePatternsVerified: paths.verifiedDir,
-      sitePatternsCandidate: paths.candidateDir,
       builtinPatternsDir: paths.builtinDir,
     }
   }
@@ -147,7 +149,7 @@ export class WebResearchRuntime {
   async getDetailedStatus(): Promise<{
     browser: { available: boolean; port: number }
     zhipu: { available: boolean }
-    sitePatterns: { count: number; builtinCount: number; userCount: number; candidateCount: number }
+    sitePatterns: { count: number; builtinCount: number; userCount: number }
     paths: ReturnType<WebResearchRuntime['getPaths']>
     mode: 'full' | 'api' | 'degraded'
     nodeVersion: string
@@ -174,7 +176,6 @@ export class WebResearchRuntime {
         count: stats.totalCount,
         builtinCount: stats.builtinCount,
         userCount: stats.userCount,
-        candidateCount: stats.candidateCount,
       },
       paths: this.getPaths(),
       mode,
@@ -493,20 +494,10 @@ export class WebResearchRuntime {
    * ════════════════════════════════════════════════════════════════════════════ */
   getSiteInfo(domain: string): Record<string, unknown> {
     const pattern = this.siteKnowledge.getPattern(domain)
-    const candidate = this.siteKnowledge.getCandidatePattern(domain)
     if (!pattern) {
       return {
         domain,
         info: null,
-        candidate: candidate
-          ? {
-            domain: candidate.domain,
-            access_strategy: candidate.accessStrategy,
-            verified_at: candidate.verifiedAt,
-            evidence_count: candidate.evidenceCount,
-            markdown: this.siteKnowledge.getCandidatePatternMarkdown(domain),
-          }
-          : null,
       }
     }
 
@@ -522,27 +513,15 @@ export class WebResearchRuntime {
       pitfalls: pattern.knownPitfalls || null,
       automation: pattern.automation || null,
       markdown: this.siteKnowledge.getPatternMarkdown(domain),
-      candidate: candidate
-        ? {
-          domain: candidate.domain,
-          access_strategy: candidate.accessStrategy,
-          verified_at: candidate.verifiedAt,
-          evidence_count: candidate.evidenceCount,
-          markdown: this.siteKnowledge.getCandidatePatternMarkdown(domain),
-        }
-        : null,
     }
   }
 
-  listCandidateSitePatterns(): Array<Record<string, unknown>> {
-    return this.siteKnowledge.getAllCandidatePatterns().map((pattern) => ({
-      domain: pattern.domain,
-      access_strategy: pattern.accessStrategy,
-      verified_at: pattern.verifiedAt,
-      evidence_count: pattern.evidenceCount,
-      source: pattern.source,
-      markdown: this.siteKnowledge.getCandidatePatternMarkdown(pattern.domain),
-    }))
+  getGlobalNotes(): string {
+    return this.globalKnowledge.getAllNotes()
+  }
+
+  async saveGlobalNote(category: string, note: string): Promise<{ added: boolean; reason?: string }> {
+    return this.globalKnowledge.addNote(category, note)
   }
 
   /* ════════════════════════════════════════════════════════════════════════════
@@ -706,16 +685,9 @@ export class WebResearchRuntime {
 
   async importSitePattern(
     content: string,
-    options?: { filename?: string; scope?: 'verified' | 'candidate' },
+    options?: { filename?: string },
   ) {
     return this.siteKnowledge.importPattern(content, options)
-  }
-
-  async reviewCandidateSitePattern(
-    domain: string,
-    action: 'approve' | 'reject',
-  ) {
-    return this.siteKnowledge.reviewCandidate(domain, action)
   }
 
   private resolveZhipuAdapter(context?: ResearchRequestContext): ZhipuSearchAdapter | null {

@@ -10,13 +10,12 @@ import { GuideBlock } from './GuideBlock'
 interface WebResearchStatus {
   browser: { available: boolean; port: number }
   zhipu: { available: boolean }
-  sitePatterns: { count: number; builtinCount: number; userCount: number; candidateCount: number }
+  sitePatterns: { count: number; builtinCount: number; userCount: number }
   paths: {
     runtimeHomeDir: string
     dataDir: string
     sitePatternsRoot: string
     sitePatternsVerified: string
-    sitePatternsCandidate: string
     builtinPatternsDir: string
   }
   mode: 'full' | 'api' | 'degraded'
@@ -29,15 +28,6 @@ interface ResearchObservation {
   url?: string
   strategy?: string
   message?: string
-}
-
-interface CandidatePatternSummary {
-  domain: string
-  access_strategy?: string
-  verified_at?: string
-  evidence_count?: number
-  source?: string
-  markdown?: string
 }
 
 interface SearchTestItem {
@@ -108,13 +98,9 @@ export function BrowserResearchSection() {
   const [testing, setTesting] = useState(false)
   const [importContent, setImportContent] = useState('')
   const [importFilename, setImportFilename] = useState('')
-  const [importScope, setImportScope] = useState<'verified' | 'candidate'>('candidate')
   const [importing, setImporting] = useState(false)
   const [importMessage, setImportMessage] = useState<string | null>(null)
   const [inspectHint, setInspectHint] = useState<string | null>(null)
-  const [candidatePatterns, setCandidatePatterns] = useState<CandidatePatternSummary[]>([])
-  const [reviewingKey, setReviewingKey] = useState<string | null>(null)
-  const [reviewMessage, setReviewMessage] = useState<string | null>(null)
   const [pathActionMessage, setPathActionMessage] = useState<string | null>(null)
   const [openingPath, setOpeningPath] = useState<string | null>(null)
   const [searchTestQuery, setSearchTestQuery] = useState('OpenAI Sora 2 official site')
@@ -129,22 +115,10 @@ export function BrowserResearchSection() {
   const [readTestError, setReadTestError] = useState<string | null>(null)
   const [readTestResult, setReadTestResult] = useState<ReadPageTestResponse | null>(null)
 
-  const fetchCandidates = useCallback(async () => {
-    const res = await fetch(`${AGENT_API_BASE}/_internal/web-research/site-patterns/candidates`)
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`)
-    }
-    const data = await res.json() as { candidates?: CandidatePatternSummary[] }
-    setCandidatePatterns(Array.isArray(data.candidates) ? data.candidates : [])
-  }, [])
-
   const fetchStatus = useCallback(async () => {
     try {
       setError(null)
-      const [statusRes] = await Promise.all([
-        fetch(`${AGENT_API_BASE}/_internal/web-research/status?detailed=1`),
-        fetchCandidates(),
-      ])
+      const statusRes = await fetch(`${AGENT_API_BASE}/_internal/web-research/status?detailed=1`)
       if (!statusRes.ok) {
         throw new Error(`HTTP ${statusRes.status}: ${statusRes.statusText}`)
       }
@@ -154,11 +128,10 @@ export function BrowserResearchSection() {
       const msg = err instanceof Error ? err.message : String(err)
       setError(msg)
       setStatus(null)
-      setCandidatePatterns([])
     } finally {
       setLoading(false)
     }
-  }, [fetchCandidates])
+  }, [])
 
   useEffect(() => {
     fetchStatus()
@@ -214,14 +187,13 @@ export function BrowserResearchSection() {
         body: JSON.stringify({
           content: importContent,
           filename: importFilename || undefined,
-          scope: importScope,
         }),
       })
       const data = await res.json() as { error?: string; pattern?: { domain?: string } }
       if (!res.ok) {
         throw new Error(data.error || `HTTP ${res.status}`)
       }
-      setImportMessage(`已导入 ${data.pattern?.domain || '站点经验'}。`)
+      setImportMessage(`已导入 ${data.pattern?.domain || '站点经验'}，立即生效。`)
       setImportContent('')
       setImportFilename('')
       await fetchStatus()
@@ -230,37 +202,6 @@ export function BrowserResearchSection() {
       setImportMessage(`导入失败: ${msg}`)
     } finally {
       setImporting(false)
-    }
-  }
-
-  const handleReviewCandidate = async (
-    domain: string,
-    action: 'approve' | 'reject',
-  ) => {
-    const reviewKey = `${domain}:${action}`
-    try {
-      setReviewingKey(reviewKey)
-      setReviewMessage(null)
-      const res = await fetch(`${AGENT_API_BASE}/_internal/web-research/site-patterns/review`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain, action }),
-      })
-      const data = await res.json() as { error?: string }
-      if (!res.ok) {
-        throw new Error(data.error || `HTTP ${res.status}`)
-      }
-      setReviewMessage(
-        action === 'approve'
-          ? `已将 ${domain} 提升为 verified。`
-          : `已拒绝 ${domain} 的 candidate。`,
-      )
-      await fetchStatus()
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setReviewMessage(`处理失败: ${msg}`)
-    } finally {
-      setReviewingKey(null)
     }
   }
 
@@ -454,7 +395,7 @@ export function BrowserResearchSection() {
               <p className="mt-1 font-medium text-foreground">
                 已加载 {status.sitePatterns.count} 个
                 <span className="text-xs text-muted-foreground ml-1">
-                  (内置 {status.sitePatterns.builtinCount} + 用户 {status.sitePatterns.userCount} + 候选 {status.sitePatterns.candidateCount})
+                  (内置 {status.sitePatterns.builtinCount} + 用户 {status.sitePatterns.userCount})
                 </span>
               </p>
             </div>
@@ -478,7 +419,7 @@ export function BrowserResearchSection() {
             <div>
               <p className="text-sm font-medium text-foreground">站点经验目录</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                自动沉淀会先写入 `candidate`，评审通过后进入 `verified`。这些目录都位于桌面版的可写用户数据目录，不会写到应用安装包里。
+                站点经验保存后立即生效。这些目录都位于桌面版的可写用户数据目录，不会写到应用安装包里。
               </p>
             </div>
 
@@ -487,7 +428,6 @@ export function BrowserResearchSection() {
                 { label: '运行时根目录', path: status.paths.runtimeHomeDir },
                 { label: '数据目录', path: status.paths.dataDir },
                 { label: '站点经验根目录', path: status.paths.sitePatternsRoot },
-                { label: 'candidate 目录', path: status.paths.sitePatternsCandidate },
                 { label: 'verified 目录', path: status.paths.sitePatternsVerified },
                 { label: '内置 patterns 目录', path: status.paths.builtinPatternsDir },
               ].map((item) => (
@@ -572,7 +512,7 @@ export function BrowserResearchSection() {
                 直接测试 LaborAny 当前的 Google / Bing / auto 搜索策略，确认浏览器搜索链路、站点限定和降级行为是否正常。
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                如果命中了站内搜索自动化，或者站内搜索失败后 fallback 成功，对应站点会自动沉淀到下方的 `candidate`。
+                如果命中了站内搜索自动化，或者站内搜索失败后 fallback 成功，对应站点经验会自动沉淀。
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 显式选择 `google` 或 `bing` 时，会跳过站内搜索自动化，直接走对应搜索引擎快路径。
@@ -721,7 +661,7 @@ export function BrowserResearchSection() {
                 直接测试 read_page 的实际抓取方式，确认页面最终是由 Jina、静态抓取还是浏览器 CDP 返回。
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                命中结构化提取成功、静态失败后浏览器兜底成功等高价值信号时，也会自动沉淀到 `candidate`。
+                命中结构化提取成功、静态失败后浏览器兜底成功等高价值信号时，也会自动沉淀站点经验。
               </p>
             </div>
 
@@ -839,25 +779,17 @@ export function BrowserResearchSection() {
             <div>
               <p className="text-sm font-medium text-foreground">导入站点经验</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                支持导入 web-access 中已有的 Markdown 经验文件。默认导入为 `candidate`，先评审再转为正式 `verified` 更安全。
+                支持导入 web-access 中已有的 Markdown 经验文件。导入后立即生效。
               </p>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-[1fr_160px_140px]">
+            <div className="grid gap-3 md:grid-cols-[1fr_140px]">
               <input
                 value={importFilename}
                 onChange={(e) => setImportFilename(e.target.value)}
                 placeholder="文件名，例如 xiaohongshu.com.md"
                 className="rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
-              <select
-                value={importScope}
-                onChange={(e) => setImportScope(e.target.value as 'verified' | 'candidate')}
-                className="rounded-md border border-border bg-background px-3 py-2 text-sm"
-              >
-                <option value="verified">verified</option>
-                <option value="candidate">candidate</option>
-              </select>
               <label className="flex items-center justify-center rounded-md border border-dashed border-border bg-background px-3 py-2 text-sm text-muted-foreground cursor-pointer hover:text-foreground">
                 选择文件
                 <input type="file" accept=".md,text/markdown,text/plain" className="hidden" onChange={handlePatternFileSelected} />
@@ -892,82 +824,6 @@ export function BrowserResearchSection() {
             )}
           </div>
 
-          <div className="rounded-lg border border-border bg-background/70 p-4 space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-foreground">待评审候选经验</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  自动沉淀和手动导入的 `candidate` 会先出现在这里，确认无误后再提升为 `verified`。
-                </p>
-              </div>
-              <span className="rounded-full border border-border bg-background px-2 py-1 text-xs text-muted-foreground">
-                {candidatePatterns.length} 条待处理
-              </span>
-            </div>
-
-            {candidatePatterns.length === 0 ? (
-              <div className="rounded-md border border-dashed border-border bg-background px-3 py-3 text-xs text-muted-foreground">
-                当前没有待评审的站点经验。
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {candidatePatterns.map((candidate) => {
-                  const approveKey = `${candidate.domain}:approve`
-                  const rejectKey = `${candidate.domain}:reject`
-                  const busy = reviewingKey === approveKey || reviewingKey === rejectKey
-
-                  return (
-                    <div key={candidate.domain} className="rounded-md border border-border bg-background/80 p-3 space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{candidate.domain}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            策略：{candidate.access_strategy || 'unknown'}
-                            {' · '}
-                            证据：{candidate.evidence_count ?? 0}
-                            {candidate.verified_at ? ` · 更新时间：${candidate.verified_at}` : ''}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleReviewCandidate(candidate.domain, 'approve')}
-                            disabled={busy}
-                            className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {reviewingKey === approveKey ? '处理中...' : '批准'}
-                          </button>
-                          <button
-                            onClick={() => handleReviewCandidate(candidate.domain, 'reject')}
-                            disabled={busy}
-                            className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {reviewingKey === rejectKey ? '处理中...' : '拒绝'}
-                          </button>
-                        </div>
-                      </div>
-
-                      {candidate.markdown && (
-                        <details className="rounded-md border border-border bg-background/70 p-3">
-                          <summary className="cursor-pointer text-xs font-medium text-foreground">
-                            查看 Markdown
-                          </summary>
-                          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-background p-3 text-xs leading-5">
-                            <code>{candidate.markdown}</code>
-                          </pre>
-                        </details>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-
-            {reviewMessage && (
-              <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground">
-                {reviewMessage}
-              </div>
-            )}
-          </div>
         </>
       )}
     </SettingsCard>

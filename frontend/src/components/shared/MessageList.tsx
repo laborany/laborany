@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type AnchorHTMLAttributes,
-  type MouseEvent,
 } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -93,8 +92,7 @@ const TOOL_DISPLAY_MAP: Record<string, string> = {
   mcp__laborany_web__screenshot: '页面截图',
   mcp__laborany_web__get_site_info: '站点经验',
   mcp__laborany_web__save_site_pattern: '保存站点经验',
-  mcp__laborany_web__list_site_pattern_candidates: '候选经验列表',
-  mcp__laborany_web__review_site_pattern_candidate: '评审站点经验',
+  mcp__laborany_web__save_global_note: '保存全局经验',
   mcp__laborany_web__verify: '事实核实',
   mcp__laborany_web__browser_open: '打开标签页',
   mcp__laborany_web__browser_navigate: '页面跳转',
@@ -1003,23 +1001,11 @@ function ToolItem({ tool }: { tool: ToolEntry }) {
 }
 
 function LinkRenderer({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
-  const handleClick = useCallback(
-    (event: MouseEvent<HTMLAnchorElement>) => {
-      if (!href) return
-      if (href.startsWith('http://') || href.startsWith('https://')) {
-        event.preventDefault()
-        window.open(href, '_blank', 'noopener,noreferrer')
-      }
-    },
-    [href],
-  )
-
   return (
     <a
       href={href}
       target={href?.startsWith('http') ? '_blank' : undefined}
       rel={href?.startsWith('http') ? 'noopener noreferrer' : undefined}
-      onClick={handleClick}
       className="text-primary underline underline-offset-2 transition-colors hover:text-primary/80"
       {...props}
     >
@@ -1044,7 +1030,7 @@ function ToolIcon({ name }: { name: string }) {
     )
   }
 
-  if (['Glob', 'Grep', 'WebSearch', 'mcp__laborany_web__search', 'mcp__laborany_web__get_site_info', 'mcp__laborany_web__list_site_pattern_candidates'].includes(name)) {
+  if (['Glob', 'Grep', 'WebSearch', 'mcp__laborany_web__search', 'mcp__laborany_web__get_site_info', 'mcp__laborany_web__save_global_note'].includes(name)) {
     return (
       <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1145,10 +1131,13 @@ function getToolDescription(name: string, input?: Record<string, unknown>): stri
       }
     }
     case 'mcp__laborany_web__get_site_info':
-    case 'mcp__laborany_web__save_site_pattern':
-    case 'mcp__laborany_web__review_site_pattern_candidate': {
+    case 'mcp__laborany_web__save_site_pattern': {
       const domain = input.domain as string
       return domain ? `站点 ${domain}` : ''
+    }
+    case 'mcp__laborany_web__save_global_note': {
+      const category = input.category as string
+      return category ? `分类 ${category}` : '全局经验'
     }
     case 'mcp__laborany_web__verify': {
       const claim = input.claim as string
