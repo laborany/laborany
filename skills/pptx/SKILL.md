@@ -1,308 +1,249 @@
 ---
-name: PPT演示助手
-description: |
-  智能演示文稿助手，支持创建新演示、编辑现有演示、多轮修改和主题应用。
-  触发场景:
-  (1) 用户需要创建新的 PPT 演示文稿
-  (2) 用户需要编辑或修改现有 .pptx 文件
-  (3) 用户需要提取 PPT 中的内容或图片
-  (4) 用户询问"帮我做个PPT"、"制作演示文稿"
-  支持: 商务演示、学术报告、产品介绍、培训材料等场景
-icon: 📽️
-category: 办公
+name: pptx-generator
+description: "Generate, edit, and read PowerPoint presentations. Create from scratch with PptxGenJS (cover, TOC, content, section divider, summary slides), edit existing PPTX via XML workflows, or extract text with markitdown. Triggers: PPT, PPTX, PowerPoint, presentation, slide, deck, slides."
+license: MIT
+metadata:
+  version: "1.0"
+  category: productivity
+  sources:
+    - https://gitbrent.github.io/PptxGenJS/
+    - https://github.com/microsoft/markitdown
 ---
 
-# PPTX 智能演示助手
+# PPTX Generator & Editor
 
-## 核心原则
+## Overview
 
-1. **五阶段工作流**: 研究收集 → 大纲规划 → 设计构思 → 生成演示 → 迭代修改
-2. **增量修改优先**: 只修改需要修改的部分，保留原文档完整性
-3. **主动澄清需求**: 不确定时先问，不要猜测用户意图
-4. **等待用户回答**: 使用 AskUserQuestion 后必须停止等待，**绝对禁止自己假设答案继续执行**
+This skill handles all PowerPoint tasks: reading/analyzing existing presentations, editing template-based decks via XML manipulation, and creating presentations from scratch using PptxGenJS. It includes a complete design system (color palettes, fonts, style recipes) and detailed guidance for every slide type.
+
+## Quick Reference
+
+| Task | Approach |
+|------|----------|
+| Read/analyze content | `python -m markitdown presentation.pptx` |
+| Edit or create from template | See [Editing Presentations](references/editing.md) |
+| Create from scratch | See [Creating from Scratch](#creating-from-scratch-workflow) below |
+
+| Item | Value |
+|------|-------|
+| **Dimensions** | 10" x 5.625" (LAYOUT_16x9) |
+| **Colors** | 6-char hex without # (e.g., `"FF0000"`) |
+| **English font** | Arial (default), or approved alternatives |
+| **Chinese font** | Microsoft YaHei |
+| **Page badge position** | x: 9.3", y: 5.1" |
+| **Theme keys** | `primary`, `secondary`, `accent`, `light`, `bg` |
+| **Shapes** | RECTANGLE, OVAL, LINE, ROUNDED_RECTANGLE |
+| **Charts** | BAR, LINE, PIE, DOUGHNUT, SCATTER, BUBBLE, RADAR |
+
+## Reference Files
+
+| File | Contents |
+|------|----------|
+| [slide-types.md](references/slide-types.md) | 5 slide page types (Cover, TOC, Section Divider, Content, Summary) + additional layout patterns |
+| [design-system.md](references/design-system.md) | Color palettes, font reference, style recipes (Sharp/Soft/Rounded/Pill), typography & spacing |
+| [editing.md](references/editing.md) | Template-based editing workflow, XML manipulation, formatting rules, common pitfalls |
+| [pitfalls.md](references/pitfalls.md) | QA process, common mistakes, critical PptxGenJS pitfalls |
+| [pptxgenjs.md](references/pptxgenjs.md) | Complete PptxGenJS API reference |
 
 ---
 
-## 任务识别与路由
+## Reading Content
 
-### 创建新演示文稿
-使用 **pptxgenjs** (JavaScript)，参考 [`pptxgen-js.md`](pptxgen-js.md)
-
-### 编辑现有演示文稿
-使用 **Presentation 类** (Python) + OOXML 直接编辑，参考 [`ooxml.md`](ooxml.md)
-
-### 提取内容
-使用解包工具提取 XML 和媒体文件
+```bash
+# Text extraction
+python -m markitdown presentation.pptx
+```
 
 ---
 
-## 五阶段工作流
+## Creating from Scratch — Workflow
 
-### 阶段一：研究收集
+**Use when no template or reference presentation is available.**
 
-在开始任何操作前，必须：
+### Step 1: Research & Requirements
 
-**1. 识别任务类型**
-- 创建新演示
-- 编辑现有演示
-- 格式调整
-- 内容提取
+Search to understand user requirements — topic, audience, purpose, tone, content depth.
 
-**2. 收集素材**
-- 读取用户提供的文档 (PDF/DOCX/MD)
-- 网络搜索补充资料（如需要）
-- 整理关键信息点
+### Step 2: Select Color Palette & Fonts
 
-**3. 主动澄清不明确的需求**
+Use the [Color Palette Reference](references/design-system.md#color-palette-reference) to select a palette matching the topic and audience. Use the [Font Reference](references/design-system.md#font-reference) to choose a font pairing.
 
-> **重要**: 当需求不够明确时，**必须使用 AskUserQuestion 工具**询问用户，并**等待用户回答后才能继续**。
-> **禁止**: 自己假设用户的回答然后继续执行。
+### Step 3: Select Design Style
 
-对于**创建新演示**任务，如果用户没有明确指定，必须询问：
+Use the [Style Recipes](references/design-system.md#style-recipes) to choose a visual style (Sharp, Soft, Rounded, or Pill) matching the presentation tone.
 
-```
-使用 AskUserQuestion 工具询问以下问题：
+### Step 4: Plan Slide Outline
 
-问题1: 演示场景是什么？
-- 选项: 商务汇报 / 学术报告 / 产品介绍 / 培训材料 / 其他
+Classify **every slide** as exactly one of the [5 page types](references/slide-types.md). Plan the content and layout for each slide. Ensure visual variety — do NOT repeat the same layout across slides.
 
-问题2: 预计幻灯片数量？
-- 选项: 简短版（5-10页）/ 标准版（10-20页）/ 详细版（20页以上）
+### Step 5: Generate Slide JS Files
 
-问题3: 视觉风格偏好？
-- 选项: 商务简约 / 学术严谨 / 创意活泼 / 极简现代
-```
+Create one JS file per slide in `slides/` directory. Each file must export a synchronous `createSlide(pres, theme)` function. Follow the [Slide Output Format](#slide-output-format) and the type-specific guidance in [slide-types.md](references/slide-types.md). Generate up to 5 slides concurrently using subagents if available.
 
-**调用 AskUserQuestion 后，必须停止并等待用户回答。绝对不能自己假设答案继续执行。**
+**Tell each subagent:**
+1. File naming: `slides/slide-01.js`, `slides/slide-02.js`, etc.
+2. Images go in: `slides/imgs/`
+3. Final PPTX goes in: `slides/output/`
+4. Dimensions: 10" x 5.625" (LAYOUT_16x9)
+5. Fonts: Chinese = Microsoft YaHei, English = Arial (or approved alternative)
+6. Colors: 6-char hex without # (e.g. `"FF0000"`)
+7. Must use the theme object contract (see [Theme Object Contract](#theme-object-contract))
+8. Must follow the [PptxGenJS API reference](references/pptxgenjs.md)
 
-### 阶段二：大纲规划
+### Step 6: Compile into Final PPTX
 
-**1. 生成演示结构大纲**
+Create `slides/compile.js` to combine all slide modules:
 
-```markdown
-## 演示大纲
+```javascript
+// slides/compile.js
+const pptxgen = require('pptxgenjs');
+const pres = new pptxgen();
+pres.layout = 'LAYOUT_16x9';
 
-### 1. 封面页
-- 标题: [主标题]
-- 副标题: [副标题/日期/作者]
+const theme = {
+  primary: "22223b",    // dark color for backgrounds/text
+  secondary: "4a4e69",  // secondary accent
+  accent: "9a8c98",     // highlight color
+  light: "c9ada7",      // light accent
+  bg: "f2e9e4"          // background color
+};
 
-### 2. 目录页
-- 章节列表
-
-### 3-N. 内容页
-- 每页核心信息
-- 视觉呈现方式（文字/图表/图片）
-
-### N+1. 结束页
-- 总结/致谢/联系方式
-```
-
-**2. 等待用户确认**
-
-使用 AskUserQuestion 工具询问：
-```
-问题: 大纲是否符合您的预期？
-- 选项: 确认，开始设计 / 需要调整大纲 / 添加更多内容
-```
-
-### 阶段三：设计构思
-
-**1. 选择/应用主题**
-
-可用预设主题：
-- `corporate.json` - 商务主题（深蓝配色，专业风格）
-- `academic.json` - 学术主题（简洁配色，严谨风格）
-- `creative.json` - 创意主题（活泼配色，现代风格）
-- `minimal.json` - 极简主题（黑白配色，极简风格）
-
-**2. 规划视觉呈现**
-
-每页确定：
-- 布局类型（标题页/内容页/图表页/图片页）
-- 元素配置（标题/正文/要点/图表/图片）
-- 动画效果（如需要）
-
-### 阶段四：生成演示
-
-**1. 转换为 Design DSL**
-
-Design DSL 是中间表示层，用于描述幻灯片结构：
-
-```json
-{
-  "presentation": {
-    "theme": "corporate",
-    "slides": [
-      {
-        "layout": "title",
-        "elements": [
-          { "type": "title", "text": "主标题", "style": "heading1" },
-          { "type": "subtitle", "text": "副标题" }
-        ]
-      },
-      {
-        "layout": "content",
-        "elements": [
-          { "type": "title", "text": "章节标题" },
-          { "type": "bullets", "items": ["要点1", "要点2", "要点3"] }
-        ]
-      }
-    ]
-  }
+for (let i = 1; i <= 12; i++) {  // adjust count as needed
+  const num = String(i).padStart(2, '0');
+  const slideModule = require(`./slide-${num}.js`);
+  slideModule.createSlide(pres, theme);
 }
+
+pres.writeFile({ fileName: './output/presentation.pptx' });
 ```
 
-**2. 生成 pptxgenjs 代码**
+Run with: `cd slides && node compile.js`
 
-参考 [`pptxgen-js.md`](pptxgen-js.md) 生成完整的 JavaScript 代码。
+### Step 7: QA (Required)
 
-**3. 执行生成 PPTX**
+See [QA Process](references/pitfalls.md#qa-process).
 
-```bash
-node generate-presentation.js
+### Output Structure
+
 ```
-
-### 阶段五：迭代修改
-
-**1. 接收用户反馈**
-
-**2. 定位修改位置**
-- 使用幻灯片编号
-- 使用元素类型（标题/正文/图表）
-- 使用文本内容搜索
-
-**3. 增量更新**
-- 对于新创建的演示：修改 pptxgenjs 代码重新生成
-- 对于现有演示：使用 Presentation 类进行 OOXML 编辑
-
-**4. 生成修改摘要**
-
-```markdown
-## 修改摘要
-
-本次修改共涉及 N 处变更：
-
-1. [幻灯片N]: [原内容] → [新内容]
-2. [幻灯片M]: [调整说明]
-```
-
-**5. 询问后续需求**
-
-使用 AskUserQuestion 工具询问：
-```
-问题: 接下来您想？
-- 选项: 继续修改其他部分 / 调整刚才的修改 / 确认完成，下载文档
+slides/
+├── slide-01.js          # Slide modules
+├── slide-02.js
+├── ...
+├── imgs/                # Images used in slides
+└── output/              # Final artifacts
+    └── presentation.pptx
 ```
 
 ---
 
-## 技术实现细节
+## Slide Output Format
 
-### 创建新演示文稿
+Each slide is a **complete, runnable JS file**:
 
-使用 **pptxgenjs** 创建新演示。
+```javascript
+// slide-01.js
+const pptxgen = require("pptxgenjs");
 
-**Workflow**
-1. **MANDATORY - READ ENTIRE FILE**: Read [`pptxgen-js.md`](pptxgen-js.md) completely
-2. Create a JavaScript file using pptxgenjs API
-3. Export as .pptx using `pres.writeFile()`
+const slideConfig = {
+  type: 'cover',
+  index: 1,
+  title: 'Presentation Title'
+};
 
-### 编辑现有演示文稿
+// MUST be synchronous (not async)
+function createSlide(pres, theme) {
+  const slide = pres.addSlide();
+  slide.background = { color: theme.bg };
 
-使用 **Presentation library** (Python library for OOXML manipulation)。
+  slide.addText(slideConfig.title, {
+    x: 0.5, y: 2, w: 9, h: 1.2,
+    fontSize: 48, fontFace: "Arial",
+    color: theme.primary, bold: true, align: "center"
+  });
 
-**Workflow**
-1. **MANDATORY - READ ENTIRE FILE**: Read [`ooxml.md`](ooxml.md) completely
-2. Unpack the document: `python ooxml/scripts/unpack.py <pptx_file> <output_directory>`
-3. Create and run a Python script using the Presentation library
-4. Pack the final document: `python ooxml/scripts/pack.py <input_directory> <pptx_file>`
+  return slide;
+}
 
-### 提取内容
+// Standalone preview - use slide-specific filename
+if (require.main === module) {
+  const pres = new pptxgen();
+  pres.layout = 'LAYOUT_16x9';
+  const theme = {
+    primary: "22223b",
+    secondary: "4a4e69",
+    accent: "9a8c98",
+    light: "c9ada7",
+    bg: "f2e9e4"
+  };
+  createSlide(pres, theme);
+  pres.writeFile({ fileName: "slide-01-preview.pptx" });
+}
 
-**提取文本**
-```bash
-# 解包后访问 ppt/slides/ 目录
-python ooxml/scripts/unpack.py presentation.pptx unpacked/
-# 文本在 slide*.xml 的 <a:t> 标签中
-```
-
-**提取图片**
-```bash
-# 解包后直接访问 ppt/media/ 目录
-python ooxml/scripts/unpack.py presentation.pptx unpacked/
-ls unpacked/ppt/media/
-```
-
----
-
-## 关键文件结构
-
-```
-unpacked/
-├── [Content_Types].xml      # 内容类型定义
-├── _rels/
-│   └── .rels               # 根关系文件
-├── docProps/
-│   ├── app.xml             # 应用属性
-│   └── core.xml            # 核心属性（标题、作者等）
-└── ppt/
-    ├── presentation.xml    # 演示文稿主文件
-    ├── slides/
-    │   ├── slide1.xml      # 幻灯片内容
-    │   └── slide2.xml
-    ├── slideLayouts/       # 幻灯片布局
-    ├── slideMasters/       # 幻灯片母版
-    ├── theme/              # 主题定义
-    └── media/              # 图片和媒体文件
+module.exports = { createSlide, slideConfig };
 ```
 
 ---
 
-## 转换为图片
+## Theme Object Contract (MANDATORY)
 
-```bash
-# 转换为 PDF
-soffice --headless --convert-to pdf presentation.pptx
+The compile script passes a theme object with these **exact keys**:
 
-# PDF 转图片
-pdftoppm -jpeg -r 150 presentation.pdf slide
+| Key | Purpose | Example |
+|-----|---------|---------|
+| `theme.primary` | Darkest color, titles | `"22223b"` |
+| `theme.secondary` | Dark accent, body text | `"4a4e69"` |
+| `theme.accent` | Mid-tone accent | `"9a8c98"` |
+| `theme.light` | Light accent | `"c9ada7"` |
+| `theme.bg` | Background color | `"f2e9e4"` |
+
+**NEVER use other key names** like `background`, `text`, `muted`, `darkest`, `lightest`.
+
+---
+
+## Page Number Badge (REQUIRED)
+
+All slides **except Cover Page** MUST include a page number badge in the bottom-right corner.
+
+- **Position**: x: 9.3", y: 5.1"
+- Show current number only (e.g. `3` or `03`), NOT "3/12"
+- Use palette colors, keep subtle
+
+### Circle Badge (Default)
+
+```javascript
+slide.addShape(pres.shapes.OVAL, {
+  x: 9.3, y: 5.1, w: 0.4, h: 0.4,
+  fill: { color: theme.accent }
+});
+slide.addText("3", {
+  x: 9.3, y: 5.1, w: 0.4, h: 0.4,
+  fontSize: 12, fontFace: "Arial",
+  color: "FFFFFF", bold: true,
+  align: "center", valign: "middle"
+});
 ```
 
-Options:
-- `-r 150`: Resolution 150 DPI
-- `-f N`: First page
-- `-l N`: Last page
+### Pill Badge
 
----
-
-## 常用布局类型
-
-| 布局 | 说明 | 适用场景 |
-|------|------|----------|
-| title | 标题幻灯片 | 封面页 |
-| section | 节标题 | 章节分隔 |
-| content | 标题+内容 | 常规内容页 |
-| two-column | 两栏布局 | 对比内容 |
-| blank | 空白页 | 自定义布局 |
-| image | 图片页 | 全屏图片 |
-
----
-
-## 依赖
-
-```bash
-# JavaScript
-npm install pptxgenjs
-
-# Python
-pip install defusedxml lxml
+```javascript
+slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
+  x: 9.1, y: 5.15, w: 0.6, h: 0.35,
+  fill: { color: theme.accent },
+  rectRadius: 0.15
+});
+slide.addText("03", {
+  x: 9.1, y: 5.15, w: 0.6, h: 0.35,
+  fontSize: 11, fontFace: "Arial",
+  color: "FFFFFF", bold: true,
+  align: "center", valign: "middle"
+});
 ```
 
 ---
 
-## Code Style Guidelines
+## Dependencies
 
-- Write concise code
-- Avoid verbose variable names and redundant operations
-- Avoid unnecessary print statements
-- 中文注释，ASCII 风格分块
+- `pip install "markitdown[pptx]"` — text extraction
+- `npm install -g pptxgenjs` — creating from scratch
+- `npm install -g react-icons react react-dom sharp` — icons (optional)

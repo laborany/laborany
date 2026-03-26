@@ -1,393 +1,138 @@
 ---
-name: Excel表格助手
-description: |
-  创建、编辑和分析电子表格（.xlsx），支持公式计算、数据分析和图表可视化。
-  触发场景:
-  (1) 用户需要创建新的 Excel 表格
-  (2) 用户需要编辑或修改现有 .xlsx 文件
-  (3) 用户需要进行数据分析、透视表、图表制作
-  (4) 用户询问"帮我做个表格"、"数据分析"、"Excel处理"
-  支持: 财务报表、数据统计、库存管理、项目跟踪等场景
-icon: 📈
-category: 办公
+name: minimax-xlsx
+description: "Open, create, read, analyze, edit, or validate Excel/spreadsheet files (.xlsx, .xlsm, .csv, .tsv). Use when the user asks to create, build, modify, analyze, read, validate, or format any Excel spreadsheet, financial model, pivot table, or tabular data file. Covers: creating new xlsx from scratch, reading and analyzing existing files, editing existing xlsx with zero format loss, formula recalculation and validation, and applying professional financial formatting standards. Triggers on 'spreadsheet', 'Excel', '.xlsx', '.csv', 'pivot table', 'financial model', 'formula', or any request to produce tabular data in Excel format."
+license: MIT
+metadata:
+  version: "1.0"
+  category: productivity
+  sources:
+    - ECMA-376 Office Open XML File Formats
+    - Microsoft Open XML SDK documentation
 ---
 
-# XLSX 电子表格处理
+# MiniMax XLSX Skill
 
-## 概述
+Handle the request directly. Do NOT spawn sub-agents. Always write the output file the user requests.
 
-处理 Excel 电子表格（.xlsx）的创建、编辑和分析。支持公式计算、数据透视、图表生成。
+## Task Routing
 
----
+| Task | Method | Guide |
+|------|--------|-------|
+| **READ** — analyze existing data | `xlsx_reader.py` + pandas | `references/read-analyze.md` |
+| **CREATE** — new xlsx from scratch | XML template | `references/create.md` + `references/format.md` |
+| **EDIT** — modify existing xlsx | XML unpack→edit→pack | `references/edit.md` (+ `format.md` if styling needed) |
+| **FIX** — repair broken formulas in existing xlsx | XML unpack→fix `<f>` nodes→pack | `references/fix.md` |
+| **VALIDATE** — check formulas | `formula_check.py` | `references/validate.md` |
 
-## 四阶段工作流
+## READ — Analyze data (read `references/read-analyze.md` first)
 
-### 阶段一：需求理解
+Start with `xlsx_reader.py` for structure discovery, then pandas for custom analysis. Never modify the source file.
 
-1. **识别任务类型**
-   - 创建新表格 → 使用 openpyxl/exceljs
-   - 编辑现有表格 → 解包 → 修改 → 打包
-   - 数据分析 → pandas + openpyxl
-   - 可视化 → openpyxl 图表 API
+**Formatting rule**: When the user specifies decimal places (e.g. "2 decimal places"), apply that format to ALL numeric values — use `f'{v:.2f}'` on every number. Never output `12875` when `12875.00` is required.
 
-2. **主动澄清需求**（使用 AskUserQuestion）
-   - 数据来源？（手动输入/导入文件/API）
-   - 输出格式？（表格/图表/透视表）
-   - 样式偏好？（财务/分析/极简）
+**Aggregation rule**: Always compute sums/means/counts directly from the DataFrame column — e.g. `df['Revenue'].sum()`. Never re-derive column values before aggregation.
 
-### 阶段二：数据处理
+## CREATE — XML template (read `references/create.md` + `references/format.md`)
 
-1. **数据导入/创建**
-   - 解析用户提供的数据
-   - 清洗和格式化
-   - 写入工作表
+Copy `templates/minimal_xlsx/` → edit XML directly → pack with `xlsx_pack.py`. Every derived value MUST be an Excel formula (`<f>SUM(B2:B9)</f>`), never a hardcoded number. Apply font colors per `format.md`.
 
-2. **公式应用**
-   - 识别计算需求
-   - 生成公式
-   - 验证计算结果
+## EDIT — XML direct-edit (read `references/edit.md` first)
 
-### 阶段三：样式与可视化
+**CRITICAL — EDIT INTEGRITY RULES:**
+1. **NEVER create a new `Workbook()`** for edit tasks. Always load the original file.
+2. The output MUST contain the **same sheets** as the input (same names, same data).
+3. Only modify the specific cells the task asks for — everything else must be untouched.
+4. **After saving output.xlsx, verify it**: open with `xlsx_reader.py` or `pandas` and confirm the original sheet names and a sample of original data are present. If verification fails, you wrote the wrong file — fix it before delivering.
 
-1. **应用主题**
-   - financial: 财务报表
-   - analysis: 数据分析
-   - inventory: 库存管理
-   - minimal: 极简打印
+Never use openpyxl round-trip on existing files (corrupts VBA, pivots, sparklines). Instead: unpack → use helper scripts → repack.
 
-2. **添加图表**（如需要）
-   - 选择图表类型
-   - 配置数据范围
-   - 设置图表样式
-
-### 阶段四：结果呈现
-
-1. **生成修改摘要**
-2. **询问后续需求**
-
----
-
-## 工具选择决策树
-
-```
-需要创建新表格？
-├─ 是 → 使用 openpyxl (Python) 或 exceljs (JavaScript)
-└─ 否 → 需要编辑现有表格？
-         ├─ 是 → 解包 → 修改 XML → 打包
-         └─ 否 → 需要数据分析？
-                  ├─ 是 → pandas + openpyxl
-                  └─ 否 → 需要公式重算？
-                           └─ 是 → scripts/recalc.py
+**"Fill cells" / "Add formulas to existing cells" = EDIT task.** If the input file already exists and you are told to fill, update, or add formulas to specific cells, you MUST use the XML edit path. Never create a new `Workbook()`. Example — fill B3 with a cross-sheet SUM formula:
+```bash
+python3 SKILL_DIR/scripts/xlsx_unpack.py input.xlsx /tmp/xlsx_work/
+# Find the target sheet's XML via xl/workbook.xml → xl/_rels/workbook.xml.rels
+# Then use the Edit tool to add <f> inside the target <c> element:
+#   <c r="B3"><f>SUM('Sales Data'!D2:D13)</f><v></v></c>
+python3 SKILL_DIR/scripts/xlsx_pack.py /tmp/xlsx_work/ output.xlsx
 ```
 
----
+**Add a column** (formulas, numfmt, styles auto-copied from adjacent column):
+```bash
+python3 SKILL_DIR/scripts/xlsx_unpack.py input.xlsx /tmp/xlsx_work/
+python3 SKILL_DIR/scripts/xlsx_add_column.py /tmp/xlsx_work/ --col G \
+    --sheet "Sheet1" --header "% of Total" \
+    --formula '=F{row}/$F$10' --formula-rows 2:9 \
+    --total-row 10 --total-formula '=SUM(G2:G9)' --numfmt '0.0%' \
+    --border-row 10 --border-style medium
+python3 SKILL_DIR/scripts/xlsx_pack.py /tmp/xlsx_work/ output.xlsx
+```
+The `--border-row` flag applies a top border to ALL cells in that row (not just the new column). Use it when the task requires accounting-style borders on total rows.
 
-## 创建新表格
+**Insert a row** (shifts existing rows, updates SUM formulas, fixes circular refs):
+```bash
+python3 SKILL_DIR/scripts/xlsx_unpack.py input.xlsx /tmp/xlsx_work/
+# IMPORTANT: Find the correct --at row by searching for the label text
+# in the worksheet XML, NOT by using the row number from the prompt.
+# The prompt may say "row 5 (Office Rent)" but Office Rent might actually
+# be at row 4. Always locate the row by its text label first.
+python3 SKILL_DIR/scripts/xlsx_insert_row.py /tmp/xlsx_work/ --at 5 \
+    --sheet "Budget FY2025" --text A=Utilities \
+    --values B=3000 C=3000 D=3500 E=3500 \
+    --formula 'F=SUM(B{row}:E{row})' --copy-style-from 4
+python3 SKILL_DIR/scripts/xlsx_pack.py /tmp/xlsx_work/ output.xlsx
+```
+**Row lookup rule**: When the task says "after row N (Label)", always find the row by searching for "Label" in the worksheet XML (`grep -n "Label" /tmp/xlsx_work/xl/worksheets/sheet*.xml` or check sharedStrings.xml). Use the actual row number + 1 for `--at`. Do NOT call `xlsx_shift_rows.py` separately — `xlsx_insert_row.py` calls it internally.
 
-### 方案一：openpyxl (Python，推荐)
+**Apply row-wide borders** (e.g. accounting line on a TOTAL row):
+After running helper scripts, apply borders to ALL cells in the target row, not just newly added cells. In `xl/styles.xml`, append a new `<border>` with the desired style, then append a new `<xf>` in `<cellXfs>` that clones each cell's existing `<xf>` but sets the new `borderId`. Apply the new style index to every `<c>` in the row via the `s` attribute:
+```xml
+<!-- In xl/styles.xml, append to <borders>: -->
+<border>
+  <left/><right/><top style="medium"/><bottom/><diagonal/>
+</border>
+<!-- Then append to <cellXfs> an xf clone with the new borderId for each existing style -->
+```
+**Key rule**: When a task says "add a border to row N", iterate over ALL cells A through the last column, not just newly added cells.
 
-```python
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill
-from openpyxl.utils import get_column_letter
-
-wb = Workbook()
-ws = wb.active
-ws.title = "数据表"
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  设置表头
-# ═══════════════════════════════════════════════════════════════════════════════
-headers = ['序号', '名称', '数量', '单价', '金额']
-header_font = Font(bold=True, color='FFFFFF')
-header_fill = PatternFill(start_color='4472C4', fill_type='solid')
-
-for col, header in enumerate(headers, 1):
-    cell = ws.cell(row=1, column=col, value=header)
-    cell.font = header_font
-    cell.fill = header_fill
-    cell.alignment = Alignment(horizontal='center')
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  填充数据
-# ═══════════════════════════════════════════════════════════════════════════════
-data = [
-    [1, '产品A', 100, 25.5, '=C2*D2'],
-    [2, '产品B', 200, 18.0, '=C3*D3'],
-    [3, '产品C', 150, 32.0, '=C4*D4'],
-]
-
-for row_idx, row_data in enumerate(data, 2):
-    for col_idx, value in enumerate(row_data, 1):
-        ws.cell(row=row_idx, column=col_idx, value=value)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  添加汇总行
-# ═══════════════════════════════════════════════════════════════════════════════
-ws.cell(row=5, column=4, value='合计:')
-ws.cell(row=5, column=5, value='=SUM(E2:E4)')
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  调整列宽
-# ═══════════════════════════════════════════════════════════════════════════════
-for col in range(1, 6):
-    ws.column_dimensions[get_column_letter(col)].width = 12
-
-wb.save('output.xlsx')
+**Manual XML edit** (for anything the helper scripts don't cover):
+```bash
+python3 SKILL_DIR/scripts/xlsx_unpack.py input.xlsx /tmp/xlsx_work/
+# ... edit XML with the Edit tool ...
+python3 SKILL_DIR/scripts/xlsx_pack.py /tmp/xlsx_work/ output.xlsx
 ```
 
-### 方案二：exceljs (JavaScript)
+## FIX — Repair broken formulas (read `references/fix.md` first)
 
-```javascript
-import ExcelJS from 'exceljs'
+This is an EDIT task. Unpack → fix broken `<f>` nodes → pack. Preserve all original sheets and data.
 
-const workbook = new ExcelJS.Workbook()
-workbook.creator = '作者'
-workbook.created = new Date()
+## VALIDATE — Check formulas (read `references/validate.md` first)
 
-const sheet = workbook.addWorksheet('数据表')
+Run `formula_check.py` for static validation. Use `libreoffice_recalc.py` for dynamic recalculation when available.
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  设置列定义
-// ═══════════════════════════════════════════════════════════════════════════════
-sheet.columns = [
-  { header: '序号', key: 'id', width: 10 },
-  { header: '名称', key: 'name', width: 20 },
-  { header: '数量', key: 'qty', width: 12 },
-  { header: '单价', key: 'price', width: 12 },
-  { header: '金额', key: 'amount', width: 15 },
-]
+## Financial Color Standard
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  添加数据
-// ═══════════════════════════════════════════════════════════════════════════════
-sheet.addRows([
-  { id: 1, name: '产品A', qty: 100, price: 25.5, amount: { formula: 'C2*D2' } },
-  { id: 2, name: '产品B', qty: 200, price: 18.0, amount: { formula: 'C3*D3' } },
-  { id: 3, name: '产品C', qty: 150, price: 32.0, amount: { formula: 'C4*D4' } },
-])
+| Cell Role | Font Color | Hex Code |
+|-----------|-----------|----------|
+| Hard-coded input / assumption | Blue | `0000FF` |
+| Formula / computed result | Black | `000000` |
+| Cross-sheet reference formula | Green | `00B050` |
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  样式设置
-// ═══════════════════════════════════════════════════════════════════════════════
-sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }
-sheet.getRow(1).fill = {
-  type: 'pattern',
-  pattern: 'solid',
-  fgColor: { argb: 'FF4472C4' }
-}
+## Key Rules
 
-await workbook.xlsx.writeFile('output.xlsx')
-```
+1. **Formula-First**: Every calculated cell MUST use an Excel formula, not a hardcoded number
+2. **CREATE → XML template**: Copy minimal template, edit XML directly, pack with `xlsx_pack.py`
+3. **EDIT → XML**: Never openpyxl round-trip. Use unpack/edit/pack scripts
+4. **Always produce the output file** — this is the #1 priority
+5. **Validate before delivery**: `formula_check.py` exit code 0 = safe
 
----
-
-## 编辑现有表格
-
-### 使用 Workbook 类（推荐）
-
-```python
-from skills.xlsx.scripts import Workbook
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  初始化
-# ═══════════════════════════════════════════════════════════════════════════════
-wb = Workbook("unpacked/")
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  读写单元格
-# ═══════════════════════════════════════════════════════════════════════════════
-value = wb.get_cell("A1", sheet_index=0)
-wb.set_cell("A1", "新值", sheet_index=0)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  批量设置
-# ═══════════════════════════════════════════════════════════════════════════════
-wb.set_range("A1", [
-    ["姓名", "年龄", "城市"],
-    ["张三", 25, "北京"],
-    ["李四", 30, "上海"],
-])
-
-# ═══════════════════════════════════════════════════════════════���═���═════════════
-#  应用主题
-# ═══════════════════════════════════════════════════════════════════════════════
-wb.apply_theme("financial")
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  保存
-# ═══════════════════════════════════════════════════════════════════════════════
-wb.save("output/")
-wb.pack("output.xlsx")
-```
-
-### 直接操作 XML
-
-```python
-from skills.xlsx.scripts import XlsxXMLEditor
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  编辑工作表
-# ═══════════════════════════════════════════════════════════════════════════════
-editor = XlsxXMLEditor("unpacked/xl/worksheets/sheet1.xml")
-
-# 查找单元格
-cell = editor.get_node(tag="c", attrs={"r": "A1"})
-
-# 修改值
-editor.set_cell_value("A1", "新值")
-
-# 保存
-editor.save()
-```
-
----
-
-## 数据分析
-
-### pandas + openpyxl
-
-```python
-import pandas as pd
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  读取数据
-# ═══════════════════════════════════════════════════════════════════════════════
-df = pd.read_excel('input.xlsx', sheet_name='Sheet1')
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  数据处理
-# ═══════════════════════════════════════════════════════════════════════════════
-summary = df.groupby('类别').agg({
-    '数量': 'sum',
-    '金额': ['sum', 'mean']
-}).round(2)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  导出结果
-# ═══════════════════════════════════════════════════════════════════════════════
-with pd.ExcelWriter('analysis.xlsx', engine='openpyxl') as writer:
-    df.to_excel(writer, sheet_name='原始数据', index=False)
-    summary.to_excel(writer, sheet_name='汇总分析')
-```
-
----
-
-## 图表生成
-
-```python
-from openpyxl import Workbook
-from openpyxl.chart import BarChart, Reference
-
-wb = Workbook()
-ws = wb.active
-
-# 数据
-data = [
-    ['月份', '销售额'],
-    ['1月', 1200],
-    ['2月', 1500],
-    ['3月', 1800],
-]
-for row in data:
-    ws.append(row)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  创建柱状图
-# ═══════════════════════════════════════════════════════════════════════════════
-chart = BarChart()
-chart.title = "月度销售额"
-chart.x_axis.title = "月份"
-chart.y_axis.title = "金额"
-
-data_ref = Reference(ws, min_col=2, min_row=1, max_row=4)
-cats_ref = Reference(ws, min_col=1, min_row=2, max_row=4)
-
-chart.add_data(data_ref, titles_from_data=True)
-chart.set_categories(cats_ref)
-
-ws.add_chart(chart, "D2")
-wb.save('chart.xlsx')
-```
-
----
-
-## 工具命令
-
-### 解包
+## Utility Scripts
 
 ```bash
-python ooxml/scripts/unpack.py input.xlsx unpacked/
+python3 SKILL_DIR/scripts/xlsx_reader.py input.xlsx                 # structure discovery
+python3 SKILL_DIR/scripts/formula_check.py file.xlsx --json         # formula validation
+python3 SKILL_DIR/scripts/formula_check.py file.xlsx --report      # standardized report
+python3 SKILL_DIR/scripts/xlsx_unpack.py in.xlsx /tmp/work/         # unpack for XML editing
+python3 SKILL_DIR/scripts/xlsx_pack.py /tmp/work/ out.xlsx          # repack after editing
+python3 SKILL_DIR/scripts/xlsx_shift_rows.py /tmp/work/ insert 5 1  # shift rows for insertion
+python3 SKILL_DIR/scripts/xlsx_add_column.py /tmp/work/ --col G ... # add column with formulas
+python3 SKILL_DIR/scripts/xlsx_insert_row.py /tmp/work/ --at 6 ...  # insert row with data
 ```
-
-### 打包
-
-```bash
-python ooxml/scripts/pack.py unpacked/ output.xlsx
-```
-
-### 验证
-
-```bash
-python ooxml/scripts/validate.py output.xlsx
-```
-
-### 公式重算
-
-```bash
-python scripts/recalc.py input.xlsx output.xlsx
-```
-
----
-
-## 主题系统
-
-### 可用主题
-
-| 主题 | 说明 | 适用场景 |
-|------|------|----------|
-| `financial` | 财务报表主题 | 财务报表、预算表、损益表 |
-| `analysis` | 数据分析主题 | 数据分析、统计报告、仪表板 |
-| `inventory` | 库存管理主题 | 库存管理、状态跟踪、资产清单 |
-| `minimal` | 极简主题 | 打印、正式文档 |
-
-### 使用主题
-
-```python
-wb = Workbook("unpacked/")
-wb.apply_theme("financial")
-wb.save()
-```
-
----
-
-## 常用公式
-
-| 功能 | 公式 |
-|-----|------|
-| 求和 | `=SUM(A1:A10)` |
-| 平均 | `=AVERAGE(A1:A10)` |
-| 计数 | `=COUNT(A1:A10)` |
-| 条件求和 | `=SUMIF(A:A,"条件",B:B)` |
-| 查找 | `=VLOOKUP(查找值,范围,列号,FALSE)` |
-| 条件判断 | `=IF(条件,真值,假值)` |
-
----
-
-## 依赖
-
-```bash
-# Python
-pip install openpyxl pandas defusedxml
-
-# JavaScript
-npm install exceljs
-```
-
----
-
-## 相关文档
-
-- [WORKFLOW.md](./WORKFLOW.md) - 多轮修改工作流指南
-- [ooxml.md](./ooxml.md) - OOXML 技术参考
-- [exceljs.md](./exceljs.md) - ExcelJS API 参考
