@@ -4,16 +4,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type AnchorHTMLAttributes,
-  type MouseEvent,
 } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type { AgentMessage, MessageMeta, WidgetState } from '../../types'
 import { getLatestRegeneratableMessageId } from '../../lib/messageVariants'
-import { openUrlExternal } from '../../lib/system-open'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { InlineWidget } from '../widget/InlineWidget'
+import { MarkdownContent } from './MarkdownContent'
 
 interface MessageListProps {
   messages: AgentMessage[]
@@ -565,60 +561,7 @@ function UserBubble({ content, meta }: { content: string; meta?: MessageMeta | n
 }
 
 function MarkdownView({ content }: { content: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        code({ className, children, ...props }) {
-          const isInline = !className
-          return isInline ? (
-            <code className="rounded bg-muted px-1 py-0.5 text-sm" {...props}>
-              {children}
-            </code>
-          ) : (
-            <code className="block overflow-x-auto rounded-lg bg-gray-900 p-3 text-sm text-gray-100" {...props}>
-              {children}
-            </code>
-          )
-        },
-        pre({ children }) {
-          return <pre className="m-0 bg-transparent p-0">{children}</pre>
-        },
-        a: LinkRenderer,
-        table({ children }) {
-          return (
-            <div className="my-4 overflow-x-auto rounded-lg border border-border">
-              <table className="min-w-full divide-y divide-border text-sm">
-                {children}
-              </table>
-            </div>
-          )
-        },
-        thead({ children }) {
-          return <thead className="bg-muted/50">{children}</thead>
-        },
-        th({ children }) {
-          return (
-            <th className="px-3 py-2 text-left text-xs font-semibold text-foreground">
-              {children}
-            </th>
-          )
-        },
-        td({ children }) {
-          return (
-            <td className="px-3 py-2 text-foreground/90">
-              {children}
-            </td>
-          )
-        },
-        tr({ children }) {
-          return <tr className="border-b border-border/50 last:border-0">{children}</tr>
-        },
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  )
+  return <MarkdownContent content={content} />
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -1001,36 +944,6 @@ function ToolItem({ tool }: { tool: ToolEntry }) {
       <span className="font-medium">{displayName}</span>
       {description && <span className="max-w-md truncate opacity-70">{description}</span>}
     </div>
-  )
-}
-
-function LinkRenderer({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
-  const handleClick = useCallback(
-    async (event: MouseEvent<HTMLAnchorElement>) => {
-      if (!href) return
-      if (href.startsWith('http://') || href.startsWith('https://')) {
-        event.preventDefault()
-        try {
-          await openUrlExternal(href)
-        } catch (error) {
-          console.error('[MessageList] Failed to open external link:', error)
-          window.open(href, '_blank', 'noopener,noreferrer')
-        }
-      }
-    },
-    [href],
-  )
-  return (
-    <a
-      href={href}
-      target={href?.startsWith('http') ? '_blank' : undefined}
-      rel={href?.startsWith('http') ? 'noopener noreferrer' : undefined}
-      onClick={handleClick}
-      className="text-primary underline underline-offset-2 transition-colors hover:text-primary/80"
-      {...props}
-    >
-      {children}
-    </a>
   )
 }
 

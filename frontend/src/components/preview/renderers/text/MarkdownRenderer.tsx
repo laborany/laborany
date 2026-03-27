@@ -5,9 +5,8 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 
+import { MarkdownContent } from '../../../shared/MarkdownContent'
 import type { RendererProps } from '../../types'
 
 export function MarkdownRenderer({ artifact }: RendererProps) {
@@ -64,9 +63,7 @@ export function MarkdownRenderer({ artifact }: RendererProps) {
   return (
     <div className="h-full overflow-auto p-6">
       <article className="prose prose-sm dark:prose-invert max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {content}
-        </ReactMarkdown>
+        <MarkdownContent content={content} />
       </article>
     </div>
   )
