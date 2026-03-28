@@ -19,9 +19,11 @@ interface WebResearchStatus {
     sitePatternsVerified: string
     sitePatternsCandidate: string
     builtinPatternsDir: string
+    researchBrowserProfileDir: string
   }
   mode: 'full' | 'api' | 'degraded'
   nodeVersion: string
+  platform: string
 }
 
 interface ResearchObservation {
@@ -66,6 +68,37 @@ interface ReadPageTestResponse {
   strategy?: string
   observations?: ResearchObservation[]
   error?: string
+}
+
+type RuntimePlatform = 'win32' | 'darwin' | 'linux' | 'unknown'
+
+function detectClientPlatform(): RuntimePlatform {
+  if (typeof navigator === 'undefined') return 'unknown'
+  const userAgent = navigator.userAgent || ''
+  if (/Windows/i.test(userAgent)) return 'win32'
+  if (/Mac OS X|Macintosh/i.test(userAgent)) return 'darwin'
+  if (/Linux/i.test(userAgent)) return 'linux'
+  return 'unknown'
+}
+
+function buildResearchBrowserCommand(platform: RuntimePlatform, profileDir: string): string {
+  if (!profileDir) return ''
+
+  if (platform === 'win32') {
+    return `"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" ^
+  --user-data-dir="${profileDir}" ^
+  --remote-debugging-port=9222`
+  }
+
+  if (platform === 'darwin') {
+    return `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
+  --user-data-dir="${profileDir}" \\
+  --remote-debugging-port=9222`
+  }
+
+  return `google-chrome \\
+  --user-data-dir="${profileDir}" \\
+  --remote-debugging-port=9222`
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -113,6 +146,8 @@ export function BrowserResearchSection() {
   const [importing, setImporting] = useState(false)
   const [importMessage, setImportMessage] = useState<string | null>(null)
   const [inspectHint, setInspectHint] = useState<string | null>(null)
+  const [openingDebugPage, setOpeningDebugPage] = useState(false)
+  const [launchingResearchBrowser, setLaunchingResearchBrowser] = useState(false)
   const [candidatePatterns, setCandidatePatterns] = useState<CandidatePatternSummary[]>([])
   const [reviewingKey, setReviewingKey] = useState<string | null>(null)
   const [reviewMessage, setReviewMessage] = useState<string | null>(null)
@@ -183,6 +218,28 @@ export function BrowserResearchSection() {
     const url = 'chrome://inspect/#remote-debugging'
 
     try {
+      setOpeningDebugPage(true)
+      const res = await fetch(`${AGENT_API_BASE}/_internal/web-research/open-debug-page`, {
+        method: 'POST',
+      })
+      const data = await res.json().catch(() => ({})) as { error?: string; executable?: string }
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      setInspectHint(
+        '已尝试直接用 Chrome 打开调试页。保持这个页面开着，等 LaborAny 首次连接时在 Chrome 弹窗里点一次 Allow。' +
+        (status?.platform === 'win32'
+          ? ' 如果 Windows 上没有出现 Allow，直接改用下方“启动专用研究浏览器（Windows 推荐）”。'
+          : ''),
+      )
+      return
+    } catch {
+      // ignore and fall back to external open / copy
+    } finally {
+      setOpeningDebugPage(false)
+    }
+
+    try {
       await openUrlExternal(url)
       setInspectHint('已尝试打开 Chrome 调试页。保持这个页面开着，等 LaborAny 首次连接时在 Chrome 弹窗里点一次 Allow。')
       return
@@ -195,6 +252,31 @@ export function BrowserResearchSection() {
       setInspectHint('Chrome 阻止了页面直接跳转，已将地址复制到剪贴板。请粘贴到 Chrome 地址栏打开，并在首次连接弹窗里点 Allow。')
     } catch {
       setInspectHint('当前环境无法直接打开调试页。请手动复制下面的地址到 Chrome 地址栏：chrome://inspect/#remote-debugging，然后在首次连接弹窗里点 Allow。')
+    }
+  }
+
+  const handleLaunchResearchBrowser = async () => {
+    try {
+      setLaunchingResearchBrowser(true)
+      setInspectHint(null)
+      const res = await fetch(`${AGENT_API_BASE}/_internal/web-research/launch-research-browser`, {
+        method: 'POST',
+      })
+      const data = await res.json().catch(() => ({})) as { error?: string; profileDir?: string; port?: number }
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      setInspectHint(
+        `已尝试启动专用研究浏览器 profile（端口 ${data.port || 9222}）。这是独立 profile，不依赖 Allow 弹窗。` +
+        ' 等浏览器窗口起来后，必要时先登录目标站点，再回到这里点“测试连接”。',
+      )
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      await fetchStatus()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setInspectHint(`启动专用研究浏览器失败：${msg}`)
+    } finally {
+      setLaunchingResearchBrowser(false)
     }
   }
 
@@ -381,6 +463,11 @@ export function BrowserResearchSection() {
   }
 
   const modeInfo = status ? MODE_CONFIG[status.mode] : null
+  const currentPlatform = (status?.platform as RuntimePlatform | undefined) || detectClientPlatform()
+  const isWindows = currentPlatform === 'win32'
+  const researchBrowserCommand = status
+    ? buildResearchBrowserCommand(currentPlatform, status.paths.researchBrowserProfileDir)
+    : ''
 
   return (
     <SettingsCard
@@ -481,6 +568,7 @@ export function BrowserResearchSection() {
                 { label: 'candidate 目录', path: status.paths.sitePatternsCandidate },
                 { label: 'verified 目录', path: status.paths.sitePatternsVerified },
                 { label: '内置 patterns 目录', path: status.paths.builtinPatternsDir },
+                { label: '研究浏览器 profile 目录', path: status.paths.researchBrowserProfileDir },
               ].map((item) => (
                 <div key={item.label} className="rounded-md border border-border bg-background/80 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -522,9 +610,21 @@ export function BrowserResearchSection() {
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <button
                   onClick={handleOpenChromeInspect}
-                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                  disabled={openingDebugPage}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                 >
-                  打开 Chrome 调试页
+                  {openingDebugPage ? '打开中...' : '打开 Chrome 调试页'}
+                </button>
+                <button
+                  onClick={handleLaunchResearchBrowser}
+                  disabled={launchingResearchBrowser}
+                  className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {launchingResearchBrowser
+                    ? '启动中...'
+                    : isWindows
+                      ? '启动专用研究浏览器（Windows 推荐）'
+                      : '启动专用研究浏览器'}
                 </button>
                 <code className="rounded bg-background/80 px-2 py-1 text-xs">chrome://inspect/#remote-debugging</code>
               </div>
@@ -534,24 +634,22 @@ export function BrowserResearchSection() {
                 </p>
               )}
               <ol className="list-decimal list-inside space-y-1 mt-2">
-                <li>在 Chrome 中打开 <code className="rounded bg-background/80 px-1 py-0.5 text-xs">chrome://inspect/#remote-debugging</code></li>
-                <li>保持这个页面开着；当 LaborAny 第一次连接当前 Chrome 时，Chrome 会弹出远程调试授权对话框</li>
-                <li>在授权对话框里点击 <strong>Allow</strong></li>
-                <li>如果 Google、Bing 或目标站点出现验证，请在当前浏览器里手动通过一次</li>
+                <li>如果你想复用当前登录中的 Chrome，先点上面的“打开 Chrome 调试页”，并在 Chrome 中打开 <code className="rounded bg-background/80 px-1 py-0.5 text-xs">chrome://inspect/#remote-debugging</code></li>
+                <li>保持 inspect 页面开着；当 LaborAny 第一次连接当前 Chrome 时，Chrome 可能会弹出远程调试授权对话框</li>
+                <li>如果出现授权对话框，在里面点击 <strong>Allow</strong></li>
+                <li>{isWindows ? '如果 Windows 上没有出现 Allow，或一直连不上，直接改用“启动专用研究浏览器（Windows 推荐）”' : '如果当前 Chrome 不弹 Allow，或默认实例被策略限制，改用“启动专用研究浏览器”'}</li>
+                <li>如果 Google、Bing 或目标站点出现验证，请在对应浏览器里手动通过一次</li>
                 <li>回到这里点击上方的「测试连接」按钮验证是否成功</li>
               </ol>
               <p className="mt-2 text-xs text-muted-foreground">
-                新版 Chrome 上不一定会显示旧版的勾选开关。以当前流程为准：打开 inspect 页面，等待首次连接时点一次 Allow。
+                Chrome 144+ 支持通过 inspect 页面把当前浏览器实例授权给本地调试客户端；但在 Windows、旧版 Chrome 或企业策略环境下，这个 Allow 流程不一定会出现。此时更稳的方式是启动一份专用研究浏览器 profile。
               </p>
               <details className="rounded-md border border-border bg-background/60 p-3 text-xs">
-                <summary className="cursor-pointer font-medium text-foreground">备用方案：专用研究浏览器 profile</summary>
+                <summary className="cursor-pointer font-medium text-foreground">备用方案：手动启动专用研究浏览器</summary>
                 <p className="mt-2">
-                  某些新版 Chrome 或企业策略环境下，默认实例可能不接受远程调试。这时可启动一份专用研究浏览器，并在其中单独登录需要的网站。
+                  某些新版 Chrome、Windows 环境或企业策略环境下，默认实例可能不接受远程调试。这时可启动一份专用研究浏览器，并在其中单独登录需要的网站。
                 </p>
-                <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-background/80 p-3 text-xs leading-5"><code>{`mkdir -p "$HOME/Library/Application Support/LaborAny/ChromeResearchProfile"
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
-  --user-data-dir="$HOME/Library/Application Support/LaborAny/ChromeResearchProfile" \\
-  --remote-debugging-port=9222`}</code></pre>
+                <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-background/80 p-3 text-xs leading-5"><code>{researchBrowserCommand || '暂未获取到当前平台的启动命令。'}</code></pre>
               </details>
             </GuideBlock>
           )}

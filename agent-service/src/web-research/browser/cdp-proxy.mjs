@@ -139,9 +139,10 @@ async function connect() {
     if (!discovered) {
       throw new Error(
         'Chrome 未开启远程调试端口。请用以下方式启动 Chrome：\n' +
-        '  macOS: /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222\n' +
-        '  Linux: google-chrome --remote-debugging-port=9222\n' +
-        '  或在 chrome://flags 中搜索 "remote debugging" 并启用'
+        '  macOS: /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --user-data-dir="$HOME/Library/Application Support/LaborAny/ChromeResearchProfile" --remote-debugging-port=9222\n' +
+        '  Windows: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir="%LOCALAPPDATA%\\LaborAny\\ChromeResearchProfile" --remote-debugging-port=9222\n' +
+        '  Linux: google-chrome --user-data-dir="$HOME/.config/laborany-chrome-research" --remote-debugging-port=9222\n' +
+        '  也可以直接在 LaborAny 设置页点击“启动专用研究浏览器”。'
       );
     }
     chromePort = discovered.port;

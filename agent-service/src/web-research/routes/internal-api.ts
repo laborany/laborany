@@ -13,6 +13,7 @@ import type { Request } from 'express'
 import type { WebResearchRuntime } from '../runtime.js'
 import type { ResearchRequestContext } from '../backends/types.js'
 import { resolveModelProfile } from '../../lib/resolve-model-profile.js'
+import { launchResearchBrowser, openChromeDebugPage } from '../browser/chrome-launcher.js'
 
 const PROFILE_CACHE_TTL_MS = 60_000
 const profileCache = new Map<string, { expiresAt: number; value: Awaited<ReturnType<typeof resolveModelProfile>> }>()
@@ -148,6 +149,40 @@ export function createWebResearchRouter(runtime: WebResearchRuntime): Router {
       })
     } catch (err) {
       console.error('[WebResearch:API] /connect-browser error:', err)
+      res.status(500).json({
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  })
+
+  // POST /open-debug-page
+  // 尽量直接用 Chrome 可执行文件打开 chrome://inspect/#remote-debugging
+  router.post('/open-debug-page', async (_req, res) => {
+    try {
+      const result = openChromeDebugPage()
+      res.json({
+        ok: true,
+        ...result,
+      })
+    } catch (err) {
+      console.error('[WebResearch:API] /open-debug-page error:', err)
+      res.status(500).json({
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  })
+
+  // POST /launch-research-browser
+  // 启动一份专用 research Chrome profile，显式开启 --remote-debugging-port
+  router.post('/launch-research-browser', async (_req, res) => {
+    try {
+      const result = launchResearchBrowser(runtime.getPaths().dataDir)
+      res.json({
+        ok: true,
+        ...result,
+      })
+    } catch (err) {
+      console.error('[WebResearch:API] /launch-research-browser error:', err)
       res.status(500).json({
         error: err instanceof Error ? err.message : String(err),
       })

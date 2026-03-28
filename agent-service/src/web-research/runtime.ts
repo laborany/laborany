@@ -11,6 +11,7 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { CdpProxyManager } from './browser/cdp-proxy-manager.js'
 import { TabManager } from './browser/tab-manager.js'
+import { getResearchBrowserProfileDir } from './browser/chrome-launcher.js'
 import { SiteKnowledge } from './knowledge/site-knowledge.js'
 import { GlobalKnowledge } from './knowledge/global-knowledge.js'
 import { ZhipuSearchAdapter } from './backends/zhipu-adapter.js'
@@ -132,6 +133,7 @@ export class WebResearchRuntime {
     sitePatternsVerified: string
     sitePatternsCandidate: string
     builtinPatternsDir: string
+    researchBrowserProfileDir: string
   } {
     const paths = this.siteKnowledge.getPaths()
     return {
@@ -141,6 +143,7 @@ export class WebResearchRuntime {
       sitePatternsVerified: paths.verifiedDir,
       sitePatternsCandidate: paths.candidateDir,
       builtinPatternsDir: paths.builtinDir,
+      researchBrowserProfileDir: getResearchBrowserProfileDir(DATA_DIR),
     }
   }
 
@@ -155,6 +158,7 @@ export class WebResearchRuntime {
     paths: ReturnType<WebResearchRuntime['getPaths']>
     mode: 'full' | 'api' | 'degraded'
     nodeVersion: string
+    platform: NodeJS.Platform
   }> {
     const browserAvailable = await this.cdpManager.checkHealth()
     const cdpPort = this.cdpManager.getPort()
@@ -183,6 +187,7 @@ export class WebResearchRuntime {
       paths: this.getPaths(),
       mode,
       nodeVersion: process.version,
+      platform: process.platform,
     }
   }
 
