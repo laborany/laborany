@@ -811,6 +811,22 @@ export function SessionDetailPage() {
     ]
     : undefined
   const headerMetaText = session ? parseUTCDate(session.created_at).toLocaleString('zh-CN') : ''
+  const runtimeBanner = liveStatus?.isRunning
+    ? (
+      <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+          <span className="font-medium">{liveStatus.runtimeSummary || '思考中'}</span>
+        </div>
+        {liveStatus.activeToolName && (
+          <p className="mt-1 text-xs text-amber-800/80">
+            当前工具：{liveStatus.activeToolName}
+            {liveStatus.activeToolInputSummary ? ` · ${liveStatus.activeToolInputSummary}` : ''}
+          </p>
+        )}
+      </div>
+    )
+    : null
   const headerRightSlot = (
     <>
       <Tooltip content="删除会话" side="bottom">
@@ -861,6 +877,7 @@ export function SessionDetailPage() {
     return (
       <div className="flex h-[calc(100vh-64px)]">
         <div className="mx-auto flex h-full max-w-4xl flex-1 flex-col px-4 py-6">
+        {runtimeBanner}
         <WorkDetailHeader
           title={displayWorkTitle}
           activeRoleLabel={activeRoleLabel}
@@ -907,18 +924,21 @@ export function SessionDetailPage() {
         respondToQuestion={questionSubmitHandler}
         placeholder="输入新的问题继续对话..."
         headerSlot={(
-          <WorkDetailHeader
-            title={displayWorkTitle}
-            activeRoleLabel={activeRoleLabel}
-            onBack={() => navigate('/history')}
-            statusLabel={renderStatusLabel(effectiveStatus)}
-            statusBadgeClassName={effectiveStatusBadgeClass}
-            metaText={headerMetaText}
-            rightSlot={headerRightSlot}
-            tabs={headerTabs}
-            activeTab={hasAssistantTab ? activeTab : undefined}
-            onTabChange={hasAssistantTab ? (tabId) => setActiveTab(tabId as 'employee' | 'assistant') : undefined}
-          />
+          <>
+            {runtimeBanner}
+            <WorkDetailHeader
+              title={displayWorkTitle}
+              activeRoleLabel={activeRoleLabel}
+              onBack={() => navigate('/history')}
+              statusLabel={renderStatusLabel(effectiveStatus)}
+              statusBadgeClassName={effectiveStatusBadgeClass}
+              metaText={headerMetaText}
+              rightSlot={headerRightSlot}
+              tabs={headerTabs}
+              activeTab={hasAssistantTab ? activeTab : undefined}
+              onTabChange={hasAssistantTab ? (tabId) => setActiveTab(tabId as 'employee' | 'assistant') : undefined}
+            />
+          </>
         )}
         activeWidget={viewingWidget}
         streamingWidget={isConverseSession ? converse.streamingWidget : undefined}

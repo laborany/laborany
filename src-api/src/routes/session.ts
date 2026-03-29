@@ -381,6 +381,10 @@ session.get('/:sessionId/live-status', (c) => {
     lastEventAt: runtimeStatus?.lastEventAt,
     canAttach: runtimeTaskManager.has(sessionId),
     runtimeStatus: runtimeStatus?.status,
+    activeToolName: runtimeStatus?.activeToolName,
+    activeToolUseId: runtimeStatus?.activeToolUseId,
+    activeToolInputSummary: runtimeStatus?.activeToolInputSummary,
+    runtimeSummary: runtimeStatus?.runtimeSummary,
   })
 })
 

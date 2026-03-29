@@ -149,6 +149,9 @@ interface RuntimeTask {
   hasError: boolean
   awaitingInput: boolean
   assistantContent: string
+  activeToolName: string | null
+  activeToolUseId: string | null
+  activeToolInputSummary: string | null
   committedWidgets: Array<{
     widgetId: string
     title: string
@@ -234,6 +237,9 @@ class RuntimeTaskManager {
       hasError: false,
       awaitingInput: false,
       assistantContent: '',
+      activeToolName: null,
+      activeToolUseId: null,
+      activeToolInputSummary: null,
       committedWidgets: [],
       controller: new AbortController(),
       events: [],
@@ -408,6 +414,10 @@ class RuntimeTaskManager {
     eventCount: number
     isRunning: boolean
     requiresInput: boolean
+    activeToolName?: string | null
+    activeToolUseId?: string | null
+    activeToolInputSummary?: string | null
+    runtimeSummary?: string
   } | null {
     const task = this.tasks.get(sessionId)
     if (!task) {
@@ -425,6 +435,10 @@ class RuntimeTaskManager {
       eventCount: task.events.length,
       isRunning: task.status === 'running',
       requiresInput: task.status === 'waiting_input',
+      activeToolName: task.activeToolName,
+      activeToolUseId: task.activeToolUseId,
+      activeToolInputSummary: task.activeToolInputSummary,
+      runtimeSummary: this.buildRuntimeSummary(task),
     }
   }
 
@@ -437,6 +451,10 @@ class RuntimeTaskManager {
     assistantContent: string
     isRunning: boolean
     requiresInput: boolean
+    activeToolName?: string | null
+    activeToolUseId?: string | null
+    activeToolInputSummary?: string | null
+    runtimeSummary?: string
   } | null {
     const task = this.tasks.get(sessionId)
     if (!task) {
@@ -452,6 +470,10 @@ class RuntimeTaskManager {
       assistantContent: task.assistantContent,
       isRunning: task.status === 'running',
       requiresInput: task.status === 'waiting_input',
+      activeToolName: task.activeToolName,
+      activeToolUseId: task.activeToolUseId,
+      activeToolInputSummary: task.activeToolInputSummary,
+      runtimeSummary: this.buildRuntimeSummary(task),
     }
   }
 
@@ -1013,6 +1035,9 @@ class RuntimeTaskManager {
   private markTaskWaitingInput(task: RuntimeTask, payload: SkillQuestionPayload): void {
     if (task.awaitingInput) return
     task.awaitingInput = true
+    task.activeToolName = null
+    task.activeToolUseId = null
+    task.activeToolInputSummary = null
     const summary = buildSkillQuestionSummary(payload)
     if (summary) {
       task.assistantContent = [task.assistantContent.trim(), summary]
@@ -1065,6 +1090,18 @@ class RuntimeTaskManager {
       task.assistantContent += event.content
     }
 
+    if (event.type === 'tool_use') {
+      task.activeToolName = event.toolName || null
+      task.activeToolUseId = event.toolUseId || null
+      task.activeToolInputSummary = summarizeToolInput(event.toolInput)
+    }
+
+    if (event.type === 'tool_result') {
+      task.activeToolName = null
+      task.activeToolUseId = null
+      task.activeToolInputSummary = null
+    }
+
     if (event.type === 'widget_commit' && event.widgetId && event.title && event.html) {
       const existingIndex = task.committedWidgets.findIndex((item) => item.widgetId === event.widgetId)
       const nextWidget = {
@@ -1102,6 +1139,9 @@ class RuntimeTaskManager {
 
     if (event.type === 'error') {
       task.hasError = true
+      task.activeToolName = null
+      task.activeToolUseId = null
+      task.activeToolInputSummary = null
     }
 
     this.emitEvent(task, event)
@@ -1214,6 +1254,41 @@ class RuntimeTaskManager {
       return skillId
     }
   }
+
+  private buildRuntimeSummary(task: RuntimeTask): string {
+    if (task.awaitingInput) {
+      return '等待补充信息'
+    }
+    if (task.activeToolName) {
+      const detail = task.activeToolInputSummary ? ` · ${task.activeToolInputSummary}` : ''
+      return `正在使用工具：${task.activeToolName}${detail}`
+    }
+    if (task.status === 'running') {
+      return '思考中'
+    }
+    if (task.status === 'waiting_input') {
+      return '等待补充信息'
+    }
+    if (task.status === 'completed') {
+      return '已完成'
+    }
+    if (task.status === 'failed') {
+      return '执行失败'
+    }
+    return '已中止'
+  }
+}
+
+function summarizeToolInput(toolInput?: Record<string, unknown>): string | null {
+  if (!toolInput) return null
+  const keys = ['file_path', 'path', 'command', 'pattern', 'url', 'query', 'description']
+  const parts = keys
+    .map((key) => toolInput[key])
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.replace(/\s+/g, ' ').trim().slice(0, 80))
+
+  if (!parts.length) return null
+  return parts.join(' | ')
 }
 
 export const runtimeTaskManager = new RuntimeTaskManager()

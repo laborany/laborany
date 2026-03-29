@@ -107,6 +107,10 @@ export interface SessionLiveStatus {
   lastEventAt?: string
   canAttach: boolean
   runtimeStatus?: string
+  activeToolName?: string | null
+  activeToolUseId?: string | null
+  activeToolInputSummary?: string | null
+  runtimeSummary?: string
 }
 
 export interface WorkSummary {
