@@ -49,9 +49,8 @@ async function main() {
     bundle: true,
     platform: 'node',
     target: 'node20',
-    format: 'esm',
-    outfile: join(distWebResearchDir, 'browser', 'cdp-proxy.mjs'),
-    banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
+    format: 'cjs',
+    outfile: join(distWebResearchDir, 'browser', 'cdp-proxy.cjs'),
   })
 
   // 3. Copy guidelines to dist

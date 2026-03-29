@@ -354,8 +354,11 @@ export class CdpProxyManager {
 
 function resolveCdpProxyScript(): string {
   const candidates = [
+    join(MODULE_DIR, 'cdp-proxy.cjs'),
     join(MODULE_DIR, 'cdp-proxy.mjs'),
+    join(MODULE_DIR, 'web-research', 'browser', 'cdp-proxy.cjs'),
     join(MODULE_DIR, 'web-research', 'browser', 'cdp-proxy.mjs'),
+    join(dirname(process.execPath), 'web-research', 'browser', 'cdp-proxy.cjs'),
     join(dirname(process.execPath), 'web-research', 'browser', 'cdp-proxy.mjs'),
   ]
 
