@@ -3,6 +3,7 @@ import { existsSync } from 'fs'
 import { dbHelper } from '../core/database.js'
 import { getTaskDir, runtimeTaskManager } from '../core/agent/index.js'
 import { looksLikeWaitingInputMessage } from '../lib/skill-interaction.js'
+import { ensureWorkForSession, refreshWork, refreshWorkBySessionId } from '../core/work-items.js'
 
 const session = new Hono()
 const ALLOWED_SESSION_STATUS = new Set(['running', 'waiting_input', 'completed', 'failed', 'stopped', 'aborted'])
@@ -155,6 +156,7 @@ session.get('/', (c) => {
 
   const sessions = dbHelper.query<{
     id: string
+    work_id?: string | null
     skill_id: string
     query: string
     status: string
@@ -162,7 +164,7 @@ session.get('/', (c) => {
     created_at: string
     source?: string
   }>(`
-    SELECT id, skill_id, query, status, cost, created_at, source
+    SELECT id, work_id, skill_id, query, status, cost, created_at, source
     FROM sessions
     ORDER BY created_at DESC
     LIMIT 100
@@ -239,6 +241,7 @@ session.get('/:sessionId', (c) => {
 
   const sessionData = dbHelper.get<{
     id: string
+    work_id?: string | null
     skill_id: string
     query: string
     status: string
@@ -248,7 +251,7 @@ session.get('/:sessionId', (c) => {
     source?: string
     source_meta?: string | null
   }>(`
-    SELECT id, skill_id, query, status, cost, work_dir, created_at, source, source_meta
+    SELECT id, work_id, skill_id, query, status, cost, work_dir, created_at, source, source_meta
     FROM sessions
     WHERE id = ?
   `, [sessionId])
@@ -300,6 +303,7 @@ session.get('/:sessionId', (c) => {
           toolName: null,
           toolInput: null,
           toolResult: null,
+          meta: null,
           createdAt: runtimeSnapshot.startedAt,
         })
       }
@@ -319,6 +323,7 @@ session.get('/:sessionId', (c) => {
           toolName: null,
           toolInput: null,
           toolResult: null,
+          meta: null,
           createdAt: runtimeSnapshot.lastEventAt || runtimeSnapshot.startedAt,
         })
       }
@@ -407,6 +412,9 @@ session.post('/external/upsert', async (c) => {
   const sourceMeta = body.sourceMeta && typeof body.sourceMeta === 'object'
     ? JSON.stringify(body.sourceMeta)
     : null
+  const sourceMetaRecord = body.sourceMeta && typeof body.sourceMeta === 'object'
+    ? body.sourceMeta as Record<string, unknown>
+    : undefined
 
   if (!sessionId || !query) {
     return c.json({ error: '缺少 sessionId 或 query 参数' }, 400)
@@ -424,14 +432,28 @@ session.post('/external/upsert', async (c) => {
        WHERE id = ?`,
       [skillId, query, status, workDir, source, sourceMeta, sessionId],
     )
+    ensureWorkForSession({
+      sessionId,
+      userId,
+      query,
+      source,
+      workId: typeof sourceMetaRecord?.workId === 'string' ? sourceMetaRecord.workId : undefined,
+    })
     return c.json({ success: true, created: false, sessionId })
   }
 
   dbHelper.run(
-    `INSERT INTO sessions (id, user_id, skill_id, query, status, work_dir, source, source_meta)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions (id, user_id, work_id, skill_id, query, status, work_dir, source, source_meta)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
     [sessionId, userId, skillId, query, status, workDir, source, sourceMeta],
   )
+  ensureWorkForSession({
+    sessionId,
+    userId,
+    query,
+    source,
+    workId: typeof sourceMetaRecord?.workId === 'string' ? sourceMetaRecord.workId : undefined,
+  })
 
   return c.json({ success: true, created: true, sessionId })
 })
@@ -483,6 +505,7 @@ session.post('/external/message', async (c) => {
     `UPDATE sessions SET updated_at = datetime('now') WHERE id = ?`,
     [sessionId],
   )
+  refreshWorkBySessionId(sessionId)
 
   return c.json({ success: true, messageId })
 })
@@ -515,6 +538,7 @@ session.post('/external/status', async (c) => {
     `UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?`,
     [status, sessionId],
   )
+  refreshWorkBySessionId(sessionId)
 
   return c.json({ success: true })
 })
@@ -522,8 +546,8 @@ session.post('/external/status', async (c) => {
 session.delete('/:sessionId', (c) => {
   const sessionId = c.req.param('sessionId')
 
-  const sessionExists = dbHelper.get<{ id: string }>(
-    `SELECT id FROM sessions WHERE id = ?`,
+  const sessionExists = dbHelper.get<{ id: string; work_id?: string | null }>(
+    `SELECT id, work_id FROM sessions WHERE id = ?`,
     [sessionId],
   )
 
@@ -542,6 +566,19 @@ session.delete('/:sessionId', (c) => {
 
   // 删除会话记录
   dbHelper.run(`DELETE FROM sessions WHERE id = ?`, [sessionId])
+
+  const workId = (sessionExists.work_id || '').trim()
+  if (workId) {
+    const remaining = dbHelper.get<{ count: number }>(
+      `SELECT COUNT(1) as count FROM sessions WHERE work_id = ?`,
+      [workId],
+    )
+    if ((remaining?.count || 0) > 0) {
+      refreshWork(workId)
+    } else {
+      dbHelper.run(`DELETE FROM works WHERE id = ?`, [workId])
+    }
+  }
 
   return c.json({ success: true, message: '会话已删除' })
 })

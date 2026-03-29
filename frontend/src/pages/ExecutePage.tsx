@@ -198,6 +198,7 @@ export default function ExecutePage() {
             attachmentIds,
             requestQuery: handoffQuery || undefined,
             originQuery: explicitOriginQuery || normalizedQuery,
+            workId: converseSid || undefined,
           })
           continuedBySid = true
           startedNewExecution = true
@@ -209,6 +210,7 @@ export default function ExecutePage() {
           attachmentIds,
           requestQuery: handoffQuery || undefined,
           originQuery: explicitOriginQuery || normalizedQuery,
+          workId: converseSid || undefined,
         })
         startedNewExecution = true
       }

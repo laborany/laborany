@@ -22,6 +22,7 @@ import {
   normalizeAttachmentIds,
 } from 'laborany-shared'
 import { dbHelper } from '../core/database.js'
+import { ensureWorkForSession } from '../core/work-items.js'
 import { getUploadsDir } from './file.js'
 import {
   installSkillFromNormalizedSource,
@@ -51,6 +52,7 @@ interface ResolvedModelSelection extends SessionModelMeta {
 
 interface AssistantSourceMeta {
   assistantHandoffText?: string
+  workId?: string
 }
 
 const skill = new Hono()
@@ -95,24 +97,32 @@ function ensureRunningSession(
         sourceMeta ? JSON.stringify(sourceMeta) : null,
       ],
     )
-    return
+  } else {
+    dbHelper.run(
+      `UPDATE sessions
+       SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?, source = ?, source_meta = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+      [
+        'running',
+        workDir,
+        modelMeta?.modelProfileId || null,
+        modelMeta?.modelProfileName || null,
+        modelMeta?.modelName || null,
+        source || 'desktop',
+        sourceMeta ? JSON.stringify(sourceMeta) : null,
+        sessionId,
+      ],
+    )
   }
 
-  dbHelper.run(
-    `UPDATE sessions
-     SET status = ?, work_dir = ?, model_profile_id = ?, model_profile_name = ?, model_name = ?, source = ?, source_meta = ?, updated_at = datetime('now')
-     WHERE id = ?`,
-    [
-      'running',
-      workDir,
-      modelMeta?.modelProfileId || null,
-      modelMeta?.modelProfileName || null,
-      modelMeta?.modelName || null,
-      source || 'desktop',
-      sourceMeta ? JSON.stringify(sourceMeta) : null,
-      sessionId,
-    ],
-  )
+  const workId = typeof sourceMeta?.workId === 'string' ? sourceMeta.workId.trim() : ''
+  ensureWorkForSession({
+    sessionId,
+    userId: 'default',
+    query,
+    source,
+    workId,
+  })
 }
 
 function findSkillPath(skillId: string): string | null {

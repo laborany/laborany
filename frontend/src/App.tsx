@@ -212,14 +212,25 @@ function AppLayout({
     try {
       const token = localStorage.getItem('token')
       const sessionIds = record.sessions.map((session) => session.id)
-      for (const sessionId of sessionIds) {
-        const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+      if (record.workId) {
+        const res = await fetch(`${API_BASE}/works/${record.workId}`, {
           method: 'DELETE',
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         })
         if (!res.ok) {
           const data = await res.json().catch(() => ({}))
           throw new Error((data as { error?: string }).error || '删除失败')
+        }
+      } else {
+        for (const sessionId of sessionIds) {
+          const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+            method: 'DELETE',
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          })
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            throw new Error((data as { error?: string }).error || '删除失败')
+          }
         }
       }
       setSessions((prev) => prev.filter((session) => !sessionIds.includes(session.id)))

@@ -4,6 +4,7 @@ const WORK_RECORD_GROUP_WINDOW_MS = 20 * 60 * 1000
 
 export interface WorkRecordItem {
   id: string
+  workId?: string
   title: string
   primarySessionId: string
   createdAt: string
@@ -157,19 +158,43 @@ export function buildWorkRecordItems(
   getSkillName: (id?: string) => string,
 ): WorkRecordItem[] {
   const sorted = [...sessions].sort((a, b) => parseUTCDateMs(a.created_at) - parseUTCDateMs(b.created_at))
-  const groups: Session[][] = []
+  const explicitGroups = new Map<string, Session[]>()
+  const heuristicSessions: Session[] = []
 
   for (const session of sorted) {
-    const current = groups[groups.length - 1]
+    const workId = (session.work_id || '').trim()
+    if (workId) {
+      const current = explicitGroups.get(workId)
+      if (current) {
+        current.push(session)
+      } else {
+        explicitGroups.set(workId, [session])
+      }
+      continue
+    }
+    heuristicSessions.push(session)
+  }
+
+  const groups: Array<{ workId?: string; sessions: Session[] }> = []
+  for (const [workId, workSessions] of explicitGroups.entries()) {
+    groups.push({ workId, sessions: workSessions })
+  }
+
+  const heuristicGroups: Session[][] = []
+
+  for (const session of heuristicSessions) {
+    const current = heuristicGroups[heuristicGroups.length - 1]
     if (current && shouldMergeIntoRecord(current, session)) {
       current.push(session)
       continue
     }
-    groups.push([session])
+    heuristicGroups.push([session])
   }
 
+  heuristicGroups.forEach((item) => groups.push({ sessions: item }))
+
   return groups
-    .map((group): WorkRecordItem => {
+    .map(({ workId, sessions: group }): WorkRecordItem => {
       const latest = getLatestSession(group)
       const primary = getPrimarySession(group)
       const assistantSession = group.find((session) => session.skill_id === '__converse__')
@@ -199,7 +224,8 @@ export function buildWorkRecordItems(
         : undefined
 
       return {
-        id: primary.id,
+        id: workId || primary.id,
+        workId,
         title: toWorkTitle(group),
         primarySessionId: primary.id,
         createdAt: group[0]?.created_at || latest.created_at,

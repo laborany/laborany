@@ -308,6 +308,12 @@ async function upsertExternalSession(
   status: ExternalSessionStatus = 'running',
   sourceMeta?: Record<string, unknown>,
 ): Promise<void> {
+  const nextSourceMeta = {
+    ...sourceMeta,
+    workId: typeof sourceMeta?.workId === 'string' && sourceMeta.workId.trim()
+      ? sourceMeta.workId.trim()
+      : sessionId,
+  }
   try {
     await fetch(`${getSrcApiBaseUrl()}/sessions/external/upsert`, {
       method: 'POST',
@@ -318,7 +324,7 @@ async function upsertExternalSession(
         status,
         skillId: '__converse__',
         source: 'converse',
-        sourceMeta,
+        sourceMeta: nextSourceMeta,
       }),
     })
   } catch (err) {

@@ -78,6 +78,7 @@ export type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq'
 
 export interface Session {
   id: string
+  work_id?: string | null
   skill_id: string
   query: string
   status: string
@@ -91,6 +92,7 @@ export interface SessionDetail extends Session {
   work_dir?: string  // 工作目录，用于 Live Preview
   sourceMeta?: {
     attachmentIds?: string[] | string
+    workId?: string
   } | null
 }
 

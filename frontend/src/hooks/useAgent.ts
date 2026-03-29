@@ -1140,7 +1140,7 @@ export function useAgent(skillId: string) {
   )
 
   const execute = useCallback(
-    async (query: string, files?: File[], options?: { originQuery?: string; attachmentIds?: string[]; requestQuery?: string; assistantHandoffText?: string }) => {
+    async (query: string, files?: File[], options?: { originQuery?: string; attachmentIds?: string[]; requestQuery?: string; assistantHandoffText?: string; workId?: string }) => {
       if (executeInFlightRef.current) {
         console.warn('[useAgent] 忽略重复执行：已有请求在进行中')
         return
@@ -1171,6 +1171,7 @@ export function useAgent(skillId: string) {
         files: (files || []).map((file) => `${file.name}:${file.size}:${file.lastModified}`).join('|'),
         originQuery: options?.originQuery || '',
         assistantHandoffText: options?.assistantHandoffText || '',
+        workId: options?.workId || '',
         attachmentIds: (options?.attachmentIds || []).join('|'),
       })
       const now = Date.now()
@@ -1284,8 +1285,11 @@ export function useAgent(skillId: string) {
           sessionId: currentSessionId,
           modelProfileId: activeProfileId || undefined,
           sourceMeta: options?.assistantHandoffText
-            ? { assistantHandoffText: options.assistantHandoffText }
-            : undefined,
+            ? {
+              assistantHandoffText: options.assistantHandoffText,
+              ...(options?.workId ? { workId: options.workId } : {}),
+            }
+            : (options?.workId ? { workId: options.workId } : undefined),
         })
 
         const res = await fetchWithRetry(

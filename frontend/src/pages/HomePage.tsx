@@ -176,6 +176,7 @@ export default function HomePage() {
           query: originQuery,
           originQuery,
           attachmentIds,
+          workId: converse.sessionId || undefined,
           handoffQuery: buildAssistantHandoffQuery({
             bossRequest: originQuery,
             mode: 'assistant',
@@ -304,6 +305,7 @@ export default function HomePage() {
         query: bossRequest,
         originQuery: bossRequest,
         attachmentIds: candidate.attachmentIds,
+        workId: converse.sessionId || undefined,
         handoffQuery: buildAssistantHandoffQuery({
           bossRequest,
           mode: 'hr',

@@ -61,6 +61,7 @@ import configRoutes from './routes/config.js'
 import modelProfilesRoutes from './routes/model-profiles.js'
 import logsRoutes from './routes/logs.js'
 import sessionRoutes from './routes/session.js'
+import workRoutes from './routes/work.js'
 import setupRoutes from './routes/setup.js'
 import sandboxRoutes from './routes/sandbox.js'
 import previewRoutes from './routes/preview.js'
@@ -109,6 +110,7 @@ app.route('/api/config', configRoutes)
 app.route('/api/config/model-profiles', modelProfilesRoutes)
 app.route('/api/logs', logsRoutes)
 app.route('/api/sessions', sessionRoutes)
+app.route('/api/works', workRoutes)
 app.route('/api/setup', setupRoutes)
 app.route('/api/sandbox', sandboxRoutes)
 app.route('/api/preview', previewRoutes)

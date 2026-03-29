@@ -6,6 +6,7 @@ import {
   resolveExecuteGenerativeWidgetSupport,
 } from 'laborany-shared'
 import { dbHelper } from '../database.js'
+import { ensureWorkForSession, refreshWorkBySessionId } from '../work-items.js'
 import { executeAgent, ensureTaskDir, type AgentEvent, type ModelOverride } from './executor.js'
 import { sessionManager } from './session-manager.js'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'path'
@@ -308,6 +309,15 @@ class RuntimeTaskManager {
         [task.sessionId, 'user', task.query],
       )
     }
+
+    const workId = typeof sourceMeta?.workId === 'string' ? sourceMeta.workId.trim() : ''
+    ensureWorkForSession({
+      sessionId: task.sessionId,
+      userId: 'default',
+      query: task.query,
+      source,
+      workId,
+    })
   }
 
   subscribe(
@@ -838,6 +848,7 @@ class RuntimeTaskManager {
         `UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?`,
         [finalStatus, task.sessionId],
       )
+      refreshWorkBySessionId(task.sessionId)
 
       task.resolveDone()
     }

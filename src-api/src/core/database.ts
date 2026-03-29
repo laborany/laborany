@@ -85,6 +85,7 @@ function createTables(db: Database): void {
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
+      work_id TEXT,
       skill_id TEXT NOT NULL,
       query TEXT NOT NULL,
       status TEXT DEFAULT 'running',
@@ -93,6 +94,24 @@ function createTables(db: Database): void {
       model_profile_id TEXT,
       model_profile_name TEXT,
       model_name TEXT,
+      updated_at TEXT DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `)
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS works (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT,
+      status TEXT DEFAULT 'running',
+      phase TEXT DEFAULT 'assistant_running',
+      source TEXT DEFAULT 'desktop',
+      current_owner_skill_id TEXT,
+      primary_session_id TEXT,
+      latest_session_id TEXT,
       updated_at TEXT DEFAULT (datetime('now')),
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id)
@@ -128,8 +147,10 @@ function createTables(db: Database): void {
 
   // 创建索引
   db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_work_id ON sessions(work_id)`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_files_user_id ON files(user_id)`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_works_user_id ON works(user_id)`)
 
   // 数据库迁移：为旧表添加新字段
   migrateDatabase(db)
@@ -153,6 +174,10 @@ function migrateDatabase(db: Database): void {
     if (!columns.includes('work_dir')) {
       db.run('ALTER TABLE sessions ADD COLUMN work_dir TEXT')
       console.log('[DB] 迁移：添加 sessions.work_dir 列')
+    }
+    if (!columns.includes('work_id')) {
+      db.run('ALTER TABLE sessions ADD COLUMN work_id TEXT')
+      console.log('[DB] 迁移：添加 sessions.work_id 列')
     }
     if (!columns.includes('model_profile_id')) {
       db.run('ALTER TABLE sessions ADD COLUMN model_profile_id TEXT')
@@ -183,6 +208,28 @@ function migrateDatabase(db: Database): void {
       SET updated_at = COALESCE(updated_at, created_at, datetime('now'))
       WHERE updated_at IS NULL OR updated_at = ''
     `)
+
+    const workTable = db.exec(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'works'`)
+    if (!workTable.length) {
+      db.run(`
+        CREATE TABLE works (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT,
+          status TEXT DEFAULT 'running',
+          phase TEXT DEFAULT 'assistant_running',
+          source TEXT DEFAULT 'desktop',
+          current_owner_skill_id TEXT,
+          primary_session_id TEXT,
+          latest_session_id TEXT,
+          updated_at TEXT DEFAULT (datetime('now')),
+          created_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+      `)
+      console.log('[DB] 迁移：创建 works 表')
+    }
   } catch (err) {
     console.warn('[DB] 迁移检查失败:', err)
   }
