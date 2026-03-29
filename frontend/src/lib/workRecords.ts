@@ -271,11 +271,13 @@ export function buildWorkRecordFromWorkSummary(
   sessions: Session[],
   getSkillName: (id?: string) => string,
 ): WorkRecordItem {
+  const openSessionId = work.latest_session_id || work.primary_session_id || sessions[0]?.id || work.id
+
   return {
     id: work.id,
     workId: work.id,
     title: work.title || '未命名工作',
-    primarySessionId: work.primary_session_id || sessions[0]?.id || work.latest_session_id || work.id,
+    primarySessionId: openSessionId,
     createdAt: work.created_at,
     status: work.status,
     source: work.source,
