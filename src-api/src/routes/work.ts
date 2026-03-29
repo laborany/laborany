@@ -27,7 +27,7 @@ work.delete('/:workId', (c) => {
 
   const running = detail.sessions.find((session) => {
     if (runtimeTaskManager.getStatus(session.id)?.isRunning) return true
-    return session.status === 'running'
+    return false
   })
   if (running) {
     return c.json({ error: '无法删除正在运行的工作，请先停止任务' }, 400)

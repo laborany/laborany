@@ -181,17 +181,11 @@ export default function HomePage() {
 
   const handleExecute = useCallback(async (targetId: string, query: string, files?: File[]) => {
     latestUserQueryRef.current = query
-    if (targetId) {
+    if (targetId && targetId !== '__generic__') {
       try {
         const attachmentIds = await uploadAttachments(files || [], localStorage.getItem('token'))
-        const handoffQuery = buildAssistantHandoffQuery({
-          bossRequest: query,
-          assigneeName: getCapabilityName(targetId),
-          mode: 'employee',
-          preparedTask: query,
-        })
         navigate(buildExecutePath(targetId, query, attachmentIds), {
-          state: { handoffQuery, originQuery: query },
+          state: { originQuery: query },
         })
       } catch (error) {
         setErrorMsg(error instanceof Error ? error.message : '文件上传失败')
@@ -797,7 +791,9 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
               isRunning={false}
               variant="home"
               placeholder={selectedCase
-                ? `把这项工作交给 ${selectedCaseDisplayName}，直接描述你的需求...`
+                ? selectedCase.targetId === '__generic__'
+                  ? '直接告诉个人助理：你想让公司帮你完成什么工作...'
+                  : `把这项工作交给 ${selectedCaseDisplayName}，直接描述你的需求...`
                 : '直接告诉个人助理：你想让公司帮你完成什么工作...'
               }
               autoFocus

@@ -69,7 +69,29 @@ function extractBossRequest(query: string): string {
 
   const remainder = text.slice(index + marker.length).trim()
   if (!remainder) return ''
-  return cleanupMarkdownMarkers(remainder)
+
+  const nextSectionIndex = remainder.search(/\n##\s+/)
+  const sectionText = nextSectionIndex >= 0
+    ? remainder.slice(0, nextSectionIndex).trim()
+    : remainder
+
+  return cleanupMarkdownMarkers(sectionText)
+}
+
+function extractInlineOriginalRequest(query: string): string {
+  const text = (query || '').trim()
+  if (!text) return ''
+
+  const inlineMarkerMatch = text.match(/\n+用户原始需求[:：]\s*\n+/)
+  if (!inlineMarkerMatch || inlineMarkerMatch.index === undefined) return ''
+
+  const markerIndex = inlineMarkerMatch.index
+  const before = text.slice(0, markerIndex).trim()
+  const after = text.slice(markerIndex + inlineMarkerMatch[0].length).trim()
+
+  if (before) return cleanupMarkdownMarkers(before)
+  if (after) return cleanupMarkdownMarkers(after)
+  return ''
 }
 
 function isInternalHandoffText(query: string): boolean {
@@ -110,6 +132,9 @@ function isActiveWorkStatus(status: string | null | undefined): boolean {
 function extractVisibleWorkText(query: string): string {
   const bossRequest = extractBossRequest(query)
   if (bossRequest) return bossRequest
+
+  const inlineOriginalRequest = extractInlineOriginalRequest(query)
+  if (inlineOriginalRequest) return inlineOriginalRequest
 
   const normalized = normalizeQuery(query)
   if (!normalized || isInternalHandoffText(normalized) || isControlInstructionText(normalized)) {
