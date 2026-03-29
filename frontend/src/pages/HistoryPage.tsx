@@ -826,21 +826,44 @@ export function SessionDetailPage() {
     return `阶段：${phase}`
   })()
   const headerMetaText = session ? parseUTCDate(session.created_at).toLocaleString('zh-CN') : ''
+  const runtimeHeadline = (() => {
+    if (!liveStatus?.isRunning) return null
+    if (!chatIsRunning) {
+      return continuing
+        ? '后台仍在运行，正在恢复连接...'
+        : '后台仍在运行，可恢复实时连接'
+    }
+    if (liveStatus.runtimeMode === 'tool') {
+      return liveStatus.runtimeSummary || '正在使用工具'
+    }
+    if (liveStatus.runtimeMode === 'waiting_input') {
+      return liveStatus.runtimeSummary || '等待补充信息'
+    }
+    return liveStatus.runtimeSummary || '思考中'
+  })()
+  const runtimeToneClass = liveStatus?.runtimeMode === 'failed'
+    ? 'border-rose-200 bg-rose-50 text-rose-900'
+    : liveStatus?.runtimeMode === 'waiting_input'
+      ? 'border-sky-200 bg-sky-50 text-sky-900'
+      : 'border-amber-200 bg-amber-50 text-amber-900'
   const runtimeBanner = liveStatus?.isRunning
     ? (
-      <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <div className={`mb-3 rounded-xl border px-4 py-3 text-sm ${runtimeToneClass}`}>
         <div className="flex items-center gap-2">
           <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-          <span className="font-medium">{liveStatus.runtimeSummary || '思考中'}</span>
+          <span className="font-medium">{runtimeHeadline}</span>
         </div>
         {phaseLabel && (
-          <p className="mt-1 text-xs text-amber-800/80">{phaseLabel}</p>
+          <p className="mt-1 text-xs opacity-80">{phaseLabel}</p>
         )}
         {liveStatus.activeToolName && (
-          <p className="mt-1 text-xs text-amber-800/80">
+          <p className="mt-1 text-xs opacity-80">
             当前工具：{liveStatus.activeToolName}
             {liveStatus.activeToolInputSummary ? ` · ${liveStatus.activeToolInputSummary}` : ''}
           </p>
+        )}
+        {!chatIsRunning && liveStatus.canAttach && (
+          <p className="mt-1 text-xs opacity-80">重新进入后会自动恢复到实时工作流。</p>
         )}
       </div>
     )

@@ -414,6 +414,7 @@ class RuntimeTaskManager {
     eventCount: number
     isRunning: boolean
     requiresInput: boolean
+    runtimeMode?: 'thinking' | 'tool' | 'waiting_input' | 'completed' | 'failed' | 'aborted'
     activeToolName?: string | null
     activeToolUseId?: string | null
     activeToolInputSummary?: string | null
@@ -435,6 +436,7 @@ class RuntimeTaskManager {
       eventCount: task.events.length,
       isRunning: task.status === 'running',
       requiresInput: task.status === 'waiting_input',
+      runtimeMode: this.buildRuntimeMode(task),
       activeToolName: task.activeToolName,
       activeToolUseId: task.activeToolUseId,
       activeToolInputSummary: task.activeToolInputSummary,
@@ -451,6 +453,7 @@ class RuntimeTaskManager {
     assistantContent: string
     isRunning: boolean
     requiresInput: boolean
+    runtimeMode?: 'thinking' | 'tool' | 'waiting_input' | 'completed' | 'failed' | 'aborted'
     activeToolName?: string | null
     activeToolUseId?: string | null
     activeToolInputSummary?: string | null
@@ -470,6 +473,7 @@ class RuntimeTaskManager {
       assistantContent: task.assistantContent,
       isRunning: task.status === 'running',
       requiresInput: task.status === 'waiting_input',
+      runtimeMode: this.buildRuntimeMode(task),
       activeToolName: task.activeToolName,
       activeToolUseId: task.activeToolUseId,
       activeToolInputSummary: task.activeToolInputSummary,
@@ -1276,6 +1280,25 @@ class RuntimeTaskManager {
       return '执行失败'
     }
     return '已中止'
+  }
+
+  private buildRuntimeMode(task: RuntimeTask): 'thinking' | 'tool' | 'waiting_input' | 'completed' | 'failed' | 'aborted' {
+    if (task.awaitingInput || task.status === 'waiting_input') {
+      return 'waiting_input'
+    }
+    if (task.activeToolName) {
+      return 'tool'
+    }
+    if (task.status === 'running') {
+      return 'thinking'
+    }
+    if (task.status === 'completed') {
+      return 'completed'
+    }
+    if (task.status === 'failed') {
+      return 'failed'
+    }
+    return 'aborted'
   }
 }
 

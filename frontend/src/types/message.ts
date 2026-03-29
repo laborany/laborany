@@ -107,6 +107,7 @@ export interface SessionLiveStatus {
   lastEventAt?: string
   canAttach: boolean
   runtimeStatus?: string
+  runtimeMode?: 'thinking' | 'tool' | 'waiting_input' | 'completed' | 'failed' | 'aborted'
   activeToolName?: string | null
   activeToolUseId?: string | null
   activeToolInputSummary?: string | null
