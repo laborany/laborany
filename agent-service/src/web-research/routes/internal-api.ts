@@ -136,6 +136,18 @@ export function createWebResearchRouter(runtime: WebResearchRuntime): Router {
     }
   })
 
+  // GET /browser-diagnostics
+  router.get('/browser-diagnostics', async (_req, res) => {
+    try {
+      res.json(await runtime.getBrowserDiagnostics())
+    } catch (err) {
+      console.error('[WebResearch:API] /browser-diagnostics error:', err)
+      res.status(500).json({
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  })
+
   // POST /connect-browser
   // 主动拉起并连接 CDP Proxy，用于设置页“测试连接”
   router.post('/connect-browser', async (_req, res) => {

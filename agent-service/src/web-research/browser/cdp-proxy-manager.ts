@@ -14,6 +14,7 @@ const MODULE_DIR = dirname(fileURLToPath(import.meta.url))
 
 const DEFAULT_PORT = 3456
 const HEALTH_CHECK_TIMEOUT_MS = 3000
+const WARM_CONNECT_TIMEOUT_MS = 25000
 const STARTUP_WAIT_MS = 5000
 const STARTUP_POLL_INTERVAL_MS = 300
 const MAX_RESTART_ATTEMPTS = 3
@@ -24,6 +25,14 @@ interface HealthStatus {
   connected: boolean
   sessions: number
   chromePort: number | null
+}
+
+interface ProxyDiagnostics {
+  status: string
+  connected: boolean
+  sessions: number
+  chromePort: number | null
+  diagnostics?: unknown
 }
 
 export class CdpProxyManager {
@@ -118,6 +127,21 @@ export class CdpProxyManager {
     return this.checkHealth()
   }
 
+  async getDiagnostics(): Promise<ProxyDiagnostics> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), WARM_CONNECT_TIMEOUT_MS)
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${this.port}/diagnostics`, {
+        signal: controller.signal,
+      })
+      if (!res.ok) throw new Error(`Diagnostics returned ${res.status}`)
+      return (await res.json()) as ProxyDiagnostics
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   // ── Private helpers ──
 
   private async fetchHealth(): Promise<HealthStatus> {
@@ -137,7 +161,7 @@ export class CdpProxyManager {
 
   private async tryWarmConnect(): Promise<void> {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS)
+    const timer = setTimeout(() => controller.abort(), WARM_CONNECT_TIMEOUT_MS)
 
     try {
       const res = await fetch(`http://127.0.0.1:${this.port}/targets`, {

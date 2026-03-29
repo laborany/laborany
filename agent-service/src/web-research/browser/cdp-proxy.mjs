@@ -18,6 +18,16 @@ const pending = new Map(); // id -> {resolve, timer}
 const sessions = new Map(); // targetId -> sessionId
 let heartbeatTimer = null;
 const HEARTBEAT_INTERVAL_MS = 20000;
+const HOST_CANDIDATES = ['127.0.0.1', 'localhost'];
+const EMPTY_DIAGNOSTICS = {
+  lastDiscovery: null,
+  discoveryHistory: [],
+  lastError: null,
+  lastConnectionAttemptAt: null,
+  lastConnectionSuccessAt: null,
+  wsUrl: null,
+};
+const diagnostics = { ...EMPTY_DIAGNOSTICS };
 
 // --- WebSocket 兼容层 ---
 const WS = typeof globalThis.WebSocket !== 'undefined'
@@ -29,6 +39,7 @@ async function discoverChromePort() {
   // 1. 尝试读 DevToolsActivePort 文件
   const possiblePaths = [];
   const platform = os.platform();
+  const attempted = [];
 
   if (platform === 'darwin') {
     const home = os.homedir();
@@ -53,8 +64,9 @@ async function discoverChromePort() {
 
   for (const p of possiblePaths) {
     try {
+      attempted.push({ source: 'DevToolsActivePort', path: p });
       const content = fs.readFileSync(p, 'utf-8').trim();
-      const lines = content.split('\n');
+      const lines = content.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
       const port = parseInt(lines[0]);
       if (port > 0 && port < 65536) {
         const ok = await checkPort(port);
@@ -62,6 +74,15 @@ async function discoverChromePort() {
           // 第二行是带 UUID 的 WebSocket 路径（如 /devtools/browser/xxx-xxx）
           // 非显式 --remote-debugging-port 启动时，Chrome 可能只接受此路径
           const wsPath = lines[1] || null;
+          const discovery = {
+            source: 'DevToolsActivePort',
+            path: p,
+            port,
+            wsPath,
+            at: new Date().toISOString(),
+          };
+          diagnostics.lastDiscovery = discovery;
+          diagnostics.discoveryHistory = [...diagnostics.discoveryHistory.slice(-9), discovery];
           console.log(`[CDP Proxy] 从 DevToolsActivePort 发现端口: ${port}${wsPath ? ' (带 wsPath)' : ''}`);
           return { port, wsPath };
         }
@@ -75,11 +96,26 @@ async function discoverChromePort() {
     const ok = await checkPort(port);
     if (ok) {
       const wsPath = await discoverWebSocketPath(port);
+      const discovery = {
+        source: 'port-scan',
+        path: null,
+        port,
+        wsPath,
+        at: new Date().toISOString(),
+      };
+      diagnostics.lastDiscovery = discovery;
+      diagnostics.discoveryHistory = [...diagnostics.discoveryHistory.slice(-9), discovery];
       console.log(`[CDP Proxy] 扫描发现 Chrome 调试端口: ${port}${wsPath ? ' (通过 /json/version 获取 wsPath)' : ''}`);
       return { port, wsPath };
     }
+    attempted.push({ source: 'port-scan', port });
   }
 
+  diagnostics.lastDiscovery = {
+    source: 'none',
+    attempted,
+    at: new Date().toISOString(),
+  };
   return null;
 }
 
@@ -87,15 +123,43 @@ async function discoverChromePort() {
 // （WebSocket 探测会被 Chrome 视为调试连接，弹出授权对话框）
 function checkPort(port) {
   return new Promise((resolve) => {
-    const socket = net.createConnection(port, '127.0.0.1');
-    const timer = setTimeout(() => { socket.destroy(); resolve(false); }, 2000);
-    socket.once('connect', () => { clearTimeout(timer); socket.destroy(); resolve(true); });
-    socket.once('error', () => { clearTimeout(timer); resolve(false); });
+    let settled = false;
+    let index = 0;
+    let socket = null;
+    let timer = null;
+
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      socket?.destroy();
+      resolve(value);
+    };
+
+    const tryNext = () => {
+      if (index >= HOST_CANDIDATES.length) {
+        finish(false);
+        return;
+      }
+      const host = HOST_CANDIDATES[index++];
+      socket = net.createConnection(port, host);
+      timer = setTimeout(() => {
+        socket?.destroy();
+        tryNext();
+      }, 2000);
+      socket.once('connect', () => finish(true));
+      socket.once('error', () => {
+        if (timer) clearTimeout(timer);
+        tryNext();
+      });
+    };
+
+    tryNext();
   });
 }
 
 function getWebSocketUrl(port, wsPath) {
-  if (wsPath) return `ws://127.0.0.1:${port}${wsPath}`;
+  if (wsPath) return `ws://127.0.0.1:${port}${String(wsPath).trim()}`;
   return `ws://127.0.0.1:${port}/devtools/browser`;
 }
 
@@ -133,6 +197,7 @@ let chromeWsPath = null;
 
 async function connect() {
   if (ws && (ws.readyState === WS.OPEN || ws.readyState === 1)) return;
+  diagnostics.lastConnectionAttemptAt = new Date().toISOString();
 
   if (!chromePort) {
     const discovered = await discoverChromePort();
@@ -150,6 +215,7 @@ async function connect() {
   }
 
   const wsUrl = getWebSocketUrl(chromePort, chromeWsPath);
+  diagnostics.wsUrl = wsUrl;
   if (!wsUrl) throw new Error('无法获取 Chrome WebSocket URL');
 
   return new Promise((resolve, reject) => {
@@ -158,12 +224,19 @@ async function connect() {
     const onOpen = () => {
       cleanup();
       startHeartbeat();
+      diagnostics.lastError = null;
+      diagnostics.lastConnectionSuccessAt = new Date().toISOString();
       console.log(`[CDP Proxy] 已连接 Chrome (端口 ${chromePort})`);
       resolve();
     };
     const onError = (e) => {
       cleanup();
       const msg = e.message || e.error?.message || '连接失败';
+      diagnostics.lastError = {
+        at: new Date().toISOString(),
+        message: msg,
+        wsUrl,
+      };
       console.error('[CDP Proxy] 连接错误:', msg);
       reject(new Error(msg));
     };
@@ -307,6 +380,18 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/health') {
       const connected = Boolean(ws && (ws.readyState === WS.OPEN || ws.readyState === 1));
       res.end(JSON.stringify({ status: 'ok', connected, sessions: sessions.size, chromePort }));
+      return;
+    }
+
+    if (pathname === '/diagnostics') {
+      const connected = Boolean(ws && (ws.readyState === WS.OPEN || ws.readyState === 1));
+      res.end(JSON.stringify({
+        status: 'ok',
+        connected,
+        sessions: sessions.size,
+        chromePort,
+        diagnostics,
+      }));
       return;
     }
 

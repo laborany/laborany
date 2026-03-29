@@ -70,6 +70,15 @@ interface ReadPageTestResponse {
   error?: string
 }
 
+interface BrowserDiagnosticsResponse {
+  status?: string
+  connected?: boolean
+  sessions?: number
+  chromePort?: number | null
+  diagnostics?: unknown
+  error?: string
+}
+
 type RuntimePlatform = 'win32' | 'darwin' | 'linux' | 'unknown'
 
 function detectClientPlatform(): RuntimePlatform {
@@ -148,6 +157,9 @@ export function BrowserResearchSection() {
   const [inspectHint, setInspectHint] = useState<string | null>(null)
   const [openingDebugPage, setOpeningDebugPage] = useState(false)
   const [launchingResearchBrowser, setLaunchingResearchBrowser] = useState(false)
+  const [diagnosingBrowser, setDiagnosingBrowser] = useState(false)
+  const [browserDiagnostics, setBrowserDiagnostics] = useState<BrowserDiagnosticsResponse | null>(null)
+  const [browserDiagnosticsError, setBrowserDiagnosticsError] = useState<string | null>(null)
   const [candidatePatterns, setCandidatePatterns] = useState<CandidatePatternSummary[]>([])
   const [reviewingKey, setReviewingKey] = useState<string | null>(null)
   const [reviewMessage, setReviewMessage] = useState<string | null>(null)
@@ -277,6 +289,25 @@ export function BrowserResearchSection() {
       setInspectHint(`启动专用研究浏览器失败：${msg}`)
     } finally {
       setLaunchingResearchBrowser(false)
+    }
+  }
+
+  const handleLoadBrowserDiagnostics = async () => {
+    try {
+      setDiagnosingBrowser(true)
+      setBrowserDiagnosticsError(null)
+      const res = await fetch(`${AGENT_API_BASE}/_internal/web-research/browser-diagnostics`)
+      const data = await res.json().catch(() => ({})) as BrowserDiagnosticsResponse
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      setBrowserDiagnostics(data)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setBrowserDiagnosticsError(msg)
+      setBrowserDiagnostics(null)
+    } finally {
+      setDiagnosingBrowser(false)
     }
   }
 
@@ -626,6 +657,13 @@ export function BrowserResearchSection() {
                       ? '启动专用研究浏览器（Windows 推荐）'
                       : '启动专用研究浏览器'}
                 </button>
+                <button
+                  onClick={handleLoadBrowserDiagnostics}
+                  disabled={diagnosingBrowser}
+                  className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                >
+                  {diagnosingBrowser ? '诊断中...' : '查看浏览器诊断'}
+                </button>
                 <code className="rounded bg-background/80 px-2 py-1 text-xs">chrome://inspect/#remote-debugging</code>
               </div>
               {inspectHint && (
@@ -651,6 +689,20 @@ export function BrowserResearchSection() {
                 </p>
                 <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-background/80 p-3 text-xs leading-5"><code>{researchBrowserCommand || '暂未获取到当前平台的启动命令。'}</code></pre>
               </details>
+              {(browserDiagnosticsError || browserDiagnostics) && (
+                <details className="rounded-md border border-border bg-background/60 p-3 text-xs" open>
+                  <summary className="cursor-pointer font-medium text-foreground">浏览器诊断结果</summary>
+                  {browserDiagnosticsError ? (
+                    <div className="mt-3 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-700">
+                      {browserDiagnosticsError}
+                    </div>
+                  ) : (
+                    <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-background p-3 text-xs leading-5">
+                      <code>{JSON.stringify(browserDiagnostics, null, 2)}</code>
+                    </pre>
+                  )}
+                </details>
+              )}
             </GuideBlock>
           )}
 

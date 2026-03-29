@@ -545,6 +545,18 @@ export class WebResearchRuntime {
     return this.ensureBrowser()
   }
 
+  async getBrowserDiagnostics(): Promise<unknown> {
+    try {
+      await this.cdpManager.ensureRunning()
+      return await this.cdpManager.getDiagnostics()
+    } catch (err) {
+      return {
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+  }
+
   /* ════════════════════════════════════════════════════════════════════════════
    *  站点信息
    * ════════════════════════════════════════════════════════════════════════════ */
