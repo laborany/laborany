@@ -11,6 +11,8 @@ interface WorkDetailHeaderProps {
   onBack: () => void
   statusLabel?: string | null
   statusBadgeClassName?: string
+  stageLabel?: string | null
+  ownerLabel?: string | null
   metaText?: string
   rightSlot?: React.ReactNode
   tabs?: WorkDetailHeaderTab[]
@@ -24,6 +26,8 @@ export function WorkDetailHeader({
   onBack,
   statusLabel,
   statusBadgeClassName,
+  stageLabel,
+  ownerLabel,
   metaText,
   rightSlot,
   tabs,
@@ -48,6 +52,11 @@ export function WorkDetailHeader({
           <div className="min-w-0">
             <h2 className="truncate text-lg font-semibold text-foreground">{title}</h2>
             <p className="text-sm text-muted-foreground">当前视角：{activeRoleLabel}</p>
+            {(stageLabel || ownerLabel) && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {[stageLabel, ownerLabel ? `负责人：${ownerLabel}` : ''].filter(Boolean).join(' · ')}
+              </p>
+            )}
           </div>
           {statusLabel && statusBadgeClassName && (
             <span className={statusBadgeClassName}>

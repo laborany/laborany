@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAgent, type PendingQuestion } from '../hooks/useAgent'
 import { useConverse } from '../hooks/useConverse'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
-import type { AgentMessage, TaskFile, SessionDetail, SessionLiveStatus, WidgetState, WorkDetailResponse } from '../types'
+import type { AgentMessage, TaskFile, SessionDetail, SessionLiveStatus, WidgetState, WorkDetailResponse, WorkSummary } from '../types'
 import { API_BASE } from '../config'
 import { ExecutionPanel } from '../components/execution'
 import { Tooltip } from '../components/ui'
@@ -370,6 +370,7 @@ export function SessionDetailPage() {
   const [relatedRecordSessionIds, setRelatedRecordSessionIds] = useState<string[]>([])
   const [workTitle, setWorkTitle] = useState('')
   const [workId, setWorkId] = useState<string | null>(null)
+  const [workSummary, setWorkSummary] = useState<WorkSummary | null>(null)
   const [liveStatus, setLiveStatus] = useState<SessionLiveStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [continuing, setContinuing] = useState(false)
@@ -404,6 +405,7 @@ export function SessionDetailPage() {
     setAssistantSession(null)
     setRelatedRecordSessionIds([])
     setWorkId(null)
+    setWorkSummary(null)
     setActiveTab('employee')
     if (sessionId) {
       fetchSessionDetail()
@@ -515,6 +517,7 @@ export function SessionDetailPage() {
       if (!data.work) return
 
       setWorkId(data.work.id)
+      setWorkSummary(data.work)
       setWorkTitle(data.work.title || '')
       setRelatedRecordSessionIds(data.sessions.map((item) => item.id))
 
@@ -800,6 +803,7 @@ export function SessionDetailPage() {
   )
   const employeeRoleLabel = getSkillName(session?.skill_id)
   const activeRoleLabel = activeTab === 'assistant' ? assistantLabel : employeeRoleLabel
+  const currentOwnerLabel = getSkillName(workSummary?.current_owner_skill_id || undefined) || null
   const fallbackSessionTitle = session?.query && !isControlInstructionText(session.query)
     ? session.query
     : ''
@@ -810,6 +814,17 @@ export function SessionDetailPage() {
       { id: 'employee', label: employeeRoleLabel },
     ]
     : undefined
+  const phaseLabel = (() => {
+    const phase = (workSummary?.phase || '').trim()
+    if (!phase) return null
+    if (phase === 'assistant_running') return '阶段：助理处理中'
+    if (phase === 'assistant_waiting') return '阶段：等待老板补充'
+    if (phase === 'employee_running') return '阶段：员工执行中'
+    if (phase === 'employee_waiting') return '阶段：等待补充信息'
+    if (phase === 'employee_completed' || phase === 'assistant_completed') return '阶段：已完成'
+    if (phase === 'employee_failed' || phase === 'assistant_failed') return '阶段：执行失败'
+    return `阶段：${phase}`
+  })()
   const headerMetaText = session ? parseUTCDate(session.created_at).toLocaleString('zh-CN') : ''
   const runtimeBanner = liveStatus?.isRunning
     ? (
@@ -818,6 +833,9 @@ export function SessionDetailPage() {
           <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
           <span className="font-medium">{liveStatus.runtimeSummary || '思考中'}</span>
         </div>
+        {phaseLabel && (
+          <p className="mt-1 text-xs text-amber-800/80">{phaseLabel}</p>
+        )}
         {liveStatus.activeToolName && (
           <p className="mt-1 text-xs text-amber-800/80">
             当前工具：{liveStatus.activeToolName}
@@ -884,6 +902,8 @@ export function SessionDetailPage() {
           onBack={() => navigate('/history')}
           statusLabel={renderStatusLabel(effectiveStatus)}
           statusBadgeClassName={effectiveStatusBadgeClass}
+          stageLabel={phaseLabel}
+          ownerLabel={currentOwnerLabel}
           metaText={headerMetaText}
           rightSlot={headerRightSlot}
           tabs={headerTabs}
@@ -932,6 +952,8 @@ export function SessionDetailPage() {
               onBack={() => navigate('/history')}
               statusLabel={renderStatusLabel(effectiveStatus)}
               statusBadgeClassName={effectiveStatusBadgeClass}
+              stageLabel={phaseLabel}
+              ownerLabel={currentOwnerLabel}
               metaText={headerMetaText}
               rightSlot={headerRightSlot}
               tabs={headerTabs}
