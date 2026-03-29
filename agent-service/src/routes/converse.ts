@@ -307,15 +307,15 @@ async function upsertExternalSession(
   query: string,
   status: ExternalSessionStatus = 'running',
   sourceMeta?: Record<string, unknown>,
-): Promise<void> {
+): Promise<string | null> {
   const nextSourceMeta = {
     ...sourceMeta,
     workId: typeof sourceMeta?.workId === 'string' && sourceMeta.workId.trim()
       ? sourceMeta.workId.trim()
-      : sessionId,
+      : undefined,
   }
   try {
-    await fetch(`${getSrcApiBaseUrl()}/sessions/external/upsert`, {
+    const response = await fetch(`${getSrcApiBaseUrl()}/sessions/external/upsert`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -327,8 +327,12 @@ async function upsertExternalSession(
         sourceMeta: nextSourceMeta,
       }),
     })
+    const payload = await response.json().catch(() => null) as { workId?: string } | null
+    const workId = typeof payload?.workId === 'string' ? payload.workId.trim() : ''
+    return workId || null
   } catch (err) {
     console.warn('[Converse] failed to upsert external session:', err)
+    return null
   }
 }
 
@@ -1930,7 +1934,6 @@ router.post('/', async (req: Request, res: Response) => {
   res.flushHeaders()
 
   const sessionId = incomingId || randomUUID()
-  sseWrite(res, 'session', { sessionId })
   const currentState = setSessionState(sessionId, {
     phase: 'clarify',
     approvalRequired: false,
@@ -1977,10 +1980,11 @@ router.post('/', async (req: Request, res: Response) => {
     evidenceText: persistUserQuery,
   })
 
-  await upsertExternalSession(sessionId, persistUserQuery, 'running', {
+  const workId = await upsertExternalSession(sessionId, persistUserQuery, 'running', {
     attachmentIds,
     modelProfileId: modelProfileId || undefined,
   })
+  sseWrite(res, 'session', { sessionId, workId: workId || undefined })
   const userMessageId = await appendExternalMessage(
     sessionId,
     'user',

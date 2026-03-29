@@ -18,6 +18,7 @@ import { SkillExecutingView, type HomePhase, type ExecutionContext } from '../co
 import { PlanReviewPanel } from '../components/home/PlanReviewPanel'
 import { CandidateConfirmView, FallbackBanner, ErrorView } from '../components/home/DispatchViews'
 import { buildExecutePath, stripAttachmentMarkers, uploadAttachments } from '../lib/attachments'
+import { navigateToHistoryBySessionId } from '../lib/historyRoutes'
 import { supportsGenerativeWidgets } from '../lib/widgetSupport'
 import { getAssistantPhaseHint, isAssistantExecutionPhase } from '../lib/assistantFlow'
 import { buildAssistantHandoffQuery } from '../lib/assistantHandoff'
@@ -177,7 +178,7 @@ export default function HomePage() {
           query: originQuery,
           originQuery,
           attachmentIds,
-          workId: converse.sessionId || undefined,
+          workId: converse.workId || undefined,
           handoffQuery: buildAssistantHandoffQuery({
             bossRequest: originQuery,
             mode: 'assistant',
@@ -228,7 +229,7 @@ export default function HomePage() {
       setPhase('idle')
       return
     }
-  }, [converse.action, converse.pendingQuestion, converse.sessionFileIds])
+  }, [converse.action, converse.pendingQuestion, converse.sessionFileIds, converse.workId])
 
   useEffect(() => {
     if (phase !== 'idle') return
@@ -288,11 +289,13 @@ export default function HomePage() {
       })
       navigate(buildExecutePath(candidate.targetId, bossRequest, candidate.attachmentIds, {
         converseSid: converse.sessionId || undefined,
+        workId: converse.workId || undefined,
       }), {
         state: {
           handoffQuery,
           originQuery: bossRequest,
           converseSessionId: converse.sessionId || undefined,
+          workId: converse.workId || undefined,
         },
       })
       return
@@ -306,7 +309,7 @@ export default function HomePage() {
         query: bossRequest,
         originQuery: bossRequest,
         attachmentIds: candidate.attachmentIds,
-        workId: converse.sessionId || undefined,
+        workId: converse.workId || undefined,
         handoffQuery: buildAssistantHandoffQuery({
           bossRequest,
           mode: 'hr',
@@ -387,7 +390,7 @@ export default function HomePage() {
   }, [agent.clear, agent.detach, agent.isRunning, agent.sessionId, phase, refreshBackgroundTasks])
 
   const handleResumeBackgroundTask = useCallback((task: RunningTaskBrief) => {
-    navigate(`/history/${encodeURIComponent(task.sessionId)}`)
+    void navigateToHistoryBySessionId(navigate, task.sessionId)
   }, [navigate])
 
   const handleCapabilityCreated = useCallback((created: {
@@ -408,6 +411,7 @@ export default function HomePage() {
     }
     navigate(buildExecutePath(created.id, query, execCtx?.attachmentIds || [], {
       converseSid: converse.sessionId || undefined,
+      workId: converse.workId || execCtx?.workId || undefined,
     }), {
       state: {
         handoffQuery: buildAssistantHandoffQuery({
@@ -418,9 +422,10 @@ export default function HomePage() {
         }),
         originQuery: query,
         converseSessionId: converse.sessionId || undefined,
+        workId: converse.workId || execCtx?.workId || undefined,
       },
     })
-  }, [converse.sessionId, execCtx?.attachmentIds, execCtx?.originQuery, execCtx?.query, navigate, getCapabilityName])
+  }, [converse.sessionId, converse.workId, execCtx?.attachmentIds, execCtx?.originQuery, execCtx?.query, execCtx?.workId, navigate, getCapabilityName])
 
   if (phase === 'idle') {
     return <IdleView

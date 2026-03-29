@@ -359,12 +359,18 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
   return messages
 }
 
-export function SessionDetailPage() {
-  const { sessionId } = useParams<{ sessionId: string }>()
+function SessionDetailContent({
+  routeSessionId = '',
+  routeWorkId = '',
+}: {
+  routeSessionId?: string
+  routeWorkId?: string
+}) {
   const navigate = useNavigate()
   const { getSkillName } = useSkillNameMap()
   const assistantLabel = '个人助理'
   const [activeTab, setActiveTab] = useState<'employee' | 'assistant'>('employee')
+  const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(null)
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [assistantSession, setAssistantSession] = useState<SessionDetail | null>(null)
   const [relatedRecordSessionIds, setRelatedRecordSessionIds] = useState<string[]>([])
@@ -378,6 +384,7 @@ export function SessionDetailPage() {
   const [deleting, setDeleting] = useState(false)
 
   const [viewingWidget, setViewingWidget] = useState<WidgetState | null>(null)
+  const sessionId = routeSessionId || resolvedSessionId || ''
 
   const attachInFlightRef = useRef<Promise<void> | null>(null)
   const attachedSessionRef = useRef<string | null>(null)
@@ -397,6 +404,7 @@ export function SessionDetailPage() {
   )
 
   useEffect(() => {
+    setLoading(true)
     setContinuing(false)
     attachInFlightRef.current = null
     attachedSessionRef.current = null
@@ -406,11 +414,9 @@ export function SessionDetailPage() {
     setRelatedRecordSessionIds([])
     setWorkId(null)
     setWorkSummary(null)
+    setResolvedSessionId(null)
     setActiveTab('employee')
-    if (sessionId) {
-      fetchSessionDetail()
-    }
-  }, [sessionId])
+  }, [routeSessionId, routeWorkId])
 
   useEffect(() => {
     if (!sessionId || !isConverseSession) return
@@ -489,26 +495,32 @@ export function SessionDetailPage() {
     }
   }, [session?.work_dir])
 
-  const fetchSessionDetail = useCallback(async () => {
+  const fetchSessionDetail = useCallback(async (targetSessionId: string) => {
+    if (!targetSessionId) return null
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+      const res = await fetch(`${API_BASE}/sessions/${targetSessionId}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error('获取会话详情失败')
-      const data = await res.json()
+      const data = await res.json() as SessionDetail
       setSession(data)
+      return data
     } catch {
       // 忽略错误
+      return null
     } finally {
       setLoading(false)
     }
-  }, [sessionId])
+  }, [])
 
-  const fetchRelatedWorkRecord = useCallback(async (targetSessionId: string, currentSession: SessionDetail) => {
+  const fetchWorkDetailById = useCallback(async (targetWorkId: string, currentSession?: SessionDetail | null) => {
+    const normalizedWorkId = targetWorkId.trim()
+    if (!normalizedWorkId) return
+
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch(`${API_BASE}/works/by-session/${encodeURIComponent(targetSessionId)}`, {
+      const res = await fetch(`${API_BASE}/works/${encodeURIComponent(normalizedWorkId)}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) return
@@ -521,9 +533,12 @@ export function SessionDetailPage() {
       setWorkTitle(data.work.title || '')
       setRelatedRecordSessionIds(data.sessions.map((item) => item.id))
 
-      const assistant = data.sessions.find((item) => item.skill_id === '__converse__')
+      const assistantSessionId = data.session_links?.assistant_session_id || ''
+      const assistant = assistantSessionId
+        ? data.sessions.find((item) => item.id === assistantSessionId)
+        : data.sessions.find((item) => item.skill_id === '__converse__')
       const hasEmployeeSession = data.sessions.some((item) => item.skill_id !== '__converse__')
-      if (!assistant || !hasEmployeeSession || assistant.id === currentSession.id) return
+      if (!assistant || !hasEmployeeSession || assistant.id === currentSession?.id) return
 
       const detailRes = await fetch(`${API_BASE}/sessions/${assistant.id}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -538,14 +553,79 @@ export function SessionDetailPage() {
   }, [])
 
   useEffect(() => {
+    if (routeWorkId) {
+      let cancelled = false
+
+      void (async () => {
+        try {
+          const token = localStorage.getItem('token')
+          const res = await fetch(`${API_BASE}/works/${encodeURIComponent(routeWorkId)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          if (!res.ok) {
+            setLoading(false)
+            return
+          }
+
+          const data = await res.json() as WorkDetailResponse
+          if (!data.work) {
+            setLoading(false)
+            return
+          }
+
+          const displaySessionId = data.session_links?.entry_session_id
+            || data.work.latest_session_id
+            || data.work.primary_session_id
+            || data.sessions[data.sessions.length - 1]?.id
+            || ''
+          if (!displaySessionId) {
+            setLoading(false)
+            return
+          }
+
+          if (cancelled) return
+          setWorkId(data.work.id)
+          setWorkSummary(data.work)
+          setWorkTitle(data.work.title || '')
+          setRelatedRecordSessionIds(data.sessions.map((item) => item.id))
+          setResolvedSessionId(displaySessionId)
+
+          const sessionDetail = await fetchSessionDetail(displaySessionId)
+          if (!sessionDetail || cancelled) return
+
+          if (cancelled) return
+          await fetchWorkDetailById(data.work.id, sessionDetail)
+        } catch {
+          // 忽略错误
+          setLoading(false)
+        }
+      })()
+
+      return () => {
+        cancelled = true
+      }
+    }
+
+    if (!routeSessionId) {
+      setLoading(false)
+      return
+    }
+
+    void fetchSessionDetail(routeSessionId)
+  }, [routeWorkId, routeSessionId, fetchSessionDetail])
+
+  useEffect(() => {
+    if (routeWorkId) return
     if (!sessionId || !session) return
-    void fetchRelatedWorkRecord(sessionId, session)
-  }, [sessionId, session, fetchRelatedWorkRecord])
+    const sessionWorkId = (session.work_id || '').trim()
+    if (!sessionWorkId) return
+    void fetchWorkDetailById(sessionWorkId, session)
+  }, [routeWorkId, sessionId, session, fetchWorkDetailById])
 
   const syncConverseSnapshot = useCallback(async () => {
     if (!sessionId) return
     if (converseThinkingRef.current) return
-    await fetchSessionDetail()
+    await fetchSessionDetail(sessionId)
     if (converseThinkingRef.current) return
     await converse.resumeSession(sessionId)
   }, [sessionId, fetchSessionDetail, converse.resumeSession])
@@ -995,4 +1075,65 @@ export function SessionDetailPage() {
       />
     </div>
   )
+}
+
+export function SessionDetailPage() {
+  const params = useParams<{ workId?: string }>()
+  const routeWorkId = typeof params.workId === 'string' ? params.workId.trim() : ''
+  return <SessionDetailContent routeWorkId={routeWorkId} />
+}
+
+export function LegacySessionDetailPage() {
+  const params = useParams<{ sessionId?: string }>()
+  const routeSessionId = typeof params.sessionId === 'string' ? params.sessionId.trim() : ''
+  const navigate = useNavigate()
+  const [resolved, setResolved] = useState<'redirecting' | 'fallback'>('redirecting')
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!routeSessionId) {
+      setResolved('fallback')
+      return () => { cancelled = true }
+    }
+
+    void (async () => {
+      try {
+        const token = localStorage.getItem('token')
+        const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(routeSessionId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) {
+          if (!cancelled) setResolved('fallback')
+          return
+        }
+
+        const data = await res.json() as SessionDetail
+        const workId = (data.work_id || '').trim()
+        if (workId) {
+          navigate(`/history/work/${encodeURIComponent(workId)}`, { replace: true })
+          return
+        }
+
+        if (!cancelled) setResolved('fallback')
+      } catch {
+        if (!cancelled) setResolved('fallback')
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [routeSessionId, navigate])
+
+  if (resolved === 'redirecting') {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-8">
+        <div className="animate-pulse space-y-4">
+          <div className="h-8 bg-muted rounded w-1/4" />
+          <div className="h-64 bg-muted rounded-lg" />
+        </div>
+      </div>
+    )
+  }
+
+  return <SessionDetailContent routeSessionId={routeSessionId} />
 }

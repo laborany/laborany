@@ -5,12 +5,13 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useCronJobs, useCronJobRuns, describeSchedule, formatTime, formatDuration } from '../hooks/useCron'
 import type { CronJob, CreateJobRequest, Schedule } from '../hooks/useCron'
 import { CronJobForm } from '../components/cron/CronJobForm'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { useModelProfile } from '../contexts/ModelProfileContext'
+import { navigateToHistoryBySessionId } from '../lib/historyRoutes'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           状态图标                                        │
@@ -153,6 +154,7 @@ function JobCard({
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
 function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
+  const navigate = useNavigate()
   const { runs, loading, error } = useCronJobRuns(jobId)
 
   if (loading) {
@@ -207,12 +209,13 @@ function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
             </div>
           )}
           {run.sessionId && (
-            <Link
-              to={`/history/${run.sessionId}`}
-              className="mt-2 text-xs text-primary hover:underline inline-flex items-center gap-1"
+            <button
+              type="button"
+              onClick={() => { void navigateToHistoryBySessionId(navigate, run.sessionId!) }}
+              className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
             >
               查看工作记录 →
-            </Link>
+            </button>
           )}
         </div>
       ))}

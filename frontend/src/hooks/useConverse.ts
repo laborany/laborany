@@ -66,6 +66,7 @@ export interface UseConverseReturn {
   } | null
   isThinking: boolean
   sessionId: string | null
+  workId: string | null
   sessionFileIds: string[]
   error: string | null
   regeneratingMessageId: string | null
@@ -103,10 +104,12 @@ interface SessionDetailMessage {
 }
 
 interface ConverseSessionPayload {
+  work_id?: string | null
   skill_id?: string
   messages?: SessionDetailMessage[]
   sourceMeta?: {
     attachmentIds?: string[] | string
+    workId?: string
   } | null
 }
 
@@ -397,6 +400,7 @@ export function useConverse(): UseConverseReturn {
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0] || null
   const canRenderWidgets = supportsGenerativeWidgets(activeProfile)
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [workId, setWorkId] = useState<string | null>(null)
   const [sessionFileIds, setSessionFileIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<string | null>(null)
@@ -405,6 +409,7 @@ export function useConverse(): UseConverseReturn {
   const [mcpNotice, setMcpNotice] = useState<UseConverseReturn['mcpNotice']>(null)
 
   const sessionIdRef = useRef<string | null>(null)
+  const workIdRef = useRef<string | null>(null)
   const sessionFileIdsRef = useRef<string[]>([])
   const messagesRef = useRef<AgentMessage[]>([])
   const abortRef = useRef<AbortController | null>(null)
@@ -477,10 +482,13 @@ export function useConverse(): UseConverseReturn {
     }
 
     const restoredAttachmentIds = normalizeAttachmentIds(payload.sourceMeta?.attachmentIds)
+    const restoredWorkId = (payload.work_id || payload.sourceMeta?.workId || '').trim() || null
     setSessionFileIds(restoredAttachmentIds)
     sessionFileIdsRef.current = restoredAttachmentIds
     sessionIdRef.current = sid
+    workIdRef.current = restoredWorkId
     setSessionId(sid)
+    setWorkId(restoredWorkId)
   }, [])
 
   const syncPersistedMessages = useCallback(async (sid: string, expectedRequestSeq?: number): Promise<boolean> => {
@@ -577,8 +585,13 @@ export function useConverse(): UseConverseReturn {
 
       if (eventType === 'session') {
         const sid = data.sessionId as string
+        const nextWorkId = typeof data.workId === 'string' && data.workId.trim()
+          ? data.workId.trim()
+          : workIdRef.current
         sessionIdRef.current = sid
+        workIdRef.current = nextWorkId || null
         setSessionId(sid)
+        setWorkId(nextWorkId || null)
         return
       }
 
@@ -1098,6 +1111,7 @@ export function useConverse(): UseConverseReturn {
     setPendingQuestion(null)
     setState(null)
     setSessionId(null)
+    setWorkId(null)
     setSessionFileIds([])
     setError(null)
     setRegeneratingMessageId(null)
@@ -1106,6 +1120,7 @@ export function useConverse(): UseConverseReturn {
     setMcpNotice(null)
     messagesRef.current = []
     sessionIdRef.current = null
+    workIdRef.current = null
     sessionFileIdsRef.current = []
   }, [stop])
 
@@ -1122,6 +1137,7 @@ export function useConverse(): UseConverseReturn {
     state,
     isThinking,
     sessionId,
+    workId,
     sessionFileIds,
     error,
     regeneratingMessageId,

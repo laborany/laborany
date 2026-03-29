@@ -39,6 +39,7 @@ interface AgentState {
   isRunning: boolean
   runCompletedAt: string | null
   sessionId: string | null
+  workId: string | null
   error: string | null
   connectionStatus: string | null
   taskFiles: TaskFile[]
@@ -364,6 +365,7 @@ export function useAgent(skillId: string) {
     isRunning: false,
     runCompletedAt: null,
     sessionId: null,
+    workId: null,
     error: null,
     connectionStatus: null,
     taskFiles: [],
@@ -387,6 +389,7 @@ export function useAgent(skillId: string) {
   })
   const currentTextRef = useRef('')
   const sessionIdRef = useRef<string | null>(null)
+  const workIdRef = useRef<string | null>(null)
   const assistantIdRef = useRef<string>(crypto.randomUUID())
   const terminalEventRef = useRef(false)
   const resumeHintAtRef = useRef(0)
@@ -511,6 +514,7 @@ export function useAgent(skillId: string) {
       isRunning: false,
       runCompletedAt: null,
       sessionId: null,
+      workId: null,
       error: null,
       connectionStatus: null,
       taskFiles: [],
@@ -607,8 +611,12 @@ export function useAgent(skillId: string) {
       switch (eventType) {
         case 'session':
           const sid = event.sessionId as string
+          const nextWorkId = typeof event.workId === 'string' && event.workId.trim()
+            ? event.workId.trim()
+            : workIdRef.current
           sessionIdRef.current = sid
-          setState((s) => ({ ...s, sessionId: sid }))
+          workIdRef.current = nextWorkId || null
+          setState((s) => ({ ...s, sessionId: sid, workId: nextWorkId || s.workId }))
           rememberActiveSessionId(sid)
           break
 
@@ -1397,6 +1405,7 @@ export function useAgent(skillId: string) {
   const clear = useCallback(() => {
     forgetActiveSessionId(sessionIdRef.current)
     sessionIdRef.current = null
+    workIdRef.current = null
     isReplayingRef.current = false
     assistantIdRef.current = crypto.randomUUID()
     currentTextRef.current = ''
@@ -1416,6 +1425,7 @@ export function useAgent(skillId: string) {
       isRunning: false,
       runCompletedAt: null,
       sessionId: null,
+      workId: null,
       error: null,
       connectionStatus: null,
       taskFiles: [],

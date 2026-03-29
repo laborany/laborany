@@ -6,7 +6,7 @@ import {
   resolveExecuteGenerativeWidgetSupport,
 } from 'laborany-shared'
 import { dbHelper } from '../database.js'
-import { ensureWorkForSession, refreshWorkBySessionId } from '../work-items.js'
+import { ensureWorkForSession, findWorkIdBySessionId, refreshWorkBySessionId } from '../work-items.js'
 import { executeAgent, ensureTaskDir, type AgentEvent, type ModelOverride } from './executor.js'
 import { sessionManager } from './session-manager.js'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'path'
@@ -64,7 +64,7 @@ function shouldEnableDesktopWidgetsForTask(
 
 export type RuntimeEvent =
   | AgentEvent
-  | { type: 'session'; sessionId: string }
+  | { type: 'session'; sessionId: string; workId?: string }
   | { type: 'aborted' }
   | { type: 'state'; phase: RuntimeTaskStatus }
   | ({ type: 'question' } & SkillQuestionPayload)
@@ -340,7 +340,11 @@ class RuntimeTaskManager {
     const includeSession = options.includeSession !== false
 
     if (includeSession) {
-      this.safeCallSubscriber(onEvent, { type: 'session', sessionId })
+      this.safeCallSubscriber(onEvent, {
+        type: 'session',
+        sessionId,
+        workId: findWorkIdBySessionId(sessionId) || undefined,
+      })
     }
 
     if (shouldReplay) {

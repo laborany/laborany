@@ -79,6 +79,7 @@ export function buildExecutePath(
   attachmentIds: string[],
   options?: {
     converseSid?: string
+    workId?: string
   },
 ): string {
   const params = new URLSearchParams()
@@ -89,6 +90,9 @@ export function buildExecutePath(
   applyAttachmentIdsToParams(params, attachmentIds)
   if (options?.converseSid?.trim()) {
     params.set('converseSid', options.converseSid.trim())
+  }
+  if (options?.workId?.trim()) {
+    params.set('workId', options.workId.trim())
   }
   const search = params.toString()
   return `/history/launch/${skillId}${search ? `?${search}` : ''}`

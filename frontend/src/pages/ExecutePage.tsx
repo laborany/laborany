@@ -54,6 +54,10 @@ export default function ExecutePage() {
     || (typeof (location.state as { converseSessionId?: unknown } | null)?.converseSessionId === 'string'
       ? (((location.state as { converseSessionId?: string }).converseSessionId || '').trim())
       : '')
+  const routeWorkId = (searchParams.get('workId') || '').trim()
+    || (typeof (location.state as { workId?: unknown } | null)?.workId === 'string'
+      ? (((location.state as { workId?: string }).workId || '').trim())
+      : '')
   const hasAssistantTab = Boolean(converseSid)
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      页面级状态（对话框 + 断线重连）                       │
@@ -113,16 +117,16 @@ export default function ExecutePage() {
   }, [converseSid, converse.resumeSession])
 
   useEffect(() => {
-    if (!agent.sessionId) return
-    if (/^\/history\/[^/]+$/.test(location.pathname)) return
+    if (!agent.workId) return
+    if (/^\/history\/work\/[^/]+$/.test(location.pathname)) return
 
     const params = new URLSearchParams()
     if (converseSid) {
       params.set('converseSid', converseSid)
     }
-    const nextPath = `/history/${encodeURIComponent(agent.sessionId)}${params.toString() ? `?${params.toString()}` : ''}`
+    const nextPath = `/history/work/${encodeURIComponent(agent.workId)}${params.toString() ? `?${params.toString()}` : ''}`
     navigate(nextPath, { replace: true })
-  }, [agent.sessionId, converseSid, location.pathname, navigate])
+  }, [agent.workId, converseSid, location.pathname, navigate])
 
   useEffect(() => {
     const sid = searchParams.get('sid')
@@ -134,6 +138,10 @@ export default function ExecutePage() {
     const handoffQuery = typeof (location.state as { handoffQuery?: unknown } | null)?.handoffQuery === 'string'
       ? ((location.state as { handoffQuery?: string }).handoffQuery || '').trim()
       : ''
+    const executionWorkId = (searchParams.get('workId') || '').trim()
+      || (typeof (location.state as { workId?: unknown } | null)?.workId === 'string'
+        ? ((location.state as { workId?: string }).workId || '').trim()
+        : '')
     if (!sid && !query && attachmentIds.length === 0) return
 
     const normalizedQuery = query?.trim() || (attachmentIds.length > 0 ? ATTACHMENT_ONLY_EXECUTION_QUERY : '')
@@ -194,12 +202,12 @@ export default function ExecutePage() {
         attached = await tryAttachRunningSession(sid)
         if (!attached && normalizedQuery && await canContinueSession(sid)) {
           agent.resumeSession(sid)
-          await agent.execute(normalizedQuery, undefined, {
-            attachmentIds,
-            requestQuery: handoffQuery || undefined,
-            originQuery: explicitOriginQuery || normalizedQuery,
-            workId: converseSid || undefined,
-          })
+            await agent.execute(normalizedQuery, undefined, {
+              attachmentIds,
+              requestQuery: handoffQuery || undefined,
+              originQuery: explicitOriginQuery || normalizedQuery,
+              workId: executionWorkId || converse.workId || undefined,
+            })
           continuedBySid = true
           startedNewExecution = true
         }
@@ -210,7 +218,7 @@ export default function ExecutePage() {
           attachmentIds,
           requestQuery: handoffQuery || undefined,
           originQuery: explicitOriginQuery || normalizedQuery,
-          workId: converseSid || undefined,
+          workId: executionWorkId || converse.workId || undefined,
         })
         startedNewExecution = true
       }
@@ -229,7 +237,7 @@ export default function ExecutePage() {
     }
 
     void bootstrap()
-  }, [searchParams, setSearchParams, agent.execute, agent.attachToSession, agent.resumeSession, skillId, location.state])
+  }, [searchParams, setSearchParams, agent.execute, agent.attachToSession, agent.resumeSession, skillId, location.state, converse.workId])
 
   useEffect(() => {
     if (skillId !== 'skill-creator') return
@@ -243,12 +251,17 @@ export default function ExecutePage() {
 
     const firstUserMessage = agent.messages.find((m) => m.type === 'user')?.content || ''
     const originQuery = (created.originQuery || firstUserMessage || '').trim()
-    const nextUrl = originQuery
-      ? `/history/launch/${created.id}?q=${encodeURIComponent(originQuery)}`
-      : `/history/launch/${created.id}`
+    const params = new URLSearchParams()
+    if (originQuery) {
+      params.set('q', originQuery)
+    }
+    if (agent.workId || routeWorkId) {
+      params.set('workId', agent.workId || routeWorkId)
+    }
+    const nextUrl = `/history/launch/${created.id}${params.toString() ? `?${params.toString()}` : ''}`
 
     navigate(nextUrl, { replace: true })
-  }, [skillId, agent.createdCapability, agent.messages, navigate])
+  }, [skillId, agent.createdCapability, agent.messages, agent.workId, routeWorkId, navigate])
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      页面级回调                                          │

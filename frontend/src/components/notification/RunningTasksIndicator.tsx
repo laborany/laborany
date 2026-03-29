@@ -6,8 +6,9 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { API_BASE } from '../../config/api'
+import { navigateToHistoryBySessionId } from '../../lib/historyRoutes'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -41,6 +42,7 @@ export function RunningTasksIndicator({
 }: {
   panelPlacement?: RunningTasksPanelPlacement
 }) {
+  const navigate = useNavigate()
   const [tasks, setTasks] = useState<RunningTask[]>([])
   const [showPanel, setShowPanel] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -156,11 +158,14 @@ export function RunningTasksIndicator({
           {/* 任务列表 */}
           <div className="max-h-[min(55vh,16rem)] overflow-y-auto">
             {tasks.map((task) => (
-              <Link
+              <button
                 key={task.sessionId}
-                to={`/history/${encodeURIComponent(task.sessionId)}`}
-                onClick={() => setShowPanel(false)}
-                className="block px-4 py-3 border-b border-border last:border-b-0 hover:bg-accent/50 transition-colors"
+                type="button"
+                onClick={() => {
+                  setShowPanel(false)
+                  void navigateToHistoryBySessionId(navigate, task.sessionId)
+                }}
+                className="block w-full px-4 py-3 border-b border-border last:border-b-0 text-left hover:bg-accent/50 transition-colors"
               >
                 <div className="flex items-center gap-2">
                   {/* 运行中指示器 */}
@@ -174,7 +179,7 @@ export function RunningTasksIndicator({
                     </p>
                   </div>
                 </div>
-              </Link>
+              </button>
             ))}
           </div>
         </div>

@@ -133,6 +133,11 @@ export interface WorkSummary {
 export interface WorkDetailResponse {
   work: WorkSummary | null
   sessions: Session[]
+  session_links?: {
+    assistant_session_id?: string | null
+    latest_employee_session_id?: string | null
+    entry_session_id?: string | null
+  }
 }
 
 export interface TaskFile {

@@ -22,7 +22,7 @@ import {
   normalizeAttachmentIds,
 } from 'laborany-shared'
 import { dbHelper } from '../core/database.js'
-import { ensureWorkForSession } from '../core/work-items.js'
+import { ensureWorkForSession, findWorkIdBySessionId } from '../core/work-items.js'
 import { getUploadsDir } from './file.js'
 import {
   installSkillFromNormalizedSource,
@@ -71,7 +71,7 @@ function ensureRunningSession(
   modelMeta?: SessionModelMeta,
   source?: string,
   sourceMeta?: Record<string, unknown>,
-): void {
+): string {
   const existing = dbHelper.get<{ id: string }>(
     `SELECT id FROM sessions WHERE id = ?`,
     [sessionId],
@@ -116,7 +116,7 @@ function ensureRunningSession(
   }
 
   const workId = typeof sourceMeta?.workId === 'string' ? sourceMeta.workId.trim() : ''
-  ensureWorkForSession({
+  return ensureWorkForSession({
     sessionId,
     userId: 'default',
     query,
@@ -507,7 +507,7 @@ skill.post('/execute', async (c) => {
     const sessionId = existingSessionId || uuid()
     const workDir = ensureTaskDir(sessionId)
 
-    ensureRunningSession(
+    const workId = ensureRunningSession(
       sessionId,
       skillId,
       visibleUserQuery,
@@ -535,7 +535,7 @@ skill.post('/execute', async (c) => {
         '我会自动完成：下载 -> 校验/改造为 LaborAny 格式 -> 安装到用户 skills 目录 -> 返回 skill ID 和路径。',
       ].join('\n')
 
-      await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId }) })
+      await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId, workId }) })
       await stream.writeSSE({ data: JSON.stringify({ type: 'text', content: `${content}\n` }) })
 
       dbHelper.run(
@@ -555,7 +555,7 @@ skill.post('/execute', async (c) => {
     const sessionId = existingSessionId || uuid()
     const workDir = ensureTaskDir(sessionId)
 
-    ensureRunningSession(
+    const workId = ensureRunningSession(
       sessionId,
       skillId,
       visibleUserQuery,
@@ -577,7 +577,7 @@ skill.post('/execute', async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'text', content }) })
       }
 
-      await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId }) })
+      await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId, workId }) })
 
       try {
         await appendText('已识别到 Skill 安装请求，开始自动安装流程。\n')
@@ -745,8 +745,10 @@ skill.post('/execute', async (c) => {
     sourceMeta,
   })
 
+  const workId = findWorkIdBySessionId(sessionId) || undefined
+
   return streamSSE(c, async (stream) => {
-    await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId }) })
+    await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId, workId }) })
     if (modelSelection.warning) {
       await stream.writeSSE({
         data: JSON.stringify({ type: 'warning', content: modelSelection.warning }),

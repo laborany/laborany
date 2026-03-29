@@ -16,7 +16,7 @@ import { LaborAnyLogo } from './components/ui/LaborAnyLogo'
 import { ModelProfileProvider } from './contexts/ModelProfileContext'
 import { COMPANY_APP_COPY, getCompanyNavLabel } from './lib/companySemantics'
 import { useSkillNameMap } from './hooks/useSkillNameMap'
-import type { WorkDetailResponse, WorkSummary } from './types'
+import type { SessionDetail, WorkSummary } from './types'
 import { buildWorkRecordFromWorkSummary, type WorkRecordItem } from './lib/workRecords'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -28,6 +28,7 @@ const HomePage = lazy(() => import('./pages/HomePage'))
 const ExecutePage = lazy(() => import('./pages/ExecutePage'))
 const HistoryPage = lazy(() => import('./pages/HistoryPage').then(m => ({ default: m.default })))
 const SessionDetailPage = lazy(() => import('./pages/HistoryPage').then(m => ({ default: m.SessionDetailPage })))
+const LegacySessionDetailPage = lazy(() => import('./pages/HistoryPage').then(m => ({ default: m.LegacySessionDetailPage })))
 const SkillsPage = lazy(() => import('./pages/SkillsPage'))
 const CreatePage = lazy(() => import('./pages/CreatePage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
@@ -134,27 +135,38 @@ function AppLayout({
   }, [location.pathname, refreshWorkRecords])
 
   useEffect(() => {
-    const match = location.pathname.match(/^\/history\/([^/]+)/)
-    if (!match) {
+    if (location.pathname.startsWith('/history/launch/')) {
       setSelectedRecordId(null)
       return
     }
 
-    const targetSessionId = decodeURIComponent(match[1])
+    const workMatch = location.pathname.match(/^\/history\/work\/([^/]+)/)
+    if (workMatch) {
+      setSelectedRecordId(decodeURIComponent(workMatch[1]))
+      return
+    }
+
+    const sessionMatch = location.pathname.match(/^\/history\/([^/]+)/)
+    if (!sessionMatch) {
+      setSelectedRecordId(null)
+      return
+    }
+
+    const targetSessionId = decodeURIComponent(sessionMatch[1])
     const token = localStorage.getItem('token')
     let cancelled = false
 
     void (async () => {
       try {
-        const res = await fetch(`${API_BASE}/works/by-session/${encodeURIComponent(targetSessionId)}`, {
+        const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(targetSessionId)}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         })
         if (!res.ok) {
           if (!cancelled) setSelectedRecordId(null)
           return
         }
-        const data = await res.json() as WorkDetailResponse
-        if (!cancelled) setSelectedRecordId(data.work?.id || null)
+        const data = await res.json() as SessionDetail
+        if (!cancelled) setSelectedRecordId((data.work_id || '').trim() || null)
       } catch {
         if (!cancelled) setSelectedRecordId(null)
       }
@@ -392,7 +404,7 @@ function AppLayout({
                       <button
                         key={record.id}
                         type="button"
-                        onClick={() => navigate(`/history/${record.primarySessionId}`)}
+                        onClick={() => navigate(`/history/work/${encodeURIComponent(record.workId || record.id)}`)}
                         className={`group relative w-full rounded-2xl border px-3 pb-4 pt-3 text-left transition-all ${
                           isActive
                             ? 'border-primary/40 bg-primary/8 shadow-sm ring-1 ring-primary/15'
@@ -535,7 +547,8 @@ export default function App() {
               <Route path="/execute/:skillId" element={<ExecutePage />} />
               <Route path="/history" element={<HistoryPage />} />
               <Route path="/history/launch/:skillId" element={<ExecutePage />} />
-              <Route path="/history/:sessionId" element={<SessionDetailPage />} />
+              <Route path="/history/work/:workId" element={<SessionDetailPage />} />
+              <Route path="/history/:sessionId" element={<LegacySessionDetailPage />} />
               <Route path="/skills" element={<SkillsPage />} />
               <Route path="/create" element={<CreatePage />} />
               <Route path="/cron" element={<CronPage />} />

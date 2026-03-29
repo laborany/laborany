@@ -1,22 +1,12 @@
 import { Hono } from 'hono'
 import { dbHelper } from '../core/database.js'
 import { runtimeTaskManager } from '../core/agent/index.js'
-import { findWorkIdBySessionId, getWorkDetail, listWorks, refreshWork } from '../core/work-items.js'
+import { getWorkDetail, listWorks, refreshWork } from '../core/work-items.js'
 
 const work = new Hono()
 
 work.get('/', (c) => {
   return c.json({ works: listWorks(100) })
-})
-
-work.get('/by-session/:sessionId', (c) => {
-  const sessionId = c.req.param('sessionId')
-  const workId = findWorkIdBySessionId(sessionId)
-  if (!workId) {
-    return c.json({ error: '工作不存在' }, 404)
-  }
-  refreshWork(workId)
-  return c.json(getWorkDetail(workId))
 })
 
 work.get('/:workId', (c) => {

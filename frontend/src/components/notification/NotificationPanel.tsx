@@ -5,8 +5,9 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { AGENT_API_BASE } from '../../config/api'
+import { navigateToHistoryBySessionId } from '../../lib/historyRoutes'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -51,6 +52,7 @@ export function NotificationPanel({
   onClose,
   onMarkAllRead,
 }: NotificationPanelProps) {
+  const navigate = useNavigate()
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [loading, setLoading] = useState(true)
   const [isDegraded, setIsDegraded] = useState(degraded)
@@ -189,19 +191,17 @@ export function NotificationPanel({
                       {formatTime(notification.createdAt)}
                     </span>
                     {notification.sessionId && (
-                      <Link
-                        to={notification.type.startsWith('task_')
-                          ? `/history/${notification.sessionId}`
-                          : `/history/${notification.sessionId}`
-                        }
+                      <button
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation()
                           onClose()
+                          void navigateToHistoryBySessionId(navigate, notification.sessionId!)
                         }}
                         className="text-xs text-primary hover:underline"
                       >
                         查看详情
-                      </Link>
+                      </button>
                     )}
                   </div>
                 </div>

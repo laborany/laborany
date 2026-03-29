@@ -437,14 +437,14 @@ session.post('/external/upsert', async (c) => {
        WHERE id = ?`,
       [skillId, query, status, workDir, source, sourceMeta, sessionId],
     )
-    ensureWorkForSession({
+    const workId = ensureWorkForSession({
       sessionId,
       userId,
       query,
       source,
       workId: typeof sourceMetaRecord?.workId === 'string' ? sourceMetaRecord.workId : undefined,
     })
-    return c.json({ success: true, created: false, sessionId })
+    return c.json({ success: true, created: false, sessionId, workId })
   }
 
   dbHelper.run(
@@ -452,7 +452,7 @@ session.post('/external/upsert', async (c) => {
      VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
     [sessionId, userId, skillId, query, status, workDir, source, sourceMeta],
   )
-  ensureWorkForSession({
+  const workId = ensureWorkForSession({
     sessionId,
     userId,
     query,
@@ -460,7 +460,7 @@ session.post('/external/upsert', async (c) => {
     workId: typeof sourceMetaRecord?.workId === 'string' ? sourceMetaRecord.workId : undefined,
   })
 
-  return c.json({ success: true, created: true, sessionId })
+  return c.json({ success: true, created: true, sessionId, workId })
 })
 
 session.post('/external/message', async (c) => {

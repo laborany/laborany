@@ -1,3 +1,4 @@
+import { v4 as uuid } from 'uuid'
 import { dbHelper } from './database.js'
 
 export type WorkSource = 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq'
@@ -34,8 +35,20 @@ export interface WorkListItem extends WorkRow {
   session_count: number
 }
 
+export interface WorkSessionLinks {
+  assistant_session_id: string | null
+  latest_employee_session_id: string | null
+  entry_session_id: string | null
+}
+
+type WorkOwnerKind = 'assistant' | 'employee'
+
 function normalizeQuery(query: string): string {
   return (query || '').replace(/\s+/g, ' ').trim()
+}
+
+function createWorkId(): string {
+  return `work_${uuid()}`
 }
 
 function cleanupMarkdownMarkers(text: string): string {
@@ -79,6 +92,33 @@ function isControlInstructionText(query: string): boolean {
   )
 }
 
+function isAssistantSession(session: WorkSessionRow | null | undefined): boolean {
+  return session?.skill_id === '__converse__'
+}
+
+function normalizeWorkStatus(status: string | null | undefined): string {
+  if (status === 'running' || status === 'waiting_input' || status === 'completed' || status === 'failed') {
+    return status
+  }
+  return 'stopped'
+}
+
+function isActiveWorkStatus(status: string | null | undefined): boolean {
+  return normalizeWorkStatus(status) === 'running' || normalizeWorkStatus(status) === 'waiting_input'
+}
+
+function extractVisibleWorkText(query: string): string {
+  const bossRequest = extractBossRequest(query)
+  if (bossRequest) return bossRequest
+
+  const normalized = normalizeQuery(query)
+  if (!normalized || isInternalHandoffText(normalized) || isControlInstructionText(normalized)) {
+    return ''
+  }
+
+  return cleanupMarkdownMarkers(normalized)
+}
+
 function toSessionTimestampMs(session: WorkSessionRow): number {
   const value = (session.updated_at || session.created_at || '').trim()
   if (!value) return 0
@@ -93,6 +133,15 @@ function getLatestSession(sessions: WorkSessionRow[]): WorkSessionRow | null {
   return [...sessions].sort((a, b) => toSessionTimestampMs(b) - toSessionTimestampMs(a))[0] || null
 }
 
+function findLatestSession(
+  sessions: WorkSessionRow[],
+  predicate: (session: WorkSessionRow) => boolean,
+): WorkSessionRow | null {
+  return [...sessions]
+    .sort((a, b) => toSessionTimestampMs(b) - toSessionTimestampMs(a))
+    .find(predicate) || null
+}
+
 function getPrimarySession(sessions: WorkSessionRow[], preferredId?: string): WorkSessionRow | null {
   if (!sessions.length) return null
   if (preferredId) {
@@ -103,56 +152,88 @@ function getPrimarySession(sessions: WorkSessionRow[], preferredId?: string): Wo
 }
 
 function deriveWorkTitle(sessions: WorkSessionRow[]): string {
-  const sorted = [...sessions].sort((a, b) => toSessionTimestampMs(b) - toSessionTimestampMs(a))
+  const sorted = [...sessions].sort((a, b) => toSessionTimestampMs(a) - toSessionTimestampMs(b))
 
   for (const session of sorted) {
-    const bossRequest = extractBossRequest(session.query)
-    if (bossRequest) return bossRequest
+    const visibleText = extractVisibleWorkText(session.query)
+    if (visibleText) return visibleText
   }
 
-  for (const session of sorted) {
-    const normalized = normalizeQuery(session.query)
-    if (!normalized || isInternalHandoffText(normalized) || isControlInstructionText(normalized)) continue
-    return cleanupMarkdownMarkers(normalized)
-  }
-
-  return cleanupMarkdownMarkers(normalizeQuery(sorted[0]?.query || '')) || '未命名工作'
+  const fallback = sorted[0]?.query || sessions[0]?.query || ''
+  return cleanupMarkdownMarkers(normalizeQuery(fallback)) || '未命名工作'
 }
 
 function deriveWorkSummary(sessions: WorkSessionRow[]): string | null {
-  const latest = getLatestSession(sessions)
-  if (!latest) return null
+  const latestEmployeeInstruction = findLatestSession(
+    sessions,
+    (session) => !isAssistantSession(session) && Boolean(extractVisibleWorkText(session.query)),
+  )
+  if (latestEmployeeInstruction) {
+    return extractVisibleWorkText(latestEmployeeInstruction.query).slice(0, 200)
+  }
 
-  const bossRequest = extractBossRequest(latest.query)
-  if (bossRequest) return bossRequest.slice(0, 200)
+  const latestVisibleInstruction = findLatestSession(
+    sessions,
+    (session) => Boolean(extractVisibleWorkText(session.query)),
+  )
+  if (latestVisibleInstruction) {
+    return extractVisibleWorkText(latestVisibleInstruction.query).slice(0, 200)
+  }
 
-  const cleaned = cleanupMarkdownMarkers(normalizeQuery(latest.query || ''))
-  return cleaned ? cleaned.slice(0, 200) : null
+  const fallbackTitle = deriveWorkTitle(sessions)
+  return fallbackTitle ? fallbackTitle.slice(0, 200) : null
+}
+
+function deriveCurrentOwnerSession(sessions: WorkSessionRow[]): WorkSessionRow | null {
+  const latestActiveEmployee = findLatestSession(
+    sessions,
+    (session) => !isAssistantSession(session) && isActiveWorkStatus(session.status),
+  )
+  if (latestActiveEmployee) return latestActiveEmployee
+
+  const latestActiveAssistant = findLatestSession(
+    sessions,
+    (session) => isAssistantSession(session) && isActiveWorkStatus(session.status),
+  )
+  if (latestActiveAssistant) return latestActiveAssistant
+
+  const latestEmployee = findLatestSession(sessions, (session) => !isAssistantSession(session))
+  if (latestEmployee) return latestEmployee
+
+  const latestAssistant = findLatestSession(sessions, (session) => isAssistantSession(session))
+  if (latestAssistant) return latestAssistant
+
+  return getLatestSession(sessions)
+}
+
+function deriveWorkOwnerKind(session: WorkSessionRow | null): WorkOwnerKind {
+  return isAssistantSession(session) ? 'assistant' : 'employee'
 }
 
 function deriveWorkPhase(sessions: WorkSessionRow[]): string {
-  const latest = getLatestSession(sessions)
-  if (!latest) return 'idle'
+  const currentOwnerSession = deriveCurrentOwnerSession(sessions)
+  if (!currentOwnerSession) return 'idle'
 
-  const isAssistant = latest.skill_id === '__converse__'
-  if (latest.status === 'waiting_input') {
-    return isAssistant ? 'assistant_waiting' : 'employee_waiting'
+  const ownerKind = deriveWorkOwnerKind(currentOwnerSession)
+  const normalizedStatus = normalizeWorkStatus(currentOwnerSession.status)
+
+  if (normalizedStatus === 'waiting_input') {
+    return ownerKind === 'assistant' ? 'assistant_waiting' : 'employee_waiting'
   }
-  if (latest.status === 'running') {
-    return isAssistant ? 'assistant_running' : 'employee_running'
+  if (normalizedStatus === 'running') {
+    return ownerKind === 'assistant' ? 'assistant_running' : 'employee_running'
   }
-  if (latest.status === 'completed') {
-    return isAssistant ? 'assistant_completed' : 'employee_completed'
+  if (normalizedStatus === 'completed') {
+    return ownerKind === 'assistant' ? 'assistant_completed' : 'employee_completed'
   }
-  if (latest.status === 'failed') {
-    return isAssistant ? 'assistant_failed' : 'employee_failed'
+  if (normalizedStatus === 'failed') {
+    return ownerKind === 'assistant' ? 'assistant_failed' : 'employee_failed'
   }
-  return isAssistant ? 'assistant_stopped' : 'employee_stopped'
+  return ownerKind === 'assistant' ? 'assistant_stopped' : 'employee_stopped'
 }
 
 function deriveWorkStatus(sessions: WorkSessionRow[]): string {
-  const latest = getLatestSession(sessions)
-  return latest?.status || 'running'
+  return normalizeWorkStatus(deriveCurrentOwnerSession(sessions)?.status)
 }
 
 function deriveWorkSource(sessions: WorkSessionRow[]): WorkSource {
@@ -165,8 +246,26 @@ function deriveWorkSource(sessions: WorkSessionRow[]): WorkSource {
 }
 
 function deriveCurrentOwnerSkillId(sessions: WorkSessionRow[]): string | null {
-  const latest = getLatestSession(sessions)
-  return latest?.skill_id || null
+  return deriveCurrentOwnerSession(sessions)?.skill_id || null
+}
+
+function deriveWorkSessionLinks(work: WorkRow | null, sessions: WorkSessionRow[]): WorkSessionLinks {
+  const assistantSession = sessions.find((session) => session.skill_id === '__converse__') || null
+  const employeeSessions = sessions.filter((session) => session.skill_id !== '__converse__')
+  const latestEmployeeSession = employeeSessions.length > 0
+    ? employeeSessions[employeeSessions.length - 1]
+    : null
+  const latestSession = getLatestSession(sessions)
+
+  return {
+    assistant_session_id: assistantSession?.id || null,
+    latest_employee_session_id: latestEmployeeSession?.id || null,
+    entry_session_id: latestEmployeeSession?.id
+      || work?.latest_session_id
+      || work?.primary_session_id
+      || latestSession?.id
+      || null,
+  }
 }
 
 export function ensureWorkForSession(params: {
@@ -184,7 +283,9 @@ export function ensureWorkForSession(params: {
     [params.sessionId],
   )
 
-  const effectiveWorkId = (params.workId || existingSession?.work_id || params.sessionId).trim()
+  const requestedWorkId = (params.workId || '').trim()
+  const existingWorkId = (existingSession?.work_id || '').trim()
+  const effectiveWorkId = requestedWorkId || existingWorkId || createWorkId()
   const userId = (params.userId || existingSession?.user_id || 'default').trim() || 'default'
   const title = cleanupMarkdownMarkers(extractBossRequest(params.query) || normalizeQuery(params.query) || '未命名工作')
 
@@ -245,7 +346,7 @@ export function refreshWork(workId: string): void {
   const phase = deriveWorkPhase(sessions)
   const source = deriveWorkSource(sessions)
   const currentOwnerSkillId = deriveCurrentOwnerSkillId(sessions)
-  const primarySession = getPrimarySession(sessions, workId)
+  const primarySession = getPrimarySession(sessions)
   const latestSession = getLatestSession(sessions)
 
   const existing = dbHelper.get<{ id: string }>(
@@ -321,6 +422,7 @@ export function listWorks(limit = 100): WorkListItem[] {
 export function getWorkDetail(workId: string): {
   work: WorkRow | null
   sessions: WorkSessionRow[]
+  session_links: WorkSessionLinks
 } {
   const work = dbHelper.get<WorkRow>(
     `SELECT * FROM works WHERE id = ?`,
@@ -335,7 +437,11 @@ export function getWorkDetail(workId: string): {
     [workId],
   )
 
-  return { work, sessions }
+  return {
+    work,
+    sessions,
+    session_links: deriveWorkSessionLinks(work, sessions),
+  }
 }
 
 export function findWorkIdBySessionId(sessionId: string): string | null {
