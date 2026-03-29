@@ -1,25 +1,12 @@
 ﻿
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Link, useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useAgent, type PendingQuestion } from '../hooks/useAgent'
 import { useConverse } from '../hooks/useConverse'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
-import { useVitePreview } from '../hooks/useVitePreview'
 import type { AgentMessage, TaskFile, SessionDetail, SessionLiveStatus, WidgetState, WorkDetailResponse } from '../types'
 import { API_BASE } from '../config'
-import ChatInput from '../components/shared/ChatInput'
-import MessageList from '../components/shared/MessageList'
-import { QuestionInput } from '../components/shared/QuestionInput'
-import { RightSidebar } from '../components/shared/RightSidebar'
-import { ResizeHandle, useResizablePanel } from '../components/shared/ResizeHandle'
-import {
-  ArtifactPreview,
-  VitePreview,
-  getExt,
-  getCategory,
-  type FileArtifact,
-} from '../components/preview'
-import { findLatestPreviewableTaskFile, findTaskFileByArtifactPath, toArtifactPath } from '../components/shared/taskFileUtils'
+import { ExecutionPanel } from '../components/execution'
 import { Tooltip } from '../components/ui'
 import {
   appendMessageWithVariants,
@@ -32,10 +19,9 @@ import {
   inferQuestionContextFromQuestions,
   normalizeQuestionContext,
 } from '../lib/question-response'
-import { WidgetPanel } from '../components/widget/WidgetPanel'
 import { isControlInstructionText } from '../lib/workRecords'
-import { CollaborationTabs } from '../components/shared/CollaborationTabs'
 import { ConversationWorkspaceView } from '../components/shared/ConversationWorkspaceView'
+import { WorkDetailHeader } from '../components/shared/WorkDetailHeader'
 
 export default function HistoryPage() {
   const [loading, setLoading] = useState(true)
@@ -97,38 +83,6 @@ export default function HistoryPage() {
       </div>
     </div>
   )
-}
-
-function toFileArtifact(
-  file: TaskFile,
-  getFileUrl: (path: string) => string,
-  workDir: string | null,
-): FileArtifact {
-  const ext = file.ext || getExt(file.name)
-  const fullPath = toArtifactPath(file.path, workDir)
-  return {
-    name: file.name,
-    path: fullPath,
-    ext,
-    category: getCategory(ext),
-    size: file.size,
-    url: getFileUrl(file.path),
-  }
-}
-
-function buildHistoryPreviewSelectionHint(session: SessionDetail | null): string {
-  if (!session) return ''
-
-  const userMessageHints = (session.messages || [])
-    .filter((message) => message.type === 'user' && typeof message.content === 'string')
-    .slice(-2)
-    .map((message) => (message.content || '').trim())
-    .filter(Boolean)
-
-  return [session.query, ...userMessageHints]
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .join('\n')
 }
 
 function normalizeMessageContent(content: string): string {
@@ -316,10 +270,6 @@ function buildPendingQuestionFromHistory(session: SessionDetail | null): Pending
   }
 }
 
-const CHAT_PANEL_MIN = 300
-const CHAT_PANEL_MAX = 800
-const CHAT_PANEL_DEFAULT = 450
-const SIDEBAR_WIDTH = 280
 const CONVERSE_SYNC_RETRY_DELAY_MS = 900
 
 /* ── SQLite datetime('now') 返回 UTC 但不带时区标记，
@@ -426,30 +376,12 @@ export function SessionDetailPage() {
   const [taskFiles, setTaskFiles] = useState<TaskFile[]>([])
   const [deleting, setDeleting] = useState(false)
 
-  const [isPreviewVisible, setIsPreviewVisible] = useState(false)
-  const [isRightSidebarVisible, setIsRightSidebarVisible] = useState(false)
-  const [selectedArtifact, setSelectedArtifact] = useState<FileArtifact | null>(null)
-  const [showLivePreview, setShowLivePreview] = useState(false)
   const [viewingWidget, setViewingWidget] = useState<WidgetState | null>(null)
 
-  // 自动展开标记
-  const hasAutoExpandedRef = useRef(false)
-  const selectedPathRef = useRef<string | null>(null)
   const attachInFlightRef = useRef<Promise<void> | null>(null)
   const attachedSessionRef = useRef<string | null>(null)
   const prevConverseThinkingRef = useRef(false)
   const converseThinkingRef = useRef(false)
-
-  const {
-    width: chatPanelWidth,
-    handleResize: handleChatResize,
-    handleResizeEnd: handleChatResizeEnd,
-  } = useResizablePanel({
-    initialWidth: CHAT_PANEL_DEFAULT,
-    minWidth: CHAT_PANEL_MIN,
-    maxWidth: CHAT_PANEL_MAX,
-    storageKey: 'laborany-history-chat-panel-width',
-  })
 
   const executionSkillId = session?.skill_id === '__converse__'
     ? '__generic__'
@@ -462,19 +394,6 @@ export function SessionDetailPage() {
     () => buildPendingQuestionFromHistory(session),
     [session],
   )
-  const previewSelectionHint = useMemo(
-    () => buildHistoryPreviewSelectionHint(session),
-    [session],
-  )
-
-  // Live Preview hook
-  const {
-    status: previewStatus,
-    previewUrl,
-    error: liveError,
-    startPreview,
-    stopPreview,
-  } = useVitePreview(sessionId || null)
 
   useEffect(() => {
     setContinuing(false)
@@ -675,65 +594,6 @@ export function SessionDetailPage() {
     [sessionId],
   )
 
-  const handleSelectArtifact = useCallback((artifact: FileArtifact) => {
-    setSelectedArtifact(artifact)
-    setIsPreviewVisible(true)
-    setShowLivePreview(false)
-  }, [])
-
-  const handleStartLivePreview = useCallback(() => {
-    if (session?.work_dir) {
-      setShowLivePreview(true)
-      setIsPreviewVisible(true)
-      startPreview(session.work_dir)
-    }
-  }, [session?.work_dir, startPreview])
-
-  useEffect(() => {
-    selectedPathRef.current = selectedArtifact?.path || null
-  }, [selectedArtifact?.path])
-
-  useEffect(() => {
-    if (hasAutoExpandedRef.current) return
-    if (taskFiles.length === 0) return
-
-    setIsRightSidebarVisible(true)
-    hasAutoExpandedRef.current = true
-
-    const latestFile = findLatestPreviewableTaskFile(taskFiles, {
-      hintText: previewSelectionHint,
-    })
-    if (!latestFile) return
-
-    handleSelectArtifact(toFileArtifact(latestFile, getFileUrl, session?.work_dir || null))
-  }, [taskFiles, handleSelectArtifact, getFileUrl, session?.work_dir, previewSelectionHint])
-
-  useEffect(() => {
-    if (taskFiles.length === 0) return
-
-    const currentFile = selectedPathRef.current
-      ? findTaskFileByArtifactPath(taskFiles, selectedPathRef.current, session?.work_dir || null)
-      : null
-
-    if (currentFile) {
-      setSelectedArtifact(toFileArtifact(currentFile, getFileUrl, session?.work_dir || null))
-      return
-    }
-
-    const latestFile = findLatestPreviewableTaskFile(taskFiles, {
-      hintText: previewSelectionHint,
-    })
-    if (latestFile) {
-      setSelectedArtifact(toFileArtifact(latestFile, getFileUrl, session?.work_dir || null))
-    }
-  }, [taskFiles, getFileUrl, session?.work_dir, previewSelectionHint])
-
-  const handleClosePreview = useCallback(() => {
-    setIsPreviewVisible(false)
-    setSelectedArtifact(null)
-    setShowLivePreview(false)
-  }, [])
-
   async function handleContinue(query: string) {
     const normalizedQuery = query.trim()
     if (!session || !sessionId || !normalizedQuery) return
@@ -743,14 +603,12 @@ export function SessionDetailPage() {
         await converse.resumeSession(sessionId)
       }
       setContinuing(true)
-      hasAutoExpandedRef.current = false
       await converse.sendMessage(normalizedQuery)
       return
     }
 
     agent.resumeSession(sessionId)
     setContinuing(true)
-    hasAutoExpandedRef.current = false  // reset so new artifacts can auto-expand
     await agent.execute(normalizedQuery)
   }
 
@@ -931,7 +789,6 @@ export function SessionDetailPage() {
     ? converse.respondToQuestion
     : (agent.pendingQuestion ? agent.respondToQuestion : handleQuestionSubmit)
   const stopHandler = isConverseSession ? converse.stop : agent.stop
-  const showResizeHandle = isPreviewVisible || isRightSidebarVisible || Boolean(viewingWidget)
   const assistantMessages = useMemo(
     () => convertMessages(assistantSession),
     [assistantSession],
@@ -947,6 +804,37 @@ export function SessionDetailPage() {
     ? session.query
     : ''
   const displayWorkTitle = workTitle || fallbackSessionTitle || '这项工作'
+  const headerTabs = hasAssistantTab
+    ? [
+      { id: 'assistant', label: assistantLabel },
+      { id: 'employee', label: employeeRoleLabel },
+    ]
+    : undefined
+  const headerMetaText = session ? parseUTCDate(session.created_at).toLocaleString('zh-CN') : ''
+  const headerRightSlot = (
+    <>
+      <Tooltip content="删除会话" side="bottom">
+        <button
+          onClick={handleDeleteSession}
+          disabled={deleting || effectiveStatus === 'running'}
+          className="p-1.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title={effectiveStatus === 'running'
+            ? '无法删除正在运行的会话'
+            : (relatedRecordSessionIds.length > 1 ? '删除整条协作工作记录' : '删除这条工作记录')}
+        >
+          {deleting ? (
+            <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          ) : (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          )}
+        </button>
+      </Tooltip>
+    </>
+  )
 
   if (loading) {
     return (
@@ -973,42 +861,18 @@ export function SessionDetailPage() {
     return (
       <div className="flex h-[calc(100vh-64px)]">
         <div className="mx-auto flex h-full max-w-4xl flex-1 flex-col px-4 py-6">
-        <div className="mb-4 shrink-0 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Link to="/history" className="text-muted-foreground hover:text-foreground transition-colors">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-              </Link>
-              <div className="min-w-0">
-                <h2 className="truncate text-lg font-semibold text-foreground">{displayWorkTitle}</h2>
-                <p className="text-sm text-muted-foreground">当前视角：{activeRoleLabel}</p>
-              </div>
-            </div>
-            <div className="text-sm text-muted-foreground">
-              {parseUTCDate(session.created_at).toLocaleString('zh-CN')}
-            </div>
-          </div>
-          <div className="flex items-center justify-between rounded-2xl border border-border bg-card/60 px-4 py-3">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                协作视角
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                按处理顺序查看这项工作的不同阶段，默认先打开当前执行中的角色。
-              </p>
-            </div>
-            <CollaborationTabs
-              tabs={[
-                { id: 'assistant', label: assistantLabel },
-                { id: 'employee', label: employeeRoleLabel },
-              ]}
-              activeTab={activeTab}
-              onChange={(tabId) => setActiveTab(tabId as 'employee' | 'assistant')}
-            />
-          </div>
-        </div>
+        <WorkDetailHeader
+          title={displayWorkTitle}
+          activeRoleLabel={activeRoleLabel}
+          onBack={() => navigate('/history')}
+          statusLabel={renderStatusLabel(effectiveStatus)}
+          statusBadgeClassName={effectiveStatusBadgeClass}
+          metaText={headerMetaText}
+          rightSlot={headerRightSlot}
+          tabs={headerTabs}
+          activeTab={hasAssistantTab ? activeTab : undefined}
+          onTabChange={hasAssistantTab ? (tabId) => setActiveTab(tabId as 'employee' | 'assistant') : undefined}
+        />
         <ConversationWorkspaceView
           messages={converse.messages.length > 0 ? converse.messages : assistantMessages}
           isRunning={converse.isThinking}
@@ -1026,228 +890,44 @@ export function SessionDetailPage() {
 
   return (
     <div className="h-[calc(100vh-64px)]">
-      <div className="flex h-full">
-      {/* 左侧：聊天面板 */}
-      <div
-        className="flex flex-col px-4 py-6 overflow-hidden"
-        style={{
-          width: showResizeHandle ? chatPanelWidth : '100%',
-          maxWidth: showResizeHandle ? undefined : '56rem',
-          margin: showResizeHandle ? undefined : '0 auto',
-        }}
-      >
-        {/* 顶部导航 */}
-        <div className="flex items-center justify-between mb-4 shrink-0">
-          <div className="flex items-center gap-4">
-            <Link to="/history" className="text-muted-foreground hover:text-foreground transition-colors">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </Link>
-            <div className="min-w-0">
-              <h2 className="truncate text-lg font-semibold text-foreground">
-                {displayWorkTitle}
-              </h2>
-              <p className="text-sm text-muted-foreground">当前视角：{activeRoleLabel}</p>
-            </div>
-            <span className={effectiveStatusBadgeClass}>
-              {renderStatusLabel(effectiveStatus)}
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* Live Preview 按钮 */}
-            {session.work_dir && (
-              <Tooltip content="在浏览器中实时预览" side="bottom">
-                <button
-                  onClick={handleStartLivePreview}
-                  className={`text-sm flex items-center gap-1.5 transition-colors ${
-                    showLivePreview ? 'text-green-500' : 'text-primary hover:text-primary/80'
-                  }`}
-                >
-                  🔍 Live
-                </button>
-              </Tooltip>
-            )}
-            {/* 侧边栏切换 */}
-            {taskFiles.length > 0 && (
-              <Tooltip content="切换侧边栏" side="bottom">
-                <button
-                  onClick={() => setIsRightSidebarVisible(!isRightSidebarVisible)}
-                  className={`text-sm flex items-center gap-1.5 transition-colors ${
-                    isRightSidebarVisible ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-                  </svg>
-                </button>
-              </Tooltip>
-            )}
-            {/* 删除按钮 */}
-            <Tooltip content="删除会话" side="bottom">
-              <button
-                onClick={handleDeleteSession}
-                disabled={deleting || effectiveStatus === 'running'}
-                className="p-1.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title={effectiveStatus === 'running'
-                  ? '无法删除正在运行的会话'
-                  : (relatedRecordSessionIds.length > 1 ? '删除整条协作工作记录' : '删除这条工作记录')}
-              >
-                {deleting ? (
-                  <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                ) : (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                )}
-              </button>
-            </Tooltip>
-            {/* 时间 */}
-            <div className="text-sm text-muted-foreground">
-              {parseUTCDate(session.created_at).toLocaleString('zh-CN')}
-            </div>
-          </div>
-        </div>
-        {hasAssistantTab && (
-          <div className="mb-4 flex items-center justify-between rounded-2xl border border-border bg-card/60 px-4 py-3">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                协作视角
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                按处理顺序查看这项工作的不同阶段，默认先打开当前执行中的角色。
-              </p>
-            </div>
-            <CollaborationTabs
-              tabs={[
-                { id: 'assistant', label: assistantLabel },
-                { id: 'employee', label: employeeRoleLabel },
-              ]}
-              activeTab={activeTab}
-              onChange={(tabId) => setActiveTab(tabId as 'employee' | 'assistant')}
-            />
-          </div>
+      <ExecutionPanel
+        messages={allMessages}
+        isRunning={chatIsRunning}
+        error={isConverseSession ? converse.error : agent.error}
+        connectionStatus={isConverseSession ? null : agent.connectionStatus}
+        taskFiles={taskFiles}
+        workDir={session?.work_dir || null}
+        filesVersion={0}
+        onSubmit={handleContinue}
+        onStop={stopHandler}
+        sessionId={sessionId || null}
+        getFileUrl={getFileUrl}
+        fetchTaskFiles={fetchTaskFiles}
+        pendingQuestion={activePendingQuestion}
+        respondToQuestion={questionSubmitHandler}
+        placeholder="输入新的问题继续对话..."
+        headerSlot={(
+          <WorkDetailHeader
+            title={displayWorkTitle}
+            activeRoleLabel={activeRoleLabel}
+            onBack={() => navigate('/history')}
+            statusLabel={renderStatusLabel(effectiveStatus)}
+            statusBadgeClassName={effectiveStatusBadgeClass}
+            metaText={headerMetaText}
+            rightSlot={headerRightSlot}
+            tabs={headerTabs}
+            activeTab={hasAssistantTab ? activeTab : undefined}
+            onTabChange={hasAssistantTab ? (tabId) => setActiveTab(tabId as 'employee' | 'assistant') : undefined}
+          />
         )}
-
-        {/* 消息列表 */}
-        <div className="flex-1 overflow-y-auto mb-4 min-h-0">
-          <MessageList
-            messages={allMessages}
-            isRunning={chatIsRunning}
-            sessionKey={sessionId}
-            initialScrollOnMount="bottom"
-            onRegenerate={isConverseSession && converse.messages.length > 0 ? converse.regenerateMessage : undefined}
-            onSelectVariant={isConverseSession && converse.messages.length > 0 ? converse.selectVariant : undefined}
-            regeneratingMessageId={isConverseSession && converse.messages.length > 0 ? converse.regeneratingMessageId : null}
-            onShowWidget={handleShowWidget}
-            onExpandWidget={handleShowWidget}
-            streamingWidget={isConverseSession ? converse.streamingWidget : undefined}
-            onWidgetInteraction={isConverseSession ? (_widgetId, data) => { handleWidgetInteraction(data) } : undefined}
-            onWidgetFallbackToText={isConverseSession ? () => { void handleContinue('[请改为文本解释]') } : undefined}
-          />
-        </div>
-
-        {/* 继续对话输入框 */}
-        <div className="border-t border-border pt-4 shrink-0">
-          {activePendingQuestion ? (
-            <>
-              <p className="text-sm text-muted-foreground mb-2">请先回答当前问题：</p>
-              <QuestionInput
-                pendingQuestion={activePendingQuestion}
-                onSubmit={questionSubmitHandler}
-              />
-            </>
-          ) : (
-            <>
-              <p className="text-sm text-muted-foreground mb-2">继续对话：</p>
-              <ChatInput
-                onSubmit={handleContinue}
-                onStop={stopHandler}
-                isRunning={chatIsRunning}
-                placeholder="输入新的问题继续对话..."
-              />
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* 分隔杆（聊天面板与预览/侧栏之间） */}
-      {showResizeHandle && (
-        <ResizeHandle
-          onResize={handleChatResize}
-          onResizeEnd={handleChatResizeEnd}
-          direction="horizontal"
-        />
-      )}
-
-      {/* 中间：Widget 面板（优先于预览） */}
-      {viewingWidget && (
-        <div className="flex-1 min-w-[300px]">
-          <WidgetPanel
-            widget={viewingWidget}
-            onClose={() => setViewingWidget(null)}
-            onWidgetInteraction={isConverseSession ? (_widgetId, data) => { handleWidgetInteraction(data) } : undefined}
-            onFallbackToText={isConverseSession ? () => { void handleContinue('[请改为文本解释]') } : undefined}
-          />
-        </div>
-      )}
-
-      {/* 中间：预览面板（Widget 不活跃时显示） */}
-      {isPreviewVisible && !viewingWidget && (
-        <div className="flex-1 min-w-[300px] border-l border-border">
-          {showLivePreview ? (
-            /* Live Preview */
-            <div className="flex h-full flex-col">
-              <div className="flex shrink-0 items-center justify-between border-b border-border bg-muted/30 px-4 py-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-foreground">Live Preview</span>
-                  {previewStatus === 'running' && (
-                    <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-                  )}
-                </div>
-                <button
-                  onClick={handleClosePreview}
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-              <div className="flex-1 overflow-hidden">
-                <VitePreview
-                  status={previewStatus}
-                  previewUrl={previewUrl}
-                  error={liveError}
-                  onStart={handleStartLivePreview}
-                  onStop={stopPreview}
-                />
-              </div>
-            </div>
-          ) : selectedArtifact ? (
-            /* 静态预览 */
-            <ArtifactPreview artifact={selectedArtifact} onClose={handleClosePreview} />
-          ) : null}
-        </div>
-      )}
-
-      {/* 右侧：工具侧栏 */}
-      {isRightSidebarVisible && (
-        <div style={{ width: SIDEBAR_WIDTH }} className="shrink-0">
-          <RightSidebar
-            messages={allMessages}
-            isRunning={chatIsRunning}
-            artifacts={taskFiles}
-            selectedArtifact={selectedArtifact}
-            onSelectArtifact={handleSelectArtifact}
-            getFileUrl={getFileUrl}
-            workDir={session?.work_dir || null}
-          />
-        </div>
-      )}
-      </div>
+        activeWidget={viewingWidget}
+        streamingWidget={isConverseSession ? converse.streamingWidget : undefined}
+        onCloseWidget={() => setViewingWidget(null)}
+        onWidgetInteraction={isConverseSession ? (_widgetId, data) => { handleWidgetInteraction(data) } : undefined}
+        onWidgetFallbackToText={isConverseSession ? () => { void handleContinue('[请改为文本解释]') } : undefined}
+        onShowWidget={handleShowWidget}
+        onExpandWidget={handleShowWidget}
+      />
     </div>
   )
 }

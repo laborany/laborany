@@ -16,8 +16,8 @@ import { API_BASE } from '../config/api'
 import { ExecutionPanel } from '../components/execution'
 import { Tooltip } from '../components/ui'
 import { parseAttachmentIdsParam } from '../lib/attachments'
-import { CollaborationTabs } from '../components/shared/CollaborationTabs'
 import { ConversationWorkspaceView } from '../components/shared/ConversationWorkspaceView'
+import { WorkDetailHeader } from '../components/shared/WorkDetailHeader'
 import { isControlInstructionText } from '../lib/workRecords'
 import {
   Dialog,
@@ -285,33 +285,37 @@ export default function ExecutePage() {
     : '输入你的问题...'
   const activeRoleLabel = activeTab === 'assistant' ? assistantLabel : displaySkillName
   const displayWorkTitle = workTitle || '这项工作'
+  const effectiveStatus = effectiveRunning
+    ? '运行中'
+    : agent.pendingQuestion
+      ? '待补充'
+      : agent.error
+        ? '失败'
+        : agent.messages.length > 0
+          ? '已完成'
+          : null
+  const effectiveStatusBadgeClass = effectiveStatus === '运行中'
+    ? 'badge badge-primary'
+    : effectiveStatus === '待补充'
+      ? 'badge badge-warning'
+      : effectiveStatus === '失败'
+        ? 'badge badge-error'
+        : effectiveStatus === '已完成'
+          ? 'badge badge-success'
+          : ''
 
   /* ┌──────────────────────────────────────────────────────────────────────────┐
    * │                      顶部导航栏                                          │
    * └──────────────────────────────────────────────────────────────────────────┘ */
   const header = (
-    <div className="mb-4 shrink-0 space-y-3">
-      <div className="flex items-center justify-between pr-24 sm:pr-28">
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={handleBackToHome}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-semibold text-foreground">
-              {displayWorkTitle}
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              当前视角：{activeRoleLabel}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
+    <WorkDetailHeader
+      title={displayWorkTitle}
+      activeRoleLabel={activeRoleLabel}
+      onBack={handleBackToHome}
+      statusLabel={effectiveStatus}
+      statusBadgeClassName={effectiveStatusBadgeClass}
+      rightSlot={(
+        <>
           {effectiveRunning ? (
             <button
               onClick={agent.stop}
@@ -337,29 +341,15 @@ export default function ExecutePage() {
               </button>
             </Tooltip>
           )}
-        </div>
-      </div>
-      {hasAssistantTab && (
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-              协作视角
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              按处理顺序查看这项工作的不同阶段，默认先打开当前执行中的角色。
-            </p>
-          </div>
-          <CollaborationTabs
-            tabs={[
-              { id: 'assistant', label: assistantLabel },
-              { id: 'employee', label: displaySkillName },
-            ]}
-            activeTab={activeTab}
-            onChange={(tabId) => setActiveTab(tabId as 'employee' | 'assistant')}
-          />
-        </div>
+        </>
       )}
-    </div>
+      tabs={hasAssistantTab ? [
+        { id: 'assistant', label: assistantLabel },
+        { id: 'employee', label: displaySkillName },
+      ] : undefined}
+      activeTab={hasAssistantTab ? activeTab : undefined}
+      onTabChange={hasAssistantTab ? (tabId) => setActiveTab(tabId as 'employee' | 'assistant') : undefined}
+    />
   )
 
   return (
