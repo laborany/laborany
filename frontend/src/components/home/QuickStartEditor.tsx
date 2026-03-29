@@ -5,7 +5,8 @@ import {
   type QuickStartItem,
 } from '../../contexts/QuickStartContext'
 import { useWorkers } from '../../hooks/useWorkers'
-import type { CapabilityTargetType } from '../../types'
+import { getEmployeeDirectoryProfile, getEmployeeDirectoryProfileById } from '../../lib/employeeDirectory'
+import { isMetaSkill, type CapabilityTargetType } from '../../types'
 
 type CapabilityOption = {
   targetType: CapabilityTargetType
@@ -37,18 +38,30 @@ export function QuickStartEditor() {
     isCustomized,
     maxItems,
   } = useQuickStartContext()
-  const { workers, loading } = useWorkers()
+  const { workers, allSkills, loading } = useWorkers()
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null)
 
   const capabilityOptions = useMemo<CapabilityOption[]>(() => {
-    return workers.map(worker => ({
-      targetType: 'skill',
-      targetId: worker.id,
-      name: worker.name,
-      icon: worker.icon || '🔧',
-      description: worker.description || '',
-    }))
-  }, [workers])
+    const sourceSkills = [
+      ...workers,
+      ...allSkills.filter(skill => isMetaSkill(skill) && skill.id === 'skill-creator'),
+    ]
+
+    const dedupedSkills = sourceSkills.filter((skill, index, list) => (
+      list.findIndex((item) => item.id === skill.id) === index
+    ))
+
+    return dedupedSkills.map(worker => {
+      const employee = getEmployeeDirectoryProfile(worker)
+      return {
+        targetType: 'skill' as const,
+        targetId: worker.id,
+        name: employee.displayName,
+        icon: worker.icon || '🔧',
+        description: employee.summary || worker.description || '',
+      }
+    })
+  }, [workers, allSkills])
 
   const selectedTargets = new Set(scenarios.map(item => `${item.targetType}:${item.targetId}`))
   const availableOptions = capabilityOptions.filter(
@@ -110,7 +123,7 @@ export function QuickStartEditor() {
       )}
 
       <section>
-        <span className="text-sm text-muted-foreground mb-2 block">可添加的技能</span>
+        <span className="text-sm text-muted-foreground mb-2 block">可选员工</span>
 
         {loading ? (
           <div className="text-sm text-muted-foreground">加载中...</div>
@@ -179,7 +192,18 @@ function ScenarioForm({
           <span>目标技能</span>
           <select
             value={activeHasOption ? scenario.targetId : ''}
-            onChange={event => onChange({ targetId: event.target.value })}
+            onChange={event => {
+              const nextTargetId = event.target.value
+              const nextOption = options.find(option => option.targetId === nextTargetId)
+              onChange({
+                targetId: nextTargetId,
+                ...(nextOption ? {
+                  name: nextOption.name,
+                  icon: nextOption.icon,
+                  description: nextOption.description,
+                } : {}),
+              })
+            }}
             className="w-full px-2 py-1.5 rounded border border-border bg-card text-foreground"
           >
             {!activeHasOption && (
@@ -230,6 +254,12 @@ function SelectedItem({
   onMoveUp,
   onMoveDown,
 }: SelectedItemProps) {
+  const employee = getEmployeeDirectoryProfileById(
+    scenario.targetId,
+    scenario.name,
+    scenario.description,
+  )
+
   return (
     <div
       className={`flex items-center gap-1 px-3 py-1.5 rounded-lg group border ${
@@ -238,8 +268,8 @@ function SelectedItem({
     >
       <button type="button" onClick={onSelect} className="flex items-center gap-1">
         <span>{scenario.icon}</span>
-        <span className="text-sm font-medium">{scenario.name}</span>
-        <span className="text-[10px] text-muted-foreground ml-1">技能</span>
+        <span className="text-sm font-medium">{employee.displayName}</span>
+        <span className="text-[10px] text-muted-foreground ml-1">{employee.roleTitle}</span>
       </button>
       <div className="flex items-center gap-0.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <button

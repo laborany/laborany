@@ -11,6 +11,7 @@
 import { useState, type FormEvent } from 'react'
 import { SmartSuggestion } from './SmartSuggestion'
 import type { QuickStartItem } from '../../../contexts/QuickStartContext'
+import { getEmployeeDirectoryProfileById } from '../../../lib/employeeDirectory'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -26,6 +27,9 @@ interface HomeChatProps {
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 export function HomeChat({ onExecute, selectedCase, onClearSelectedCase }: HomeChatProps) {
   const [input, setInput] = useState('')
+  const selectedCaseDisplayName = selectedCase
+    ? getEmployeeDirectoryProfileById(selectedCase.targetId, selectedCase.name, selectedCase.description).displayName
+    : ''
 
   /* ────────────────────────────────────────────────────────────────────────
    *  提交：有选中案例传 targetId，否则传空串走编排
@@ -51,7 +55,7 @@ export function HomeChat({ onExecute, selectedCase, onClearSelectedCase }: HomeC
       {selectedCase && (
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm bg-primary/10 border border-primary/30 text-primary">
           <span>{selectedCase.icon || '🔧'}</span>
-          <span>{selectedCase.name}</span>
+          <span>{selectedCaseDisplayName}</span>
           <button
             onClick={onClearSelectedCase}
             className="ml-1 hover:text-primary/70"
@@ -67,7 +71,7 @@ export function HomeChat({ onExecute, selectedCase, onClearSelectedCase }: HomeC
           value={input}
           onChange={e => setInput(e.target.value)}
           placeholder={selectedCase
-            ? `向 ${selectedCase.name} 描述你的任务...`
+            ? `向 ${selectedCaseDisplayName} 描述你的任务...`
             : '描述你想完成的任务...'
           }
           className={

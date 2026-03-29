@@ -11,14 +11,14 @@ export interface EmployeeDirectoryProfile {
 const EMPLOYEE_PROFILE_MAP: Record<string, EmployeeDirectoryProfile> = {
   '__generic__': {
     displayName: '个人助理',
-    roleTitle: '老板助理',
+    roleTitle: '通用事务助理',
     summary: '负责接收老板需求、处理通用事务，并把更专业的工作安排给合适的同事。',
     tags: ['助理', '通用事务'],
     priority: 0,
   },
   'skill-creator': {
-    displayName: '人力专员',
-    roleTitle: 'HR · 招聘与培训负责人',
+    displayName: '人力专员 HR',
+    roleTitle: '创建技能，提升技能',
     summary: '负责招聘新员工、补齐岗位能力，并帮助现有同事提升技能水平。',
     tags: ['HR', '招聘', '培训'],
     priority: 1,
@@ -60,14 +60,14 @@ const EMPLOYEE_PROFILE_MAP: Record<string, EmployeeDirectoryProfile> = {
   },
   'wechat-writer': {
     displayName: '公众号写作编辑',
-    roleTitle: '内容写作同事',
+    roleTitle: '公众号内容写作同事',
     summary: '负责公众号选题策划、文章写作与内容整理。',
     tags: ['公众号', '写作', '内容'],
     priority: 70,
   },
   'xhs-note-creator': {
     displayName: '小红书编辑',
-    roleTitle: '内容运营同事',
+    roleTitle: '小红书内容运营同事',
     summary: '负责小红书笔记文案、结构和配图素材准备。',
     tags: ['小红书', '运营', '内容'],
     priority: 80,
@@ -198,4 +198,20 @@ function toFallbackProfile(skill: Skill): EmployeeDirectoryProfile {
 
 export function getEmployeeDirectoryProfile(skill: Skill): EmployeeDirectoryProfile {
   return EMPLOYEE_PROFILE_MAP[skill.id] || toFallbackProfile(skill)
+}
+
+export function getEmployeeDirectoryProfileById(
+  skillId: string,
+  fallbackName?: string,
+  fallbackDescription?: string,
+): EmployeeDirectoryProfile {
+  const mapped = EMPLOYEE_PROFILE_MAP[skillId]
+  if (mapped) return mapped
+
+  return {
+    displayName: fallbackName || skillId,
+    roleTitle: '数字员工',
+    summary: fallbackDescription || '负责完成该岗位相关工作。',
+    priority: 500,
+  }
 }

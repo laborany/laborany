@@ -8,8 +8,10 @@ import type { Schedule } from '../hooks/useCron'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { useModelProfile } from '../contexts/ModelProfileContext'
 import { type QuickStartItem } from '../contexts/QuickStartContext'
+import { useQuickStartContext } from '../contexts/QuickStartContext'
 import { API_BASE } from '../config'
 import type { WorkSummary } from '../types'
+import { getEmployeeDirectoryProfileById } from '../lib/employeeDirectory'
 import { GuideBanner } from '../components/home/GuideBanner'
 import { ScenarioCards } from '../components/home/ScenarioCards'
 import ChatInput from '../components/shared/ChatInput'
@@ -82,6 +84,7 @@ export default function HomePage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { getCapabilityName } = useSkillNameMap()
+  const { scenarios } = useQuickStartContext()
   const { activeProfileId, profiles } = useModelProfile()
   const cachedProfileName = typeof window !== 'undefined'
     ? (localStorage.getItem('laborany.profile.name') || '').trim()
@@ -147,6 +150,28 @@ export default function HomePage() {
   useEffect(() => {
     if (!converse.action) handledActionRef.current = null
   }, [converse.action])
+
+  useEffect(() => {
+    if (scenarios.length === 0) {
+      if (selectedCase) setSelectedCase(null)
+      return
+    }
+
+    if (!selectedCase) {
+      setSelectedCase(scenarios[0])
+      return
+    }
+
+    const matched = scenarios.find((item) => item.id === selectedCase.id)
+    if (matched) {
+      if (matched !== selectedCase) {
+        setSelectedCase(matched)
+      }
+      return
+    }
+
+    setSelectedCase(scenarios[0])
+  }, [scenarios, selectedCase])
 
   useEffect(() => {
     void refreshWorks()
@@ -681,6 +706,11 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
   completedCount: number
   todayScheduleCount: number
 }) {
+  const [selectedCardPosition, setSelectedCardPosition] = useState<{ centerX: number } | null>(null)
+  const selectedCaseDisplayName = selectedCase
+    ? getEmployeeDirectoryProfileById(selectedCase.targetId, selectedCase.name, selectedCase.description).displayName
+    : ''
+
   return (
     <div className="min-h-screen p-6">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -747,21 +777,34 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
             </div>
           </div>
         )}
-        <ScenarioCards
-          selectedId={selectedCase?.id}
-          onSelect={onSelectCase}
-        />
-        <ChatInput
-          onSubmit={(query, files) => onExecute(selectedCase?.targetId || '', query, files)}
-          onStop={() => {}}
-          isRunning={false}
-          variant="home"
-          placeholder={selectedCase
-            ? `把这项工作交给助理，助理会安排：${selectedCase.name}`
-            : '直接告诉个人助理：你想让公司帮你完成什么工作...'
-          }
-          autoFocus
-        />
+        <div>
+          <ScenarioCards
+            selectedId={selectedCase?.id}
+            onSelect={onSelectCase}
+            onSelectedCardPositionChange={setSelectedCardPosition}
+          />
+          <div className="relative mt-3">
+            {selectedCase && selectedCardPosition && (
+              <div
+                className="pointer-events-none absolute -top-3 h-3 w-px bg-primary/40"
+                style={{ left: `${selectedCardPosition.centerX}px` }}
+              />
+            )}
+            <div className="rounded-2xl bg-card px-4 pb-4 pt-4">
+            <ChatInput
+              onSubmit={(query, files) => onExecute(selectedCase?.targetId || '', query, files)}
+              onStop={() => {}}
+              isRunning={false}
+              variant="home"
+              placeholder={selectedCase
+                ? `把这项工作交给 ${selectedCaseDisplayName}，直接描述你的需求...`
+                : '直接告诉个人助理：你想让公司帮你完成什么工作...'
+              }
+              autoFocus
+            />
+            </div>
+          </div>
+        </div>
         <GuideBanner />
         {cronPending && (
             <CronSetupCard

@@ -66,11 +66,19 @@ const LEGACY_TARGET_ID_MAP: Record<string, string> = {
 
 export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
   {
+    id: 'case-generic-assistant',
+    targetType: 'skill',
+    targetId: '__generic__',
+    icon: '🤖',
+    name: '个人助理',
+    description: '先由个人助理理解需求，再决定自己处理或安排合适同事',
+  },
+  {
     id: 'case-skill-creator',
     targetType: 'skill',
     targetId: 'skill-creator',
     icon: '🧑‍💼',
-    name: '联系 HR',
+    name: '人力专员',
     description: '招聘新员工，或帮现有员工提升能力',
   },
   {
@@ -78,7 +86,7 @@ export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
     targetType: 'skill',
     targetId: 'xhs-note-creator',
     icon: '📕',
-    name: '安排内容同事做小红书',
+    name: '小红书编辑',
     description: '让内容同事撰写小红书文案并准备素材',
   },
   {
@@ -86,7 +94,7 @@ export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
     targetType: 'skill',
     targetId: 'wechat-writer',
     icon: '✍️',
-    name: '安排写作同事写公众号',
+    name: '公众号写作编辑',
     description: '让写作同事策划、成稿并整理公众号内容',
   },
   {
@@ -94,7 +102,7 @@ export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
     targetType: 'skill',
     targetId: 'stock-analyzer',
     icon: '📈',
-    name: '安排投研同事分析股票',
+    name: '投研分析师',
     description: '让投研同事采集数据并完成股票分析',
   },
   {
@@ -102,7 +110,7 @@ export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
     targetType: 'skill',
     targetId: 'deep-research',
     icon: '🔍',
-    name: '安排研究同事做深度调研',
+    name: '研究员',
     description: '让研究同事做多源调研并生成报告',
   },
   {
@@ -110,7 +118,7 @@ export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
     targetType: 'skill',
     targetId: 'pptx',
     icon: '📽️',
-    name: '安排汇报同事做 PPT',
+    name: 'PPT 汇报设计师',
     description: '让汇报同事整理内容并制作演示文稿',
   },
 ]
