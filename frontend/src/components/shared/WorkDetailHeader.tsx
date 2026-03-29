@@ -7,7 +7,6 @@ interface WorkDetailHeaderTab {
 
 interface WorkDetailHeaderProps {
   title: string
-  activeRoleLabel: string
   onBack: () => void
   statusLabel?: string | null
   statusBadgeClassName?: string
@@ -22,7 +21,6 @@ interface WorkDetailHeaderProps {
 
 export function WorkDetailHeader({
   title,
-  activeRoleLabel,
   onBack,
   statusLabel,
   statusBadgeClassName,
@@ -39,7 +37,7 @@ export function WorkDetailHeader({
   return (
     <div className="mb-4 shrink-0 space-y-3">
       <div className="flex items-center justify-between">
-        <div className="flex min-w-0 items-center gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-4 pr-4">
           <button
             type="button"
             onClick={onBack}
@@ -49,9 +47,8 @@ export function WorkDetailHeader({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <div className="min-w-0">
+          <div className="min-w-0 max-w-[16rem] sm:max-w-[20rem] md:max-w-[24rem] lg:max-w-[28rem] xl:max-w-[32rem]">
             <h2 className="truncate text-lg font-semibold text-foreground">{title}</h2>
-            <p className="text-sm text-muted-foreground">当前视角：{activeRoleLabel}</p>
             {(stageLabel || ownerLabel) && (
               <p className="mt-1 text-xs text-muted-foreground">
                 {[stageLabel, ownerLabel ? `负责人：${ownerLabel}` : ''].filter(Boolean).join(' · ')}
@@ -59,15 +56,15 @@ export function WorkDetailHeader({
             )}
           </div>
           {statusLabel && statusBadgeClassName && (
-            <span className={statusBadgeClassName}>
+            <span className={`shrink-0 ${statusBadgeClassName}`}>
               {statusLabel}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           {rightSlot}
           {metaText && (
-            <div className="text-sm text-muted-foreground">
+            <div className="text-sm text-muted-foreground whitespace-nowrap">
               {metaText}
             </div>
           )}

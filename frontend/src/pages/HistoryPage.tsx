@@ -381,6 +381,7 @@ function SessionDetailContent({
   const [loading, setLoading] = useState(true)
   const [continuing, setContinuing] = useState(false)
   const [taskFiles, setTaskFiles] = useState<TaskFile[]>([])
+  const [filesVersion, setFilesVersion] = useState(0)
   const [deleting, setDeleting] = useState(false)
 
   const [viewingWidget, setViewingWidget] = useState<WidgetState | null>(null)
@@ -410,10 +411,15 @@ function SessionDetailContent({
     attachedSessionRef.current = null
     prevConverseThinkingRef.current = false
     converse.reset()
+    setSession(null)
     setAssistantSession(null)
     setRelatedRecordSessionIds([])
     setWorkId(null)
     setWorkSummary(null)
+    setLiveStatus(null)
+    setTaskFiles([])
+    setFilesVersion(0)
+    setViewingWidget(null)
     setResolvedSessionId(null)
     setActiveTab('employee')
   }, [routeSessionId, routeWorkId])
@@ -490,9 +496,12 @@ function SessionDetailContent({
   }, [sessionId, session, isConverseSession, agent.isRunning, agent.resumeSession, agent.attachToSession])
 
   useEffect(() => {
-    if (session?.work_dir) {
-      fetchTaskFiles()
+    if (!session?.work_dir) {
+      setTaskFiles([])
+      setFilesVersion(0)
+      return
     }
+    fetchTaskFiles()
   }, [session?.work_dir])
 
   const fetchSessionDetail = useCallback(async (targetSessionId: string) => {
@@ -666,6 +675,7 @@ function SessionDetailContent({
       if (res.ok) {
         const data = await res.json()
         setTaskFiles(data.files || [])
+        setFilesVersion((value) => value + 1)
       }
     } catch {
       // 忽略错误
@@ -882,7 +892,6 @@ function SessionDetailContent({
     && session?.skill_id !== '__converse__',
   )
   const employeeRoleLabel = getSkillName(session?.skill_id)
-  const activeRoleLabel = activeTab === 'assistant' ? assistantLabel : employeeRoleLabel
   const currentOwnerLabel = getSkillName(workSummary?.current_owner_skill_id || undefined) || null
   const fallbackSessionTitle = session?.query && !isControlInstructionText(session.query)
     ? session.query
@@ -897,13 +906,13 @@ function SessionDetailContent({
   const phaseLabel = (() => {
     const phase = (workSummary?.phase || '').trim()
     if (!phase) return null
-    if (phase === 'assistant_running') return '阶段：助理处理中'
-    if (phase === 'assistant_waiting') return '阶段：等待老板补充'
-    if (phase === 'employee_running') return '阶段：员工执行中'
-    if (phase === 'employee_waiting') return '阶段：等待补充信息'
-    if (phase === 'employee_completed' || phase === 'assistant_completed') return '阶段：已完成'
-    if (phase === 'employee_failed' || phase === 'assistant_failed') return '阶段：执行失败'
-    return `阶段：${phase}`
+    if (phase === 'assistant_running') return '状态：助理处理中'
+    if (phase === 'assistant_waiting') return '状态：等待老板补充'
+    if (phase === 'employee_running') return '状态：员工执行中'
+    if (phase === 'employee_waiting') return '状态：等待补充信息'
+    if (phase === 'employee_completed' || phase === 'assistant_completed') return '状态：已完成'
+    if (phase === 'employee_failed' || phase === 'assistant_failed') return '状态：执行失败'
+    return `状态：${phase}`
   })()
   const headerMetaText = session ? parseUTCDate(session.created_at).toLocaleString('zh-CN') : ''
   const runtimeHeadline = (() => {
@@ -1001,7 +1010,6 @@ function SessionDetailContent({
         {runtimeBanner}
         <WorkDetailHeader
           title={displayWorkTitle}
-          activeRoleLabel={activeRoleLabel}
           onBack={() => navigate('/history')}
           statusLabel={renderStatusLabel(effectiveStatus)}
           statusBadgeClassName={effectiveStatusBadgeClass}
@@ -1031,13 +1039,14 @@ function SessionDetailContent({
   return (
     <div className="h-[calc(100vh-64px)]">
       <ExecutionPanel
+        key={`${sessionId || 'empty'}:${session?.work_dir || 'no-workdir'}`}
         messages={allMessages}
         isRunning={chatIsRunning}
         error={isConverseSession ? converse.error : agent.error}
         connectionStatus={isConverseSession ? null : agent.connectionStatus}
         taskFiles={taskFiles}
         workDir={session?.work_dir || null}
-        filesVersion={0}
+        filesVersion={filesVersion}
         onSubmit={handleContinue}
         onStop={stopHandler}
         sessionId={sessionId || null}
@@ -1051,7 +1060,6 @@ function SessionDetailContent({
             {runtimeBanner}
             <WorkDetailHeader
               title={displayWorkTitle}
-              activeRoleLabel={activeRoleLabel}
               onBack={() => navigate('/history')}
               statusLabel={renderStatusLabel(effectiveStatus)}
               statusBadgeClassName={effectiveStatusBadgeClass}

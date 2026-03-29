@@ -19,16 +19,16 @@ const CONCEPTS = [
   },
   {
     icon: '⏰',
-    title: '日历安排 = 提前排班做事',
+    title: '日历·定时任务 = 提前排班做事',
     desc: '把工作安排进日历，到时间后员工会自动执行。',
     example: '例如：每周一早上自动生成周报。',
   },
 ]
 
 const QUICK_LINKS = [
-  { label: '查看通讯录', path: '/skills' },
+  { label: '打开技能·通讯录', path: '/skills' },
   { label: '联系 HR', path: '/create' },
-  { label: '打开日历', path: '/cron' },
+  { label: '打开日历·定时任务', path: '/cron' },
 ] as const
 
 export function GuideBanner() {

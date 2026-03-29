@@ -153,6 +153,15 @@ export function ExecutionPanel({
     [messages],
   )
 
+  useEffect(() => {
+    hasAutoExpandedRef.current = false
+    selectedPathRef.current = null
+    setSelectedArtifact(null)
+    setIsPreviewVisible(false)
+    setIsRightSidebarVisible(false)
+    setShowLivePreview(false)
+  }, [sessionId, workDir])
+
   /* ── 可拖拽面板 ── */
   const {
     width: chatPanelWidth,
@@ -200,6 +209,15 @@ export function ExecutionPanel({
   useEffect(() => {
     if (!isRunning && sessionId && messages.length > 0) fetchTaskFiles()
   }, [isRunning, sessionId, messages.length, fetchTaskFiles])
+
+  useEffect(() => {
+    if (taskFiles.length > 0) return
+    selectedPathRef.current = null
+    setSelectedArtifact(null)
+    setIsPreviewVisible(false)
+    setIsRightSidebarVisible(false)
+    setShowLivePreview(false)
+  }, [taskFiles.length])
 
   /* ── 自动展开预览面板 ── */
   useAutoExpandPreview(

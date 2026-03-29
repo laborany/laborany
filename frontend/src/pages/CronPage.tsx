@@ -278,7 +278,7 @@ export default function CronPage() {
       {/* 头部 */}
       <header className="h-14 border-b border-border bg-card flex items-center justify-between pl-6 pr-40">
         <div>
-          <h1 className="text-lg font-semibold text-foreground">日历</h1>
+          <h1 className="text-lg font-semibold text-foreground">日历·定时任务</h1>
           <p className="text-xs text-muted-foreground">把工作安排进日历，到时间后由对应同事自动执行。</p>
         </div>
         <button

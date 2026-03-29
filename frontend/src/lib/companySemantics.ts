@@ -21,19 +21,19 @@ export const COMPANY_APP_COPY = {
 
 const NAV_COPY: Record<CompanyNavKey, CompanyNavCopy> = {
   home: {
-    primary: '助理办公桌',
-    secondary: '首页',
-    shortLabel: '助理办公桌',
+    primary: '首页',
+    secondary: '办公桌',
+    shortLabel: '首页',
   },
   skills: {
-    primary: '通讯录',
-    secondary: '员工',
+    primary: '技能',
+    secondary: '通讯录',
     shortLabel: '通讯录',
   },
   cron: {
     primary: '日历',
-    secondary: '安排',
-    shortLabel: '日历',
+    secondary: '定时任务',
+    shortLabel: '定时任务',
   },
   history: {
     primary: '工作记录',
@@ -41,20 +41,18 @@ const NAV_COPY: Record<CompanyNavKey, CompanyNavCopy> = {
     shortLabel: '工作记录',
   },
   memory: {
-    primary: '老板档案',
-    secondary: 'Memory',
+    primary: '记忆',
+    secondary: '老板档案',
     shortLabel: '老板档案',
   },
   settings: {
-    primary: '公司设置',
-    secondary: '设置',
-    shortLabel: '公司设置',
+    primary: '设置',
+    shortLabel: '设置',
   },
 }
 
 export function getCompanyNavLabel(key: CompanyNavKey, collapsed = false): string {
   const copy = NAV_COPY[key]
   if (collapsed) return copy.shortLabel
-  return copy.secondary ? `${copy.primary} · ${copy.secondary}` : copy.primary
+  return copy.secondary ? `${copy.primary}·${copy.secondary}` : copy.primary
 }
-

@@ -49,10 +49,12 @@ export default function MemoryPage() {
         <h1 className="text-lg font-semibold text-foreground">记忆管理</h1>
       </header>
 
-      {/* Tab 切换 */}
-      <div className="border-b border-border bg-card">
-        <div className="mx-auto max-w-4xl px-6">
-          <nav className="flex gap-6">
+      <div className="flex">
+        <aside className="sticky top-14 h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto border-r border-border bg-background">
+          <div className="px-3 pt-4 pb-2">
+            <span className="text-xs font-semibold tracking-wider text-muted-foreground">记忆</span>
+          </div>
+          <nav className="space-y-0.5 p-2">
             <TabButton
               active={activeTab === 'boss'}
               onClick={() => setActiveTab('boss')}
@@ -75,14 +77,15 @@ export default function MemoryPage() {
               testId="memory-tab-archive"
             />
           </nav>
-        </div>
-      </div>
+        </aside>
 
-      {/* Tab 内容 */}
-      <div className="mx-auto max-w-4xl p-6">
-        {activeTab === 'boss' && <BossEditor />}
-        {activeTab === 'profile' && <ProfileTab />}
-        {activeTab === 'archive' && <MemoryArchiveTab />}
+        <div className="min-w-0 flex-1 p-6">
+          <div className="max-w-4xl space-y-6">
+            {activeTab === 'boss' && <BossEditor />}
+            {activeTab === 'profile' && <ProfileTab />}
+            {activeTab === 'archive' && <MemoryArchiveTab />}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -108,13 +111,13 @@ function TabButton({
     <button
       onClick={onClick}
       data-testid={testId}
-      className={`flex items-center gap-2 border-b-2 py-3 transition-colors ${
+      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
         active
-          ? 'border-primary text-primary'
-          : 'border-transparent text-muted-foreground hover:text-foreground'
+          ? 'bg-primary/10 text-primary'
+          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
       }`}
     >
-      {icon}
+      <span className="flex-shrink-0">{icon}</span>
       <span className="text-sm font-medium">{label}</span>
     </button>
   )

@@ -9,6 +9,7 @@ import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { useModelProfile } from '../contexts/ModelProfileContext'
 import { type QuickStartItem } from '../contexts/QuickStartContext'
 import { API_BASE } from '../config'
+import type { WorkSummary } from '../types'
 import { GuideBanner } from '../components/home/GuideBanner'
 import { ScenarioCards } from '../components/home/ScenarioCards'
 import ChatInput from '../components/shared/ChatInput'
@@ -64,6 +65,17 @@ function getTaskSourceLabel(source?: RunningTaskBrief['source']): string {
   return '桌面工作'
 }
 
+function isTimestampToday(timestampMs: number | undefined): boolean {
+  if (!timestampMs || !Number.isFinite(timestampMs)) return false
+  const target = new Date(timestampMs)
+  const now = new Date()
+  return (
+    target.getFullYear() === now.getFullYear()
+    && target.getMonth() === now.getMonth()
+    && target.getDate() === now.getDate()
+  )
+}
+
 export default function HomePage() {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -85,6 +97,7 @@ export default function HomePage() {
   const [genericPlan, setGenericPlan] = useState<GenericExecutionPlan | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [backgroundTasks, setBackgroundTasks] = useState<RunningTaskBrief[]>([])
+  const [workSummaries, setWorkSummaries] = useState<WorkSummary[]>([])
 
   const handledActionRef = useRef<string | null>(null)
   const latestUserQueryRef = useRef('')
@@ -92,7 +105,7 @@ export default function HomePage() {
   const skillId = execCtx?.id || ''
   const agent = useAgent(skillId)
   const converse = useConverse()
-  const { createJob } = useCronJobs()
+  const { createJob, jobs } = useCronJobs()
 
   const refreshBackgroundTasks = useCallback(async () => {
     try {
@@ -113,9 +126,32 @@ export default function HomePage() {
     }
   }, [])
 
+  const refreshWorks = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/works`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      if (!res.ok) {
+        setWorkSummaries([])
+        return
+      }
+      const data = await res.json() as { works?: WorkSummary[] }
+      setWorkSummaries(Array.isArray(data.works) ? data.works : [])
+    } catch {
+      setWorkSummaries([])
+    }
+  }, [])
+
   useEffect(() => {
     if (!converse.action) handledActionRef.current = null
   }, [converse.action])
+
+  useEffect(() => {
+    void refreshWorks()
+    const timer = window.setInterval(() => { void refreshWorks() }, 15000)
+    return () => window.clearInterval(timer)
+  }, [refreshWorks])
 
   const handleExecute = useCallback(async (targetId: string, query: string, files?: File[]) => {
     latestUserQueryRef.current = query
@@ -427,6 +463,10 @@ export default function HomePage() {
     })
   }, [converse.sessionId, converse.workId, execCtx?.attachmentIds, execCtx?.originQuery, execCtx?.query, execCtx?.workId, navigate, getCapabilityName])
 
+  const inProgressCount = workSummaries.filter((work: WorkSummary) => work.status === 'running' || work.status === 'waiting_input').length
+  const completedCount = workSummaries.filter((work: WorkSummary) => work.status === 'completed').length
+  const todayScheduleCount = jobs.filter((job) => job.enabled && isTimestampToday(job.nextRunAtMs)).length
+
   if (phase === 'idle') {
     return <IdleView
       userName={displayUserName}
@@ -438,6 +478,9 @@ export default function HomePage() {
       onCronCancel={() => setCronPending(null)}
       backgroundTasks={backgroundTasks}
       onResumeTask={handleResumeBackgroundTask}
+      inProgressCount={inProgressCount}
+      completedCount={completedCount}
+      todayScheduleCount={todayScheduleCount}
     />
   }
 
@@ -598,7 +641,7 @@ export default function HomePage() {
   )
 }
 
-function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending, onCronConfirm, onCronCancel, backgroundTasks, onResumeTask }: {
+function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending, onCronConfirm, onCronCancel, backgroundTasks, onResumeTask, inProgressCount, completedCount, todayScheduleCount }: {
   userName?: string
   onExecute: (targetId: string, query: string, files?: File[]) => void | Promise<void>
   selectedCase: QuickStartItem | null
@@ -608,9 +651,10 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
   onCronCancel: () => void
   backgroundTasks: RunningTaskBrief[]
   onResumeTask: (task: RunningTaskBrief) => void
+  inProgressCount: number
+  completedCount: number
+  todayScheduleCount: number
 }) {
-  const todayWorkCount = backgroundTasks.length + (cronPending ? 1 : 0)
-
   return (
     <div className="min-h-screen p-6">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -629,14 +673,18 @@ function IdleView({ userName, onExecute, selectedCase, onSelectCase, cronPending
 
           <div className="rounded-2xl border border-primary/20 bg-primary/5 p-6">
             <p className="text-sm font-semibold text-foreground mb-4">今日概览</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div className="rounded-xl border border-border bg-background px-4 py-3">
-                <p className="text-xs text-muted-foreground">进行中的工作</p>
-                <p className="mt-1 text-2xl font-bold text-foreground">{backgroundTasks.length}</p>
+                <p className="text-xs text-muted-foreground">进行中</p>
+                <p className="mt-1 text-2xl font-bold text-foreground">{inProgressCount}</p>
               </div>
               <div className="rounded-xl border border-border bg-background px-4 py-3">
-                <p className="text-xs text-muted-foreground">今日安排</p>
-                <p className="mt-1 text-2xl font-bold text-foreground">{todayWorkCount}</p>
+                <p className="text-xs text-muted-foreground">已完成</p>
+                <p className="mt-1 text-2xl font-bold text-foreground">{completedCount}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-background px-4 py-3">
+                <p className="text-xs text-muted-foreground">今日日程</p>
+                <p className="mt-1 text-2xl font-bold text-foreground">{todayScheduleCount}</p>
               </div>
             </div>
             <div className="mt-4 rounded-xl border border-dashed border-primary/30 bg-background/60 px-4 py-3">

@@ -219,7 +219,7 @@ export function NotificationPanel({
             onClick={onClose}
             className="text-xs text-primary hover:underline"
           >
-            查看所有定时任务 →
+            打开定时任务 →
           </Link>
         </div>
       )}

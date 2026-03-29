@@ -54,7 +54,7 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="h-14 border-b border-border bg-card flex items-center px-6">
-        <h1 className="text-lg font-semibold text-foreground">设置中心</h1>
+        <h1 className="text-lg font-semibold text-foreground">设置</h1>
       </header>
 
       <div className="flex">

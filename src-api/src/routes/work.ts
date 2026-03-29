@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { dbHelper } from '../core/database.js'
 import { runtimeTaskManager } from '../core/agent/index.js'
-import { getWorkDetail, listWorks, refreshWork } from '../core/work-items.js'
+import { getWorkDetail, listWorks } from '../core/work-items.js'
 
 const work = new Hono()
 
@@ -15,8 +15,7 @@ work.get('/:workId', (c) => {
   if (!detail.work) {
     return c.json({ error: '工作不存在' }, 404)
   }
-  refreshWork(workId)
-  return c.json(getWorkDetail(workId))
+  return c.json(detail)
 })
 
 work.delete('/:workId', (c) => {

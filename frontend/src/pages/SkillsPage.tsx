@@ -275,7 +275,7 @@ export default function SkillsPage() {
       }
 
       await fetchSkills()
-      setInstallSuccess(typeof data.summary === 'string' ? data.summary : '员工已入职，可在「通讯录」查看')
+      setInstallSuccess(typeof data.summary === 'string' ? data.summary : '员工已入职，可在「技能·通讯录」查看')
       setSearch(typeof data.skillId === 'string' ? data.skillId : '')
       setActiveTab('mine')
       setCustomUrl('')
@@ -359,7 +359,7 @@ export default function SkillsPage() {
           <h2 className="text-2xl font-bold text-foreground">通讯录</h2>
           <p className="text-sm text-muted-foreground mt-1">查看公司现有员工、联系 HR 招聘新同事，或为员工提升能力。</p>
         </div>
-        <Link to="/" className="text-sm text-primary hover:underline">返回助理办公桌</Link>
+        <Link to="/" className="text-sm text-primary hover:underline">返回首页</Link>
       </div>
 
       <div className="mb-6">

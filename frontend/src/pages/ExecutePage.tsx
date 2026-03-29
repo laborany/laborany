@@ -296,7 +296,6 @@ export default function ExecutePage() {
   const placeholder = skillId === 'financial-report'
     ? '例如：分析腾讯 2023 年财报的营收增长情况'
     : '输入你的问题...'
-  const activeRoleLabel = activeTab === 'assistant' ? assistantLabel : displaySkillName
   const displayWorkTitle = workTitle || '这项工作'
   const effectiveStatus = effectiveRunning
     ? '运行中'
@@ -323,7 +322,6 @@ export default function ExecutePage() {
   const header = (
     <WorkDetailHeader
       title={displayWorkTitle}
-      activeRoleLabel={activeRoleLabel}
       onBack={handleBackToHome}
       statusLabel={effectiveStatus}
       statusBadgeClassName={effectiveStatusBadgeClass}
@@ -383,6 +381,7 @@ export default function ExecutePage() {
         </div>
       ) : (
         <ExecutionPanel
+          key={`${agent.sessionId || 'empty'}:${agent.workDir || 'no-workdir'}`}
           messages={agent.messages}
           isRunning={effectiveRunning}
           error={agent.error}
