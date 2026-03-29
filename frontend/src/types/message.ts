@@ -74,7 +74,7 @@ export interface HistoryMessage {
   createdAt: string
 }
 
-export type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq'
+export type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq' | 'wechat'
 
 export interface Session {
   id: string

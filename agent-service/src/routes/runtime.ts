@@ -15,6 +15,8 @@ import {
   startQQBot,
   stopQQBot,
 } from '../qq/index.js'
+import { isWechatEnabled } from '../wechat/config.js'
+import { isWechatRunning, restartWechatBot, startWechatBot, stopWechatBot } from '../wechat/index.js'
 import { resetNotifierTransport } from '../cron/index.js'
 
 interface ApplyConfigRequest {
@@ -34,6 +36,7 @@ function hasChangedPrefix(changedKeys: string[], prefixes: string[]): boolean {
 
 const FEISHU_PREFIXES = ['FEISHU_']
 const QQ_PREFIXES = ['QQ_']
+const WECHAT_PREFIXES = ['WECHAT_']
 const NOTIFY_PREFIXES = ['SMTP_', 'NOTIFICATION_', 'NOTIFY_']
 
 const router = Router()
@@ -68,6 +71,21 @@ router.post('/apply-config', async (req: Request, res: Response) => {
   } = {
     attempted: false,
     changed: false,
+  }
+  const wechatResult: {
+    attempted: boolean
+    changed: boolean
+    before: 'running' | 'stopped'
+    after: 'running' | 'stopped'
+    enabled: boolean
+    note?: string
+    error?: string
+  } = {
+    attempted: false,
+    changed: false,
+    before: isWechatRunning() ? 'running' : 'stopped',
+    after: isWechatRunning() ? 'running' : 'stopped',
+    enabled: isWechatEnabled(),
   }
   const qqResult: {
     attempted: boolean
@@ -132,6 +150,32 @@ router.post('/apply-config', async (req: Request, res: Response) => {
     }
   }
 
+  const shouldApplyWechat = applyAll || hasChangedPrefix(changedKeys, WECHAT_PREFIXES)
+  if (shouldApplyWechat) {
+    wechatResult.attempted = true
+    const beforeRunning = isWechatRunning()
+    try {
+      if (isWechatEnabled()) {
+        if (beforeRunning) {
+          await restartWechatBot('runtime config apply')
+          wechatResult.changed = true
+        } else {
+          await startWechatBot()
+          wechatResult.changed = isWechatRunning()
+        }
+      } else if (beforeRunning) {
+        stopWechatBot()
+        wechatResult.changed = true
+      }
+    } catch (error) {
+      wechatResult.error = toErrorMessage(error)
+    } finally {
+      wechatResult.enabled = isWechatEnabled()
+      wechatResult.after = isWechatRunning() ? 'running' : 'stopped'
+      wechatResult.note = isWechatEnabled() ? undefined : 'WeChat config refreshed.'
+    }
+  }
+
   const shouldApplyNotify = applyAll || hasChangedPrefix(changedKeys, NOTIFY_PREFIXES)
   if (shouldApplyNotify) {
     emailResult.attempted = true
@@ -143,11 +187,11 @@ router.post('/apply-config', async (req: Request, res: Response) => {
     }
   }
 
-  if (!shouldApplyFeishu && !shouldApplyQQ && !shouldApplyNotify) {
+  if (!shouldApplyFeishu && !shouldApplyQQ && !shouldApplyWechat && !shouldApplyNotify) {
     warnings.push('No runtime module matched changed keys; env values were refreshed only.')
   }
 
-  const success = !feishuResult.error && !qqResult.error && !emailResult.error
+  const success = !feishuResult.error && !qqResult.error && !wechatResult.error && !emailResult.error
   const summary = success ? 'Runtime config applied' : 'Config saved but runtime apply had errors'
 
   res.json({
@@ -165,6 +209,7 @@ router.post('/apply-config', async (req: Request, res: Response) => {
       },
       feishu: feishuResult,
       qq: qqResult,
+      wechat: wechatResult,
       email: emailResult,
     },
   })

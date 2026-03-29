@@ -10,7 +10,7 @@ import { join } from 'path'
 import { existsSync, createWriteStream } from 'fs'
 import { v4 as uuid } from 'uuid'
 import { Readable } from 'stream'
-import { exec } from 'child_process'
+import { spawn } from 'child_process'
 import busboy from 'busboy'
 import { getRuntimeTasksDir, getRuntimeUploadsDir } from 'laborany-shared'
 import {
@@ -58,6 +58,7 @@ interface TaskFile {
 }
 
 const TASK_INTERNAL_IGNORE_LIST = new Set(['history.txt', '.git', 'node_modules', '__pycache__', 'CLAUDE.md'])
+const TASK_INTERNAL_DOWNLOAD_ALLOW_LIST = new Set(['.laborany-input-files.json'])
 
 function shouldIgnoreTaskEntry(name: string): boolean {
   if (!name) return true
@@ -68,10 +69,15 @@ function shouldIgnoreTaskEntry(name: string): boolean {
 }
 
 function isInternalTaskPath(filePath: string): boolean {
-  return filePath
+  const segments = filePath
     .split('/')
     .filter(Boolean)
-    .some(segment => shouldIgnoreTaskEntry(segment))
+
+  if (segments.length === 1 && TASK_INTERNAL_DOWNLOAD_ALLOW_LIST.has(segments[0])) {
+    return false
+  }
+
+  return segments.some(segment => shouldIgnoreTaskEntry(segment))
 }
 
 async function listTaskFiles(baseDir: string, relativePath: string): Promise<TaskFile[]> {
@@ -393,36 +399,105 @@ export default file
  * │                       用系统默认应用打开文件                               │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 file.post('/files/open', async (c) => {
-  const body = await c.req.json<{ path: string }>()
-  const filePath = body.path
+  const body: { path?: string; url?: string } = await c.req.json<{ path?: string; url?: string }>().catch(() => ({}))
+  const filePath = typeof body.path === 'string' ? body.path.trim() : ''
+  const targetUrl = typeof body.url === 'string' ? body.url.trim() : ''
 
-  if (!filePath) {
-    return c.json({ error: '缺少文件路径' }, 400)
+  if (!filePath && !targetUrl) {
+    return c.json({ error: '缺少文件路径或 URL' }, 400)
   }
 
-  if (!existsSync(filePath)) {
+  if (filePath && targetUrl) {
+    return c.json({ error: 'path 和 url 只能传一个' }, 400)
+  }
+
+  if (filePath && !existsSync(filePath)) {
     return c.json({ error: '文件不存在' }, 404)
   }
 
-  console.log(`[File] Opening file: ${filePath}`)
+  const openTarget = filePath || targetUrl
 
-  const command = process.platform === 'win32'
-    ? `start "" "${filePath}"`
-    : process.platform === 'darwin'
-      ? `open "${filePath}"`
-      : `xdg-open "${filePath}"`
+  if (targetUrl) {
+    const validationError = validateExternalUrl(targetUrl)
+    if (validationError) {
+      return c.json({ error: validationError }, 400)
+    }
+  }
 
-  return new Promise<Response>((resolve) => {
-    exec(command, (err) => {
-      if (err) {
-        console.error('[File] Failed to open file:', err)
-        resolve(c.json({ error: '打开文件失败', detail: err.message }, 500))
-      } else {
-        resolve(c.json({ success: true }))
-      }
+  console.log(`[File] Opening target: ${openTarget}`)
+
+  try {
+    await openWithDefaultApp(openTarget)
+    return c.json({ success: true, target: openTarget, type: targetUrl ? 'url' : 'path' })
+  } catch (err) {
+    console.error('[File] Failed to open target:', err)
+    return c.json({ error: targetUrl ? '打开链接失败' : '打开文件失败', detail: err instanceof Error ? err.message : String(err) }, 500)
+  }
+})
+
+function validateExternalUrl(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(rawUrl)
+    const allowedProtocols = new Set([
+      'http:',
+      'https:',
+      'mailto:',
+      'chrome:',
+      'microsoft-edge:',
+      'googlechrome:',
+    ])
+    if (!allowedProtocols.has(parsed.protocol)) {
+      return `不支持的链接协议: ${parsed.protocol}`
+    }
+    return null
+  } catch {
+    return '链接格式无效'
+  }
+}
+
+function openWithDefaultApp(target: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const { command, args } = getOpenCommand(target)
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: 'ignore',
+    })
+
+    let settled = false
+    child.once('error', (error) => {
+      if (settled) return
+      settled = true
+      reject(error)
+    })
+    child.once('spawn', () => {
+      if (settled) return
+      settled = true
+      child.unref()
+      resolve()
     })
   })
-})
+}
+
+function getOpenCommand(target: string): { command: string; args: string[] } {
+  if (process.platform === 'win32') {
+    return {
+      command: 'cmd',
+      args: ['/c', 'start', '""', target],
+    }
+  }
+
+  if (process.platform === 'darwin') {
+    return {
+      command: 'open',
+      args: [target],
+    }
+  }
+
+  return {
+    command: 'xdg-open',
+    args: [target],
+  }
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       Office 文档转换 API                                 │

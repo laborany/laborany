@@ -57,6 +57,45 @@ interface AssistantSourceMeta {
 
 const skill = new Hono()
 const ATTACHMENT_ONLY_EXECUTION_QUERY = '请先查看当前上传的文件，并根据文件内容继续处理。'
+const INPUT_ATTACHMENT_MANIFEST = '.laborany-input-files.json'
+
+interface TaskInputAttachmentManifest {
+  version: 1
+  inputFiles: string[]
+}
+
+async function persistTaskInputAttachmentManifest(taskDir: string, fileNames: string[]): Promise<void> {
+  if (fileNames.length === 0) return
+
+  const manifestPath = join(taskDir, INPUT_ATTACHMENT_MANIFEST)
+  let previous: TaskInputAttachmentManifest | null = null
+
+  try {
+    const raw = await readFile(manifestPath, 'utf-8')
+    previous = JSON.parse(raw) as TaskInputAttachmentManifest
+  } catch {
+    previous = null
+  }
+
+  const merged = new Set<string>()
+  if (previous && Array.isArray(previous.inputFiles)) {
+    previous.inputFiles
+      .map(name => (typeof name === 'string' ? name.trim() : ''))
+      .filter(Boolean)
+      .forEach(name => merged.add(name))
+  }
+  fileNames
+    .map(name => name.trim())
+    .filter(Boolean)
+    .forEach(name => merged.add(name))
+
+  const payload: TaskInputAttachmentManifest = {
+    version: 1,
+    inputFiles: Array.from(merged),
+  }
+
+  await writeFile(manifestPath, JSON.stringify(payload, null, 2), 'utf-8')
+}
 
 function readAssistantHandoffText(sourceMeta?: Record<string, unknown>): string {
   const text = (sourceMeta as AssistantSourceMeta | undefined)?.assistantHandoffText
@@ -695,6 +734,7 @@ skill.post('/execute', async (c) => {
   }
 
   if (uploadedFileNames.length > 0) {
+    await persistTaskInputAttachmentManifest(taskDir, uploadedFileNames)
     const fileList = uploadedFileNames.map(name => `- ${name}`).join('\n')
     finalQuery = `${finalQuery}\n\n[Uploaded files in current task directory]\n${fileList}\n\n这些文件都在当前任务工作目录下，请先读取这些文件，再处理用户请求。`
   }
@@ -741,7 +781,7 @@ skill.post('/execute', async (c) => {
     modelName: modelSelection.modelName,
     originQuery: skillId === 'skill-creator' ? (originQuery || cleanQuery) : undefined,
     beforeSkillIds: skillId === 'skill-creator' ? beforeSkillIds : undefined,
-    source: source as 'desktop' | 'feishu' | 'qq' | 'cron' | 'converse',
+    source: source as 'desktop' | 'feishu' | 'qq' | 'wechat' | 'cron' | 'converse',
     sourceMeta,
   })
 
@@ -908,6 +948,7 @@ skill.post('/:skillId/optimize', async (c) => {
         sessionId,
         signal: abortController.signal,
         modelOverride: modelSelection.modelOverride,
+        modelProfileId: modelSelection.modelProfileId,
         onEvent: (event) => {
           if (event.type === 'error') {
             hasErrorEvent = true

@@ -5,6 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import type { FileCategory } from './types'
+import { openFileExternal } from '../../lib/system-open'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                      扩展名 → 分类 映射表                                  │
@@ -129,17 +130,4 @@ export function getFileIcon(ext: string): string {
  * │                           外部应用打开                                    │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-/** 用系统默认应用打开文件 */
-export async function openFileExternal(path: string): Promise<void> {
-  if (!path) return
-  try {
-    await fetch('/api/files/open', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
-    })
-  } catch (err) {
-    console.error('[Preview] Failed to open file:', err)
-  }
-}
-
+export { openFileExternal }

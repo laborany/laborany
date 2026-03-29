@@ -10,7 +10,7 @@ const ALLOWED_SESSION_STATUS = new Set(['running', 'waiting_input', 'completed',
 const ALLOWED_MESSAGE_TYPES = new Set(['user', 'assistant', 'tool_use', 'tool_result', 'error', 'system'])
 const CONVERSE_HEARTBEAT_STALE_MS = 90 * 1000
 
-type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq'
+type SessionSource = 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq' | 'wechat'
 type MessageSessionMode = 'converse' | 'execution'
 type MessageKind =
   | 'user'
@@ -44,9 +44,10 @@ function inferSessionSource(sessionId: string, skillId: string, dbSource?: strin
   if (sid.startsWith('cron-') || sid.startsWith('cron-manual-')) return 'cron'
   if (sid.startsWith('feishu-') || sid.startsWith('feishu-conv-')) return 'feishu'
   if (sid.startsWith('qq-') || sid.startsWith('qq-conv-')) return 'qq'
+  if (sid.startsWith('wechat-') || sid.startsWith('wechat-conv-')) return 'wechat'
 
   // 其次使用数据库中的 source 字段
-  if (dbSource && ['desktop', 'feishu', 'qq', 'cron', 'converse'].includes(dbSource)) {
+  if (dbSource && ['desktop', 'feishu', 'qq', 'wechat', 'cron', 'converse'].includes(dbSource)) {
     return dbSource as SessionSource
   }
 
@@ -58,6 +59,7 @@ function getRunningSkillName(source: SessionSource, fallbackSkillName: string, s
   if (source === 'cron') return '定时任务'
   if (source === 'feishu') return skillId === '__converse__' ? '飞书对话分派' : '飞书任务执行'
   if (source === 'qq') return skillId === '__converse__' ? 'QQ 对话分派' : 'QQ 任务执行'
+  if (source === 'wechat') return skillId === '__converse__' ? '微信对话分派' : '微信任务执行'
   if (source === 'converse') return '首页对话分派'
   return fallbackSkillName || skillId
 }
@@ -411,7 +413,7 @@ session.post('/external/upsert', async (c) => {
     ? body.workDir.trim()
     : null
   const sourceRaw = typeof body.source === 'string' ? body.source.trim() : ''
-  const source = ['desktop', 'feishu', 'qq', 'cron', 'converse'].includes(sourceRaw)
+  const source = ['desktop', 'feishu', 'qq', 'wechat', 'cron', 'converse'].includes(sourceRaw)
     ? sourceRaw
     : (skillId === '__converse__' ? 'converse' : 'desktop')
   const sourceMeta = body.sourceMeta && typeof body.sourceMeta === 'object'

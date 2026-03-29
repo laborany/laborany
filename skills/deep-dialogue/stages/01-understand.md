@@ -23,15 +23,15 @@
 根据话题，使用搜索工具建立知识基础：
 
 ```
-使用 mcp__web-search-prime__webSearchPrime 搜索：
+使用 mcp__laborany_web__search 搜索：
 - "{话题} 最新进展 2025 2026"（中文）
 - "{topic} latest research findings"（英文）
 ```
 
 如果话题涉及具体事实或数据，额外搜索验证：
 ```
-使用 mcp__web-search-prime__webSearchPrime 搜索具体事实
-使用 mcp__web-reader__webReader 阅读 1-2 篇最相关的文章
+使用 mcp__laborany_web__search 搜索具体事实
+使用 mcp__laborany_web__read_page 阅读 1-2 篇最相关的文章
 ```
 
 注意：

@@ -6,6 +6,7 @@
 
 import { useState } from 'react'
 import type { PreviewStatus } from '../../hooks/useVitePreview'
+import { openUrlExternal } from '../../lib/system-open'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           Props 定义                                      │
@@ -22,6 +23,15 @@ export function VitePreview({ status, previewUrl, error, onStart, onStop }: Vite
   const [iframeKey, setIframeKey] = useState(0)
 
   const handleRefresh = () => setIframeKey(k => k + 1)
+  const handleOpenExternal = async () => {
+    if (!previewUrl) return
+    try {
+      await openUrlExternal(previewUrl)
+    } catch (openError) {
+      console.error('[VitePreview] Failed to open preview externally:', openError)
+      window.open(previewUrl, '_blank', 'noopener,noreferrer')
+    }
+  }
 
   /* ────────────────────────────────────────────────────────────────────────
    * 空闲状态：显示启动按钮
@@ -110,15 +120,15 @@ export function VitePreview({ status, previewUrl, error, onStart, onStop }: Vite
           >
             🔄
           </button>
-          <a
-            href={previewUrl || '#'}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
+            onClick={handleOpenExternal}
+            disabled={!previewUrl}
             className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="在新标签页打开"
+            title="用系统浏览器打开"
           >
             🔗
-          </a>
+          </button>
           <button
             onClick={onStop}
             className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

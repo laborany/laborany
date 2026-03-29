@@ -90,7 +90,7 @@ python scripts/check_deps.py
 
 - 读取用户提供的文档 (PDF/DOCX/MD)
 - 分析用户上传的图片
-- 使用 WebFetch 获取网页内容
+- 使用 mcp__laborany_web__read_page 获取网页内容
 - 整理关键信息点
 
 **4. 主动澄清不明确的需求**
@@ -341,7 +341,7 @@ python scripts/render_video.py -p ./video-project -o out/video.mp4
 
 当用户提供网页链接时：
 
-1. **获取内容**：使用 WebFetch 获取网页内容
+1. **获取内容**：使用 mcp__laborany_web__read_page 获取网页内容
 2. **提取要点**：识别核心信息和数据
 3. **转化脚本**：将内容转化为视频叙事
 

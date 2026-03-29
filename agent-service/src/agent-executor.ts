@@ -36,6 +36,8 @@ import {
   type WidgetHandlerState,
   type WidgetEvent,
 } from './generative-ui/index.js'
+import { writeWebResearchMcpConfig } from './web-research/index.js'
+import { buildResearchPolicySection } from './web-research/policy/research-policy.js'
 
 /* ════════════════════════════════════════════════════════════════════════════
  *  默认超时时间：30 分钟
@@ -113,6 +115,7 @@ interface ExecuteOptions {
   signal: AbortSignal
   onEvent: (event: AgentEvent) => void
   modelOverride?: ModelOverride
+  modelProfileId?: string
   enableWidgets?: boolean
 }
 
@@ -172,7 +175,7 @@ function buildLaborAnyRuntimeContext(taskDir: string, skillId: string, sessionId
     `- LaborAny user home: ${normalizePathForPrompt(userHome)}`,
     `- LaborAny app home: ${normalizePathForPrompt(APP_HOME_DIR)}`,
     `- Primary env file path: ${normalizePathForPrompt(envPath)}`,
-    `- API base URL: http://localhost:${process.env.PORT || 23816}`,
+    `- API base URL: http://localhost:${process.env.AGENT_PORT || 3002}`,
     '',
     'Execution constraints:',
     '- You are running inside LaborAny desktop app.',
@@ -399,7 +402,7 @@ function parseMcpStatusLine(line: string): McpServerStatus | null {
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, modelOverride, enableWidgets } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, modelOverride, modelProfileId, enableWidgets } = options
 
   refreshRuntimeConfig()
 
@@ -518,6 +521,19 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     }
   }
 
+  // ── Web Research MCP: 对所有用户统一注入 ──
+  try {
+    const webMcpPath = writeWebResearchMcpConfig(taskDir, {
+      agentServicePort: process.env.AGENT_PORT || '3002',
+      nodePath: resolveMcpNodeCommand(cliLaunch.source === 'bundled' ? cliLaunch.command : undefined),
+      modelProfileId,
+    })
+    args.push('--mcp-config', webMcpPath)
+    console.log(`[Agent] Web Research MCP injected: ${webMcpPath}`)
+  } catch (err) {
+    console.error('[Agent] Failed to inject web research MCP:', err)
+  }
+
   communicationPreferenceManager.applyFromUserText(userQuery, userQuery)
 
   // 每轮都构建并写入系统提示词（确保记忆实时生效）
@@ -529,10 +545,15 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   })
   memoryFileManager.ensureSkillMemoryDir(skill.meta.id)
   const runtimeContext = buildLaborAnyRuntimeContext(taskDir, skill.meta.id, sessionId)
-
-  const systemPrompt = retrieved.context
-    ? `${runtimeContext}\n\n---\n\n${retrieved.context}\n\n---\n\n${skill.systemPrompt}`
-    : `${runtimeContext}\n\n---\n\n${skill.systemPrompt}`
+  const sections = [runtimeContext]
+  if (!skill.systemPrompt.includes('## 联网调研策略')) {
+    sections.push(buildResearchPolicySection())
+  }
+  if (retrieved.context) {
+    sections.push(retrieved.context)
+  }
+  sections.push(skill.systemPrompt)
+  const systemPrompt = sections.join('\n\n---\n\n')
 
   const claudeMdPath = join(taskDir, 'CLAUDE.md')
   writeFileSync(claudeMdPath, systemPrompt, 'utf-8')

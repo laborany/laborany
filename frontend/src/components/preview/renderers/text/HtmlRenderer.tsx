@@ -71,6 +71,40 @@ async function inlineAssets(html: string, baseUrl: string): Promise<string> {
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
+ * │                   链接拦截脚本                                           │
+ * │                                                                          │
+ * │  注入到 iframe HTML 中，拦截 <a> 点击并通过 postMessage 传递给父窗口        │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+const LINK_INTERCEPTOR_SCRIPT = `<script>
+document.addEventListener('click', function(e) {
+  var target = e.target;
+  while (target && target.tagName !== 'A') target = target.parentElement;
+  if (!target || !target.href) return;
+  var href = target.href;
+  if (href.startsWith('http:') || href.startsWith('https:')) {
+    e.preventDefault();
+    e.stopPropagation();
+    window.parent.postMessage({
+      type: 'external-link',
+      source: 'laborany-preview',
+      url: href
+    }, '*');
+  }
+}, true);
+</script>`
+
+function injectLinkInterceptor(html: string): string {
+  /* 优先插入到 </body> 前，其次 </html> 前，否则追加到末尾 */
+  if (html.includes('</body>')) {
+    return html.replace('</body>', LINK_INTERCEPTOR_SCRIPT + '</body>')
+  }
+  if (html.includes('</html>')) {
+    return html.replace('</html>', LINK_INTERCEPTOR_SCRIPT + '</html>')
+  }
+  return html + LINK_INTERCEPTOR_SCRIPT
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       HTML 渲染器组件                                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export function HtmlRenderer({ artifact }: RendererProps) {
@@ -96,10 +130,13 @@ export function HtmlRenderer({ artifact }: RendererProps) {
         /* 内联 CSS/JS 资源 */
         const inlinedHtml = await inlineAssets(html, artifact.url)
 
+        /* 注入链接拦截脚本 */
+        const finalHtml = injectLinkInterceptor(inlinedHtml)
+
         if (cancelled) return
 
         /* 创建 Blob URL */
-        const blob = new Blob([inlinedHtml], { type: 'text/html' })
+        const blob = new Blob([finalHtml], { type: 'text/html' })
         const url = URL.createObjectURL(blob)
         setBlobUrl(url)
       } catch (err) {
@@ -127,6 +164,20 @@ export function HtmlRenderer({ artifact }: RendererProps) {
       if (blobUrl) URL.revokeObjectURL(blobUrl)
     }
   }, [blobUrl])
+
+  /* ── 监听 iframe 链接点击消息 ── */
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      const data = event.data
+      if (!data || data.type !== 'external-link') return
+      if (data.source !== 'laborany-preview') return
+      if (typeof data.url === 'string' && (data.url.startsWith('http:') || data.url.startsWith('https:'))) {
+        window.open(data.url, '_blank')
+      }
+    }
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [])
 
   /* ── 加载中状态 ── */
   if (isLoading) {

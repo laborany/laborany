@@ -314,6 +314,7 @@ function mountCreateAndOptimize(r: ReturnType<typeof Router>, sm: SessionManager
         sessionId,
         signal: abortController.signal,
         modelOverride,
+        modelProfileId,
         onEvent: (event) => {
           if (event.type === 'error') {
             hasErrorEvent = true
@@ -389,6 +390,7 @@ function mountCreateAndOptimize(r: ReturnType<typeof Router>, sm: SessionManager
         sessionId,
         signal: abortController.signal,
         modelOverride,
+        modelProfileId,
         onEvent: (event) => {
           if (event.type === 'error') {
             hasErrorEvent = true

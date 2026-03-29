@@ -12,8 +12,17 @@ import type {
   ApplyRuntimeResponse,
   StorageHomeSwitchResponse,
   BannerType,
+  WechatStatusResponse,
+  WechatTestResponse,
+  WechatLoginResponse,
 } from '../types'
 import { DEFAULT_GROUPS } from '../types'
+
+const TERMINAL_WECHAT_LOGIN_STATUSES = new Set<WechatLoginResponse['status']>([
+  'confirmed',
+  'cancelled',
+  'failed',
+])
 
 function normalizeBool(value: string | undefined): boolean {
   const raw = (value || '').trim().toLowerCase()
@@ -101,6 +110,15 @@ export function useSettingsConfig() {
 
   const [testingEmail, setTestingEmail] = useState(false)
   const [emailTestResult, setEmailTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [loadingWechatStatus, setLoadingWechatStatus] = useState(true)
+  const [wechatStatus, setWechatStatus] = useState<WechatStatusResponse | null>(null)
+  const [testingWechat, setTestingWechat] = useState(false)
+  const [wechatTestResult, setWechatTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [startingWechatLogin, setStartingWechatLogin] = useState(false)
+  const [cancellingWechatLogin, setCancellingWechatLogin] = useState(false)
+  const [loggingOutWechat, setLoggingOutWechat] = useState(false)
+  const [wechatLoginDialogOpen, setWechatLoginDialogOpen] = useState(false)
+  const [wechatLoginState, setWechatLoginState] = useState<WechatLoginResponse | null>(null)
   const [testingFeishu, setTestingFeishu] = useState(false)
   const [feishuTestResult, setFeishuTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [testingQQ, setTestingQQ] = useState(false)
@@ -109,7 +127,47 @@ export function useSettingsConfig() {
   useEffect(() => {
     void loadConfig()
     void loadTemplate()
+    void loadWechatStatus()
   }, [])
+
+  useEffect(() => {
+    const sessionKey = wechatLoginState?.sessionKey
+    if (!wechatLoginDialogOpen || !sessionKey) return
+    if (TERMINAL_WECHAT_LOGIN_STATUSES.has(wechatLoginState.status)) return
+
+    let cancelled = false
+    let timer: number | undefined
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`${AGENT_API_BASE}/wechat/login/status?sessionKey=${encodeURIComponent(sessionKey)}`)
+        const data = await res.json() as WechatLoginResponse
+        if (cancelled) return
+        setWechatLoginState(data)
+        if (data.status === 'confirmed') {
+          void loadWechatStatus()
+          setWechatTestResult({ success: true, message: data.message || '微信绑定成功' })
+        }
+        if (!TERMINAL_WECHAT_LOGIN_STATUSES.has(data.status)) {
+          timer = window.setTimeout(poll, 1500)
+        }
+      } catch {
+        if (cancelled) return
+        setWechatLoginState(prev => prev ? {
+          ...prev,
+          status: 'failed',
+          message: '查询扫码状态失败，请重试。',
+        } : null)
+      }
+    }
+
+    timer = window.setTimeout(poll, 800)
+
+    return () => {
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [wechatLoginDialogOpen, wechatLoginState?.sessionKey, wechatLoginState?.status])
 
   async function loadConfig(): Promise<ConfigResponse | null> {
     try {
@@ -148,8 +206,29 @@ export function useSettingsConfig() {
     } catch { /* ignore */ }
   }
 
+  async function loadWechatStatus() {
+    setLoadingWechatStatus(true)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/wechat/status`)
+      const data = await res.json() as WechatStatusResponse
+      setWechatStatus(data)
+      return data
+    } catch {
+      setWechatStatus(null)
+      return null
+    } finally {
+      setLoadingWechatStatus(false)
+    }
+  }
+
   function validateBeforeSave(): string[] {
     const errors: string[] = []
+    const wechatEnabled = normalizeBool(editValues.WECHAT_ENABLED)
+    if (wechatEnabled) {
+      if (normalizeBool(editValues.WECHAT_REQUIRE_ALLOWLIST) && !(editValues.WECHAT_ALLOW_USERS || '').trim()) {
+        errors.push('微信 Bot 开启强制白名单时，WECHAT_ALLOW_USERS 不能为空')
+      }
+    }
     const feishuEnabled = normalizeBool(editValues.FEISHU_ENABLED)
     if (feishuEnabled) {
       if (!(editValues.FEISHU_APP_ID || '').trim()) errors.push('飞书已启用，但缺少 FEISHU_APP_ID')
@@ -207,6 +286,7 @@ export function useSettingsConfig() {
       if (data.profile?.name) localStorage.setItem('laborany.profile.name', data.profile.name)
       else if (profileName.trim()) localStorage.setItem('laborany.profile.name', profileName.trim())
       void loadConfig()
+      void loadWechatStatus()
     } catch {
       setMessage({ type: 'error', text: '保存配置失败' })
     } finally {
@@ -522,6 +602,92 @@ export function useSettingsConfig() {
     }
   }
 
+  async function testWechatConfig() {
+    setTestingWechat(true)
+    setWechatTestResult(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/wechat/test`, { method: 'POST' })
+      const data = await res.json() as WechatTestResponse
+      setWechatTestResult({
+        success: Boolean(data.success),
+        message: data.message || data.error || (data.success ? '微信连接成功' : '微信连接失败'),
+      })
+      await loadWechatStatus()
+    } catch {
+      setWechatTestResult({ success: false, message: '无法连接 Agent Service' })
+    } finally {
+      setTestingWechat(false)
+    }
+  }
+
+  async function startWechatLoginFlow() {
+    setStartingWechatLogin(true)
+    setWechatTestResult(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/wechat/login/start`, { method: 'POST' })
+      const data = await res.json() as WechatLoginResponse
+      setWechatLoginState(data)
+      setWechatLoginDialogOpen(true)
+      if (!data.success) {
+        setWechatTestResult({ success: false, message: data.message || '微信扫码绑定启动失败' })
+      }
+    } catch {
+      setWechatTestResult({ success: false, message: '无法发起微信扫码绑定' })
+    } finally {
+      setStartingWechatLogin(false)
+    }
+  }
+
+  async function cancelWechatLoginFlow() {
+    const sessionKey = wechatLoginState?.sessionKey
+    if (!sessionKey) {
+      setWechatLoginDialogOpen(false)
+      return
+    }
+
+    setCancellingWechatLogin(true)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/wechat/login/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionKey }),
+      })
+      const data = await res.json() as WechatLoginResponse
+      setWechatLoginState(data)
+      setWechatTestResult({
+        success: Boolean(data.success),
+        message: data.message || '扫码绑定已取消',
+      })
+      await loadWechatStatus()
+    } catch {
+      setWechatTestResult({ success: false, message: '取消扫码绑定失败' })
+    } finally {
+      setCancellingWechatLogin(false)
+    }
+  }
+
+  async function logoutWechat() {
+    setLoggingOutWechat(true)
+    setWechatTestResult(null)
+    try {
+      const res = await fetch(`${AGENT_API_BASE}/wechat/logout`, { method: 'POST' })
+      const data = await res.json() as WechatTestResponse
+      setWechatTestResult({
+        success: Boolean(data.success),
+        message: data.message || data.error || (data.success ? '已退出微信账号' : '退出失败'),
+      })
+      await loadWechatStatus()
+    } catch {
+      setWechatTestResult({ success: false, message: '退出微信账号失败' })
+    } finally {
+      setLoggingOutWechat(false)
+    }
+  }
+
+  function closeWechatLoginDialog() {
+    setWechatLoginDialogOpen(false)
+  }
+
   function handleChange(key: string, value: string) {
     setEditValues(prev => ({ ...prev, [key]: value }))
   }
@@ -535,7 +701,7 @@ export function useSettingsConfig() {
   }, [template, config, editValues])
 
   const groupedKeys = useMemo(() => {
-    const buckets: Record<ConfigGroupId, string[]> = { model: [], feishu: [], qq: [], email: [], system: [], advanced: [] }
+    const buckets: Record<ConfigGroupId, string[]> = { model: [], wechat: [], feishu: [], qq: [], email: [], system: [], advanced: [] }
     for (const key of allKeys) {
       const group = template[key]?.group || 'advanced'
       buckets[group].push(key)
@@ -553,7 +719,7 @@ export function useSettingsConfig() {
 
   const knownKeys = useMemo(() => {
     const set = new Set<string>()
-    for (const group of ['model', 'feishu', 'qq', 'email', 'system'] as ConfigGroupId[]) {
+    for (const group of ['model', 'wechat', 'feishu', 'qq', 'email', 'system'] as ConfigGroupId[]) {
       for (const key of groupedKeys[group]) set.add(key)
     }
     return set
@@ -607,6 +773,9 @@ export function useSettingsConfig() {
     testingProfileId, profileTestResults,
 
     // Integration test results
+    loadingWechatStatus, wechatStatus, testingWechat, wechatTestResult,
+    startingWechatLogin, cancellingWechatLogin, loggingOutWechat,
+    wechatLoginDialogOpen, wechatLoginState,
     testingEmail, emailTestResult,
     testingFeishu, feishuTestResult,
     testingQQ, qqTestResult,
@@ -618,6 +787,7 @@ export function useSettingsConfig() {
     saveConfig, retryApplyConfig, exportLogs, switchStorageHome,
     saveModelProfiles, testProfileConnection, addProfile, removeProfile, moveProfile, updateProfile,
     setProfileAsCurrentDefault,
+    loadWechatStatus, testWechatConfig, startWechatLoginFlow, cancelWechatLoginFlow, closeWechatLoginDialog, logoutWechat,
     testEmailConfig, testFeishuConfig, testQQConfig,
     handleChange, toggleShowValue, isFieldVisible,
   }

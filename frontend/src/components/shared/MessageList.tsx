@@ -4,15 +4,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type AnchorHTMLAttributes,
-  type MouseEvent,
 } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type { AgentMessage, MessageMeta, WidgetState } from '../../types'
 import { getLatestRegeneratableMessageId } from '../../lib/messageVariants'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { InlineWidget } from '../widget/InlineWidget'
+import { MarkdownContent } from './MarkdownContent'
 
 interface MessageListProps {
   messages: AgentMessage[]
@@ -88,6 +85,22 @@ const TOOL_DISPLAY_MAP: Record<string, string> = {
   Grep: '搜索内容',
   WebFetch: '获取网页',
   WebSearch: '网络搜索',
+  mcp__laborany_web__search: '联网搜索',
+  mcp__laborany_web__read_page: '读取网页',
+  mcp__laborany_web__screenshot: '页面截图',
+  mcp__laborany_web__get_site_info: '站点经验',
+  mcp__laborany_web__save_site_pattern: '保存站点经验',
+  mcp__laborany_web__list_site_pattern_candidates: '候选经验列表',
+  mcp__laborany_web__review_site_pattern: '评审站点经验',
+  mcp__laborany_web__save_global_note: '保存全局经验',
+  mcp__laborany_web__verify: '事实核实',
+  mcp__laborany_web__browser_open: '打开标签页',
+  mcp__laborany_web__browser_navigate: '页面跳转',
+  mcp__laborany_web__browser_eval: '页面提取',
+  mcp__laborany_web__browser_click: '点击页面',
+  mcp__laborany_web__browser_scroll: '滚动页面',
+  mcp__laborany_web__browser_screenshot: '标签页截图',
+  mcp__laborany_web__browser_close: '关闭标签页',
   AskUserQuestion: '询问用户',
   execution_result: '执行结果',
   '执行结果': '执行结果',
@@ -569,31 +582,7 @@ function UserBubble({ content, meta }: { content: string; meta?: MessageMeta | n
 }
 
 function MarkdownView({ content }: { content: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        code({ className, children, ...props }) {
-          const isInline = !className
-          return isInline ? (
-            <code className="rounded bg-muted px-1 py-0.5 text-sm" {...props}>
-              {children}
-            </code>
-          ) : (
-            <code className="block overflow-x-auto rounded-lg bg-gray-900 p-3 text-sm text-gray-100" {...props}>
-              {children}
-            </code>
-          )
-        },
-        pre({ children }) {
-          return <pre className="m-0 bg-transparent p-0">{children}</pre>
-        },
-        a: LinkRenderer,
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  )
+  return <MarkdownContent content={content} />
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -979,32 +968,6 @@ function ToolItem({ tool }: { tool: ToolEntry }) {
   )
 }
 
-function LinkRenderer({ href, children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
-  const handleClick = useCallback(
-    (event: MouseEvent<HTMLAnchorElement>) => {
-      if (!href) return
-      if (href.startsWith('http://') || href.startsWith('https://')) {
-        event.preventDefault()
-        window.open(href, '_blank', 'noopener,noreferrer')
-      }
-    },
-    [href],
-  )
-
-  return (
-    <a
-      href={href}
-      target={href?.startsWith('http') ? '_blank' : undefined}
-      rel={href?.startsWith('http') ? 'noopener noreferrer' : undefined}
-      onClick={handleClick}
-      className="text-primary underline underline-offset-2 transition-colors hover:text-primary/80"
-      {...props}
-    >
-      {children}
-    </a>
-  )
-}
-
 function ToolIcon({ name }: { name: string }) {
   const iconClass = 'h-4 w-4'
 
@@ -1021,7 +984,7 @@ function ToolIcon({ name }: { name: string }) {
     )
   }
 
-  if (['Glob', 'Grep', 'WebSearch'].includes(name)) {
+  if (['Glob', 'Grep', 'WebSearch', 'mcp__laborany_web__search', 'mcp__laborany_web__get_site_info', 'mcp__laborany_web__list_site_pattern_candidates', 'mcp__laborany_web__save_global_note'].includes(name)) {
     return (
       <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1042,7 +1005,7 @@ function ToolIcon({ name }: { name: string }) {
     )
   }
 
-  if (name === 'WebFetch') {
+  if (['WebFetch', 'mcp__laborany_web__read_page', 'mcp__laborany_web__screenshot', 'mcp__laborany_web__browser_open', 'mcp__laborany_web__browser_navigate', 'mcp__laborany_web__browser_screenshot'].includes(name)) {
     return (
       <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
@@ -1099,18 +1062,59 @@ function getToolDescription(name: string, input?: Record<string, unknown>): stri
       const pattern = input.pattern as string
       return pattern ? `查找 "${pattern}"` : ''
     }
-    case 'WebSearch': {
+    case 'WebSearch':
+    case 'mcp__laborany_web__search': {
       const query = input.query as string
       return query ? `搜索 "${query}"` : ''
     }
-    case 'WebFetch': {
+    case 'WebFetch':
+    case 'mcp__laborany_web__read_page':
+    case 'mcp__laborany_web__screenshot':
+    case 'mcp__laborany_web__browser_open':
+    case 'mcp__laborany_web__browser_navigate':
+    case 'mcp__laborany_web__browser_screenshot': {
       const url = input.url as string
-      if (!url) return ''
+      if (!url) {
+        const filePath = input.file_path as string
+        return filePath ? `输出 ${filePath.split(/[/\\]/).pop() || filePath}` : ''
+      }
       try {
         return `获取 ${new URL(url).hostname}`
       } catch {
         return url.slice(0, 40)
       }
+    }
+    case 'mcp__laborany_web__get_site_info':
+    case 'mcp__laborany_web__save_site_pattern':
+    case 'mcp__laborany_web__review_site_pattern': {
+      const domain = input.domain as string
+      return domain ? `站点 ${domain}` : ''
+    }
+    case 'mcp__laborany_web__list_site_pattern_candidates':
+      return '查看待评审经验'
+    case 'mcp__laborany_web__save_global_note': {
+      const category = input.category as string
+      return category ? `分类 ${category}` : '全局经验'
+    }
+    case 'mcp__laborany_web__verify': {
+      const claim = input.claim as string
+      return claim ? `核实 "${claim}"` : ''
+    }
+    case 'mcp__laborany_web__browser_eval': {
+      const expression = input.expression as string
+      return expression ? `提取页面内容` : ''
+    }
+    case 'mcp__laborany_web__browser_click': {
+      const selector = input.selector as string
+      return selector ? `点击 ${selector}` : ''
+    }
+    case 'mcp__laborany_web__browser_scroll': {
+      const direction = input.direction as string
+      return direction ? `滚动 ${direction}` : '滚动页面'
+    }
+    case 'mcp__laborany_web__browser_close': {
+      const targetId = input.target_id as string
+      return targetId ? `关闭 ${targetId}` : '关闭标签页'
     }
     default:
       return ''

@@ -53,7 +53,7 @@ interface RunningTaskBrief {
   skillId: string
   skillName: string
   startedAt: string
-  source?: 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq'
+  source?: 'desktop' | 'converse' | 'cron' | 'feishu' | 'qq' | 'wechat'
   query?: string
 }
 
@@ -61,6 +61,7 @@ function getTaskSourceLabel(source?: RunningTaskBrief['source']): string {
   if (source === 'cron') return '日历安排'
   if (source === 'feishu') return '飞书'
   if (source === 'qq') return 'QQ'
+  if (source === 'wechat') return '微信'
   if (source === 'converse') return '助理会话'
   return '桌面工作'
 }
@@ -187,6 +188,31 @@ export default function HomePage() {
     if (action.action === 'recommend_capability' && action.targetId) {
       const attachmentIds = action.attachmentIds || converse.sessionFileIds
       const normalizedQuery = stripAttachmentMarkers(action.query || latestUserQueryRef.current || '')
+
+      // 高置信度匹配：直接跳转执行页，不显示确认弹窗
+      if (typeof action.confidence === 'number' && action.confidence >= 0.85) {
+        const bossRequest = latestUserQueryRef.current || normalizedQuery
+        const handoffQuery = buildAssistantHandoffQuery({
+          bossRequest,
+          assigneeName: getCapabilityName(action.targetId),
+          mode: 'employee',
+          reason: action.reason,
+          preparedTask: normalizedQuery,
+        })
+        navigate(buildExecutePath(action.targetId, bossRequest, attachmentIds, {
+          converseSid: converse.sessionId || undefined,
+          workId: converse.workId || undefined,
+        }), {
+          state: {
+            handoffQuery,
+            originQuery: bossRequest,
+            converseSessionId: converse.sessionId || undefined,
+            workId: converse.workId || undefined,
+          },
+        })
+        return
+      }
+
       setCandidate({
         variant: 'recommend',
         targetId: action.targetId,
@@ -265,7 +291,7 @@ export default function HomePage() {
       setPhase('idle')
       return
     }
-  }, [converse.action, converse.pendingQuestion, converse.sessionFileIds, converse.workId])
+  }, [converse.action, converse.pendingQuestion, converse.sessionFileIds, converse.sessionId, converse.workId, getCapabilityName, navigate])
 
   useEffect(() => {
     if (phase !== 'idle') return

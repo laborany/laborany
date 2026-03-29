@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,6 +7,8 @@ const tempHome = mkdtempSync(join(tmpdir(), 'laborany-remote-bot-'))
 process.env.LABORANY_HOME = tempHome
 process.env.SRC_API_BASE_URL = 'http://127.0.0.1:3620/api'
 process.env.AGENT_SERVICE_URL = 'http://127.0.0.1:3002'
+const directSendFilePath = join(tempHome, 'direct-send-report.md')
+writeFileSync(directSendFilePath, '# direct send\n\nhello from verify-remote-bot-flow\n', 'utf-8')
 
 type FetchCall = {
   url: string
@@ -16,6 +18,7 @@ type FetchCall = {
 
 const fetchCalls: FetchCall[] = []
 let mockMessageSeq = 0
+const wechatReplies: Array<{ toUserId: string; itemList: any[] }> = []
 
 function createJsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -65,6 +68,30 @@ globalThis.fetch = async (input: string | URL | Request, init?: RequestInit): Pr
   }
 
   if (url.endsWith('/converse')) {
+    const latestUserContent = Array.isArray(body?.messages)
+      ? String(body.messages[body.messages.length - 1]?.content || '')
+      : ''
+    if (latestUserContent.includes('附件执行回归测试')) {
+      return createSseResponse([
+        {
+          type: 'action',
+          action: 'execute_generic',
+          query: '请根据上传文件生成一份摘要文件',
+          attachmentIds: ['att-a', 'att-b'],
+        },
+        { type: 'done' },
+      ])
+    }
+    if (latestUserContent.includes('文件直发回归测试')) {
+      return createSseResponse([
+        {
+          type: 'action',
+          action: 'send_file',
+          filePaths: [directSendFilePath],
+        },
+        { type: 'done' },
+      ])
+    }
     return createSseResponse([
       { type: 'text', content: '路由器已接管这条新需求。' },
       { type: 'done' },
@@ -73,6 +100,29 @@ globalThis.fetch = async (input: string | URL | Request, init?: RequestInit): Pr
 
   if (/\/skill\/stop\/[^/]+$/.test(url)) {
     return createJsonResponse({ success: true })
+  }
+
+  if (url.includes('/ilink/bot/sendmessage')) {
+    wechatReplies.push({
+      toUserId: String(body?.msg?.to_user_id || ''),
+      itemList: Array.isArray(body?.msg?.item_list) ? body.msg.item_list : [],
+    })
+    return createJsonResponse({ ret: 0, errcode: 0, errmsg: 'ok' })
+  }
+
+  if (url.includes('/ilink/bot/getuploadurl')) {
+    return createJsonResponse({
+      upload_param: `upload-${String(body?.filekey || 'file-key')}`,
+    })
+  }
+
+  if (url.startsWith('https://novac2c.cdn.weixin.qq.com/c2c/upload')) {
+    return new Response(Buffer.alloc(0), {
+      status: 200,
+      headers: {
+        'x-encrypted-param': 'download-direct-send-key',
+      },
+    })
   }
 
   if (url.endsWith('/skill/execute')) {
@@ -98,7 +148,7 @@ globalThis.fetch = async (input: string | URL | Request, init?: RequestInit): Pr
             },
           ],
         },
-        { type: 'state', phase: 'waiting_input' },
+        { type: 'state', phase: 'completed' },
         { type: 'done' },
       ])
     }
@@ -187,11 +237,28 @@ function createQQClient() {
   return { client, sentTexts }
 }
 
+function extractWechatText(itemList: any[]): string {
+  if (!Array.isArray(itemList)) return ''
+  return itemList
+    .map((item) => {
+      if (item?.type === 1) {
+        return String(item?.text_item?.text || '').trim()
+      }
+      if (item?.type === 2) return '[image]'
+      if (item?.type === 4) return `[file:${String(item?.file_item?.file_name || '')}]`
+      return ''
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
 async function run(): Promise<void> {
   const feishuHandler = await import('../agent-service/src/feishu/handler.ts')
   const feishuState = await import('../agent-service/src/feishu/index.ts')
   const qqHandler = await import('../agent-service/src/qq/handler.ts')
   const qqState = await import('../agent-service/src/qq/index.ts')
+  const wechatHandler = await import('../agent-service/src/wechat/handler.ts')
+  const wechatState = await import('../agent-service/src/wechat/index.ts')
   const skillSessionGuard = await import('../src-api/src/lib/skill-session-guard.ts')
 
   assert.equal(skillSessionGuard.isExistingSkillSessionBusy('running'), true)
@@ -216,6 +283,22 @@ async function run(): Promise<void> {
     requireAllowlist: true,
     botName: 'LaborAny',
     defaultSkillId: '__generic__',
+  }
+
+  const wechatConfig = {
+    token: 'wechat-token',
+    baseUrl: 'https://ilinkai.weixin.qq.com',
+    cdnBaseUrl: 'https://novac2c.cdn.weixin.qq.com/c2c',
+    allowUsers: ['wechat-user'],
+    requireAllowlist: true,
+    botName: 'LaborAny',
+    defaultSkillId: '__generic__',
+    pollTimeoutMs: 35_000,
+    textChunkLimit: 1_000,
+    credentialSource: 'file',
+    accountId: 'wechat-bot-1',
+    rawAccountId: 'wechat-bot-1@im.bot',
+    userId: 'wechat-bot-1@im.wechat',
   }
 
   const { client: feishuClient, sentTexts: feishuReplies } = createFeishuClient()
@@ -294,6 +377,26 @@ async function run(): Promise<void> {
   )
   assert.ok(fetchCalls.some(call => call.url.endsWith('/converse') && call.body?.source === 'feishu'))
 
+  const feishuExecuteCountBeforeAttachment = fetchCalls.filter(call => call.url.endsWith('/skill/execute') && call.body?.source === 'feishu').length
+  await feishuHandler.handleFeishuMessage(
+    feishuClient as any,
+    {
+      sender: { sender_id: { open_id: 'feishu-user' } },
+      message: {
+        chat_id: 'chat-1',
+        message_id: 'feishu-msg-5',
+        message_type: 'text',
+        content: JSON.stringify({ text: '附件执行回归测试' }),
+      },
+    },
+    feishuConfig as any,
+  )
+  const feishuAttachmentExecute = fetchCalls
+    .filter(call => call.url.endsWith('/skill/execute') && call.body?.source === 'feishu')
+    .slice(feishuExecuteCountBeforeAttachment)
+  assert.equal(feishuAttachmentExecute.length, 1)
+  assert.match(String(feishuAttachmentExecute[0]?.body?.query || ''), /\[LABORANY_FILE_IDS:\s*att-a,\s*att-b\]/)
+
   assert.equal(qqState.buildUserStateKey('qq-user', 'guild-a', 'channel-a', 'group-a'), 'qq-user')
   const qqStateKey = qqState.buildUserStateKey('qq-user')
   qqState.resetUser(qqStateKey)
@@ -362,8 +465,176 @@ async function run(): Promise<void> {
   )
   assert.ok(fetchCalls.some(call => call.url.endsWith('/converse') && call.body?.source === 'qq'))
 
+  const qqExecuteCountBeforeAttachment = fetchCalls.filter(call => call.url.endsWith('/skill/execute') && call.body?.source === 'qq').length
+  await qqHandler.handleQQMessage(
+    qqClient as any,
+    {
+      id: 'qq-msg-5',
+      author: { id: 'qq-user', username: 'boss' },
+      content: '附件执行回归测试',
+      channel_id: 'channel-e',
+    },
+    qqConfig as any,
+    'c2c',
+  )
+  const qqAttachmentExecute = fetchCalls
+    .filter(call => call.url.endsWith('/skill/execute') && call.body?.source === 'qq')
+    .slice(qqExecuteCountBeforeAttachment)
+  assert.equal(qqAttachmentExecute.length, 1)
+  assert.match(String(qqAttachmentExecute[0]?.body?.query || ''), /\[LABORANY_FILE_IDS:\s*att-a,\s*att-b\]/)
+
+  assert.equal(wechatState.buildUserStateKey('wechat-bot-1', 'wechat-user'), 'wechat-bot-1@@wechat-user')
+  const wechatStateKey = wechatState.buildUserStateKey('wechat-bot-1', 'wechat-user')
+  wechatState.resetUser(wechatStateKey)
+
+  await wechatHandler.handleWechatMessage(
+    wechatConfig as any,
+    {
+      message_id: 1,
+      from_user_id: 'wechat-user',
+      context_token: 'wechat-ctx-1',
+      item_list: [
+        {
+          type: 1,
+          text_item: { text: '/skill wechat-writer 创建一个关于ai搜索的文章' },
+        },
+      ],
+    },
+  )
+
+  const wechatFirstState = wechatState.getUserState(wechatStateKey)
+  assert.equal(wechatFirstState.activeSkillId, 'wechat-writer')
+  assert.equal(wechatFirstState.executeAwaitingInput, true)
+  assert.ok(wechatFirstState.executeSessionId)
+
+  await wechatHandler.handleWechatMessage(
+    wechatConfig as any,
+    {
+      message_id: 2,
+      from_user_id: 'wechat-user',
+      context_token: 'wechat-ctx-2',
+      item_list: [
+        {
+          type: 1,
+          text_item: { text: '方向4' },
+        },
+      ],
+    },
+  )
+
+  const wechatExecuteCalls = fetchCalls.filter(call => call.url.endsWith('/skill/execute') && call.body?.source === 'wechat')
+  assert.equal(wechatExecuteCalls.length, 2)
+  assert.equal(wechatExecuteCalls[1]?.body?.sessionId, wechatExecuteCalls[0]?.body?.sessionId)
+  assert.equal(wechatState.getUserState(wechatStateKey).executeAwaitingInput, false)
+  assert.ok(wechatReplies.some(reply => extractWechatText(reply.itemList).includes('方向4')))
+
+  await wechatHandler.handleWechatMessage(
+    wechatConfig as any,
+    {
+      message_id: 3,
+      from_user_id: 'wechat-user',
+      context_token: 'wechat-ctx-3',
+      item_list: [
+        {
+          type: 1,
+          text_item: { text: '/cron help' },
+        },
+      ],
+    },
+  )
+  assert.ok(wechatReplies.some(reply => extractWechatText(reply.itemList).includes('/cron create')))
+
+  await wechatHandler.handleWechatMessage(
+    wechatConfig as any,
+    {
+      message_id: 4,
+      from_user_id: 'wechat-user',
+      context_token: 'wechat-ctx-4',
+      item_list: [
+        {
+          type: 1,
+          text_item: { text: '/home' },
+        },
+      ],
+    },
+  )
+
+  await wechatHandler.handleWechatMessage(
+    wechatConfig as any,
+    {
+      message_id: 5,
+      from_user_id: 'wechat-user',
+      context_token: 'wechat-ctx-5',
+      item_list: [
+        {
+          type: 1,
+          text_item: { text: '帮我重新路由一个新任务' },
+        },
+      ],
+    },
+  )
+
+  const wechatConverseCalls = fetchCalls.filter(call => call.url.endsWith('/converse') && call.body?.source === 'wechat')
+  assert.ok(wechatConverseCalls.length >= 1)
+  assert.equal(wechatConverseCalls[0]?.body?.context?.channel, 'wechat')
+  assert.equal(wechatConverseCalls[0]?.body?.context?.capabilities?.canSendFile, true)
+  assert.equal(wechatConverseCalls[0]?.body?.context?.capabilities?.canSendImage, true)
+
+  const wechatExecuteCountBeforeAttachment = fetchCalls.filter(call => call.url.endsWith('/skill/execute') && call.body?.source === 'wechat').length
+  await wechatHandler.handleWechatMessage(
+    wechatConfig as any,
+    {
+      message_id: 6,
+      from_user_id: 'wechat-user',
+      context_token: 'wechat-ctx-6',
+      item_list: [
+        {
+          type: 1,
+          text_item: { text: '附件执行回归测试' },
+        },
+      ],
+    },
+  )
+  const wechatAttachmentExecute = fetchCalls
+    .filter(call => call.url.endsWith('/skill/execute') && call.body?.source === 'wechat')
+    .slice(wechatExecuteCountBeforeAttachment)
+  assert.equal(wechatAttachmentExecute.length, 1)
+  assert.match(String(wechatAttachmentExecute[0]?.body?.query || ''), /\[LABORANY_FILE_IDS:\s*att-a,\s*att-b\]/)
+
+  await wechatHandler.handleWechatMessage(
+    wechatConfig as any,
+    {
+      message_id: 61,
+      from_user_id: 'wechat-user',
+      context_token: 'wechat-ctx-61',
+      item_list: [
+        {
+          type: 1,
+          text_item: { text: '/home' },
+        },
+      ],
+    },
+  )
+
+  await wechatHandler.handleWechatMessage(
+    wechatConfig as any,
+    {
+      message_id: 7,
+      from_user_id: 'wechat-user',
+      context_token: 'wechat-ctx-7',
+      item_list: [
+        {
+          type: 1,
+          text_item: { text: '文件直发回归测试' },
+        },
+      ],
+    },
+  )
+  assert.ok(wechatReplies.some(reply => reply.itemList.some(item => item?.type === 4 && item?.file_item?.file_name === 'direct-send-report.md')))
+  assert.ok(!wechatReplies.some(reply => extractWechatText(reply.itemList).includes('文件发送结果：成功 1，失败 0，未找到 0。')))
+
   console.log('verify-remote-bot-flow: PASS')
-  console.log(`feishu replies: ${feishuReplies.length}, qq replies: ${qqReplies.length}`)
+  console.log(`feishu replies: ${feishuReplies.length}, qq replies: ${qqReplies.length}, wechat replies: ${wechatReplies.length}`)
 }
 
 run()

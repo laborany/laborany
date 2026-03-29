@@ -177,7 +177,7 @@ def build_search_queries(date_ctx: DateContext) -> dict:
 def print_search_queries(queries: dict):
     """打印搜索查询（供手动执行或调试）"""
     print("=" * 60)
-    print("🔍 搜索查询列表（请使用 WebSearch 工具执行）")
+    print("🔍 搜索查询列表（请使用 mcp__laborany_web__search 工具执行）")
     print("=" * 60)
     print()
 
@@ -628,7 +628,7 @@ def main():
     if not save_md and not save_html:
         print_search_queries(queries)
         print()
-        print("💡 提示：使用 WebSearch 工具执行上述搜索，")
+        print("💡 提示：使用 mcp__laborany_web__search 工具执行上述搜索，")
         print("   然后将结果整理成热点数据结构。")
         print()
         print("📝 要生成文件，请使用 --output-md 或 --output-html 参数。")
@@ -657,7 +657,7 @@ def main():
         print("=" * 60)
         print()
         print("⚠️ 注意：当前输出为模板格式。")
-        print("   请使用 WebSearch 工具执行搜索查询，")
+        print("   请使用 mcp__laborany_web__search 工具执行搜索查询，")
         print("   然后将结果填入热点数据结构。")
 
 

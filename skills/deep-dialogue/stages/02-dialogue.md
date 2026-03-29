@@ -26,8 +26,8 @@
 当用户提到具体数据、事件、研究结论时：
 
 ```
-使用 mcp__web-search-prime__webSearchPrime 搜索验证
-如果需要深入了解，使用 mcp__web-reader__webReader 阅读原文
+使用 mcp__laborany_web__search 搜索验证
+如果需要深入了解，使用 mcp__laborany_web__read_page 阅读原文
 ```
 
 核查后的处理：

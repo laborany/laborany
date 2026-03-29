@@ -38,7 +38,7 @@ category: 金融
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 2: K线数据采集 (核心步骤)                                   │
-│  ├─ [WebFetch] 从金融数据API获取历史OHLCV数据                     │
+│  ├─ [mcp__laborany_web__read_page] 从金融数据API获取历史OHLCV数据                     │
 │  ├─ 数据周期: 日K线，默认获取60-120个交易日                        │
 │  └─ 数据字段: 日期/开盘/最高/最低/收盘/成交量                      │
 └─────────────────────────────────────────────────────────────────┘
@@ -56,9 +56,9 @@ category: 金融
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 4: 辅助数据采集 (并行执行)                                  │
-│  ├─ [WebSearch] 搜索近期新闻和市场情绪                            │
-│  ├─ [WebSearch] 搜索财报数据和分析师评级                          │
-│  └─ [WebSearch] 搜索行业动态和政策影响                            │
+│  ├─ [mcp__laborany_web__search] 搜索近期新闻和市场情绪                            │
+│  ├─ [mcp__laborany_web__search] 搜索财报数据和分析师评级                          │
+│  └─ [mcp__laborany_web__search] 搜索行业动态和政策影响                            │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -88,9 +88,9 @@ category: 金融
 | 输入类型 | 示例 | 处理方式 |
 |---------|------|---------|
 | 美股代码 | AAPL, MSFT | 直接使用 |
-| 美股名称 | 苹果, 微软 | WebSearch 查询对应代码 |
+| 美股名称 | 苹果, 微软 | mcp__laborany_web__search 查询对应代码 |
 | A股代码 | 600519, 000858 | 补充后缀 (.SS 上交所 / .SZ 深交所) |
-| A股名称 | 茅台, 五粮液 | WebSearch 查询对应代码 |
+| A股名称 | 茅台, 五粮液 | mcp__laborany_web__search 查询对应代码 |
 
 ### Step 2: K线数据采集
 
@@ -103,17 +103,17 @@ category: 金融
 | 美股 | Yahoo Finance | `https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=6mo` |
 | 美股 | Alpha Vantage | `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}` |
 | A股 | 新浪财经 | `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={symbol}&scale=240&ma=no&datalen=120` |
-| A股 | 东方财富 | 通过 WebSearch 搜索 "{股票代码} 历史K线数据" |
+| A股 | 东方财富 | 通过 mcp__laborany_web__search 搜索 "{股票代码} 历史K线数据" |
 
-#### 使用 WebFetch 获取数据
+#### 使用 mcp__laborany_web__read_page 获取数据
 
 ```
 # 美股示例 (Yahoo Finance)
-WebFetch URL: https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=3mo
+mcp__laborany_web__read_page URL: https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=3mo
 Prompt: 提取JSON中的K线数据，返回格式化的OHLCV数组
 
 # A股示例 (新浪财经)
-WebFetch URL: https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=sh600519&scale=240&ma=no&datalen=120
+mcp__laborany_web__read_page URL: https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=sh600519&scale=240&ma=no&datalen=120
 Prompt: 提取K线数据数组，包含日期、开盘、最高、最低、收盘、成交量
 ```
 
@@ -271,7 +271,7 @@ function calculateBOLL(closes, period = 20, multiplier = 2) {
 
 ### Step 4: 辅助数据采集
 
-使用 WebSearch 工具并行采集辅助数据：
+使用 mcp__laborany_web__search 工具并行采集辅助数据：
 
 ```
 # 新闻资讯

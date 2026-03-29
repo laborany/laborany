@@ -38,20 +38,22 @@ export interface RetryPolicy {
   backoffMs: number
 }
 
-export type JobSourceChannel = 'desktop' | 'feishu' | 'qq'
-export type JobNotifyChannel = 'app' | 'feishu_dm' | 'qq_dm'
+export type JobSourceChannel = 'desktop' | 'feishu' | 'qq' | 'wechat'
+export type JobNotifyChannel = 'app' | 'feishu_dm' | 'qq_dm' | 'wechat_dm'
 
 export interface JobSource {
   channel: JobSourceChannel
   feishuOpenId?: string
   feishuChatId?: string
   qqOpenId?: string
+  wechatUserId?: string
 }
 
 export interface JobNotify {
   channel: JobNotifyChannel
   feishuOpenId?: string
   qqOpenId?: string
+  wechatUserId?: string
 }
 
 export const DEFAULT_RETRY_POLICY: RetryPolicy = {
@@ -82,9 +84,11 @@ export interface CronJob {
   sourceFeishuOpenId?: string
   sourceFeishuChatId?: string
   sourceQqOpenId?: string
+  sourceWechatUserId?: string
   notifyChannel: JobNotifyChannel
   notifyFeishuOpenId?: string
   notifyQqOpenId?: string
+  notifyWechatUserId?: string
 
   retryMaxRetries: number
   retryBackoffMs: number

@@ -6,6 +6,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { loadCatalog, type CatalogItem } from './catalog.js'
+import { buildResearchPolicySection } from './web-research/policy/research-policy.js'
 
 export interface ConverseRuntimeContext {
   channel?: string
@@ -20,6 +21,54 @@ export interface ConverseRuntimeContext {
 
 export interface ConversePromptOptions {
   forceWidgetDirectMode?: boolean
+  latestUserQuery?: string
+}
+
+const EXPLICIT_DOMAIN_RE = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b/ig
+const MUST_RESEARCH_QUERY_RE = /最新|最近|当前|官网|官方|文档|来源|出处|链接|价格|政策|法规|对比|推荐|哪个好|which|compare|pricing|official|documentation|source|latest|current|today|site:/i
+
+function extractExplicitDomains(query: string): string[] {
+  const matches = query.match(EXPLICIT_DOMAIN_RE) || []
+  const unique = new Set<string>()
+  for (const match of matches) {
+    const normalized = match.trim().replace(/[),.]+$/, '').toLowerCase()
+    if (normalized) unique.add(normalized)
+  }
+  return Array.from(unique).slice(0, 3)
+}
+
+function shouldForceResearchTurn(query: string): boolean {
+  if (!query.trim()) return false
+  return MUST_RESEARCH_QUERY_RE.test(query) || extractExplicitDomains(query).length > 0
+}
+
+function buildForcedResearchTurnSection(query?: string): string {
+  const normalizedQuery = query?.trim() || ''
+  if (!shouldForceResearchTurn(normalizedQuery)) return ''
+
+  const domains = extractExplicitDomains(normalizedQuery)
+  const lines = [
+    '## 本轮强制调研执行令（最高优先级）',
+    '',
+    '系统已判定：这条用户请求必须联网调研后才能回答。',
+    '你在输出任何面向用户的自然语言之前，必须先产生至少一次真实的 research tool use。',
+    '如果你没有先调用 tool，就直接回答、复述、猜测、或写出“根据结果”“基于站点信息”之类的话，这一轮回答视为失败。',
+    '',
+    '本轮最低执行要求：',
+  ]
+
+  if (domains.length > 0) {
+    const domainList = domains.join(', ')
+    lines.push(`- 用户已明确指定站点/域名：${domainList}`)
+    lines.push(`- 你的第一步必须是对这些域名执行 research，而不是直接凭记忆回答。优先调用 mcp__laborany_web__search，并传 site / sites 参数限定到 ${domainList}。`)
+  } else {
+    lines.push('- 你的第一步必须是调用 mcp__laborany_web__search 获取线索，而不是直接回答。')
+  }
+
+  lines.push('- 当你准备给出链接、来源、官方说法、文档页时，至少必须再调用一次 mcp__laborany_web__read_page 读取其中一个你将引用的 URL。')
+  lines.push('- 在完成 tool use 之前，禁止输出最终答案。')
+
+  return lines.join('\n')
 }
 
 function formatCatalog(items: CatalogItem[]): string {
@@ -89,6 +138,17 @@ const BEHAVIOR_SECTION = `# LaborAny 个人助理
 3. 如果要安排给其他同事，不要只转发老板原话。要先整理成更完整的任务说明，再派单。
 4. 老板不关心 recommend_capability / execute_generic / create_capability / setup_schedule 这些内部概念。它们只能作为内部决策协议存在，不能成为你对老板的主要表达方式。
 5. 你对最终结果负责，不是只对“分发动作”负责。
+6. 遇到事实性、时效性、官网/价格/政策/来源类问题时，哪怕最终是直接解释，也必须先调用 research 工具核实，再回答。
+7. 直接解释模式下，不要推荐 skill，不要输出 LABORANY_ACTION，不要写文件当作替代品。
+8. 派单模式下，不要尝试自己完成真正需要下游执行器处理的任务。你必须输出 LABORANY_ACTION 让后续执行链路处理。
+9. 如果你发现自己想要在解释型请求里“先写个 HTML 文件再让用户打开”，立刻停下，优先使用 widget 或直接文本解释。
+
+## 哪些情况必须先 research
+
+1. 用户要求“来源”“官网”“官方文档”“最新”“当前”“今天”“价格”“政策”等时，不能凭记忆给 URL、数据或结论；至少要先 read_page 一个你准备引用的链接。
+2. 用户明确提到具体站点、域名、产品价格、政策条款、官方说法、实时信息时，必须先核实。
+3. 在完成 tool use 之前，禁止输出最终答案或伪装成“已经查过”的口吻。
+4. 只有纯概念解释、逻辑推理、数学计算、创意写作这类不需要联网核实的问题，才可以直接从知识回答。
 
 ## 哪些情况你必须追问老板
 
@@ -113,20 +173,25 @@ const BEHAVIOR_SECTION = `# LaborAny 个人助理
 
 ## 决策流程
 
-1. 先判断这是不是“助理直办模式”的工作。
-2. 如果是助理直办模式：
+1. 先判断这个请求是否属于“必须先 research”的问题。
+2. 如果必须先 research：
+   - 先调用 mcp__laborany_web__search / mcp__laborany_web__read_page 核实
+   - 核实后再决定是直接解释，还是进入派单模式
+   - 在未核实前，禁止直接给出来源、官方 URL、最新结论
+3. 如果不需要 research，再判断这是不是“助理直办模式”的工作。
+4. 如果是助理直办模式：
    - 直接自然语言回复
    - 如需图解且 canRenderWidgets=true，可使用 widget 工具
    - 不输出 LABORANY_ACTION
-3. 如果不是助理直办模式，则进入助理派单模式：
+5. 如果不是助理直办模式，则进入助理派单模式：
    - 先判断是否已有足够信息形成一份可执行任务说明
    - 如果还缺关键字段，通过 AskUserQuestion 追问最少、最关键的问题
    - 如果信息足够，再判断由哪位同事负责最合适
    - 高置信度匹配：你可以直接建议这位同事负责，并在内部准备派单
    - 低置信度匹配：先和老板确认负责人是否合适
    - 无匹配：优先由你先通用处理；只有当老板明确表达“需要新增岗位/新增能力/长期复用/让 HR 处理”，或者你已经能够清楚说明“现有同事都不适合、且这是长期重复需求”时，才建议交给 HR
-4. 检测到日历安排意图（例如每天、每周、定期、自动执行等）时，必须输出 setup_schedule action，不要误输出 recommend_capability。
-5. 老板明确要求“招聘新同事 / 新建能力 / 让 HR 处理 / 培养现有同事”时，必须输出 create_capability，不要误输出 execute_generic 或 recommend_capability。
+6. 检测到定时任务意图（例如每天、每周、定期、自动执行等）时，必须输出 setup_schedule action，不要误输出 recommend_capability。setup_schedule 支持 cron、at、every 三种调度。
+7. 老板明确要求“招聘新同事 / 新建能力 / 让 HR 处理 / 培养现有同事”时，必须输出 create_capability，不要误输出 execute_generic 或 recommend_capability。
 
 ## HR / 新能力 的触发边界
 
@@ -308,6 +373,8 @@ export function buildConverseSystemPrompt(
     BEHAVIOR_SECTION,
     ADDRESSING_SECTION,
     buildRuntimeContextSection(runtimeContext),
+    buildForcedResearchTurnSection(options?.latestUserQuery),
+    buildResearchPolicySection(),
     `## 可用能力目录\n\n${catalogText}`,
     QUESTION_PROTOCOL_SECTION,
     ACTION_PROTOCOL_SECTION,
@@ -315,7 +382,8 @@ export function buildConverseSystemPrompt(
   ]
 
   if (options?.forceWidgetDirectMode) {
-    sections.splice(3, 0, buildWidgetDirectModeSection())
+    // 插入到 catalog 之前（原来 catalog 在索引 3，现在因为插入了 ResearchPolicy 变成索引 4）
+    sections.splice(4, 0, buildWidgetDirectModeSection())
   }
 
   if (memoryContext) {

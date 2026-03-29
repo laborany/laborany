@@ -32,6 +32,22 @@ const TOOL_DISPLAY_MAP: Record<string, string> = {
   Grep: '搜索内容',
   WebFetch: '获取网页',
   WebSearch: '网络搜索',
+  mcp__laborany_web__search: '联网搜索',
+  mcp__laborany_web__read_page: '读取网页',
+  mcp__laborany_web__screenshot: '页面截图',
+  mcp__laborany_web__get_site_info: '站点经验',
+  mcp__laborany_web__save_site_pattern: '保存站点经验',
+  mcp__laborany_web__list_site_pattern_candidates: '候选经验列表',
+  mcp__laborany_web__review_site_pattern: '评审站点经验',
+  mcp__laborany_web__save_global_note: '保存全局经验',
+  mcp__laborany_web__verify: '事实核实',
+  mcp__laborany_web__browser_open: '打开标签页',
+  mcp__laborany_web__browser_navigate: '页面跳转',
+  mcp__laborany_web__browser_eval: '页面提取',
+  mcp__laborany_web__browser_click: '点击页面',
+  mcp__laborany_web__browser_scroll: '滚动页面',
+  mcp__laborany_web__browser_screenshot: '标签页截图',
+  mcp__laborany_web__browser_close: '关闭标签页',
   AskUserQuestion: '询问用户',
   execution_result: '执行结果',
   '执行结果': '执行结果',
@@ -46,6 +62,22 @@ const TOOL_ICON_MAP: Record<string, string> = {
   Grep: '🔍',
   WebFetch: '🌐',
   WebSearch: '🔎',
+  mcp__laborany_web__search: '🔎',
+  mcp__laborany_web__read_page: '🌐',
+  mcp__laborany_web__screenshot: '📸',
+  mcp__laborany_web__get_site_info: '🧠',
+  mcp__laborany_web__save_site_pattern: '🧠',
+  mcp__laborany_web__list_site_pattern_candidates: '🧠',
+  mcp__laborany_web__review_site_pattern: '🧠',
+  mcp__laborany_web__save_global_note: '🧠',
+  mcp__laborany_web__verify: '✅',
+  mcp__laborany_web__browser_open: '🌐',
+  mcp__laborany_web__browser_navigate: '🧭',
+  mcp__laborany_web__browser_eval: '📄',
+  mcp__laborany_web__browser_click: '🖱️',
+  mcp__laborany_web__browser_scroll: '↕️',
+  mcp__laborany_web__browser_screenshot: '📸',
+  mcp__laborany_web__browser_close: '❎',
   AskUserQuestion: '❓',
   execution_result: '✅',
   '执行结果': '✅',
@@ -118,6 +150,9 @@ function ToolItem({ tool }: { tool: ToolUsage }) {
   const displayName = getToolDisplayName(tool.name)
   const filePath = tool.input?.file_path as string | undefined
   const command = tool.input?.command as string | undefined
+  const query = tool.input?.query as string | undefined
+  const url = tool.input?.url as string | undefined
+  const domain = tool.input?.domain as string | undefined
 
   const description = useMemo(() => {
     if (filePath) {
@@ -129,8 +164,24 @@ function ToolItem({ tool }: { tool: ToolUsage }) {
       return command.length > 30 ? `${command.slice(0, 27)}...` : command
     }
 
+    if (query) {
+      return query.length > 30 ? `${query.slice(0, 27)}...` : query
+    }
+
+    if (url) {
+      try {
+        return new URL(url).hostname
+      } catch {
+        return url.length > 30 ? `${url.slice(0, 27)}...` : url
+      }
+    }
+
+    if (domain) {
+      return domain
+    }
+
     return ''
-  }, [filePath, command])
+  }, [command, domain, filePath, query, url])
 
   return (
     <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent/50">

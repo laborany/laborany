@@ -4,6 +4,7 @@ import { basename, extname, join } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import type { Client } from '@larksuiteoapi/node-sdk'
+import { normalizeAttachmentIds, stripAttachmentMarkers } from 'laborany-shared'
 import { UPLOADS_DIR } from '../paths.js'
 import type { FeishuConfig } from './config.js'
 import {
@@ -36,6 +37,7 @@ function getFeishuHistorySkillId(): string {
 }
 
 type ExecuteRoundPhase = 'running' | 'waiting_input' | 'completed' | 'failed' | 'aborted'
+const ATTACHMENT_ONLY_EXECUTION_QUERY = '请先查看当前上传的文件，并根据文件内容继续处理。'
 const ASK_USER_QUESTION_CLEAN_RE = /AskU(?:ser|er)Question\(\s*[\s\S]*?\s*\)\s*/gi
 
 function buildExecuteSessionId(skillId: string, currentSkillId?: string, currentSessionId?: string): string {
@@ -126,11 +128,20 @@ interface SseEvent {
   everyMs?: number
   tz?: string
   name?: string
+  attachmentIds?: string[]
   seedQuery?: string
   capabilityId?: string
   primary?: { id?: string }
   filePaths?: string[]
   questions?: unknown[]
+}
+
+function buildExecutionQueryWithAttachments(baseQuery: string, attachmentIds?: string[]): string {
+  const normalizedAttachmentIds = normalizeAttachmentIds(attachmentIds)
+  const cleanQuery = stripAttachmentMarkers(baseQuery || '').trim()
+  if (normalizedAttachmentIds.length === 0) return cleanQuery
+  const nextQuery = cleanQuery || ATTACHMENT_ONLY_EXECUTION_QUERY
+  return `${nextQuery}\n\n[LABORANY_FILE_IDS: ${normalizedAttachmentIds.join(', ')}]`
 }
 
 type FeishuResourceType = 'image' | 'file' | 'audio' | 'video'
@@ -1397,7 +1408,11 @@ async function executeSkill(
             markSkillAwaitingInput(stateKey, pendingQuestionText || stripQuestionMarkers(accumulated))
           }
         } else if (phase === 'completed') {
-          roundPhase = 'completed'
+          // Some runtimes emit a trailing completed state after a question event.
+          // Once we have entered waiting_input, keep that phase until the user replies.
+          if (roundPhase !== 'waiting_input') {
+            roundPhase = 'completed'
+          }
         } else if (phase === 'failed') {
           roundPhase = 'failed'
         } else if (phase === 'aborted') {
@@ -1549,6 +1564,7 @@ async function dispatchAction(
   const targetId = (actionEvent as any)?.targetId || ''
   const fallbackQuery = (userText || converseText || '').trim()
   const query = ((actionEvent as any)?.query || fallbackQuery).trim()
+  const executionQuery = buildExecutionQueryWithAttachments(query, actionEvent.attachmentIds)
 
   if (actionType === 'send_file') {
     const rawPaths = Array.isArray((actionEvent as any)?.filePaths)
@@ -1584,7 +1600,7 @@ async function dispatchAction(
       ? `匹配技能 ${targetId} 失败，已回退到 ${resolved.skillId} 执行。`
       : `已匹配技能 ${targetId}，任务已开始执行。`
     await card.update(`Matched capability ${resolved.skillId}, executing...`)
-    await executeSkill(client, openId, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
+    await executeSkill(client, openId, chatId, stateKey, resolved.skillId, executionQuery, card, modelProfileIdOverride)
     return
   }
 
@@ -1594,7 +1610,7 @@ async function dispatchAction(
     const hint = resolved.fallbackUsed && resolved.reason
       ? `已进入通用执行模式（${resolved.reason}）。`
       : '已进入通用执行模式，任务已开始。'
-    await executeSkill(client, openId, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
+    await executeSkill(client, openId, chatId, stateKey, resolved.skillId, executionQuery, card, modelProfileIdOverride)
     return
   }
 
@@ -1753,7 +1769,7 @@ async function dispatchAction(
 
   const resolved = await resolveExecutableSkillId(config.defaultSkillId, '__generic__')
   await card.update('Executing...')
-  await executeSkill(client, openId, chatId, stateKey, resolved.skillId, query, card, modelProfileIdOverride)
+  await executeSkill(client, openId, chatId, stateKey, resolved.skillId, executionQuery, card, modelProfileIdOverride)
 }
 
 async function runConverse(

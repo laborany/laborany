@@ -3,7 +3,7 @@ export interface ConfigItem {
   masked: string
 }
 
-export type ConfigGroupId = 'model' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
+export type ConfigGroupId = 'model' | 'wechat' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
 
 export interface ConfigTemplate {
   label?: string
@@ -61,7 +61,46 @@ export type BannerType = 'success' | 'error' | 'warning'
 
 export type SettingsSection = 'profile' | 'model' | 'storage' | 'integration' | 'system' | 'tools'
 
+export interface WechatPublicAccount {
+  accountId: string
+  rawAccountId: string
+  userId?: string
+  savedAt: string
+}
+
+export interface WechatStatusResponse {
+  enabled: boolean
+  running: boolean
+  loggedIn: boolean
+  credentialSource: 'env' | 'file' | null
+  loginPending: boolean
+  account: WechatPublicAccount | null
+  config?: {
+    enabled: boolean
+    baseUrl: string
+    cdnBaseUrl: string
+    storedAccountsCount: number
+  }
+}
+
+export interface WechatTestResponse {
+  success?: boolean
+  message?: string
+  error?: string
+}
+
+export interface WechatLoginResponse {
+  success: boolean
+  sessionKey: string
+  status: 'ready' | 'wait' | 'scaned' | 'confirmed' | 'expired' | 'cancelled' | 'failed'
+  message: string
+  qrcodeDataUrl?: string
+  account?: WechatPublicAccount
+}
+
 export const BOOLEAN_KEYS = new Set([
+  'WECHAT_ENABLED',
+  'WECHAT_REQUIRE_ALLOWLIST',
   'FEISHU_ENABLED',
   'FEISHU_REQUIRE_ALLOWLIST',
   'QQ_ENABLED',
@@ -73,6 +112,7 @@ export const BOOLEAN_KEYS = new Set([
 
 export const DEFAULT_GROUPS: TemplateGroup[] = [
   { id: 'model', title: '模型服务', description: '配置 API Key、Base URL 和模型名称。' },
+  { id: 'wechat', title: '微信 Bot', description: '开启微信 ClawBot 接入，并支持扫码绑定。' },
   { id: 'feishu', title: '飞书 Bot', description: '开启飞书会话接入与文件回传能力。' },
   { id: 'qq', title: 'QQ Bot', description: '开启 QQ C2C 私聊接入能力。' },
   { id: 'email', title: '邮件通知', description: '任务执行完成后通过邮件通知。' },

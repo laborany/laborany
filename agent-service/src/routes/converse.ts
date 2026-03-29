@@ -439,6 +439,7 @@ router.post('/regenerate', async (req: Request, res: Response) => {
       sessionId: tempRunId,
       signal: new AbortController().signal,
       modelOverride,
+      modelProfileId: effectiveModelProfileId || undefined,
       onEvent: (event) => {
         if (event.type === 'text' && event.content) {
           regeneratedText += event.content
@@ -1843,17 +1844,37 @@ function shouldSuppressActionForInformationalQuery(text: string): boolean {
   return subjectPattern.test(query) && infoPattern.test(query)
 }
 
-function inferFallbackAction(query: string, fullText: string): ConverseActionPayload | null {
-  const ruleBasedSchedule = detectRuleBasedScheduleAction(query)
-  if (ruleBasedSchedule) return ruleBasedSchedule
+function shouldInferActionFromAssistantText(text: string): boolean {
+  const raw = stripActionMarkers(text).trim()
+  if (!raw) return false
+  if (raw.length > 320) return false
+  if (/https?:\/\/|\[[^\]]+\]\((?:https?:\/\/|\/)/i.test(raw)) return false
+  if (/^#{1,6}\s/m.test(raw)) return false
+  if ((raw.match(/\n/g) || []).length > 4) return false
+  return true
+}
 
-  // Keep user intent and assistant prose separate. Mixing them can turn
-  // harmless phrases like "创建组件" + "不要推荐 skill" into a false create_capability action.
-  const rejectCreate = hasRejectCreateIntent(query) || hasRejectCreateIntent(fullText)
-  const acceptCreate = hasCreateCapabilityIntent(query) || hasCreateCapabilityIntent(fullText)
-  const genericSignal = hasExplicitGenericIntent(query) || hasExplicitGenericIntent(fullText)
+function normalizeAssistantIntentText(text: string): string {
+  return stripActionMarkers(text)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\[[^\]]+\]\((?:https?:\/\/|\/)[^)]+\)/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/`[^`]+`/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
-  if (acceptCreate && !rejectCreate) {
+function detectAssistantIntentAction(text: string, query: string): ConverseActionPayload | null {
+  if (!shouldInferActionFromAssistantText(text)) return null
+
+  const normalized = normalizeAssistantIntentText(text)
+  if (!normalized) return null
+
+  const createCapabilityPattern = /(?:(?:我|这里|这类任务)(?:更)?(?:建议|适合|可以|会|将)?(?:为你)?|建议|适合|可以|可考虑|应该)?(?:创建|新建|沉淀(?:成|为)?|封装成|做成).{0,12}(?:新(?:的)?\s*)?(?:skill|技能|能力|capability)|进入创建(?:新)?(?:skill|技能|能力|capability)?流程/i
+  const executeGenericPattern = /(?:直接执行|直接做|先直接做|先直接执行|走通用执行|进入通用执行|改为通用执行)/i
+  const rejectCreatePattern = /(?:不(?:需要|用|必)|不要)(?:创建|新建).{0,12}(?:skill|技能|能力|capability)?/i
+
+  if (createCapabilityPattern.test(normalized) && !rejectCreatePattern.test(normalized)) {
     return {
       action: 'create_capability',
       mode: 'skill',
@@ -1861,7 +1882,7 @@ function inferFallbackAction(query: string, fullText: string): ConverseActionPay
     }
   }
 
-  if (rejectCreate || genericSignal) {
+  if (rejectCreatePattern.test(normalized) || executeGenericPattern.test(normalized)) {
     return {
       action: 'execute_generic',
       query: query || '请直接执行这个任务，不创建新技能',
@@ -1870,6 +1891,13 @@ function inferFallbackAction(query: string, fullText: string): ConverseActionPay
   }
 
   return null
+}
+
+function inferFallbackAction(query: string, fullText: string): ConverseActionPayload | null {
+  const ruleBasedSchedule = detectRuleBasedScheduleAction(query)
+  if (ruleBasedSchedule) return ruleBasedSchedule
+
+  return detectDirectIntentAction(query) || detectAssistantIntentAction(fullText, query)
 }
 
 function detectDirectIntentAction(query: string): ConverseActionPayload | null {
@@ -2221,6 +2249,7 @@ router.post('/', async (req: Request, res: Response) => {
     })
     const systemPrompt = buildConverseSystemPrompt(memoryCtx, effectiveRuntimeContext, {
       forceWidgetDirectMode: widgetRuntimePlan.forceDirectMode,
+      latestUserQuery: query,
     })
     const skill = {
       meta: { id: '__converse__', name: '对话助手', description: '多轮对话', kind: 'skill' as const },
@@ -2240,6 +2269,7 @@ router.post('/', async (req: Request, res: Response) => {
         sessionId,
         signal: abortController.signal,
         modelOverride,
+        modelProfileId,
         enableWidgets,
         onEvent: (event) => {
           if (event.type === 'widget_start') {

@@ -17,6 +17,7 @@ const MAX_ARTIFACTS_PER_RUN = 5
 const MAX_ARTIFACT_BYTES = 20 * 1024 * 1024
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg'])
 const IGNORE_ARTIFACT_NAMES = new Set(['history.txt', 'CLAUDE.md'])
+const INPUT_ATTACHMENT_MANIFEST = '.laborany-input-files.json'
 
 interface TaskFileNode {
   name: string
@@ -33,6 +34,11 @@ interface TaskFileSnapshot {
   path: string
   size: number
   mtimeMs: number
+}
+
+interface TaskInputAttachmentManifest {
+  version?: number
+  inputFiles?: string[]
 }
 
 export interface QQArtifactPushResult {
@@ -117,6 +123,23 @@ async function downloadTaskFile(sessionId: string, filePath: string): Promise<Bu
   }
 }
 
+async function fetchTaskInputFiles(sessionId: string): Promise<Set<string>> {
+  const normalizedPath = normalizeApiFilePath(INPUT_ATTACHMENT_MANIFEST)
+  try {
+    const response = await fetch(`${getSrcApiBaseUrl()}/task/${encodeURIComponent(sessionId)}/files/${normalizedPath}`)
+    if (!response.ok) return new Set()
+    const payload = await response.json() as TaskInputAttachmentManifest
+    const inputFiles = Array.isArray(payload.inputFiles) ? payload.inputFiles : []
+    return new Set(
+      inputFiles
+        .map(filePath => (typeof filePath === 'string' ? filePath.trim() : ''))
+        .filter(Boolean),
+    )
+  } catch {
+    return new Set()
+  }
+}
+
 export async function sendFileToTarget(
   client: any,
   targetId: string,
@@ -189,8 +212,10 @@ export async function sendArtifactsToTarget(
   }
 
   const nodes = await fetchTaskFiles(sessionId)
+  const inputFiles = await fetchTaskInputFiles(sessionId)
   const files = flattenTaskFiles(nodes)
     .filter(item => !shouldIgnoreArtifact(item.path))
+    .filter(item => !inputFiles.has(item.path))
     .filter(item => {
       if (!startedAfterMs) return true
       return item.mtimeMs >= startedAfterMs - 1000

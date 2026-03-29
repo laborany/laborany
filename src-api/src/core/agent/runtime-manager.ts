@@ -22,7 +22,7 @@ import {
 } from '../../lib/skill-interaction.js'
 
 type RuntimeTaskStatus = 'running' | 'waiting_input' | 'completed' | 'failed' | 'aborted'
-type RuntimeTaskSource = 'desktop' | 'feishu' | 'qq' | 'cron' | 'converse'
+type RuntimeTaskSource = 'desktop' | 'feishu' | 'qq' | 'wechat' | 'cron' | 'converse'
 
 const EXTERNAL_SYNC_DIR = '_external'
 const TOOL_PATH_KEYS = new Set([
@@ -176,7 +176,7 @@ interface StartTaskOptions {
   modelName?: string
   originQuery?: string
   beforeSkillIds?: Set<string>
-  source?: 'desktop' | 'feishu' | 'qq' | 'cron' | 'converse'
+  source?: 'desktop' | 'feishu' | 'qq' | 'wechat' | 'cron' | 'converse'
   sourceMeta?: Record<string, unknown>
 }
 
@@ -197,7 +197,7 @@ interface SubscribeOptions {
 }
 
 function shouldInferPlainTextWaitingInput(source: RuntimeTaskSource): boolean {
-  return source === 'feishu' || source === 'qq'
+  return source === 'feishu' || source === 'qq' || source === 'wechat'
 }
 
 class RuntimeTaskManager {
@@ -762,6 +762,7 @@ class RuntimeTaskManager {
           sessionId: task.sessionId,
           signal: task.controller.signal,
           modelOverride: options.modelOverride,
+          modelProfileId: options.modelProfileId,
           enableWidgets: shouldEnableDesktopWidgetsForTask(task.source, options.modelOverride),
           onEvent: (event) => this.handleAgentEvent(task, event),
         })
@@ -990,6 +991,7 @@ class RuntimeTaskManager {
         signal: task.controller.signal,
         workDir: options.workDir,
         modelOverride: options.modelOverride,
+        modelProfileId: task.modelProfileId,
         enableWidgets: shouldEnableDesktopWidgetsForTask(task.source, options.modelOverride),
         onEvent: (event) => {
           if (event.type === 'text' && event.content) {

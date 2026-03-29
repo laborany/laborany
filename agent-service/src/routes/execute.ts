@@ -92,6 +92,7 @@ function createExecuteRouter(sessionManager: SessionManager, taskManager: TaskMa
         signal: abortController.signal,
         onEvent: (event) => taskManager.addEvent(sessionId, event),
         modelOverride,
+        modelProfileId,
         enableWidgets: executeWidgetSupport.enabled,
       })
     } catch (error) {

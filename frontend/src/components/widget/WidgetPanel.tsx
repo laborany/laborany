@@ -98,8 +98,22 @@ export function WidgetPanel({ widget, onClose, onWidgetInteraction, onFallbackTo
     const iframeWindow = iframeRef.current?.contentWindow
     const data = event.data
     if (!iframeWindow || event.source !== iframeWindow) return
-    if (event.origin !== 'null') return
     if (!isPlainObject(data)) return
+
+    // External link — open in system browser (checked before origin gate)
+    if (
+      data.type === 'external-link'
+      && data.source === 'laborany-widget'
+      && typeof data.url === 'string'
+    ) {
+      const url = data.url as string
+      if (url.startsWith('http:') || url.startsWith('https:')) {
+        window.open(url, '_blank')
+      }
+      return
+    }
+
+    if (event.origin !== 'null') return
     if (data.type !== 'widget_interaction' || data.source !== 'laborany-widget' || data.widgetId !== widget.widgetId) {
       return
     }

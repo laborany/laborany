@@ -30,14 +30,14 @@ interface TemplateField {
   required: boolean
   placeholder: string
   sensitive: boolean
-  group: 'model' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
+  group: 'model' | 'wechat' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
   order: number
   dependsOnKey?: string
   dependsOnValue?: string
 }
 
 interface TemplateGroup {
-  id: 'model' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
+  id: 'model' | 'wechat' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
   title: string
   description: string
 }
@@ -48,6 +48,11 @@ function buildTemplateGroups(): TemplateGroup[] {
       id: 'model',
       title: '模型服务',
       description: 'LaborAny 调用大模型所需的核心配置（建议优先完成）',
+    },
+    {
+      id: 'wechat',
+      title: '微信 Bot',
+      description: '用于将任务从微信 ClawBot 私聊接入 LaborAny，并支持扫码绑定账号',
     },
     {
       id: 'feishu',
@@ -273,6 +278,114 @@ function buildTemplate(): Record<string, TemplateField> {
       sensitive: true,
       group: 'email',
       order: 70,
+    },
+    WECHAT_ENABLED: {
+      label: '启用微信 Bot',
+      description: '开启后，允许微信 ClawBot 私聊触发 LaborAny（true/false）',
+      required: false,
+      placeholder: 'false',
+      sensitive: false,
+      group: 'wechat',
+      order: 10,
+    },
+    WECHAT_BASE_URL: {
+      label: '微信 API Base URL',
+      description: '微信 iLink API 基础地址，通常保持默认即可',
+      required: false,
+      placeholder: 'https://ilinkai.weixin.qq.com',
+      sensitive: false,
+      group: 'wechat',
+      order: 20,
+      dependsOnKey: 'WECHAT_ENABLED',
+      dependsOnValue: 'true',
+    },
+    WECHAT_CDN_BASE_URL: {
+      label: '微信 CDN Base URL',
+      description: '微信媒体上传下载 CDN 地址，通常保持默认即可',
+      required: false,
+      placeholder: 'https://novac2c.cdn.weixin.qq.com/c2c',
+      sensitive: false,
+      group: 'wechat',
+      order: 30,
+      dependsOnKey: 'WECHAT_ENABLED',
+      dependsOnValue: 'true',
+    },
+    WECHAT_BOT_TOKEN: {
+      label: '微信 Bot Token（可选）',
+      description: '可手工填写 token；如果已扫码绑定，环境变量 token 会覆盖扫码保存的账号凭据。',
+      required: false,
+      placeholder: '',
+      sensitive: true,
+      group: 'wechat',
+      order: 40,
+      dependsOnKey: 'WECHAT_ENABLED',
+      dependsOnValue: 'true',
+    },
+    WECHAT_ALLOW_USERS: {
+      label: '允许用户列表',
+      description: '允许访问的微信用户 ID，多个用逗号分隔；为空表示允许所有用户',
+      required: false,
+      placeholder: 'user1@im.wechat,user2@im.wechat',
+      sensitive: false,
+      group: 'wechat',
+      order: 50,
+      dependsOnKey: 'WECHAT_ENABLED',
+      dependsOnValue: 'true',
+    },
+    WECHAT_REQUIRE_ALLOWLIST: {
+      label: '强制白名单',
+      description: '是否要求允许用户列表不能为空（true/false）',
+      required: false,
+      placeholder: 'false',
+      sensitive: false,
+      group: 'wechat',
+      order: 60,
+      dependsOnKey: 'WECHAT_ENABLED',
+      dependsOnValue: 'true',
+    },
+    WECHAT_BOT_NAME: {
+      label: 'Bot 显示名称',
+      description: '微信消息中使用的 Bot 名称',
+      required: false,
+      placeholder: 'LaborAny',
+      sensitive: false,
+      group: 'wechat',
+      order: 70,
+      dependsOnKey: 'WECHAT_ENABLED',
+      dependsOnValue: 'true',
+    },
+    WECHAT_DEFAULT_SKILL: {
+      label: '默认执行技能',
+      description: '未匹配到具体技能时使用的默认技能 ID',
+      required: false,
+      placeholder: '__generic__',
+      sensitive: false,
+      group: 'wechat',
+      order: 80,
+      dependsOnKey: 'WECHAT_ENABLED',
+      dependsOnValue: 'true',
+    },
+    WECHAT_POLL_TIMEOUT_MS: {
+      label: '轮询超时（毫秒）',
+      description: '微信长轮询超时时间，默认 35000',
+      required: false,
+      placeholder: '35000',
+      sensitive: false,
+      group: 'wechat',
+      order: 90,
+      dependsOnKey: 'WECHAT_ENABLED',
+      dependsOnValue: 'true',
+    },
+    WECHAT_TEXT_CHUNK_LIMIT: {
+      label: '单条文本分段上限',
+      description: '微信单条消息的文本分段长度，默认 1000',
+      required: false,
+      placeholder: '1000',
+      sensitive: false,
+      group: 'wechat',
+      order: 100,
+      dependsOnKey: 'WECHAT_ENABLED',
+      dependsOnValue: 'true',
     },
     FEISHU_ENABLED: {
       label: '启用飞书 Bot',
