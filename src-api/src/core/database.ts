@@ -145,15 +145,15 @@ function createTables(db: Database): void {
     )
   `)
 
+  // 数据库迁移：为旧表添加新字段
+  migrateDatabase(db)
+
   // 创建索引
   db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_work_id ON sessions(work_id)`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_files_user_id ON files(user_id)`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_works_user_id ON works(user_id)`)
-
-  // 数据库迁移：为旧表添加新字段
-  migrateDatabase(db)
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
