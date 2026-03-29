@@ -17,9 +17,10 @@ export interface WorkRow {
   updated_at: string
 }
 
-interface WorkSessionRow {
+export interface WorkSessionRow {
   id: string
   user_id: string
+  cost: number
   skill_id: string
   query: string
   status: string
@@ -226,7 +227,7 @@ export function ensureWorkForSession(params: {
 
 export function refreshWork(workId: string): void {
   const sessions = dbHelper.query<WorkSessionRow>(
-    `SELECT id, user_id, skill_id, query, status, source, created_at, updated_at, work_id
+    `SELECT id, user_id, cost, skill_id, query, status, source, created_at, updated_at, work_id
      FROM sessions
      WHERE work_id = ?
      ORDER BY created_at ASC`,
@@ -327,7 +328,7 @@ export function getWorkDetail(workId: string): {
   ) || null
 
   const sessions = dbHelper.query<WorkSessionRow>(
-    `SELECT id, user_id, skill_id, query, status, source, created_at, updated_at, work_id
+    `SELECT id, user_id, cost, skill_id, query, status, source, created_at, updated_at, work_id
      FROM sessions
      WHERE work_id = ?
      ORDER BY created_at ASC`,
@@ -335,4 +336,13 @@ export function getWorkDetail(workId: string): {
   )
 
   return { work, sessions }
+}
+
+export function findWorkIdBySessionId(sessionId: string): string | null {
+  const row = dbHelper.get<{ work_id?: string | null }>(
+    `SELECT work_id FROM sessions WHERE id = ?`,
+    [sessionId],
+  )
+  const workId = (row?.work_id || '').trim()
+  return workId || null
 }

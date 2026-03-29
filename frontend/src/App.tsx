@@ -16,8 +16,8 @@ import { LaborAnyLogo } from './components/ui/LaborAnyLogo'
 import { ModelProfileProvider } from './contexts/ModelProfileContext'
 import { COMPANY_APP_COPY, getCompanyNavLabel } from './lib/companySemantics'
 import { useSkillNameMap } from './hooks/useSkillNameMap'
-import type { Session } from './types'
-import { buildWorkRecordItems, findWorkRecordBySessionId } from './lib/workRecords'
+import type { WorkDetailResponse, WorkSummary } from './types'
+import { buildWorkRecordFromWorkSummary, type WorkRecordItem } from './lib/workRecords'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           懒加载页面组件                                   │
@@ -95,10 +95,11 @@ function AppLayout({
   profileName: string
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [sessions, setSessions] = useState<Session[]>([])
+  const [workRecords, setWorkRecords] = useState<WorkRecordItem[]>([])
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null)
   const [workSearch, setWorkSearch] = useState('')
   const [workSectionCollapsed, setWorkSectionCollapsed] = useState(false)
+  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null)
   const location = useLocation()
   const navigate = useNavigate()
   const { getSkillName } = useSkillNameMap()
@@ -106,16 +107,21 @@ function AppLayout({
   const refreshWorkRecords = useCallback(async () => {
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch(`${API_BASE}/sessions`, {
+      const res = await fetch(`${API_BASE}/works`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       })
       if (!res.ok) return
-      const data = await res.json() as Session[]
-      setSessions(data)
+      const data = await res.json() as { works?: WorkSummary[] }
+      const works = Array.isArray(data.works) ? data.works : []
+      setWorkRecords(
+        works
+          .slice(0, 100)
+          .map((work) => buildWorkRecordFromWorkSummary(work, [], getSkillName)),
+      )
     } catch {
       // ignore
     }
-  }, [])
+  }, [getSkillName])
 
   useEffect(() => {
     void refreshWorkRecords()
@@ -127,19 +133,37 @@ function AppLayout({
     void refreshWorkRecords()
   }, [location.pathname, refreshWorkRecords])
 
-  const workRecords = useMemo(
-    () => buildWorkRecordItems(sessions, getSkillName).slice(0, 10),
-    [sessions, getSkillName],
-  )
-
-  const selectedRecordId = useMemo(() => {
+  useEffect(() => {
     const match = location.pathname.match(/^\/history\/([^/]+)/)
-    if (!match) return null
-    const record = findWorkRecordBySessionId(sessions, decodeURIComponent(match[1]), getSkillName)
-    return record?.id || null
-  }, [location.pathname, sessions, getSkillName])
+    if (!match) {
+      setSelectedRecordId(null)
+      return
+    }
 
-  const getOwnerTagLabel = useCallback((record: ReturnType<typeof buildWorkRecordItems>[number]) => {
+    const targetSessionId = decodeURIComponent(match[1])
+    const token = localStorage.getItem('token')
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/works/by-session/${encodeURIComponent(targetSessionId)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        })
+        if (!res.ok) {
+          if (!cancelled) setSelectedRecordId(null)
+          return
+        }
+        const data = await res.json() as WorkDetailResponse
+        if (!cancelled) setSelectedRecordId(data.work?.id || null)
+      } catch {
+        if (!cancelled) setSelectedRecordId(null)
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [location.pathname])
+
+  const getOwnerTagLabel = useCallback((record: WorkRecordItem) => {
     if (record.collaborationLabel) {
       return record.collaborationLabel.replace(' -> ', ' | ')
     }
@@ -199,7 +223,7 @@ function AppLayout({
     })
   }, [workRecords, workSearch, getOwnerTagLabel])
 
-  const handleDeleteRecord = useCallback(async (record: ReturnType<typeof buildWorkRecordItems>[number], event: React.MouseEvent) => {
+  const handleDeleteRecord = useCallback(async (record: WorkRecordItem, event: React.MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
 
@@ -211,7 +235,6 @@ function AppLayout({
     setDeletingRecordId(record.id)
     try {
       const token = localStorage.getItem('token')
-      const sessionIds = record.sessions.map((session) => session.id)
       if (record.workId) {
         const res = await fetch(`${API_BASE}/works/${record.workId}`, {
           method: 'DELETE',
@@ -222,6 +245,7 @@ function AppLayout({
           throw new Error((data as { error?: string }).error || '删除失败')
         }
       } else {
+        const sessionIds = record.sessions.map((session) => session.id)
         for (const sessionId of sessionIds) {
           const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
             method: 'DELETE',
@@ -233,7 +257,7 @@ function AppLayout({
           }
         }
       }
-      setSessions((prev) => prev.filter((session) => !sessionIds.includes(session.id)))
+      setWorkRecords((prev) => prev.filter((item) => item.id !== record.id))
       if (selectedRecordId === record.id) {
         navigate('/history')
       }
@@ -362,7 +386,7 @@ function AppLayout({
                     {workSearch.trim() ? '没有匹配的工作记录' : '暂无工作记录'}
                   </div>
                 ) : (
-                  filteredWorkRecords.map((record) => {
+                  filteredWorkRecords.slice(0, 10).map((record) => {
                     const isActive = selectedRecordId === record.id
                     return (
                       <button

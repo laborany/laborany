@@ -5,7 +5,7 @@ import { useAgent, type PendingQuestion } from '../hooks/useAgent'
 import { useConverse } from '../hooks/useConverse'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
 import { useVitePreview } from '../hooks/useVitePreview'
-import type { AgentMessage, TaskFile, Session, SessionDetail, SessionLiveStatus, WidgetState } from '../types'
+import type { AgentMessage, TaskFile, SessionDetail, SessionLiveStatus, WidgetState, WorkDetailResponse } from '../types'
 import { API_BASE } from '../config'
 import ChatInput from '../components/shared/ChatInput'
 import MessageList from '../components/shared/MessageList'
@@ -33,7 +33,7 @@ import {
   normalizeQuestionContext,
 } from '../lib/question-response'
 import { WidgetPanel } from '../components/widget/WidgetPanel'
-import { findWorkRecordBySessionId, isControlInstructionText } from '../lib/workRecords'
+import { isControlInstructionText } from '../lib/workRecords'
 import { CollaborationTabs } from '../components/shared/CollaborationTabs'
 import { ConversationWorkspaceView } from '../components/shared/ConversationWorkspaceView'
 
@@ -419,6 +419,7 @@ export function SessionDetailPage() {
   const [assistantSession, setAssistantSession] = useState<SessionDetail | null>(null)
   const [relatedRecordSessionIds, setRelatedRecordSessionIds] = useState<string[]>([])
   const [workTitle, setWorkTitle] = useState('')
+  const [workId, setWorkId] = useState<string | null>(null)
   const [liveStatus, setLiveStatus] = useState<SessionLiveStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [continuing, setContinuing] = useState(false)
@@ -483,6 +484,7 @@ export function SessionDetailPage() {
     converse.reset()
     setAssistantSession(null)
     setRelatedRecordSessionIds([])
+    setWorkId(null)
     setActiveTab('employee')
     if (sessionId) {
       fetchSessionDetail()
@@ -585,20 +587,20 @@ export function SessionDetailPage() {
   const fetchRelatedWorkRecord = useCallback(async (targetSessionId: string, currentSession: SessionDetail) => {
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch(`${API_BASE}/sessions`, {
+      const res = await fetch(`${API_BASE}/works/by-session/${encodeURIComponent(targetSessionId)}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) return
 
-      const allSessions = await res.json() as Session[]
-      const record = findWorkRecordBySessionId(allSessions, targetSessionId, getSkillName)
-      if (!record) return
+      const data = await res.json() as WorkDetailResponse
+      if (!data.work) return
 
-      setWorkTitle(record.title)
-      setRelatedRecordSessionIds(record.sessions.map((item) => item.id))
+      setWorkId(data.work.id)
+      setWorkTitle(data.work.title || '')
+      setRelatedRecordSessionIds(data.sessions.map((item) => item.id))
 
-      const assistant = record.sessions.find((item) => item.skill_id === '__converse__')
-      const hasEmployeeSession = record.sessions.some((item) => item.skill_id !== '__converse__')
+      const assistant = data.sessions.find((item) => item.skill_id === '__converse__')
+      const hasEmployeeSession = data.sessions.some((item) => item.skill_id !== '__converse__')
       if (!assistant || !hasEmployeeSession || assistant.id === currentSession.id) return
 
       const detailRes = await fetch(`${API_BASE}/sessions/${assistant.id}`, {
@@ -611,7 +613,7 @@ export function SessionDetailPage() {
     } catch {
       // 忽略错误
     }
-  }, [getSkillName])
+  }, [])
 
   useEffect(() => {
     if (!sessionId || !session) return
@@ -783,8 +785,8 @@ export function SessionDetailPage() {
     setDeleting(true)
     try {
       const token = localStorage.getItem('token')
-      for (const targetSessionId of targetSessionIds) {
-        const res = await fetch(`${API_BASE}/sessions/${targetSessionId}`, {
+      if (workId) {
+        const res = await fetch(`${API_BASE}/works/${workId}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },
         })
@@ -792,6 +794,18 @@ export function SessionDetailPage() {
         if (!res.ok) {
           const data = await res.json().catch(() => ({}))
           throw new Error((data as { error?: string }).error || '删除失败')
+        }
+      } else {
+        for (const targetSessionId of targetSessionIds) {
+          const res = await fetch(`${API_BASE}/sessions/${targetSessionId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          })
+
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            throw new Error((data as { error?: string }).error || '删除失败')
+          }
         }
       }
 

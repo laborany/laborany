@@ -109,6 +109,27 @@ export interface SessionLiveStatus {
   runtimeStatus?: string
 }
 
+export interface WorkSummary {
+  id: string
+  user_id: string
+  title: string
+  summary: string | null
+  status: string
+  phase: string
+  source?: SessionSource
+  current_owner_skill_id?: string | null
+  primary_session_id?: string | null
+  latest_session_id?: string | null
+  created_at: string
+  updated_at: string
+  session_count: number
+}
+
+export interface WorkDetailResponse {
+  work: WorkSummary | null
+  sessions: Session[]
+}
+
 export interface TaskFile {
   name: string
   path: string

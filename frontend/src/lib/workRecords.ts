@@ -1,4 +1,4 @@
-import type { Session, SessionSource } from '../types'
+import type { Session, SessionSource, WorkSummary } from '../types'
 
 const WORK_RECORD_GROUP_WINDOW_MS = 20 * 60 * 1000
 
@@ -251,4 +251,45 @@ export function findWorkRecordBySessionId(
 ): WorkRecordItem | null {
   const records = buildWorkRecordItems(sessions, getSkillName)
   return records.find((record) => record.sessions.some((session) => session.id === sessionId)) || null
+}
+
+function toStageSummary(work: WorkSummary, getSkillName: (id?: string) => string): string {
+  const currentOwnerLabel = getSkillName(work.current_owner_skill_id || undefined)
+  if (work.phase === 'assistant_running') return '个人助理正在跟进这项工作'
+  if (work.phase === 'assistant_waiting') return '个人助理正在等待老板补充信息'
+  if (work.phase === 'employee_running') return `${currentOwnerLabel}正在负责这项工作`
+  if (work.phase === 'employee_waiting') return `${currentOwnerLabel}正在等待补充信息`
+  if (work.phase === 'employee_completed') return `${currentOwnerLabel}已完成当前工作`
+  if (work.phase === 'assistant_completed') return '个人助理已完成当前工作'
+  if (work.phase === 'employee_failed') return `${currentOwnerLabel}处理这项工作时失败`
+  if (work.phase === 'assistant_failed') return '个人助理处理这项工作时失败'
+  return currentOwnerLabel ? `${currentOwnerLabel}正在负责这项工作` : '这项工作正在处理中'
+}
+
+export function buildWorkRecordFromWorkSummary(
+  work: WorkSummary,
+  sessions: Session[],
+  getSkillName: (id?: string) => string,
+): WorkRecordItem {
+  return {
+    id: work.id,
+    workId: work.id,
+    title: work.title || '未命名工作',
+    primarySessionId: work.primary_session_id || sessions[0]?.id || work.latest_session_id || work.id,
+    createdAt: work.created_at,
+    status: work.status,
+    source: work.source,
+    currentOwnerSkillId: work.current_owner_skill_id || '',
+    sessionCount: work.session_count || sessions.length || 1,
+    stageSummary: toStageSummary(work, getSkillName),
+    entryLabel: toEntryLabel(work.source),
+    workflowSummary: work.summary || undefined,
+    hasAssistantHandoff: sessions.some((session) => session.skill_id === '__converse__')
+      && sessions.some((session) => session.skill_id !== '__converse__'),
+    collaborationLabel: sessions.some((session) => session.skill_id === '__converse__')
+      && sessions.some((session) => session.skill_id !== '__converse__')
+      ? `个人助理 -> ${getSkillName(work.current_owner_skill_id || undefined)}`
+      : undefined,
+    sessions,
+  }
 }
