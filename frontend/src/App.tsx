@@ -534,6 +534,7 @@ export default function App() {
               <Route path="/" element={<HomePage />} />
               <Route path="/execute/:skillId" element={<ExecutePage />} />
               <Route path="/history" element={<HistoryPage />} />
+              <Route path="/history/launch/:skillId" element={<ExecutePage />} />
               <Route path="/history/:sessionId" element={<SessionDetailPage />} />
               <Route path="/skills" element={<SkillsPage />} />
               <Route path="/create" element={<CreatePage />} />

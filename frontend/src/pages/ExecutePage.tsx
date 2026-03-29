@@ -114,7 +114,7 @@ export default function ExecutePage() {
 
   useEffect(() => {
     if (!agent.sessionId) return
-    if (location.pathname.startsWith('/history/')) return
+    if (/^\/history\/[^/]+$/.test(location.pathname)) return
 
     const params = new URLSearchParams()
     if (converseSid) {
@@ -244,8 +244,8 @@ export default function ExecutePage() {
     const firstUserMessage = agent.messages.find((m) => m.type === 'user')?.content || ''
     const originQuery = (created.originQuery || firstUserMessage || '').trim()
     const nextUrl = originQuery
-      ? `/execute/${created.id}?q=${encodeURIComponent(originQuery)}`
-      : `/execute/${created.id}`
+      ? `/history/launch/${created.id}?q=${encodeURIComponent(originQuery)}`
+      : `/history/launch/${created.id}`
 
     navigate(nextUrl, { replace: true })
   }, [skillId, agent.createdCapability, agent.messages, navigate])

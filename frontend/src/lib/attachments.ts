@@ -91,7 +91,7 @@ export function buildExecutePath(
     params.set('converseSid', options.converseSid.trim())
   }
   const search = params.toString()
-  return `/execute/${skillId}${search ? `?${search}` : ''}`
+  return `/history/launch/${skillId}${search ? `?${search}` : ''}`
 }
 
 export async function uploadAttachments(
