@@ -601,7 +601,7 @@ type ConverseActionPayload =
       action: 'recommend_capability'
       targetType: ActionTargetType
       targetId: string
-      query: string
+      query?: string
       confidence?: number
       matchType?: 'exact' | 'candidate'
       reason?: string
@@ -1666,8 +1666,8 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
     const targetId = rawTargetId
       ? (resolveCapabilityByAlias(rawTargetId)?.id || rawTargetId)
       : ''
-    const query = asString(raw.query)
-    if (!targetType || !targetId || !query) return null
+    const query = asString(raw.query) || asString(raw.seedQuery) || undefined
+    if (!targetType || !targetId) return null
     const confidence = typeof raw.confidence === 'number' ? raw.confidence : undefined
     const matchType = raw.matchType === 'exact' || raw.matchType === 'candidate' ? raw.matchType : undefined
     return {
@@ -1745,8 +1745,8 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
   /* 兼容旧动作协议 */
   if (action === 'navigate_skill') {
     const targetId = asString(raw.skillId)
-    const query = asString(raw.query)
-    if (!targetId || !query) return null
+    const query = asString(raw.query) || asString(raw.seedQuery) || undefined
+    if (!targetId) return null
     return {
       action: 'recommend_capability',
       targetType: 'skill',
@@ -1760,8 +1760,8 @@ function normalizeAction(raw: Record<string, unknown>): ConverseActionPayload | 
   // We normalize it to unified skill/capability routing semantics.
   if (action === 'navigate_workflow') {
     const targetId = asString(raw.workflowId)
-    const query = asString(raw.query)
-    if (!targetId || !query) return null
+    const query = asString(raw.query) || asString(raw.seedQuery) || undefined
+    if (!targetId) return null
     return {
       action: 'recommend_capability',
       targetType: 'skill',

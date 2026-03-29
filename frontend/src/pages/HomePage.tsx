@@ -147,12 +147,13 @@ export default function HomePage() {
     if (handledActionRef.current === actionKey) return
     handledActionRef.current = actionKey
 
-    if (action.action === 'recommend_capability' && action.targetId && action.query) {
+    if (action.action === 'recommend_capability' && action.targetId) {
       const attachmentIds = action.attachmentIds || converse.sessionFileIds
+      const normalizedQuery = stripAttachmentMarkers(action.query || latestUserQueryRef.current || '')
       setCandidate({
         variant: 'recommend',
         targetId: action.targetId,
-        query: stripAttachmentMarkers(action.query),
+        query: normalizedQuery,
         attachmentIds,
         reason: action.reason,
         confidence: action.confidence,
