@@ -548,11 +548,15 @@ export class WebResearchRuntime {
   async getBrowserDiagnostics(): Promise<unknown> {
     try {
       await this.cdpManager.ensureRunning()
-      return await this.cdpManager.getDiagnostics()
+      return {
+        ...(await this.cdpManager.getDiagnostics()),
+        startup: this.cdpManager.getStartupDiagnostics(),
+      }
     } catch (err) {
       return {
         status: 'error',
         error: err instanceof Error ? err.message : String(err),
+        startup: this.cdpManager.getStartupDiagnostics(),
       }
     }
   }

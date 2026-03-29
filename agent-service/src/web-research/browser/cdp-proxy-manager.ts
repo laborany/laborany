@@ -35,6 +35,13 @@ interface ProxyDiagnostics {
   diagnostics?: unknown
 }
 
+interface StartupDiagnostics {
+  scriptPath: string | null
+  lastStdout: string[]
+  lastStderr: string[]
+  lastExit: { code: number | null; signal: NodeJS.Signals | null } | null
+}
+
 export class CdpProxyManager {
   private process: ChildProcess | null = null
   private port: number
@@ -42,6 +49,12 @@ export class CdpProxyManager {
   private stopping = false
   private restartAttempts = 0
   private lastRestartTime = 0
+  private startupDiagnostics: StartupDiagnostics = {
+    scriptPath: null,
+    lastStdout: [],
+    lastStderr: [],
+    lastExit: null,
+  }
 
   constructor(port?: number) {
     this.port = port ?? parseInt(process.env.CDP_PROXY_PORT || String(DEFAULT_PORT))
@@ -142,6 +155,15 @@ export class CdpProxyManager {
     }
   }
 
+  getStartupDiagnostics(): StartupDiagnostics {
+    return {
+      scriptPath: this.startupDiagnostics.scriptPath,
+      lastStdout: [...this.startupDiagnostics.lastStdout],
+      lastStderr: [...this.startupDiagnostics.lastStderr],
+      lastExit: this.startupDiagnostics.lastExit ? { ...this.startupDiagnostics.lastExit } : null,
+    }
+  }
+
   // ── Private helpers ──
 
   private async fetchHealth(): Promise<HealthStatus> {
@@ -178,7 +200,18 @@ export class CdpProxyManager {
 
   private spawnAndWait(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = fork(resolveCdpProxyScript(), [], {
+      const scriptPath = resolveCdpProxyScript()
+      this.startupDiagnostics.scriptPath = scriptPath
+      this.startupDiagnostics.lastStdout = []
+      this.startupDiagnostics.lastStderr = []
+      this.startupDiagnostics.lastExit = null
+
+      if (!existsSync(scriptPath)) {
+        reject(new Error(`cdp-proxy script not found: ${scriptPath}`))
+        return
+      }
+
+      const child = fork(scriptPath, [], {
         env: { ...process.env, CDP_PROXY_PORT: String(this.port) },
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       })
@@ -188,15 +221,22 @@ export class CdpProxyManager {
       // Forward stdout/stderr with prefix
       child.stdout?.on('data', (data: Buffer) => {
         const lines = data.toString().trim()
-        if (lines) console.log(`[CdpProxyManager] ${lines}`)
+        if (lines) {
+          this.pushLogLine('stdout', lines)
+          console.log(`[CdpProxyManager] ${lines}`)
+        }
       })
       child.stderr?.on('data', (data: Buffer) => {
         const lines = data.toString().trim()
-        if (lines) console.error(`[CdpProxyManager] ${lines}`)
+        if (lines) {
+          this.pushLogLine('stderr', lines)
+          console.error(`[CdpProxyManager] ${lines}`)
+        }
       })
 
       // Handle unexpected exit
       child.on('exit', (code, signal) => {
+        this.startupDiagnostics.lastExit = { code, signal }
         console.log(`[CdpProxyManager] Process exited (code=${code}, signal=${signal})`)
         this.process = null
         if (this.stopping) {
@@ -215,10 +255,7 @@ export class CdpProxyManager {
       const startTime = Date.now()
       const poll = async () => {
         if (Date.now() - startTime > STARTUP_WAIT_MS) {
-          reject(new Error(
-            `CDP Proxy failed to become healthy within ${STARTUP_WAIT_MS}ms. ` +
-            `Check that cdp-proxy.mjs can start on port ${this.port}.`
-          ))
+          reject(new Error(this.buildStartupFailureMessage()))
           return
         }
 
@@ -280,6 +317,38 @@ export class CdpProxyManager {
     this.start().catch((err) => {
       console.error(`[CdpProxyManager] Auto-restart failed:`, err.message)
     })
+  }
+
+  private pushLogLine(stream: 'stdout' | 'stderr', text: string): void {
+    const key = stream === 'stdout' ? 'lastStdout' : 'lastStderr'
+    const current = this.startupDiagnostics[key]
+    current.push(...text.split(/\r?\n/).filter(Boolean))
+    if (current.length > 20) {
+      current.splice(0, current.length - 20)
+    }
+  }
+
+  private buildStartupFailureMessage(): string {
+    const parts = [
+      `CDP Proxy failed to become healthy within ${STARTUP_WAIT_MS}ms.`,
+      `port=${this.port}`,
+    ]
+
+    if (this.startupDiagnostics.scriptPath) {
+      parts.push(`script=${this.startupDiagnostics.scriptPath}`)
+    }
+    if (this.startupDiagnostics.lastExit) {
+      parts.push(
+        `lastExit(code=${this.startupDiagnostics.lastExit.code}, signal=${this.startupDiagnostics.lastExit.signal})`,
+      )
+    }
+    if (this.startupDiagnostics.lastStderr.length > 0) {
+      parts.push(`stderr=${this.startupDiagnostics.lastStderr.slice(-3).join(' | ')}`)
+    } else if (this.startupDiagnostics.lastStdout.length > 0) {
+      parts.push(`stdout=${this.startupDiagnostics.lastStdout.slice(-3).join(' | ')}`)
+    }
+
+    return parts.join(' ')
   }
 }
 
