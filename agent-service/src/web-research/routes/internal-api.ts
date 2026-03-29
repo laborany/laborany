@@ -156,14 +156,21 @@ export function createWebResearchRouter(runtime: WebResearchRuntime): Router {
       const status = await runtime.getDetailedStatus()
       res.json({
         ok: available,
+        status: available ? 'connected' : 'unavailable',
         browser: status.browser,
         mode: status.mode,
       })
     } catch (err) {
       console.error('[WebResearch:API] /connect-browser error:', err)
-      res.status(500).json({
-        error: err instanceof Error ? err.message : String(err),
-      })
+      const details = runtime.describeBrowserConnectionError(err)
+      if (details.status === 'pending_authorization') {
+        res.json({
+          ok: false,
+          ...details,
+        })
+        return
+      }
+      res.status(500).json(details)
     }
   })
 

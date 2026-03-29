@@ -542,22 +542,45 @@ export class WebResearchRuntime {
   }
 
   async ensureBrowserReady(): Promise<boolean> {
-    return this.ensureBrowser()
+    return this.ensureBrowserStrict()
   }
 
   async getBrowserDiagnostics(): Promise<unknown> {
     try {
-      await this.cdpManager.ensureRunning()
+      await this.ensureBrowserStrict()
       return {
         ...(await this.cdpManager.getDiagnostics()),
         startup: this.cdpManager.getStartupDiagnostics(),
       }
     } catch (err) {
-      return {
-        status: 'error',
-        error: err instanceof Error ? err.message : String(err),
-        startup: this.cdpManager.getStartupDiagnostics(),
-      }
+      return this.describeBrowserConnectionError(err)
+    }
+  }
+
+  describeBrowserConnectionError(err: unknown): {
+    status: 'pending_authorization' | 'error'
+    error: string
+    guidance?: string
+    startup: ReturnType<CdpProxyManager['getStartupDiagnostics']>
+  } {
+    const startup = this.cdpManager.getStartupDiagnostics()
+    const errorMessage = err instanceof Error ? err.message : String(err)
+    const likelyWaitingForAuthorization = (
+      /Timed out waiting for Chrome authorization/i.test(errorMessage)
+      || (
+        startup.lastExit === null
+        && startup.lastStderr.length === 0
+        && startup.lastStdout.some(line => line.includes('从 DevToolsActivePort 发现端口'))
+      )
+    )
+
+    return {
+      status: likelyWaitingForAuthorization ? 'pending_authorization' : 'error',
+      error: errorMessage,
+      guidance: likelyWaitingForAuthorization
+        ? '已发现 Chrome current_session 调试入口，但还没完成授权握手。请保持 chrome://inspect/#remote-debugging 页面打开，并在 Chrome 的授权对话框里点击 Allow。'
+        : undefined,
+      startup,
     }
   }
 
@@ -785,11 +808,15 @@ export class WebResearchRuntime {
    */
   private async ensureBrowser(): Promise<boolean> {
     try {
-      await this.cdpManager.ensureRunning()
-      return await this.cdpManager.isAvailable()
+      return await this.ensureBrowserStrict()
     } catch {
       return false
     }
+  }
+
+  private async ensureBrowserStrict(): Promise<boolean> {
+    await this.cdpManager.ensureRunning()
+    return await this.cdpManager.isAvailable()
   }
 
   async importSitePattern(

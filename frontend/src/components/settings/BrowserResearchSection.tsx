@@ -77,6 +77,8 @@ interface BrowserDiagnosticsResponse {
   chromePort?: number | null
   diagnostics?: unknown
   error?: string
+  guidance?: string
+  startup?: unknown
 }
 
 type RuntimePlatform = 'win32' | 'darwin' | 'linux' | 'unknown'
@@ -214,10 +216,27 @@ export function BrowserResearchSection() {
 
   const handleTestConnection = async () => {
     setTesting(true)
+    setInspectHint(null)
     try {
-      await fetch(`${AGENT_API_BASE}/_internal/web-research/connect-browser`, {
+      const res = await fetch(`${AGENT_API_BASE}/_internal/web-research/connect-browser`, {
         method: 'POST',
       })
+      const data = await res.json().catch(() => ({})) as BrowserDiagnosticsResponse & {
+        ok?: boolean
+        status?: string
+      }
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      if (data.status === 'pending_authorization') {
+        setInspectHint(
+          data.guidance
+          || '已发现 Chrome current_session 调试入口，但还没完成授权握手。请保持 chrome://inspect/#remote-debugging 页面打开，并在 Chrome 的授权对话框里点击 Allow。',
+        )
+        setBrowserDiagnostics(data)
+      } else if (data.ok) {
+        setInspectHint('浏览器增强已连接成功，可以直接复用当前 Chrome 会话。')
+      }
     } catch {
       // fetchStatus will surface the actual state/error
     }

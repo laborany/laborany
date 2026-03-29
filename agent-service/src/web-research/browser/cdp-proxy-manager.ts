@@ -14,7 +14,7 @@ const MODULE_DIR = dirname(fileURLToPath(import.meta.url))
 
 const DEFAULT_PORT = 3456
 const HEALTH_CHECK_TIMEOUT_MS = 3000
-const WARM_CONNECT_TIMEOUT_MS = 25000
+const WARM_CONNECT_TIMEOUT_MS = 60000
 const STARTUP_WAIT_MS = 5000
 const STARTUP_POLL_INTERVAL_MS = 300
 const MAX_RESTART_ATTEMPTS = 3
@@ -193,6 +193,14 @@ export class CdpProxyManager {
         throw new Error(`Warm connect returned ${res.status}`)
       }
       await res.text()
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new Error(
+          `Timed out waiting for Chrome authorization after ${WARM_CONNECT_TIMEOUT_MS}ms. ` +
+          'Keep chrome://inspect/#remote-debugging open and click Allow in Chrome.'
+        )
+      }
+      throw err
     } finally {
       clearTimeout(timer)
     }
