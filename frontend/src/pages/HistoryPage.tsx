@@ -1,6 +1,6 @@
 ﻿
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAgent, type PendingQuestion } from '../hooks/useAgent'
 import { useConverse } from '../hooks/useConverse'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
@@ -361,9 +361,11 @@ function convertMessages(session: SessionDetail | null): AgentMessage[] {
 function SessionDetailContent({
   routeSessionId = '',
   routeWorkId = '',
+  preferredSessionId = '',
 }: {
   routeSessionId?: string
   routeWorkId?: string
+  preferredSessionId?: string
 }) {
   const navigate = useNavigate()
   const { getSkillName } = useSkillNameMap()
@@ -447,6 +449,23 @@ function SessionDetailContent({
     void converse.resumeSession(assistantSessionId)
   }, [assistantSession?.id, isConverseSession, converse.resumeSession])
 
+  const fetchTaskFiles = useCallback(async () => {
+    if (!sessionId) return
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/task/${sessionId}/files`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setTaskFiles(data.files || [])
+        setFilesVersion((value) => value + 1)
+      }
+    } catch {
+      // 忽略错误
+    }
+  }, [sessionId])
+
   useEffect(() => {
     if (!sessionId || !session || isConverseSession) return
     let cancelled = false
@@ -471,8 +490,8 @@ function SessionDetailContent({
         ) {
           setContinuing(true)
           attachedSessionRef.current = sessionId || null
-          agent.resumeSession(sessionId!)
-          attachInFlightRef.current = agent.attachToSession(sessionId!)
+          agent.resumeSession(sessionId)
+          attachInFlightRef.current = agent.attachToSession(sessionId)
             .catch(() => {
               attachedSessionRef.current = null
             })
@@ -485,14 +504,16 @@ function SessionDetailContent({
       }
     }
 
-    refreshLiveStatus()
-    const timer = setInterval(refreshLiveStatus, 5000)
+    void refreshLiveStatus()
+    const timer = window.setInterval(() => {
+      void refreshLiveStatus()
+    }, 5000)
 
     return () => {
       cancelled = true
-      clearInterval(timer)
+      window.clearInterval(timer)
     }
-  }, [sessionId, session, isConverseSession, agent.isRunning, agent.resumeSession, agent.attachToSession])
+  }, [sessionId, session, isConverseSession, agent.isRunning])
 
   useEffect(() => {
     if (!session?.work_dir) {
@@ -581,11 +602,29 @@ function SessionDetailContent({
             return
           }
 
-          const displaySessionId = data.session_links?.entry_session_id
+          const requestedSessionId = preferredSessionId.trim()
+          const assistantSessionId = data.session_links?.assistant_session_id
+            || data.sessions.find((item) => item.skill_id === '__converse__')?.id
+            || ''
+          const employeeSessions = data.sessions.filter((item) => item.skill_id !== '__converse__')
+          const preferredSession = requestedSessionId
+            ? data.sessions.find((item) => item.id === requestedSessionId) || null
+            : null
+          const fallbackDisplaySessionId = data.session_links?.entry_session_id
             || data.work.latest_session_id
             || data.work.primary_session_id
+            || employeeSessions[employeeSessions.length - 1]?.id
             || data.sessions[data.sessions.length - 1]?.id
             || ''
+          const shouldOpenAssistantTab = Boolean(
+            requestedSessionId
+            && assistantSessionId
+            && requestedSessionId === assistantSessionId
+            && employeeSessions.length > 0,
+          )
+          const displaySessionId = shouldOpenAssistantTab
+            ? fallbackDisplaySessionId
+            : (preferredSession?.id || fallbackDisplaySessionId)
           if (!displaySessionId) {
             setLoading(false)
             return
@@ -596,6 +635,7 @@ function SessionDetailContent({
           setWorkSummary(data.work)
           setWorkTitle(data.work.title || '')
           setRelatedRecordSessionIds(data.sessions.map((item) => item.id))
+          setActiveTab(shouldOpenAssistantTab ? 'assistant' : 'employee')
           setResolvedSessionId(displaySessionId)
 
           const sessionDetail = await fetchSessionDetail(displaySessionId)
@@ -620,7 +660,7 @@ function SessionDetailContent({
     }
 
     void fetchSessionDetail(routeSessionId)
-  }, [routeWorkId, routeSessionId, fetchSessionDetail])
+  }, [routeWorkId, routeSessionId, preferredSessionId, fetchSessionDetail, fetchWorkDetailById])
 
   useEffect(() => {
     if (routeWorkId) return
@@ -662,23 +702,6 @@ function SessionDetailContent({
     if (status === 'failed') return '失败'
     if (status === 'stopped' || status === 'aborted') return '已中止'
     return status
-  }
-
-  async function fetchTaskFiles() {
-    if (!sessionId) return
-    try {
-      const token = localStorage.getItem('token')
-      const res = await fetch(`${API_BASE}/task/${sessionId}/files`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setTaskFiles(data.files || [])
-        setFilesVersion((value) => value + 1)
-      }
-    } catch {
-      // 忽略错误
-    }
   }
 
   const getFileUrl = useCallback(
@@ -1023,6 +1046,9 @@ function SessionDetailContent({
         <ConversationWorkspaceView
           messages={converse.messages.length > 0 ? converse.messages : assistantMessages}
           isRunning={converse.isThinking}
+          onRegenerate={converse.regenerateMessage}
+          onSelectVariant={converse.selectVariant}
+          regeneratingMessageId={converse.regeneratingMessageId}
           pendingQuestion={converse.pendingQuestion}
           respondToQuestion={converse.respondToQuestion}
           onSubmit={converse.sendMessage}
@@ -1048,6 +1074,9 @@ function SessionDetailContent({
         filesVersion={filesVersion}
         onSubmit={handleContinue}
         onStop={stopHandler}
+        onRegenerate={isConverseSession ? converse.regenerateMessage : undefined}
+        onSelectVariant={isConverseSession ? converse.selectVariant : undefined}
+        regeneratingMessageId={isConverseSession ? converse.regeneratingMessageId : undefined}
         sessionId={sessionId || null}
         getFileUrl={getFileUrl}
         fetchTaskFiles={fetchTaskFiles}
@@ -1087,7 +1116,9 @@ function SessionDetailContent({
 export function SessionDetailPage() {
   const params = useParams<{ workId?: string }>()
   const routeWorkId = typeof params.workId === 'string' ? params.workId.trim() : ''
-  return <SessionDetailContent routeWorkId={routeWorkId} />
+  const [searchParams] = useSearchParams()
+  const preferredSessionId = (searchParams.get('sessionId') || '').trim()
+  return <SessionDetailContent routeWorkId={routeWorkId} preferredSessionId={preferredSessionId} />
 }
 
 export function LegacySessionDetailPage() {
@@ -1118,7 +1149,10 @@ export function LegacySessionDetailPage() {
         const data = await res.json() as SessionDetail
         const workId = (data.work_id || '').trim()
         if (workId) {
-          navigate(`/history/work/${encodeURIComponent(workId)}`, { replace: true })
+          navigate(
+            `/history/work/${encodeURIComponent(workId)}?sessionId=${encodeURIComponent(routeSessionId)}`,
+            { replace: true },
+          )
           return
         }
 

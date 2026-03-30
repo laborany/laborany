@@ -45,6 +45,9 @@ export interface ExecutionPanelProps {
   /* 交互 */
   onSubmit: (message: string, files?: File[]) => void
   onStop: () => void
+  onRegenerate?: (messageId: string) => void | Promise<void>
+  onSelectVariant?: (messageId: string, variantIndex: number) => void
+  regeneratingMessageId?: string | null
 
   /* 会话信息 */
   sessionId: string | null
@@ -124,6 +127,9 @@ export function ExecutionPanel({
   filesVersion,
   onSubmit,
   onStop,
+  onRegenerate,
+  onSelectVariant,
+  regeneratingMessageId,
   sessionId,
   getFileUrl,
   fetchTaskFiles,
@@ -250,6 +256,9 @@ export function ExecutionPanel({
         respondToQuestion={respondToQuestion}
         onSubmit={onSubmit}
         onStop={onStop}
+        onRegenerate={onRegenerate}
+        onSelectVariant={onSelectVariant}
+        regeneratingMessageId={regeneratingMessageId}
         placeholder={placeholder}
         compositeSteps={compositeSteps}
         currentCompositeStep={currentCompositeStep}
@@ -338,6 +347,9 @@ interface ChatPanelProps {
   respondToQuestion: (id: string, answers: Record<string, string>) => void
   onSubmit: (message: string, files?: File[]) => void
   onStop: () => void
+  onRegenerate?: (messageId: string) => void | Promise<void>
+  onSelectVariant?: (messageId: string, variantIndex: number) => void
+  regeneratingMessageId?: string | null
   placeholder: string
   compositeSteps?: CompositeStepUI[]
   currentCompositeStep?: number
@@ -360,6 +372,9 @@ function ChatPanel({
   respondToQuestion,
   onSubmit,
   onStop,
+  onRegenerate,
+  onSelectVariant,
+  regeneratingMessageId,
   placeholder,
   compositeSteps,
   currentCompositeStep,
@@ -400,6 +415,9 @@ function ChatPanel({
           <MessageList
             messages={messages}
             isRunning={isRunning}
+            onRegenerate={onRegenerate}
+            onSelectVariant={onSelectVariant}
+            regeneratingMessageId={regeneratingMessageId}
             onShowWidget={onShowWidget}
             onExpandWidget={onExpandWidget}
             streamingWidget={streamingWidget}

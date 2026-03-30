@@ -9,6 +9,9 @@ interface ConversationWorkspaceViewProps {
   subtitle?: string
   messages: AgentMessage[]
   isRunning: boolean
+  onRegenerate?: (messageId: string) => void | Promise<void>
+  onSelectVariant?: (messageId: string, variantIndex: number) => void
+  regeneratingMessageId?: string | null
   pendingQuestion?: PendingQuestion | null
   respondToQuestion?: (questionId: string, answers: Record<string, string>) => void
   onSubmit: (text: string, files?: File[]) => void
@@ -22,6 +25,9 @@ export function ConversationWorkspaceView({
   subtitle,
   messages,
   isRunning,
+  onRegenerate,
+  onSelectVariant,
+  regeneratingMessageId,
   pendingQuestion,
   respondToQuestion,
   onSubmit,
@@ -42,7 +48,13 @@ export function ConversationWorkspaceView({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {messages.length > 0 ? (
-          <MessageList messages={messages} isRunning={isRunning && !pendingQuestion} />
+          <MessageList
+            messages={messages}
+            isRunning={isRunning && !pendingQuestion}
+            onRegenerate={onRegenerate}
+            onSelectVariant={onSelectVariant}
+            regeneratingMessageId={regeneratingMessageId}
+          />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             {emptyText}
