@@ -67,8 +67,22 @@ export default function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const prevIsRunningRef = useRef(isRunning)
-  const { profiles, activeProfileId, setActiveProfile } = useModelProfile()
+  const {
+    profiles,
+    activeProfileId,
+    setActiveProfile,
+    activeReasoningEffort,
+    setActiveReasoningEffort,
+  } = useModelProfile()
   const activeProfile = profiles.find(p => p.id === activeProfileId) ?? profiles[0]
+
+  const reasoningLabel = activeReasoningEffort === 'low'
+    ? '推理 低'
+    : activeReasoningEffort === 'medium'
+      ? '推理 中'
+      : activeReasoningEffort === 'high'
+        ? '推理 高'
+        : '推理 默认'
 
   const renderProfileTriggerContent = useCallback((withChevron: boolean) => {
     if (!activeProfile) return null
@@ -403,6 +417,55 @@ export default function ChatInput({
               </div>
             )
           )}
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                data-testid="reasoning-effort-trigger"
+                className="flex min-h-11 items-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                disabled={isRunning}
+                title="设置当前对话的推理强度"
+              >
+                <svg className="w-4 h-4 shrink-0 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.5 3.5A6.5 6.5 0 0012 16h4a4 4 0 000-8 5.5 5.5 0 00-10.52-2.2" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17h6M10 21h4" />
+                </svg>
+                <span className="text-sm font-medium">{reasoningLabel}</span>
+                <svg className="w-3.5 h-3.5 shrink-0 opacity-70 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" side="top" className="min-w-[180px] p-1.5">
+              {[
+                { value: 'default', label: '默认', description: '沿用模型默认推理策略' },
+                { value: 'low', label: '低', description: '更快，适合简单问答' },
+                { value: 'medium', label: '中', description: '平衡速度与质量' },
+                { value: 'high', label: '高', description: '更深入，适合复杂任务' },
+              ].map((option) => {
+                const isActive = option.value === activeReasoningEffort
+                return (
+                  <DropdownMenuItem
+                    key={option.value}
+                    onClick={() => setActiveReasoningEffort(option.value as typeof activeReasoningEffort)}
+                    className={`${isActive ? 'bg-accent/70' : ''} rounded-lg px-3 py-2.5`}
+                  >
+                    <span className="grid w-full grid-cols-[1rem,minmax(0,1fr)] gap-x-3 gap-y-1">
+                      <span className="row-span-2 mt-0.5 flex h-4 w-4 items-center justify-center">
+                        {isActive && (
+                          <svg className="h-4 w-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </span>
+                      <span className="text-left text-sm font-medium leading-snug">{option.label}</span>
+                      <span className="text-left text-[11px] text-muted-foreground">{option.description}</span>
+                    </span>
+                  </DropdownMenuItem>
+                )
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <span className="hidden sm:inline text-xs text-muted-foreground">Enter 发送，Ctrl / Cmd + Enter 换行</span>
         </div>

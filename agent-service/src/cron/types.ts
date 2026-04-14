@@ -39,7 +39,7 @@ export interface RetryPolicy {
 }
 
 export type JobSourceChannel = 'desktop' | 'feishu' | 'qq' | 'wechat'
-export type JobNotifyChannel = 'app' | 'feishu_dm' | 'qq_dm' | 'wechat_dm'
+export type JobNotifyChannel = 'app' | 'email' | 'feishu_dm' | 'qq_dm' | 'wechat_dm'
 
 export interface JobSource {
   channel: JobSourceChannel

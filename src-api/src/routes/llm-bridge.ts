@@ -8,6 +8,7 @@ interface AnthropicRequestBody {
   messages?: unknown[]
   system?: unknown
   thinking?: unknown
+  reasoning_effort?: unknown
   tools?: unknown[]
   tool_choice?: unknown
   max_tokens?: number
@@ -557,6 +558,11 @@ router.post('/anthropic/v1/messages', async (c) => {
   const upstreamApiKey = bridgePayload?.apiKey || incomingKey
   const upstreamBaseUrl = normalizeOpenAiBaseUrl(bridgePayload?.baseUrl)
   const model = (body.model || bridgePayload?.model || '').trim()
+  const reasoningEffort = (
+    typeof body.reasoning_effort === 'string'
+      ? body.reasoning_effort
+      : bridgePayload?.reasoningEffort
+  )?.trim()
   const provider = detectOpenAiProviderCapabilities(upstreamBaseUrl, model)
   const anthropicThinkingMode = getAnthropicThinkingMode(body.thinking)
   const preservedThinkingEnabled = shouldEnablePreservedThinking(provider, anthropicThinkingMode)
@@ -579,6 +585,7 @@ router.post('/anthropic/v1/messages', async (c) => {
     tool_choice: body.tool_choice,
     temperature: typeof body.temperature === 'number' ? body.temperature : undefined,
     top_p: typeof body.top_p === 'number' ? body.top_p : undefined,
+    reasoning_effort: reasoningEffort,
   }
 
   removeExpiredCacheEntries()
@@ -625,6 +632,9 @@ router.post('/anthropic/v1/messages', async (c) => {
   }
   if (typeof body.top_p === 'number' && Number.isFinite(body.top_p)) {
     openAiRequest.top_p = body.top_p
+  }
+  if (reasoningEffort === 'low' || reasoningEffort === 'medium' || reasoningEffort === 'high') {
+    openAiRequest.reasoning_effort = reasoningEffort
   }
 
   const tools = mapAnthropicToolsToOpenAi(Array.isArray(body.tools) ? body.tools : [])

@@ -17,10 +17,12 @@ import {
   sanitizeClaudeEnv,
   encodeOpenAiBridgeApiKey,
   normalizeModelInterfaceType,
+  normalizeReasoningEffort,
   resolveExecuteGenerativeWidgetSupport,
   resolveGenerativeWidgetSupport,
   type GenerativeWidgetSupport,
   type ModelInterfaceType,
+  type ReasoningEffort,
   BUILTIN_SKILLS_DIR,
   USER_SKILLS_DIR,
   getUserDir,
@@ -80,6 +82,7 @@ export interface ModelOverride {
   baseUrl?: string
   model?: string
   interfaceType?: ModelInterfaceType
+  reasoningEffort?: ReasoningEffort
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -613,6 +616,9 @@ function buildEnvConfig(overrides?: ModelOverride): Record<string, string | unde
   const interfaceType = normalizeModelInterfaceType(
     overrides?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,
   )
+  const reasoningEffort = normalizeReasoningEffort(
+    overrides?.reasoningEffort || process.env.LABORANY_REASONING_EFFORT,
+  )
 
   if (interfaceType === 'openai_compatible') {
     if (effectiveApiKey) {
@@ -620,6 +626,7 @@ function buildEnvConfig(overrides?: ModelOverride): Record<string, string | unde
         apiKey: effectiveApiKey,
         baseUrl: effectiveBaseUrl,
         model: effectiveModel,
+        reasoningEffort,
       })
     } else {
       delete env.ANTHROPIC_API_KEY
@@ -646,6 +653,14 @@ function buildEnvConfig(overrides?: ModelOverride): Record<string, string | unde
     } else {
       delete env.ANTHROPIC_MODEL
     }
+  }
+
+  if (reasoningEffort) {
+    env.LABORANY_REASONING_EFFORT = reasoningEffort
+    env.CLAUDE_CODE_EFFORT_LEVEL = reasoningEffort
+  } else {
+    delete env.LABORANY_REASONING_EFFORT
+    delete env.CLAUDE_CODE_EFFORT_LEVEL
   }
 
   if (platform() === 'win32') {
@@ -990,6 +1005,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     ? (modelOverride.model?.trim() || undefined)
     : process.env.ANTHROPIC_MODEL
   const interfaceType = normalizeModelInterfaceType(modelOverride?.interfaceType)
+  const effectiveReasoningEffort = normalizeReasoningEffort(
+    modelOverride?.reasoningEffort || process.env.LABORANY_REASONING_EFFORT || process.env.CLAUDE_CODE_EFFORT_LEVEL,
+  )
   const widgetSupport = resolveGenerativeWidgetSupport({
     requested: Boolean(enableWidgets),
     interfaceType,
@@ -1082,6 +1100,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   if (effectiveModel) {
     args.push('--model', effectiveModel)
+  }
+  if (effectiveReasoningEffort) {
+    args.push('--effort', effectiveReasoningEffort)
   }
 
   let widgetState: WidgetHandlerState | undefined

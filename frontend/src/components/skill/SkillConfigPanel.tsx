@@ -7,6 +7,8 @@
 import { useState, useEffect } from 'react'
 import type { SkillDetail } from '../../types'
 import { useSkillNameMap } from '../../hooks/useSkillNameMap'
+import { useModelProfile } from '../../contexts/ModelProfileContext'
+import { getEmployeeDirectoryProfileById } from '../../lib/employeeDirectory'
 import { FileIcon } from '../shared/FileIcon'
 import { CodeRenderer, MarkdownRenderer, getExt, type FileArtifact } from '../preview'
 
@@ -17,14 +19,27 @@ interface SkillConfigPanelProps {
 
 export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
   const { getSkillName } = useSkillNameMap()
+  const { profiles } = useModelProfile()
   const [detail, setDetail] = useState<SkillDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [fileContent, setFileContent] = useState<string>('')
   const [editing, setEditing] = useState(false)
+  const [modelProfileId, setModelProfileId] = useState('')
+  const [savingModelConfig, setSavingModelConfig] = useState(false)
+  const [modelConfigMessage, setModelConfigMessage] = useState<string | null>(null)
+  const isAssistantSkill = skillId === '__generic__' || skillId === '__converse__'
+
+  const employeeProfile = getEmployeeDirectoryProfileById(
+    detail?.id || skillId,
+    detail?.name,
+    detail?.description,
+  )
+  const displayName = employeeProfile.displayName || detail?.name || getSkillName(skillId) || skillId
+  const roleTitle = employeeProfile.roleTitle
 
   useEffect(() => {
-    fetchSkillDetail()
+    void fetchSkillDetail()
   }, [skillId, getSkillName])
 
   async function fetchSkillDetail() {
@@ -35,6 +50,7 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
       })
       const data = await res.json()
       setDetail(data)
+      setModelProfileId(data.modelConfig?.modelProfileId || '')
     } catch {
       // 模拟数据
       setDetail({
@@ -43,6 +59,9 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
         description: '分析财报数据，生成专业的金融研究报告',
         icon: '📊',
         category: '金融',
+        modelConfig: {
+          usesOverride: false,
+        },
         files: [
           { name: 'SKILL.md', path: 'SKILL.md', type: 'md', description: '主指令（触发时加载）' },
           { name: 'FORMS.md', path: 'FORMS.md', type: 'md', description: '表单指南（按需加载）' },
@@ -54,6 +73,38 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
       })
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function saveModelConfig() {
+    setSavingModelConfig(true)
+    setModelConfigMessage(null)
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`/api/skill/${skillId}/model-config`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          modelProfileId: modelProfileId || null,
+        }),
+      })
+      const data = await res.json().catch(() => ({})) as {
+        success?: boolean
+        error?: string
+        modelConfig?: SkillDetail['modelConfig']
+      }
+      if (!res.ok) {
+        throw new Error(data.error || '保存员工模型设置失败')
+      }
+      setDetail((prev) => prev ? { ...prev, modelConfig: data.modelConfig || prev.modelConfig } : prev)
+      setModelConfigMessage(modelProfileId ? '员工模型设置已保存' : '已恢复为继承个人助手默认模型')
+    } catch (error) {
+      setModelConfigMessage(error instanceof Error ? error.message : '保存员工模型设置失败')
+    } finally {
+      setSavingModelConfig(false)
     }
   }
 
@@ -118,7 +169,8 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
         <div className="flex items-center gap-3">
           <span className="text-3xl">{detail?.icon}</span>
           <div>
-            <h2 className="text-2xl font-bold text-foreground">{detail?.name}</h2>
+            <h2 className="text-2xl font-bold text-foreground">{displayName}</h2>
+            <p className="text-sm text-primary">{roleTitle}</p>
             <p className="text-sm text-muted-foreground">{detail?.description}</p>
           </div>
         </div>
@@ -126,8 +178,54 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
 
       <div className="grid grid-cols-12 gap-6">
         {/* 文件列表 */}
-        <div className="col-span-4 card p-4">
-          <h3 className="font-semibold text-foreground mb-4">物料结构</h3>
+        <div className="col-span-4 space-y-6">
+          <div className="card p-4">
+            <h3 className="font-semibold text-foreground mb-4">员工模型设置</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">执行模型</label>
+                <select
+                  value={modelProfileId}
+                  onChange={(e) => setModelProfileId(e.target.value)}
+                  className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="">
+                    {isAssistantSkill ? '跟随当前对话所选模型' : '继承本次调用时选择的模型'}
+                  </option>
+                  {profiles.map((profile, index) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}{index === 0 ? '（默认）' : ''}{profile.model ? ` · ${profile.model}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {isAssistantSkill
+                  ? '为个人助理绑定默认模型后，对话会默认使用这里的模型；但如果当前对话或任务显式指定了别的模型，会优先使用本次指定模型。'
+                  : '为当前员工绑定默认模型后，调用该员工时会默认使用这里的模型；但如果本次任务或定时任务显式指定了别的模型，会优先使用本次指定模型。'}
+              </p>
+              {detail?.modelConfig?.usesOverride && detail.modelConfig.modelProfileName && (
+                <p className="text-xs text-primary">
+                  当前绑定：{detail.modelConfig.modelProfileName}
+                </p>
+              )}
+              {modelConfigMessage && (
+                <p className="text-xs text-muted-foreground">{modelConfigMessage}</p>
+              )}
+              <div className="flex justify-end">
+                <button
+                  onClick={() => void saveModelConfig()}
+                  disabled={savingModelConfig}
+                  className="btn-primary px-3 py-1.5 text-sm"
+                >
+                  {savingModelConfig ? '保存中...' : '保存设置'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="card p-4">
+            <h3 className="font-semibold text-foreground mb-4">物料结构</h3>
           <div className="space-y-1">
             {detail?.files.map((file) => (
               <FileTreeItem
@@ -138,6 +236,7 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
               />
             ))}
           </div>
+        </div>
         </div>
 
         {/* 文件内容 */}

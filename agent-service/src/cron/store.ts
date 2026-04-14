@@ -377,6 +377,46 @@ export function updateJob(id: string, req: UpdateJobRequest): CronJob | null {
   return getJob(id)
 }
 
+export function updateJobNotifyRecipient(
+  id: string,
+  notify: {
+    channel: CronJob['notifyChannel']
+    feishuOpenId?: string
+    qqOpenId?: string
+    wechatUserId?: string
+  },
+): CronJob | null {
+  // 验证 channel 与对应 ID 字段的一致性
+  if (notify.channel === 'feishu_dm' && !notify.feishuOpenId?.trim()) {
+    console.warn(`[CronStore] updateJobNotifyRecipient: channel=feishu_dm but feishuOpenId is missing for job=${id}`)
+  }
+  if (notify.channel === 'qq_dm' && !notify.qqOpenId?.trim()) {
+    console.warn(`[CronStore] updateJobNotifyRecipient: channel=qq_dm but qqOpenId is missing for job=${id}`)
+  }
+  if (notify.channel === 'wechat_dm' && !notify.wechatUserId?.trim()) {
+    console.warn(`[CronStore] updateJobNotifyRecipient: channel=wechat_dm but wechatUserId is missing for job=${id}`)
+  }
+
+  getDb().prepare(`
+    UPDATE cron_jobs
+    SET notify_channel = ?,
+        notify_feishu_open_id = ?,
+        notify_qq_open_id = ?,
+        notify_wechat_user_id = ?,
+        updated_at = ?
+    WHERE id = ?
+  `).run(
+    notify.channel,
+    notify.channel === 'feishu_dm' ? (notify.feishuOpenId?.trim() || null) : null,
+    notify.channel === 'qq_dm' ? (notify.qqOpenId?.trim() || null) : null,
+    notify.channel === 'wechat_dm' ? (notify.wechatUserId?.trim() || null) : null,
+    new Date().toISOString(),
+    id,
+  )
+
+  return getJob(id)
+}
+
 /** 删除任务 */
 export function deleteJob(id: string): boolean {
   const result = getDb().prepare('DELETE FROM cron_jobs WHERE id = ?').run(id)

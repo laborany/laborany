@@ -9,7 +9,7 @@ import { Router, Request, Response } from 'express'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { readdir, writeFile } from 'fs/promises'
 import { join, dirname, normalize, posix } from 'path'
-import { loadSkill } from 'laborany-shared'
+import { getCapabilityDisplayName, loadSkill } from 'laborany-shared'
 import { DATA_DIR } from '../paths.js'
 import {
   memoryFileManager,
@@ -350,10 +350,10 @@ router.get('/memory/global', async (_req: Request, res: Response) => {
       const skillIds = await readdir(skillsRootDir)
       for (const skillId of skillIds) {
         const skillDir = join(skillsRootDir, skillId)
-        let skillName = skillId
+        let skillName = getCapabilityDisplayName(skillId)
         try {
           const skill = await loadSkill.byId(skillId)
-          if (skill?.meta?.name) skillName = skill.meta.name
+          if (skill?.meta?.name) skillName = getCapabilityDisplayName(skillId, skill.meta.name)
         } catch {
           // ignore skill metadata load errors, fallback to skillId
         }
@@ -408,7 +408,7 @@ router.get('/memory/skill/:skillId', async (req: Request, res: Response) => {
     }
 
     const skill = await loadSkill.byId(skillId)
-    const skillName = skill?.meta?.name || skillId
+    const skillName = getCapabilityDisplayName(skillId, skill?.meta?.name || skillId)
 
     const entries = await readdir(skillDir)
     const files = entries
@@ -649,7 +649,7 @@ router.get('/memory/consolidation-candidates', async (req: Request, res: Respons
     let skillName: string | undefined
     if (resolvedScope === 'skill' && resolvedSkillId) {
       const skill = await loadSkill.byId(resolvedSkillId)
-      skillName = skill?.meta?.name
+      skillName = getCapabilityDisplayName(resolvedSkillId, skill?.meta?.name || resolvedSkillId)
     }
 
     if (shouldAnalyze && resolvedScope) {

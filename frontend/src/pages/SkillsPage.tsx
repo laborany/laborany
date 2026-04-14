@@ -287,7 +287,8 @@ export default function SkillsPage() {
   }
 
   async function uninstallSkill(skillId: string) {
-    const skillName = skills.find(skill => skill.id === skillId)?.name || skillId
+    const skill = skills.find((item) => item.id === skillId)
+    const skillName = skill ? getEmployeeDirectoryProfile(skill).displayName : skillId
     if (!confirm(`确定要为 "${skillName}" 办理离职吗？`)) return
 
     try {
@@ -339,10 +340,11 @@ export default function SkillsPage() {
 
   if (optimizingSkill) {
     const skill = skills.find(item => item.id === optimizingSkill)
+    const skillDisplayName = skill ? getEmployeeDirectoryProfile(skill).displayName : optimizingSkill
     return (
       <OptimizeSkillChat
         skillId={optimizingSkill}
-        skillName={skill?.name || optimizingSkill}
+        skillName={skillDisplayName}
         onBack={() => setOptimizingSkill(null)}
         onComplete={() => {
           setOptimizingSkill(null)

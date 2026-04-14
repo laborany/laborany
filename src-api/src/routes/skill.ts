@@ -38,6 +38,13 @@ import {
   type ModelProfile,
 } from '../lib/model-profiles.js'
 import { isExistingSkillSessionBusy } from '../lib/skill-session-guard.js'
+import {
+  getSkillModelProfileId,
+  removeSkillModelSetting,
+  resolveSkillModelSettingDetail,
+  upsertSkillModelSetting,
+} from '../lib/skill-model-settings.js'
+import { normalizeReasoningEffort, type ReasoningEffort } from 'laborany-shared'
 
 interface SessionModelMeta {
   modelProfileId?: string
@@ -53,6 +60,18 @@ interface ResolvedModelSelection extends SessionModelMeta {
 interface AssistantSourceMeta {
   assistantHandoffText?: string
   workId?: string
+}
+
+function applyReasoningEffort(
+  modelOverride: ModelOverride | undefined,
+  reasoningEffort?: ReasoningEffort,
+): ModelOverride | undefined {
+  const normalized = normalizeReasoningEffort(reasoningEffort)
+  if (!normalized) return modelOverride
+  return {
+    ...(modelOverride || { apiKey: '' }),
+    reasoningEffort: normalized,
+  }
 }
 
 const skill = new Hono()
@@ -268,6 +287,62 @@ function resolveModelSelection(requestedProfileId?: string): ResolvedModelSelect
   }
 }
 
+function resolveExecutionModelSelection(
+  skillId: string,
+  requestedProfileId?: string,
+  reasoningEffort?: ReasoningEffort,
+): ResolvedModelSelection {
+  const configuredProfileId = getSkillModelProfileId(skillId)
+  const effectiveProfileId = requestedProfileId || configuredProfileId
+  const selection = resolveModelSelection(effectiveProfileId)
+  const appliedModelOverride = applyReasoningEffort(selection.modelOverride, reasoningEffort)
+
+  if (!requestedProfileId && !configuredProfileId) {
+    return {
+      ...selection,
+      modelOverride: appliedModelOverride,
+    }
+  }
+
+  if (requestedProfileId) {
+    if (selection.modelProfileId === requestedProfileId) {
+      return {
+        ...selection,
+        modelOverride: appliedModelOverride,
+      }
+    }
+
+    const fallbackWarning = selection.warning
+      ? `本次指定模型不可用：${selection.warning}`
+      : '本次指定模型不可用，已回退到员工默认模型或系统默认模型'
+
+    const fallbackProfileId = configuredProfileId
+    const fallbackSelection = resolveModelSelection(fallbackProfileId)
+    return {
+      ...fallbackSelection,
+      modelOverride: applyReasoningEffort(fallbackSelection.modelOverride, reasoningEffort),
+      warning: fallbackWarning,
+    }
+  }
+
+  if (selection.modelProfileId === configuredProfileId) {
+    return {
+      ...selection,
+      modelOverride: appliedModelOverride,
+    }
+  }
+
+  const fallbackWarning = selection.warning
+    ? `员工绑定模型不可用：${selection.warning}`
+    : '员工绑定模型不可用，已回退到默认模型'
+
+  return {
+    ...selection,
+    modelOverride: appliedModelOverride,
+    warning: fallbackWarning,
+  }
+}
+
 skill.get('/', async (c) => {
   const skills = await loadSkill.listAll()
   return c.json({ skills })
@@ -397,7 +472,39 @@ skill.get('/:skillId/detail', async (c) => {
     description: skillData.meta.description,
     icon: skillData.meta.icon,
     category: skillData.meta.category,
+    modelConfig: resolveSkillModelSettingDetail(skillId),
     files,
+  })
+})
+
+skill.put('/:skillId/model-config', async (c) => {
+  const skillId = c.req.param('skillId')
+  const skillData = await loadSkill.byId(skillId)
+
+  if (!skillData) {
+    return c.json({ error: 'Skill not found' }, 404)
+  }
+
+  const body = await c.req.json<{ modelProfileId?: string | null }>().catch(() => ({} as { modelProfileId?: string | null }))
+  const modelProfileId = typeof body.modelProfileId === 'string'
+    ? body.modelProfileId.trim()
+    : ''
+
+  if (modelProfileId) {
+    migrateFromEnvIfNeeded()
+    const store = readModelProfiles()
+    const profile = store.profiles.find((item) => item.id === modelProfileId)
+    if (!profile) {
+      return c.json({ error: '模型配置不存在' }, 400)
+    }
+    upsertSkillModelSetting(skillId, modelProfileId)
+  } else {
+    upsertSkillModelSetting(skillId, undefined)
+  }
+
+  return c.json({
+    success: true,
+    modelConfig: resolveSkillModelSettingDetail(skillId),
   })
 })
 
@@ -452,6 +559,7 @@ skill.post('/execute', async (c) => {
   let originQuery: string | undefined
   let existingSessionId: string | undefined
   let modelProfileIdRaw: string | undefined
+  let reasoningEffortRaw: string | undefined
   let sourceRaw: string | undefined
   let sourceMeta: Record<string, unknown> | undefined
   let attachmentIdsRaw: unknown
@@ -466,6 +574,7 @@ skill.post('/execute', async (c) => {
     originQuery = body['originQuery'] as string
     existingSessionId = (body['sessionId'] as string) || (body['session_id'] as string)
     modelProfileIdRaw = (body['modelProfileId'] as string) || (body['model_profile_id'] as string)
+    reasoningEffortRaw = (body['reasoningEffort'] as string) || (body['reasoning_effort'] as string)
     sourceRaw = body['source'] as string
     attachmentIdsRaw = body['attachmentIds']
     const sourceMetaStr = body['sourceMeta'] as string
@@ -494,6 +603,7 @@ skill.post('/execute', async (c) => {
     originQuery = body.originQuery
     existingSessionId = body.sessionId || body.session_id
     modelProfileIdRaw = body.modelProfileId || body.model_profile_id
+    reasoningEffortRaw = body.reasoningEffort || body.reasoning_effort
     sourceRaw = body.source
     attachmentIdsRaw = body.attachmentIds
     sourceMeta = body.sourceMeta
@@ -501,13 +611,19 @@ skill.post('/execute', async (c) => {
 
   let skillId = normalizeExecutionSkillId(skillIdRaw)
   const requestedModelProfileId = (modelProfileIdRaw || '').trim() || undefined
-  const modelSelection = resolveModelSelection(requestedModelProfileId)
+  const requestedReasoningEffort = normalizeReasoningEffort(reasoningEffortRaw)
   const source = (sourceRaw || '').trim() || 'desktop'
   const requestAttachmentIds = normalizeAttachmentIds(attachmentIdsRaw)
 
   if (!skillId || typeof query !== 'string') {
     return c.json({ error: '缺少 skillId 或 query 参数' }, 400)
   }
+
+  const modelSelection = resolveExecutionModelSelection(
+    skillId,
+    requestedModelProfileId,
+    requestedReasoningEffort,
+  )
 
   const existingRuntimeStatus = existingSessionId
     ? runtimeTaskManager.getStatus(existingSessionId)
@@ -990,6 +1106,7 @@ skill.delete('/:skillId', async (c) => {
   }
 
   await rm(userSkillPath, { recursive: true, force: true })
+  removeSkillModelSetting(skillId)
   loadSkill.clearCache()
   return c.json({ success: true })
 })

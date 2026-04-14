@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { API_BASE } from '../config/api'
 
 export type ModelInterfaceType = 'anthropic' | 'openai_compatible'
+export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high'
 
 export interface ModelProfile {
   id: string
@@ -19,15 +20,20 @@ interface ModelProfileContextValue {
   profiles: ModelProfile[]
   activeProfileId: string | null
   setActiveProfile: (id: string) => void
+  activeReasoningEffort: ReasoningEffort
+  setActiveReasoningEffort: (value: ReasoningEffort) => void
   refreshProfiles: () => Promise<void>
 }
 
 const STORAGE_KEY = 'laborany:active-model-profile-id'
+const REASONING_STORAGE_KEY = 'laborany:active-reasoning-effort'
 
 const ModelProfileContext = createContext<ModelProfileContextValue>({
   profiles: [],
   activeProfileId: null,
   setActiveProfile: () => {},
+  activeReasoningEffort: 'default',
+  setActiveReasoningEffort: () => {},
   refreshProfiles: async () => {},
 })
 
@@ -35,6 +41,10 @@ export function ModelProfileProvider({ children }: { children: ReactNode }) {
   const [profiles, setProfiles] = useState<ModelProfile[]>([])
   const [activeProfileId, setActiveProfileIdState] = useState<string | null>(() => {
     return localStorage.getItem(STORAGE_KEY)
+  })
+  const [activeReasoningEffort, setActiveReasoningEffortState] = useState<ReasoningEffort>(() => {
+    const stored = localStorage.getItem(REASONING_STORAGE_KEY)
+    return stored === 'low' || stored === 'medium' || stored === 'high' ? stored : 'default'
   })
 
   const refreshProfiles = useCallback(async () => {
@@ -80,6 +90,11 @@ export function ModelProfileProvider({ children }: { children: ReactNode }) {
     setActiveProfileIdState(id)
   }, [])
 
+  const setActiveReasoningEffort = useCallback((value: ReasoningEffort) => {
+    localStorage.setItem(REASONING_STORAGE_KEY, value)
+    setActiveReasoningEffortState(value)
+  }, [])
+
   // Sync activeProfileId to localStorage whenever it changes
   useEffect(() => {
     if (activeProfileId) {
@@ -87,8 +102,19 @@ export function ModelProfileProvider({ children }: { children: ReactNode }) {
     }
   }, [activeProfileId])
 
+  useEffect(() => {
+    localStorage.setItem(REASONING_STORAGE_KEY, activeReasoningEffort)
+  }, [activeReasoningEffort])
+
   return (
-    <ModelProfileContext.Provider value={{ profiles, activeProfileId, setActiveProfile, refreshProfiles }}>
+    <ModelProfileContext.Provider value={{
+      profiles,
+      activeProfileId,
+      setActiveProfile,
+      activeReasoningEffort,
+      setActiveReasoningEffort,
+      refreshProfiles,
+    }}>
       {children}
     </ModelProfileContext.Provider>
   )

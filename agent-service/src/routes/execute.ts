@@ -8,8 +8,11 @@
 import { Router, Request, Response } from 'express'
 import { v4 as uuid } from 'uuid'
 import {
+  getCapabilityDisplayName,
   loadSkill,
+  normalizeReasoningEffort,
   resolveExecuteGenerativeWidgetSupport,
+  type ReasoningEffort,
 } from 'laborany-shared'
 import { SessionManager } from '../session-manager.js'
 import { executeAgent } from '../agent-executor.js'
@@ -17,6 +20,18 @@ import { taskManager as taskManagerInstance } from '../task-manager.js'
 import { resolveModelProfile } from '../lib/resolve-model-profile.js'
 
 type TaskManagerType = typeof taskManagerInstance
+
+function applyReasoningEffortToModelOverride(
+  modelOverride: Awaited<ReturnType<typeof resolveModelProfile>>,
+  reasoningEffort?: ReasoningEffort,
+) {
+  const normalized = normalizeReasoningEffort(reasoningEffort)
+  if (!normalized) return modelOverride
+  return {
+    ...(modelOverride || { apiKey: '' }),
+    reasoningEffort: normalized,
+  }
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       工厂函数：注入 sessionManager 和 taskManager        │
@@ -33,6 +48,9 @@ function createExecuteRouter(sessionManager: SessionManager, taskManager: TaskMa
    * └──────────────────────────────────────────────────────────────────────────┘ */
   router.post('/execute', async (req: Request, res: Response) => {
     const { skillId, query, sessionId: existingSessionId, modelProfileId } = req.body
+    const reasoningEffort = normalizeReasoningEffort(
+      typeof req.body?.reasoningEffort === 'string' ? req.body.reasoningEffort : undefined,
+    )
 
     if (!skillId || !query) {
       res.status(400).json({ error: '缺少 skillId 或 query 参数' })
@@ -53,17 +71,18 @@ function createExecuteRouter(sessionManager: SessionManager, taskManager: TaskMa
     const sessionId = existingSessionId || uuid()
     const abortController = new AbortController()
     sessionManager.register(sessionId, abortController)
-    taskManager.register(sessionId, skillId, skill.meta.name)
+    taskManager.register(sessionId, skillId, getCapabilityDisplayName(skillId, skill.meta.name))
 
     res.write(`data: ${JSON.stringify({ type: 'session', sessionId })}\n\n`)
 
     // Resolve model profile (non-blocking warning on failure)
-    const modelOverride = await resolveModelProfile(modelProfileId)
-    if (modelProfileId && !modelOverride) {
+    const resolvedModelOverride = await resolveModelProfile(modelProfileId)
+    if (modelProfileId && !resolvedModelOverride) {
       try {
         res.write(`data: ${JSON.stringify({ type: 'warning', content: `模型配置 ${modelProfileId} 未找到，已回退到默认模型` })}\n\n`)
       } catch { /* ignore */ }
     }
+    const modelOverride = applyReasoningEffortToModelOverride(resolvedModelOverride, reasoningEffort)
     const executeWidgetSupport = resolveExecuteGenerativeWidgetSupport({
       requested: true,
       interfaceType: modelOverride?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,

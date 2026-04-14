@@ -110,6 +110,7 @@ interface ConverseSessionPayload {
   sourceMeta?: {
     attachmentIds?: string[] | string
     workId?: string
+    reasoningEffort?: string
   } | null
 }
 
@@ -396,7 +397,7 @@ export function useConverse(): UseConverseReturn {
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [state, setState] = useState<UseConverseReturn['state']>(null)
   const [isThinking, setIsThinking] = useState(false)
-  const { activeProfileId, profiles } = useModelProfile()
+  const { activeProfileId, activeReasoningEffort, profiles } = useModelProfile()
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0] || null
   const canRenderWidgets = supportsGenerativeWidgets(activeProfile)
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -892,6 +893,7 @@ export function useConverse(): UseConverseReturn {
           latestUserQuery: userInput,
           messages: payloadMessages,
           modelProfileId: activeProfileId || undefined,
+          reasoningEffort: activeReasoningEffort !== 'default' ? activeReasoningEffort : undefined,
           questionResponse: questionResponse || undefined,
           attachmentIds: mergedFileIds,
           context: {
@@ -949,7 +951,7 @@ export function useConverse(): UseConverseReturn {
         setIsThinking(false)
       }
     }
-  }, [activeProfileId, canRenderWidgets, processSSEStream, syncPersistedMessages])
+  }, [activeProfileId, activeReasoningEffort, canRenderWidgets, processSSEStream, syncPersistedMessages])
 
   const selectVariant = useCallback((messageId: string, variantIndex: number) => {
     const sessionKey = sessionIdRef.current?.trim()
@@ -999,6 +1001,7 @@ export function useConverse(): UseConverseReturn {
           sessionId: sid,
           messageId: targetMessage.serverMessageId,
           modelProfileId: activeProfileId || undefined,
+          reasoningEffort: activeReasoningEffort !== 'default' ? activeReasoningEffort : undefined,
           messages: contextMessages,
         }),
       })
@@ -1052,7 +1055,7 @@ export function useConverse(): UseConverseReturn {
     } finally {
       setRegeneratingMessageId(null)
     }
-  }, [activeProfileId, regeneratingMessageId])
+  }, [activeProfileId, activeReasoningEffort, regeneratingMessageId])
 
   const respondToQuestion = useCallback(async (_questionId: string, answers: Record<string, string>) => {
     if (!pendingQuestion) return

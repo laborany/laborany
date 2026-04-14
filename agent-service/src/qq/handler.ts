@@ -29,7 +29,7 @@ import {
 } from './index.js'
 import { QQStreamingSession } from './streaming.js'
 import { sendArtifactsToTarget, sendFileToTarget } from './push.js'
-import { normalizeAttachmentIds, stripAttachmentMarkers } from 'laborany-shared'
+import { getCapabilityDisplayName, normalizeAttachmentIds, stripAttachmentMarkers } from 'laborany-shared'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     配置与常量                                           │
@@ -446,7 +446,7 @@ async function fetchSkillList(): Promise<SkillListItem[]> {
       ? obj.description
       : (typeof obj.meta?.description === 'string' ? obj.meta.description : undefined)
     if (!id || !name) continue
-    skills.push({ id, name, description })
+    skills.push({ id, name: getCapabilityDisplayName(id, name), description })
   }
 
   return skills

@@ -1,6 +1,7 @@
 import { copyFile, mkdir, readdir, rename, stat } from 'fs/promises'
 import type { Skill, CompositeStep } from 'laborany-shared'
 import {
+  getCapabilityDisplayName,
   loadSkill,
   normalizeCapabilityDisplayName,
   resolveExecuteGenerativeWidgetSupport,
@@ -224,7 +225,7 @@ class RuntimeTaskManager {
     const task: RuntimeTask = {
       sessionId: options.sessionId,
       skillId: options.skillId,
-      skillName: options.skill.meta.name || options.skillId,
+      skillName: getCapabilityDisplayName(options.skillId, options.skill.meta.name || options.skillId),
       query: options.query,
       workDir,
       source: options.source || 'desktop',

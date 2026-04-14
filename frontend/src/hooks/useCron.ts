@@ -5,7 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useEffect, useCallback } from 'react'
-import { AGENT_API_BASE } from '../config/api'
+import { AGENT_API_BASE, API_BASE } from '../config/api'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           类型定义                                        │
@@ -40,7 +40,7 @@ export interface ExecutionTarget {
 }
 
 export type JobSourceChannel = 'desktop' | 'feishu' | 'qq' | 'wechat'
-export type JobNotifyChannel = 'app' | 'feishu_dm' | 'qq_dm' | 'wechat_dm'
+export type JobNotifyChannel = 'app' | 'email' | 'feishu_dm' | 'qq_dm' | 'wechat_dm'
 
 export interface JobSource {
   channel: JobSourceChannel
@@ -55,6 +55,36 @@ export interface JobNotify {
   feishuOpenId?: string
   qqOpenId?: string
   wechatUserId?: string
+}
+
+export interface DeliveryChannelAvailability {
+  enabled: boolean
+  reason?: string
+  resolvedRecipientLabel?: string
+  resolvedRecipientId?: string
+}
+
+export interface DeliveryStatusResponse {
+  channels: Record<JobNotifyChannel, DeliveryChannelAvailability>
+}
+
+interface ConfigItem {
+  value: string
+  masked: string
+}
+
+interface WechatStatusResponse {
+  enabled: boolean
+  running: boolean
+  loggedIn: boolean
+  credentialSource: 'env' | 'file' | null
+  loginPending: boolean
+  account: {
+    accountId: string
+    rawAccountId: string
+    userId?: string
+    savedAt: string
+  } | null
 }
 
 export interface CronJob {
@@ -183,6 +213,89 @@ async function fetchJobRuns(id: string, limit = 20): Promise<CronRun[]> {
   return data.runs
 }
 
+function parseListValue(rawValue?: string): string[] {
+  return (rawValue || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+async function fetchDeliveryStatus(): Promise<DeliveryStatusResponse> {
+  const [configRes, wechatRes, cronStatusRes] = await Promise.allSettled([
+    fetch(`${API_BASE}/config`),
+    fetch(`${AGENT_API_BASE}/wechat/status`),
+    fetch(`${AGENT_API_BASE}/cron/delivery-status`),
+  ])
+
+  let configMap: Record<string, ConfigItem> = {}
+  if (configRes.status === 'fulfilled' && configRes.value.ok) {
+    const payload = await configRes.value.json() as { config?: Record<string, ConfigItem> }
+    configMap = payload.config || {}
+  }
+
+  let wechatStatus: WechatStatusResponse | null = null
+  if (wechatRes.status === 'fulfilled' && wechatRes.value.ok) {
+    wechatStatus = await wechatRes.value.json() as WechatStatusResponse
+  }
+
+  let backendChannels: DeliveryStatusResponse['channels'] | null = null
+  if (cronStatusRes.status === 'fulfilled' && cronStatusRes.value.ok) {
+    const payload = await cronStatusRes.value.json() as DeliveryStatusResponse
+    backendChannels = payload.channels || null
+  }
+
+  const email = (configMap.NOTIFICATION_EMAIL?.value || '').trim()
+  const smtpHost = (configMap.SMTP_HOST?.value || '').trim()
+  const smtpUser = (configMap.SMTP_USER?.value || '').trim()
+  const smtpPass = (configMap.SMTP_PASS?.value || '').trim()
+  const qqEnabled = (configMap.QQ_ENABLED?.value || '').trim().toLowerCase() === 'true'
+  const qqAllowUsers = parseListValue(configMap.QQ_ALLOW_USERS?.value)
+  const feishuEnabled = (configMap.FEISHU_ENABLED?.value || '').trim().toLowerCase() === 'true'
+
+  return {
+    channels: {
+      app: {
+        enabled: true,
+        resolvedRecipientLabel: '应用内通知',
+      },
+      email: !email
+        ? { enabled: false, reason: '未配置通知邮箱 (NOTIFICATION_EMAIL)' }
+        : (!smtpHost || !smtpUser || !smtpPass)
+          ? { enabled: false, reason: '未完整配置 SMTP_HOST / SMTP_USER / SMTP_PASS' }
+          : { enabled: true, resolvedRecipientLabel: email },
+      feishu_dm: backendChannels?.feishu_dm || (
+        !feishuEnabled
+          ? { enabled: false, reason: '未启用飞书 Bot' }
+          : { enabled: false, reason: '请先用当前飞书账号与机器人对话一次，以建立送达对象' }
+      ),
+      qq_dm: backendChannels?.qq_dm || (
+        !qqEnabled
+          ? { enabled: false, reason: '未启用 QQ Bot' }
+          : qqAllowUsers.length === 0
+            ? { enabled: false, reason: '请先在 QQ_ALLOW_USERS 中配置至少一个接收账号' }
+            : {
+                enabled: true,
+                resolvedRecipientLabel: qqAllowUsers[0],
+                resolvedRecipientId: qqAllowUsers[0],
+              }
+      ),
+      wechat_dm: backendChannels?.wechat_dm || (
+        !wechatStatus?.enabled
+          ? { enabled: false, reason: '未启用微信 Bot' }
+          : (!wechatStatus.loggedIn || !wechatStatus.account)
+            ? { enabled: false, reason: '未绑定微信账号' }
+            : !wechatStatus.account.userId?.trim()
+              ? { enabled: false, reason: '当前微信账号缺少 userId，无法作为送达对象' }
+              : {
+                  enabled: true,
+                  resolvedRecipientLabel: wechatStatus.account.rawAccountId,
+                  resolvedRecipientId: wechatStatus.account.userId.trim(),
+                }
+      ),
+    },
+  }
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           useCronJobs Hook                               │
  * │  管理任务列表的获取、创建、更新、删除                                      │
@@ -279,6 +392,37 @@ export function useCronJobRuns(jobId: string | null) {
   }, [refresh])
 
   return { runs, loading, error, refresh }
+}
+
+export function useCronDeliveryStatus() {
+  const [status, setStatus] = useState<DeliveryStatusResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const data = await fetchDeliveryStatus()
+      setStatus(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载送达通道状态失败')
+      setStatus(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  return {
+    status,
+    loading,
+    error,
+    refresh,
+  }
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

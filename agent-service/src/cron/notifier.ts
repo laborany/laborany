@@ -6,12 +6,16 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { createTransport, type Transporter } from 'nodemailer'
+import { existsSync, readFileSync } from 'fs'
+import { join } from 'path'
 import { createNotification } from './store.js'
 import type { CronJob } from './types.js'
+import { updateJobNotifyRecipient } from './store.js'
 import { sendTextToOpenId, sendArtifactsToOpenId } from '../feishu/push.js'
 import { sendTextToTarget, sendArtifactsToTarget } from '../qq/push.js'
 import { loadWechatConfig } from '../wechat/config.js'
 import { queueWechatPendingText, sendWechatTextChunks } from '../wechat/push.js'
+import { DATA_DIR } from '../paths.js'
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                           配置读取                                        │
@@ -41,6 +45,44 @@ function getNotifyConfig(): NotifyConfig {
       pass: process.env.SMTP_PASS || '',
     } : undefined
   }
+}
+
+function loadSingleRemoteRecipient(stateFilePath: string): string | null {
+  try {
+    if (!existsSync(stateFilePath)) return null
+    const raw = readFileSync(stateFilePath, 'utf-8')
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const keys = Object.keys(parsed || {}).map(key => key.trim()).filter(Boolean)
+    if (keys.length !== 1) return null
+    return keys[0]
+  } catch (error) {
+    console.warn(`[Notifier] Failed to load recipient from ${stateFilePath}:`, error)
+    return null
+  }
+}
+
+function resolveEffectiveFeishuRecipient(job: CronJob): { recipient: string | null; healed: boolean } {
+  const latest = loadSingleRemoteRecipient(join(DATA_DIR, 'feishu', 'user-states.json'))
+  if (latest && latest !== (job.notifyFeishuOpenId || '')) {
+    updateJobNotifyRecipient(job.id, {
+      channel: 'feishu_dm',
+      feishuOpenId: latest,
+    })
+    return { recipient: latest, healed: true }
+  }
+  return { recipient: job.notifyFeishuOpenId || latest, healed: false }
+}
+
+function resolveEffectiveQqRecipient(job: CronJob): { recipient: string | null; healed: boolean } {
+  const latest = loadSingleRemoteRecipient(join(DATA_DIR, 'qq', 'user-states.json'))
+  if (latest && latest !== (job.notifyQqOpenId || '')) {
+    updateJobNotifyRecipient(job.id, {
+      channel: 'qq_dm',
+      qqOpenId: latest,
+    })
+    return { recipient: latest, healed: true }
+  }
+  return { recipient: job.notifyQqOpenId || latest, healed: false }
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -122,9 +164,56 @@ export async function notifyJobComplete(
   const title = `${job.name} ${isSuccess ? '执行成功' : isAborted ? '已中止' : '执行失败'}`
   const content = error || (isAborted ? '任务已中止' : '任务已完成')
 
-  if (job.notifyChannel === 'feishu_dm' && job.notifyFeishuOpenId) {
+  createNotification({
+    type: isSuccess ? 'cron_success' : 'cron_error',
+    title,
+    content,
+    jobId: job.id,
+    sessionId,
+  })
+
+  if (job.notifyChannel === 'email') {
+    if (config.email && config.smtp) {
+      const html = buildEmailHtml(job, status, sessionId, error)
+      const sent = await sendEmail(config.email, `[LaborAny] ${title}`, html)
+      if (!sent) {
+        createNotification({
+          type: isSuccess ? 'cron_success' : 'cron_error',
+          title: `${title}（邮箱推送失败）`,
+          content,
+          jobId: job.id,
+          sessionId,
+        })
+      }
+    } else {
+      createNotification({
+        type: isSuccess ? 'cron_success' : 'cron_error',
+        title: `${title}（邮箱未配置）`,
+        content,
+        jobId: job.id,
+        sessionId,
+      })
+    }
+    return
+  }
+
+  if (job.notifyChannel === 'feishu_dm') {
+    const { recipient, healed } = resolveEffectiveFeishuRecipient(job)
+    if (healed) {
+      console.log(`[Notifier] healed Feishu recipient for job=${job.id}`)
+    }
+    if (!recipient) {
+      createNotification({
+        type: isSuccess ? 'cron_success' : 'cron_error',
+        title: `${title}（飞书接收对象缺失）`,
+        content,
+        jobId: job.id,
+        sessionId,
+      })
+      return
+    }
     const summary = buildFeishuSummaryText(job, status, sessionId, error)
-    const summarySent = await sendTextToOpenId(job.notifyFeishuOpenId, summary)
+    const summarySent = await sendTextToOpenId(recipient, summary)
     if (!summarySent) {
       console.warn(`[Notifier] 飞书摘要推送失败: job=${job.id}`)
       createNotification({
@@ -138,18 +227,32 @@ export async function notifyJobComplete(
     }
 
     if (isSuccess) {
-      const artifacts = await sendArtifactsToOpenId(job.notifyFeishuOpenId, sessionId, runStartedAtMs)
+      const artifacts = await sendArtifactsToOpenId(recipient, sessionId, runStartedAtMs)
       if (artifacts.sent > 0 || artifacts.failed > 0 || artifacts.skipped > 0) {
         const followup = `文件回传结果：成功 ${artifacts.sent}，失败 ${artifacts.failed}，跳过 ${artifacts.skipped}。`
-        await sendTextToOpenId(job.notifyFeishuOpenId, followup)
+        await sendTextToOpenId(recipient, followup)
       }
     }
     return
   }
 
-  if (job.notifyChannel === 'qq_dm' && job.notifyQqOpenId) {
+  if (job.notifyChannel === 'qq_dm') {
+    const { recipient, healed } = resolveEffectiveQqRecipient(job)
+    if (healed) {
+      console.log(`[Notifier] healed QQ recipient for job=${job.id}`)
+    }
+    if (!recipient) {
+      createNotification({
+        type: isSuccess ? 'cron_success' : 'cron_error',
+        title: `${title}（QQ 接收对象缺失）`,
+        content,
+        jobId: job.id,
+        sessionId,
+      })
+      return
+    }
     const summary = buildQqSummaryText(job, status, sessionId, error)
-    const summarySent = await sendTextToTarget(job.notifyQqOpenId, 'c2c', summary)
+    const summarySent = await sendTextToTarget(recipient, 'c2c', summary)
     if (!summarySent) {
       console.warn(`[Notifier] QQ 摘要推送失败: job=${job.id}`)
       createNotification({
@@ -162,10 +265,10 @@ export async function notifyJobComplete(
       return
     }
 
-    const artifacts = await sendArtifactsToTarget(job.notifyQqOpenId, 'c2c', sessionId, runStartedAtMs)
+    const artifacts = await sendArtifactsToTarget(recipient, 'c2c', sessionId, runStartedAtMs)
     if (artifacts.sent > 0 || artifacts.failed > 0 || artifacts.skipped > 0) {
       const followup = `文件回传结果：成功 ${artifacts.sent}，失败 ${artifacts.failed}，跳过 ${artifacts.skipped}。`
-      await sendTextToTarget(job.notifyQqOpenId, 'c2c', followup)
+      await sendTextToTarget(recipient, 'c2c', followup)
     }
     return
   }
@@ -207,21 +310,6 @@ export async function notifyJobComplete(
       })
       return
     }
-  }
-
-  // 默认通知渠道：写入 app 内通知
-  createNotification({
-    type: isSuccess ? 'cron_success' : 'cron_error',
-    title,
-    content,
-    jobId: job.id,
-    sessionId,
-  })
-
-  // 发送邮件（如配置）
-  if (config.email && config.smtp) {
-    const html = buildEmailHtml(job, status, sessionId, error)
-    await sendEmail(config.email, `[LaborAny] ${title}`, html)
   }
 }
 

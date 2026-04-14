@@ -57,11 +57,13 @@ export {
 
 export {
   normalizeModelInterfaceType,
+  normalizeReasoningEffort,
   encodeOpenAiBridgeApiKey,
   decodeOpenAiBridgeApiKey,
   isOpenAiBridgeApiKey,
   type ModelInterfaceType,
   type OpenAiBridgeCredential,
+  type ReasoningEffort,
 } from './model-interface.js'
 
 export {
@@ -76,3 +78,7 @@ export {
   type GenerativeWidgetTarget,
   type GenerativeWidgetSupport,
 } from './generative-widgets.js'
+
+export {
+  getCapabilityDisplayName,
+} from './display-names.js'

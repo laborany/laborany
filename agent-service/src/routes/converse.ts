@@ -38,7 +38,9 @@ import {
   extractAttachmentIdsFromText,
   hydrateAttachmentsToTaskDir,
   normalizeAttachmentIds,
+  normalizeReasoningEffort,
   resolveGenerativeWidgetSupport,
+  type ReasoningEffort,
   type Skill,
 } from 'laborany-shared'
 
@@ -106,6 +108,7 @@ interface StoredConverseSessionDetail {
   sourceMeta?: {
     attachmentIds?: string[] | string
     modelProfileId?: string
+    reasoningEffort?: string
   } | null
 }
 
@@ -190,6 +193,18 @@ function buildConverseRegenerateQuery(messages: RegenerateContextMessage[]): str
     '[Conversation Transcript]',
     transcript,
   ].join('\n')
+}
+
+function applyReasoningEffortToModelOverride(
+  modelOverride: Awaited<ReturnType<typeof resolveModelProfile>>,
+  reasoningEffort?: ReasoningEffort,
+) {
+  const normalized = normalizeReasoningEffort(reasoningEffort)
+  if (!normalized) return modelOverride
+  return {
+    ...(modelOverride || { apiKey: '' }),
+    reasoningEffort: normalized,
+  }
 }
 
 async function fetchStoredConverseSession(sessionId: string): Promise<StoredConverseSessionDetail | null> {
@@ -343,6 +358,9 @@ router.post('/regenerate', async (req: Request, res: Response) => {
   const requestedModelProfileId = typeof req.body?.modelProfileId === 'string'
     ? req.body.modelProfileId.trim()
     : ''
+  const requestedReasoningEffort = normalizeReasoningEffort(
+    typeof req.body?.reasoningEffort === 'string' ? req.body.reasoningEffort : undefined,
+  )
 
   const contextMessages = rawMessages
     .map((item: unknown) => {
@@ -409,7 +427,13 @@ router.post('/regenerate', async (req: Request, res: Response) => {
 
   const attachmentIds = normalizeAttachmentIds(storedSession.sourceMeta?.attachmentIds)
   const effectiveModelProfileId = requestedModelProfileId || storedSession.sourceMeta?.modelProfileId || ''
-  const modelOverride = await resolveModelProfile(effectiveModelProfileId || undefined)
+  const effectiveReasoningEffort = requestedReasoningEffort
+    || normalizeReasoningEffort(storedSession.sourceMeta?.reasoningEffort)
+  const resolvedModelOverride = await resolveModelProfile(effectiveModelProfileId || undefined)
+  const modelOverride = applyReasoningEffortToModelOverride(
+    resolvedModelOverride,
+    effectiveReasoningEffort,
+  )
 
   const tempRunId = `${sessionId}-regen-${randomUUID()}`
   const taskDir = join(TASKS_DIR, tempRunId)
@@ -1943,12 +1967,16 @@ router.post('/', async (req: Request, res: Response) => {
     messages: rawMessages,
     context: rawContext,
     modelProfileId,
+    reasoningEffort: rawReasoningEffort,
     attachmentIds: rawAttachmentIds,
     latestUserQuery: rawLatestUserQuery,
     questionResponse: rawQuestionResponse,
   } = req.body
   const runtimeContext = normalizeRuntimeContext(rawContext)
   const questionResponse = normalizeQuestionResponsePayload(rawQuestionResponse)
+  const reasoningEffort = normalizeReasoningEffort(
+    typeof rawReasoningEffort === 'string' ? rawReasoningEffort : undefined,
+  )
 
   if (!rawMessages || !Array.isArray(rawMessages) || !rawMessages.length) {
     res.status(400).json({ error: '缺少 messages 参数' })
@@ -2011,6 +2039,7 @@ router.post('/', async (req: Request, res: Response) => {
   const workId = await upsertExternalSession(sessionId, persistUserQuery, 'running', {
     attachmentIds,
     modelProfileId: modelProfileId || undefined,
+    reasoningEffort: reasoningEffort || undefined,
   })
   sseWrite(res, 'session', { sessionId, workId: workId || undefined })
   const userMessageId = await appendExternalMessage(
@@ -2215,10 +2244,14 @@ router.post('/', async (req: Request, res: Response) => {
     const query = buildConverseQuery(effectiveBaseQuery, uploadedFiles)
 
     // Resolve model profile for this round
-    const modelOverride = await resolveModelProfile(modelProfileId)
-    if (modelProfileId && !modelOverride) {
+    const resolvedModelOverride = await resolveModelProfile(modelProfileId)
+    if (modelProfileId && !resolvedModelOverride) {
       sseWrite(res, 'warning', { content: `模型配置 ${modelProfileId} 未找到，已回退到默认模型` })
     }
+    const modelOverride = applyReasoningEffortToModelOverride(
+      resolvedModelOverride,
+      reasoningEffort,
+    )
     const widgetSupport = resolveGenerativeWidgetSupport({
       requested: Boolean(runtimeContext?.capabilities?.canRenderWidgets),
       interfaceType: modelOverride?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,

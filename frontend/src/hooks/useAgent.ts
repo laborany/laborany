@@ -404,7 +404,7 @@ export function useAgent(skillId: string) {
   const pendingWidgetDeltaRef = useRef<string | null>(null)
   const widgetDeltaRafRef = useRef<number | null>(null)
   const committedWidgetsRef = useRef<Map<string, WidgetState>>(new Map())
-  const { activeProfileId } = useModelProfile()
+  const { activeProfileId, activeReasoningEffort } = useModelProfile()
 
   const flushAssistantText = useCallback((force = false) => {
     // Fix P0-3: force flush 时先取消 pending RAF，防止 tool_use 后文本丢失
@@ -1292,6 +1292,7 @@ export function useAgent(skillId: string) {
           attachmentIds: fileIds,
           sessionId: currentSessionId,
           modelProfileId: activeProfileId || undefined,
+          reasoningEffort: activeReasoningEffort !== 'default' ? activeReasoningEffort : undefined,
           sourceMeta: options?.assistantHandoffText
             ? {
               assistantHandoffText: options.assistantHandoffText,
@@ -1363,7 +1364,7 @@ export function useAgent(skillId: string) {
         }
       }
     },
-    [activeProfileId, skillId, reconnectSessionStream, readSseStream],
+    [activeProfileId, activeReasoningEffort, skillId, reconnectSessionStream, readSseStream],
   )
 
   const stop = useCallback(async () => {

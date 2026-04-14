@@ -38,6 +38,7 @@ export {
   listJobsBySourceOpenId,
   createJob,
   updateJob,
+  updateJobNotifyRecipient,
   deleteJob,
   getJobRuns,
   getDueJobs,

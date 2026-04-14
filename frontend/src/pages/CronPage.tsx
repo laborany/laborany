@@ -6,7 +6,7 @@
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useCronJobs, useCronJobRuns, describeSchedule, formatTime, formatDuration } from '../hooks/useCron'
+import { useCronJobs, useCronJobRuns, useCronDeliveryStatus, describeSchedule, formatTime, formatDuration } from '../hooks/useCron'
 import type { CronJob, CreateJobRequest, Schedule } from '../hooks/useCron'
 import { CronJobForm } from '../components/cron/CronJobForm'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
@@ -43,10 +43,11 @@ function getJobSourceLabel(job: CronJob): string {
 }
 
 function getJobNotifyLabel(job: CronJob): string {
-  if (job.notifyChannel === 'feishu_dm') return '飞书私聊'
-  if (job.notifyChannel === 'qq_dm') return 'QQ 私聊'
-  if (job.notifyChannel === 'wechat_dm') return '微信私聊'
-  return '应用内'
+  if (job.notifyChannel === 'email') return '应用内 + 邮箱'
+  if (job.notifyChannel === 'feishu_dm') return '应用内 + 飞书私聊'
+  if (job.notifyChannel === 'qq_dm') return '应用内 + QQ 私聊'
+  if (job.notifyChannel === 'wechat_dm') return '应用内 + 微信私聊'
+  return '仅应用内'
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -243,6 +244,7 @@ function RunsPanel({ jobId, jobName }: { jobId: string; jobName: string }) {
 
 export default function CronPage() {
   const { jobs, loading, error, degraded, createJob, updateJob, deleteJob, triggerJob } = useCronJobs()
+  const { status: deliveryStatus, loading: deliveryStatusLoading } = useCronDeliveryStatus()
   const { getCapabilityName } = useSkillNameMap()
   const { profiles } = useModelProfile()
   const [showForm, setShowForm] = useState(false)
@@ -380,6 +382,8 @@ export default function CronPage() {
       {(showForm || editingJob) && (
         <CronJobForm
           job={editingJob}
+          deliveryStatus={deliveryStatus}
+          deliveryStatusLoading={deliveryStatusLoading}
           onSubmit={editingJob ? handleUpdate : handleCreate}
           onCancel={() => {
             setShowForm(false)

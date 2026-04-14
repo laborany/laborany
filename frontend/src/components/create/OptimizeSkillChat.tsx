@@ -65,7 +65,7 @@ export function OptimizeSkillChat({ skillId, skillName, onBack, onComplete }: Op
   const [isRunning, setIsRunning] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { activeProfileId } = useModelProfile()
+  const { activeProfileId, activeReasoningEffort } = useModelProfile()
 
   const abortRef = useRef<AbortController | null>(null)
   const currentAssistantIdRef = useRef<string>(crypto.randomUUID())
@@ -192,6 +192,7 @@ export function OptimizeSkillChat({ skillId, skillName, onBack, onComplete }: Op
         body: JSON.stringify({
           messages: toConversationMessages(nextMessages),
           modelProfileId: activeProfileId || undefined,
+          reasoningEffort: activeReasoningEffort !== 'default' ? activeReasoningEffort : undefined,
         }),
         signal: abortController.signal,
       })
@@ -250,7 +251,7 @@ export function OptimizeSkillChat({ skillId, skillName, onBack, onComplete }: Op
         abortRef.current = null
       }
     }
-  }, [activeProfileId, handleEvent, isRunning, messages, pushErrorMessage, resetAssistantDraft, skillId])
+  }, [activeProfileId, activeReasoningEffort, handleEvent, isRunning, messages, pushErrorMessage, resetAssistantDraft, skillId])
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort()

@@ -8,7 +8,9 @@ import {
   sanitizeClaudeEnv,
   encodeOpenAiBridgeApiKey,
   normalizeModelInterfaceType,
+  normalizeReasoningEffort,
   type ModelInterfaceType,
+  type ReasoningEffort,
 } from 'laborany-shared'
 import { RESOURCES_DIR } from './paths.js'
 import { refreshRuntimeConfig } from './runtime-config.js'
@@ -301,6 +303,7 @@ export interface ModelOverride {
   baseUrl?: string
   model?: string
   interfaceType?: ModelInterfaceType
+  reasoningEffort?: ReasoningEffort
 }
 
 function getSrcApiBaseUrl(): string {
@@ -328,6 +331,9 @@ export function buildClaudeEnvConfig(overrides?: ModelOverride): Record<string, 
   const interfaceType = normalizeModelInterfaceType(
     overrides?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,
   )
+  const reasoningEffort = normalizeReasoningEffort(
+    overrides?.reasoningEffort || process.env.LABORANY_REASONING_EFFORT,
+  )
 
   if (interfaceType === 'openai_compatible') {
     if (effectiveApiKey) {
@@ -335,6 +341,7 @@ export function buildClaudeEnvConfig(overrides?: ModelOverride): Record<string, 
         apiKey: effectiveApiKey,
         baseUrl: effectiveBaseUrl,
         model: effectiveModel,
+        reasoningEffort,
       })
     } else {
       delete env.ANTHROPIC_API_KEY
@@ -363,6 +370,14 @@ export function buildClaudeEnvConfig(overrides?: ModelOverride): Record<string, 
     } else {
       delete env.ANTHROPIC_MODEL
     }
+  }
+
+  if (reasoningEffort) {
+    env.LABORANY_REASONING_EFFORT = reasoningEffort
+    env.CLAUDE_CODE_EFFORT_LEVEL = reasoningEffort
+  } else {
+    delete env.LABORANY_REASONING_EFFORT
+    delete env.CLAUDE_CODE_EFFORT_LEVEL
   }
 
   if (platform() === 'win32') {

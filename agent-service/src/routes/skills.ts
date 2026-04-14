@@ -16,13 +16,27 @@ import {
   USER_SKILLS_DIR,
   generateCapabilityId,
   normalizeCapabilityDisplayName,
+  normalizeReasoningEffort,
   pickUniqueCapabilityId,
+  type ReasoningEffort,
 } from 'laborany-shared'
 import type { SessionManager } from '../session-manager.js'
 import { executeAgent } from '../agent-executor.js'
 import { resolveModelProfile } from '../lib/resolve-model-profile.js'
 
 const router = Router()
+
+function applyReasoningEffortToModelOverride(
+  modelOverride: Awaited<ReturnType<typeof resolveModelProfile>>,
+  reasoningEffort?: ReasoningEffort,
+) {
+  const normalized = normalizeReasoningEffort(reasoningEffort)
+  if (!normalized) return modelOverride
+  return {
+    ...(modelOverride || { apiKey: '' }),
+    reasoningEffort: normalized,
+  }
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                     Skill 路径查找                                       │
@@ -348,6 +362,9 @@ function mountCreateAndOptimize(r: ReturnType<typeof Router>, sm: SessionManager
   r.post('/skills/:skillId/optimize', async (req: Request, res: Response) => {
     const { skillId } = req.params
     const { messages, modelProfileId } = req.body
+    const reasoningEffort = normalizeReasoningEffort(
+      typeof req.body?.reasoningEffort === 'string' ? req.body.reasoningEffort : undefined,
+    )
 
     if (!messages || !Array.isArray(messages)) {
       res.status(400).json({ error: '缺少 messages 参数' })
@@ -368,10 +385,11 @@ function mountCreateAndOptimize(r: ReturnType<typeof Router>, sm: SessionManager
     const sessionId = uuid()
     const abortController = new AbortController()
     sm.register(sessionId, abortController)
-    const modelOverride = await resolveModelProfile(modelProfileId)
-    if (modelProfileId && !modelOverride) {
+    const resolvedModelOverride = await resolveModelProfile(modelProfileId)
+    if (modelProfileId && !resolvedModelOverride) {
       res.write(`data: ${JSON.stringify({ type: 'warning', content: `模型配置 ${modelProfileId} 未找到，已回退到默认模型` })}\n\n`)
     }
+    const modelOverride = applyReasoningEffortToModelOverride(resolvedModelOverride, reasoningEffort)
 
     try {
       const skillFiles = await readSkillFiles(skillId)

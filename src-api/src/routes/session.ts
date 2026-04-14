@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { existsSync } from 'fs'
+import { getCapabilityDisplayName } from 'laborany-shared'
 import { dbHelper } from '../core/database.js'
 import { getTaskDir, runtimeTaskManager } from '../core/agent/index.js'
 import { looksLikeWaitingInputMessage } from '../lib/skill-interaction.js'
@@ -61,7 +62,7 @@ function getRunningSkillName(source: SessionSource, fallbackSkillName: string, s
   if (source === 'qq') return skillId === '__converse__' ? 'QQ 对话分派' : 'QQ 任务执行'
   if (source === 'wechat') return skillId === '__converse__' ? '微信对话分派' : '微信任务执行'
   if (source === 'converse') return '首页对话分派'
-  return fallbackSkillName || skillId
+  return getCapabilityDisplayName(skillId, fallbackSkillName || skillId)
 }
 
 function toUtcMs(value?: string | null): number {

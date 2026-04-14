@@ -6,6 +6,8 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { Router, Request, Response } from 'express'
+import { existsSync, readFileSync } from 'fs'
+import { join } from 'path'
 import { loadCatalog } from '../catalog.js'
 import {
   listJobs,
@@ -27,6 +29,8 @@ import {
   sendTestEmail,
 } from '../cron/index.js'
 import { isCronStorageUnavailableError } from '../cron/db.js'
+import { refreshRuntimeConfig } from '../runtime-config.js'
+import { DATA_DIR } from '../paths.js'
 import type {
   CreateJobRequest,
   UpdateJobRequest,
@@ -35,6 +39,11 @@ import type {
   JobSource,
   JobSourceChannel,
 } from '../cron/index.js'
+import { isFeishuEnabled } from '../feishu/index.js'
+import { isQQEnabled } from '../qq/index.js'
+import { getWechatRuntimeStatus } from '../wechat/index.js'
+import { loadFeishuConfig } from '../feishu/config.js'
+import { loadQQConfig } from '../qq/config.js'
 
 const router = Router()
 
@@ -76,9 +85,10 @@ function validateSource(source: JobSource | undefined): string | null {
 
 function validateNotify(notify: JobNotify | undefined): string | null {
   if (!notify) return null
-  if (notify.channel !== 'app' && notify.channel !== 'feishu_dm' && notify.channel !== 'qq_dm' && notify.channel !== 'wechat_dm') {
-    return 'notify.channel 必须是 app / feishu_dm / qq_dm / wechat_dm'
+  if (notify.channel !== 'app' && notify.channel !== 'email' && notify.channel !== 'feishu_dm' && notify.channel !== 'qq_dm' && notify.channel !== 'wechat_dm') {
+    return 'notify.channel 必须是 app / email / feishu_dm / qq_dm / wechat_dm'
   }
+  if (notify.channel === 'email') return null
   if (notify.channel === 'feishu_dm' && !notify.feishuOpenId?.trim()) {
     return 'notify.channel=feishu_dm 时必须提供 notify.feishuOpenId'
   }
@@ -89,6 +99,97 @@ function validateNotify(notify: JobNotify | undefined): string | null {
     return 'notify.channel=wechat_dm 时必须提供 notify.wechatUserId'
   }
   return null
+}
+
+function getEmailDeliveryAvailability() {
+  const email = (process.env.NOTIFICATION_EMAIL || '').trim()
+  const host = (process.env.SMTP_HOST || '').trim()
+  const user = (process.env.SMTP_USER || '').trim()
+  const pass = (process.env.SMTP_PASS || '').trim()
+
+  if (!email) {
+    return { enabled: false, reason: '未配置通知邮箱 (NOTIFICATION_EMAIL)' }
+  }
+  if (!host || !user || !pass) {
+    return { enabled: false, reason: '未完整配置 SMTP_HOST / SMTP_USER / SMTP_PASS' }
+  }
+  return {
+    enabled: true,
+    resolvedRecipientLabel: email,
+  }
+}
+
+function loadSingleRemoteRecipient(stateFilePath: string): string | null {
+  try {
+    if (!existsSync(stateFilePath)) return null
+    const raw = readFileSync(stateFilePath, 'utf-8')
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const keys = Object.keys(parsed || {}).map(key => key.trim()).filter(Boolean)
+    if (keys.length !== 1) return null
+    return keys[0]
+  } catch {
+    return null
+  }
+}
+
+function getDesktopFeishuDeliveryAvailability() {
+  if (!isFeishuEnabled()) {
+    return { enabled: false, reason: '未启用飞书 Bot' }
+  }
+  const recentRecipient = loadSingleRemoteRecipient(join(DATA_DIR, 'feishu', 'user-states.json'))
+  if (recentRecipient) {
+    return {
+      enabled: true,
+      resolvedRecipientLabel: recentRecipient,
+      resolvedRecipientId: recentRecipient,
+    }
+  }
+  return { enabled: false, reason: '请先用当前飞书账号与机器人对话一次，以建立送达对象' }
+}
+
+function getDesktopQqDeliveryAvailability() {
+  if (!isQQEnabled()) {
+    return { enabled: false, reason: '未启用 QQ Bot' }
+  }
+  const recentRecipient = loadSingleRemoteRecipient(join(DATA_DIR, 'qq', 'user-states.json'))
+  if (recentRecipient) {
+    return {
+      enabled: true,
+      resolvedRecipientLabel: recentRecipient,
+      resolvedRecipientId: recentRecipient,
+    }
+  }
+  const config = loadQQConfig()
+  const allowUsers = config?.allowUsers || []
+  if (allowUsers.length === 1) {
+    return {
+      enabled: true,
+      resolvedRecipientLabel: `${allowUsers[0]}（白名单）`,
+      resolvedRecipientId: allowUsers[0],
+    }
+  }
+  if (allowUsers.length > 1) {
+    return { enabled: false, reason: '检测到多个 QQ 白名单账号，请先让目标账号与机器人私聊一次以自动识别' }
+  }
+  return { enabled: false, reason: '请先用当前 QQ 账号与机器人私聊一次，以建立送达对象' }
+}
+
+function getDesktopWechatDeliveryAvailability() {
+  const runtime = getWechatRuntimeStatus()
+  if (!runtime.enabled) {
+    return { enabled: false, reason: '未启用微信 Bot' }
+  }
+  if (!runtime.loggedIn || !runtime.account) {
+    return { enabled: false, reason: '未绑定微信账号' }
+  }
+  if (!runtime.account.userId?.trim()) {
+    return { enabled: false, reason: '当前微信账号缺少 userId，无法作为送达对象' }
+  }
+  return {
+    enabled: true,
+    resolvedRecipientLabel: runtime.account.rawAccountId,
+    resolvedRecipientId: runtime.account.userId.trim(),
+  }
 }
 
 function validateTarget(target: CreateJobRequest['target'] | UpdateJobRequest['target'] | undefined): string | null {
@@ -150,6 +251,22 @@ router.get('/jobs', (req: Request, res: Response) => {
     }
     res.status(500).json({ error: withDetail('获取任务列表失败', error) })
   }
+})
+
+router.get('/delivery-status', (_req: Request, res: Response) => {
+  refreshRuntimeConfig()
+  res.json({
+    channels: {
+      app: {
+        enabled: true,
+        resolvedRecipientLabel: '应用内通知',
+      },
+      email: getEmailDeliveryAvailability(),
+      feishu_dm: getDesktopFeishuDeliveryAvailability(),
+      qq_dm: getDesktopQqDeliveryAvailability(),
+      wechat_dm: getDesktopWechatDeliveryAvailability(),
+    },
+  })
 })
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐

@@ -70,7 +70,7 @@ export function TargetInput({ value, onChange }: Props) {
         <select
           value={value.id}
           onChange={(e) => handleIdChange(e.target.value)}
-          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+          className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-[15px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
           <option value="">选择负责这项工作的同事...</option>
           {skills.map((item) => {
@@ -84,12 +84,6 @@ export function TargetInput({ value, onChange }: Props) {
         </select>
       )}
 
-      {!loading && skills.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          由个人助理安排给具体同事执行，后续会支持更完整的部门与岗位筛选。
-        </p>
-      )}
-
       <div>
         <label className="block text-sm font-medium text-foreground mb-1.5">
           工作要求 <span className="text-red-500">*</span>
@@ -98,10 +92,13 @@ export function TargetInput({ value, onChange }: Props) {
           value={value.query}
           onChange={(e) => handleQueryChange(e.target.value)}
           placeholder="告诉这位同事需要完成什么工作、产出什么结果..."
-          rows={3}
-          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+          rows={4}
+          className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
         />
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-2 text-sm text-muted-foreground">
+          由个人助理安排给具体同事执行，后续会支持更完整的部门与岗位筛选。
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
           尽量写清目标、参考材料、截止时间和希望看到的交付物。
         </p>
       </div>

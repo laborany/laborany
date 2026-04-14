@@ -57,6 +57,12 @@ export interface SkillDetail {
   icon?: string
   category?: string
   kind?: SkillKind
+  modelConfig?: {
+    usesOverride: boolean
+    modelProfileId?: string
+    modelProfileName?: string
+    updatedAt?: string
+  }
   files: SkillFile[]
 }
 

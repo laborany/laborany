@@ -14,6 +14,7 @@ import {
   BUILTIN_SKILLS_DIR,
   USER_SKILLS_DIR,
   getUserDir,
+  normalizeReasoningEffort,
   resolveGenerativeWidgetSupport,
 } from 'laborany-shared'
 import { memoryFileManager, memoryOrchestrator, memoryAsyncQueue } from './memory/index.js'
@@ -452,6 +453,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   console.log(`[Agent] Claude CLI command: ${cliLaunch.command}`)
   const effectiveModel = modelOverride?.model || process.env.ANTHROPIC_MODEL
   const effectiveBaseUrl = modelOverride?.baseUrl || process.env.ANTHROPIC_BASE_URL
+  const effectiveReasoningEffort = normalizeReasoningEffort(
+    modelOverride?.reasoningEffort || process.env.LABORANY_REASONING_EFFORT || process.env.CLAUDE_CODE_EFFORT_LEVEL,
+  )
   const widgetSupport = resolveGenerativeWidgetSupport({
     requested: Boolean(enableWidgets),
     interfaceType: modelOverride?.interfaceType || process.env.LABORANY_MODEL_INTERFACE,
@@ -476,6 +480,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   if (effectiveModel) {
     args.push('--model', effectiveModel)
+  }
+  if (effectiveReasoningEffort) {
+    args.push('--effort', effectiveReasoningEffort)
   }
 
   // ── Generative UI: MCP config + widget state ──

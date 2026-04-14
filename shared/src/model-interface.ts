@@ -1,9 +1,11 @@
 export type ModelInterfaceType = 'anthropic' | 'openai_compatible'
+export type ReasoningEffort = 'low' | 'medium' | 'high'
 
 export interface OpenAiBridgeCredential {
   apiKey: string
   baseUrl?: string
   model?: string
+  reasoningEffort?: ReasoningEffort
 }
 
 const OPENAI_BRIDGE_PREFIX = 'laborany-openai-bridge:'
@@ -27,11 +29,20 @@ export function normalizeModelInterfaceType(value?: string): ModelInterfaceType 
   return value === 'openai_compatible' ? 'openai_compatible' : 'anthropic'
 }
 
+export function normalizeReasoningEffort(value?: string): ReasoningEffort | undefined {
+  const normalized = (value || '').trim().toLowerCase()
+  if (normalized === 'low' || normalized === 'medium' || normalized === 'high') {
+    return normalized
+  }
+  return undefined
+}
+
 export function encodeOpenAiBridgeApiKey(payload: OpenAiBridgeCredential): string {
   const body: OpenAiBridgeCredential = {
     apiKey: (payload.apiKey || '').trim(),
     baseUrl: (payload.baseUrl || '').trim() || undefined,
     model: (payload.model || '').trim() || undefined,
+    reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort),
   }
 
   return `${OPENAI_BRIDGE_PREFIX}${toBase64Url(JSON.stringify(body))}`
@@ -51,6 +62,7 @@ export function decodeOpenAiBridgeApiKey(apiKey?: string): OpenAiBridgeCredentia
       apiKey: parsedKey,
       baseUrl: (decoded.baseUrl || '').trim() || undefined,
       model: (decoded.model || '').trim() || undefined,
+      reasoningEffort: normalizeReasoningEffort(decoded.reasoningEffort),
     }
   } catch {
     return null

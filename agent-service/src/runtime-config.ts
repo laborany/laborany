@@ -82,6 +82,7 @@ export function refreshRuntimeConfig(): RuntimeConfigSnapshot {
         resolve(__dirname, '../../.env'),
         resolve(process.cwd(), '.env'),
         resolve(process.cwd(), 'data', '.env'),
+        resolve(process.cwd(), 'src-api', 'data', '.env'),
         resolve(process.cwd(), '..', 'data', '.env'),
         resolve(process.cwd(), '..', 'src-api', 'data', '.env'),
         runtimeEnvPath,

@@ -4,7 +4,7 @@ import { basename, extname, join } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import type { Client } from '@larksuiteoapi/node-sdk'
-import { normalizeAttachmentIds, stripAttachmentMarkers } from 'laborany-shared'
+import { getCapabilityDisplayName, normalizeAttachmentIds, stripAttachmentMarkers } from 'laborany-shared'
 import { UPLOADS_DIR } from '../paths.js'
 import type { FeishuConfig } from './config.js'
 import {
@@ -895,7 +895,7 @@ async function fetchSkillList(): Promise<SkillListItem[]> {
       ? obj.description
       : (typeof obj.meta?.description === 'string' ? obj.meta.description : undefined)
     if (!id || !name) continue
-    skills.push({ id, name, description })
+    skills.push({ id, name: getCapabilityDisplayName(id, name), description })
   }
 
   return skills

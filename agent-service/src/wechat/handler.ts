@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { normalizeAttachmentIds, stripAttachmentMarkers } from 'laborany-shared'
+import { getCapabilityDisplayName, normalizeAttachmentIds, stripAttachmentMarkers } from 'laborany-shared'
 import type { WechatInboundMessage } from './api.js'
 import type { WechatConfig } from './config.js'
 import {
@@ -1312,7 +1312,7 @@ async function handleCommand(
       }
 
       const content = skills
-        .map(skill => `• ${skill.name} (${skill.id})${skill.description ? `\n  ${skill.description}` : ''}`)
+        .map(skill => `• ${getCapabilityDisplayName(skill.id, skill.name)} (${skill.id})${skill.description ? `\n  ${skill.description}` : ''}`)
         .join('\n\n')
       await sendText(config, accountId, toUserId, contextToken, `可用技能：\n\n${content}`)
     } catch (error) {
