@@ -163,11 +163,36 @@ export default function ExecutePage() {
     if (!query && attachmentIds.length === 0 && hasLiveState) return
 
     const normalizedQuery = query?.trim() || (attachmentIds.length > 0 ? ATTACHMENT_ONLY_EXECUTION_QUERY : '')
-    const bootstrapKey = `${skillId || ''}|${sid || ''}|${normalizedQuery}|${attachmentIds.join(',')}|${handoffQuery}`
+    const bootstrapKey = normalizedQuery
+      ? `${skillId || ''}|run|${normalizedQuery}|${attachmentIds.join(',')}|${handoffQuery}|${explicitOriginQuery}`
+      : `${skillId || ''}|snapshot|${sid || ''}`
     if (lastBootstrapKeyRef.current === bootstrapKey) return
     lastBootstrapKeyRef.current = bootstrapKey
 
     const token = localStorage.getItem('token')
+
+    const consumeBootstrapParams = (options?: { clearSid?: boolean }) => {
+      const nextParams = new URLSearchParams(searchParams)
+      let changed = false
+
+      if (query) {
+        nextParams.delete('q')
+        changed = true
+      }
+
+      if (attachmentIds.length > 0 && nextParams.has('attachments')) {
+        nextParams.delete('attachments')
+        changed = true
+      }
+
+      if (options?.clearSid && sid && nextParams.get('sid') === sid) {
+        nextParams.delete('sid')
+        changed = true
+      }
+
+      if (!changed) return
+      setSearchParams(nextParams, { replace: true })
+    }
 
     const canContinueSession = async (targetSessionId: string): Promise<boolean> => {
       if (!targetSessionId || !token || !skillId) return false
@@ -201,6 +226,7 @@ export default function ExecutePage() {
         }
 
         if (live.isRunning && live.canAttach) {
+          consumeBootstrapParams()
           agent.resumeSession(targetSessionId)
           await agent.attachToSession(targetSessionId)
           return true
@@ -214,47 +240,34 @@ export default function ExecutePage() {
     const bootstrap = async () => {
       let attached = false
       let continuedBySid = false
-      let startedNewExecution = false
 
       if (sid) {
         attached = await tryAttachRunningSession(sid)
         if (!attached && normalizedQuery && await canContinueSession(sid)) {
+          consumeBootstrapParams()
           agent.resumeSession(sid)
-            await agent.execute(normalizedQuery, undefined, {
-              attachmentIds,
-              requestQuery: handoffQuery || undefined,
-              originQuery: explicitOriginQuery || normalizedQuery,
-              workId: executionWorkId || converse.workId || undefined,
-            })
+          await agent.execute(normalizedQuery, undefined, {
+            attachmentIds,
+            requestQuery: handoffQuery || undefined,
+            originQuery: explicitOriginQuery || normalizedQuery,
+            workId: executionWorkId || converse.workId || undefined,
+          })
           continuedBySid = true
-          startedNewExecution = true
         }
       }
 
       if (normalizedQuery && !attached && !continuedBySid) {
+        consumeBootstrapParams({ clearSid: Boolean(sid) })
         await agent.execute(normalizedQuery, undefined, {
           attachmentIds,
           requestQuery: handoffQuery || undefined,
           originQuery: explicitOriginQuery || normalizedQuery,
           workId: executionWorkId || converse.workId || undefined,
         })
-        startedNewExecution = true
       }
 
       if (sid && !normalizedQuery && !attached && !continuedBySid) {
         await agent.loadSessionSnapshot(sid)
-      }
-
-      if ((query || attachmentIds.length > 0) && (startedNewExecution || attached || continuedBySid)) {
-        const nextParams = new URLSearchParams(searchParams)
-        nextParams.delete('q')
-        nextParams.delete('attachments')
-        // sid 存在但并未成功续接时，说明已启动了新的 runtime 会话，清理旧 sid 避免后续误判。
-        if (sid && startedNewExecution && !attached && !continuedBySid) {
-          nextParams.delete('sid')
-        }
-        lastBootstrapKeyRef.current = `${skillId || ''}|${sid || ''}|`
-        setSearchParams(nextParams, { replace: true })
       }
     }
 

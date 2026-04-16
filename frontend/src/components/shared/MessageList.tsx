@@ -970,33 +970,36 @@ function ErrorBanner({ content }: { content: string }) {
 function ToolResultView({ name, content }: { name: string; content: string }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const normalized = content.trim()
-  const lineCount = normalized.split('\n').length
-  const shouldCollapse = normalized.length > 900 || lineCount > 14
-  const preview = shouldCollapse && !isExpanded
-    ? `${normalized.slice(0, 900).trimEnd()}...`
-    : normalized
+  const summary = normalized
+    ? normalized.split('\n').map((line) => line.trim()).find(Boolean) || ''
+    : ''
+  const description = summary.length > 72 ? `${summary.slice(0, 72).trimEnd()}...` : summary
 
   return (
     <div className="animate-in slide-in-from-bottom-1 min-w-0 overflow-hidden rounded-xl border border-emerald-200/50 bg-emerald-50/70 duration-200 fade-in dark:border-emerald-900/40 dark:bg-emerald-950/20">
-      <div className="flex items-center gap-2 px-4 py-2.5 text-sm text-emerald-900 dark:text-emerald-100">
+      <button
+        type="button"
+        onClick={() => setIsExpanded((value) => !value)}
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-emerald-900 transition-colors hover:bg-emerald-100/60 dark:text-emerald-100 dark:hover:bg-emerald-900/20"
+      >
         <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
+        <svg
+          className={`h-4 w-4 shrink-0 transition-transform ${!isExpanded ? '-rotate-90' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
         <span className="font-medium">{getToolDisplayName(name || '执行结果')}</span>
-        {shouldCollapse && (
-          <button
-            type="button"
-            onClick={() => setIsExpanded((value) => !value)}
-            className="ml-auto text-xs text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-300"
-          >
-            {isExpanded ? '收起输出' : '展开输出'}
-          </button>
-        )}
-      </div>
-      {normalized ? (
+        {description && <span className="truncate text-left opacity-75">{description}</span>}
+      </button>
+      {normalized && isExpanded ? (
         <div className="border-t border-emerald-200/50 px-4 py-3 dark:border-emerald-900/40">
           <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-background/80 p-3 text-xs leading-5 text-foreground/90">
-            {preview}
+            {normalized}
           </pre>
         </div>
       ) : null}

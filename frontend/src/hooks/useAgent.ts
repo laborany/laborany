@@ -1114,13 +1114,17 @@ export function useAgent(skillId: string) {
   )
 
   const reconnectSessionStream = useCallback(
-    async (sessionId: string): Promise<boolean> => {
+    async (sessionId: string, requestSeq?: number): Promise<boolean> => {
       const token = localStorage.getItem('token')
       const reconnectUrl = `${API_BASE}/skill/runtime/attach/${sessionId}?replay=0&includeSession=0`
       let reconnectError: unknown = null
       const maxReconnectAttempts = 3
 
       for (let attempt = 1; attempt <= maxReconnectAttempts; attempt++) {
+        if (requestSeq !== undefined && requestSeq !== requestSeqRef.current) {
+          return false
+        }
+
         // Fix P0-4: 每次重连前重置状态，防止 isReplayingRef 卡住导致消息丢弃
         isReplayingRef.current = false
         resumeHintAtRef.current = 0  // 清除 resume 信号，防止 stall 误判循环
@@ -1337,7 +1341,9 @@ export function useAgent(skillId: string) {
             signal: abortRef.current.signal,
           },
           3,
-          (msg) => setState((s) => ({ ...s, connectionStatus: msg })),
+          (msg) => setState((s) => (requestSeq === requestSeqRef.current
+            ? { ...s, connectionStatus: msg }
+            : s)),
         )
 
         console.log('[useAgent] 响应状态:', res.status)
@@ -1358,7 +1364,7 @@ export function useAgent(skillId: string) {
           && isTransientNetworkError(err)
         ) {
           try {
-            recoveredByReconnect = await reconnectSessionStream(activeSessionId)
+            recoveredByReconnect = await reconnectSessionStream(activeSessionId, requestSeq)
           } catch (reErr) {
             err = reErr
           }
@@ -1695,11 +1701,13 @@ export function useAgent(skillId: string) {
   const attachToSession = useCallback(
     async (targetSessionId: string) => {
       const token = localStorage.getItem('token')
+      const requestSeq = ++requestSeqRef.current
       if (abortRef.current) {
         abortRef.current.abort()
         abortRef.current = null
       }
       const controller = new AbortController()
+      executeInFlightRef.current = false
 
       setState((s) => ({
         ...s,
@@ -1738,7 +1746,9 @@ export function useAgent(skillId: string) {
             headers: createAuthHeaders(token),
           },
           3,
-          (msg) => setState((s) => ({ ...s, connectionStatus: msg })),
+          (msg) => setState((s) => (requestSeq === requestSeqRef.current
+            ? { ...s, connectionStatus: msg }
+            : s)),
         )
 
         if (!res.ok) {
@@ -1751,27 +1761,29 @@ export function useAgent(skillId: string) {
 
         if (!isAbortLikeError(err) && !terminalEventRef.current && isTransientNetworkError(err)) {
           try {
-            recoveredByReconnect = await reconnectSessionStream(targetSessionId)
+            recoveredByReconnect = await reconnectSessionStream(targetSessionId, requestSeq)
           } catch (reErr) {
             err = reErr
           }
         }
 
-        if (!isAbortLikeError(err) && !recoveredByReconnect) {
+        if (!isAbortLikeError(err) && !recoveredByReconnect && requestSeq === requestSeqRef.current) {
           setState((s) => ({
             ...s,
             error: (err as Error).message,
           }))
         }
       } finally {
-        isReplayingRef.current = false
-        setState((s) => ({
-          ...s,
-          isRunning: false,
-          runCompletedAt: s.runCompletedAt || (terminalEventRef.current ? new Date().toISOString() : s.runCompletedAt),
-        }))
-        if (abortRef.current === controller) {
-          abortRef.current = null
+        if (requestSeq === requestSeqRef.current) {
+          isReplayingRef.current = false
+          setState((s) => ({
+            ...s,
+            isRunning: false,
+            runCompletedAt: s.runCompletedAt || (terminalEventRef.current ? new Date().toISOString() : s.runCompletedAt),
+          }))
+          if (abortRef.current === controller) {
+            abortRef.current = null
+          }
         }
       }
     },
