@@ -37,7 +37,16 @@ type TextBlock = {
   serverMessageId?: number | null
   meta?: MessageMeta | null
 }
-type ToolGroup = { type: 'tools'; tools: ToolEntry[]; isCompleted: boolean }
+type ToolCallBlock = {
+  type: 'tool_call'
+  name: string
+  input?: Record<string, unknown>
+}
+type ToolResultBlock = {
+  type: 'tool_result'
+  name: string
+  content: string
+}
 type UserBlock = {
   type: 'user'
   content: string
@@ -58,10 +67,10 @@ type InlineWidgetBlock = {
   errorMessage?: string
 }
 
-type ToolEntry = { name: string; input?: Record<string, unknown> }
 type RenderBlock =
   | TextBlock
-  | ToolGroup
+  | ToolCallBlock
+  | ToolResultBlock
   | UserBlock
   | ErrorBlock
   | ThinkingStatusBlock
@@ -115,6 +124,12 @@ function normalizeToolName(name: string): string {
 
 function getToolDisplayName(name: string): string {
   return TOOL_DISPLAY_MAP[name] || name
+}
+
+function isToolResultMessage(message: AgentMessage): boolean {
+  if (message.type !== 'tool') return false
+  const normalized = normalizeToolName(message.toolName || '')
+  return normalized === '执行结果' || (!normalized && Boolean(message.content.trim()))
 }
 
 function isNearBottom(element: HTMLElement): boolean {
@@ -358,17 +373,9 @@ export default function MessageList({
 
 function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): RenderBlock[] {
   const blocks: RenderBlock[] = []
-  let pendingTools: ToolEntry[] = []
-
-  const flushTools = (completed: boolean) => {
-    if (pendingTools.length === 0) return
-    blocks.push({ type: 'tools', tools: pendingTools, isCompleted: completed })
-    pendingTools = []
-  }
 
   for (const message of messages) {
     if (message.type === 'user') {
-      flushTools(true)
       blocks.push({
         type: 'user',
         content: message.content,
@@ -380,7 +387,6 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
     }
 
     if (message.type === 'assistant' && message.widgetId) {
-      flushTools(true)
       const widgetMeta = message.meta?.widget
       // New data with displayMode='inline' and full widget data → inline rendering
       if (widgetMeta?.displayMode === 'inline' && widgetMeta.html) {
@@ -403,7 +409,6 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
     }
 
     if (message.type === 'assistant' && message.content) {
-      flushTools(true)
       const segments = splitAssistantContent(message.content)
       const actionText = segments
         .filter((segment): segment is Extract<AssistantSegment, { type: 'text' }> => segment.type === 'text')
@@ -436,20 +441,26 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
     }
 
     if (message.type === 'tool') {
-      pendingTools.push({
-        name: normalizeToolName(message.toolName || 'Tool'),
-        input: message.toolInput,
-      })
+      if (isToolResultMessage(message)) {
+        blocks.push({
+          type: 'tool_result',
+          name: normalizeToolName(message.toolName || '执行结果') || '执行结果',
+          content: message.content || '',
+        })
+      } else {
+        blocks.push({
+          type: 'tool_call',
+          name: normalizeToolName(message.toolName || 'Tool'),
+          input: message.toolInput,
+        })
+      }
       continue
     }
 
     if (message.type === 'error') {
-      flushTools(true)
       blocks.push({ type: 'error', content: message.content })
     }
   }
-
-  flushTools(!isRunning)
 
   if (isRunning) {
     for (let index = blocks.length - 1; index >= 0; index--) {
@@ -465,7 +476,8 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
     const showThinking =
       !lastBlock
       || lastBlock.type === 'user'
-      || lastBlock.type === 'tools'
+      || lastBlock.type === 'tool_call'
+      || lastBlock.type === 'tool_result'
       || lastBlock.type === 'thinking_content'
     if (showThinking) {
       blocks.push({ type: 'thinking' })
@@ -522,8 +534,10 @@ function BlockRenderer({
           onVisualizeMessage={onVisualizeMessage}
         />
       )
-    case 'tools':
-      return <ToolGroupView tools={block.tools} isCompleted={block.isCompleted} />
+    case 'tool_call':
+      return <ToolCallView name={block.name} input={block.input} />
+    case 'tool_result':
+      return <ToolResultView name={block.name} content={block.content} />
     case 'error':
       return <ErrorBanner content={block.content} />
     case 'thinking':
@@ -900,8 +914,13 @@ function ThinkingContentView({ content }: { content: string }) {
   )
 }
 
-function ToolGroupView({ tools, isCompleted }: { tools: ToolEntry[]; isCompleted: boolean }) {
+function ToolCallView({ name, input }: { name: string; input?: Record<string, unknown> }) {
   const [isExpanded, setIsExpanded] = useState(false)
+  const description = getToolDescription(name, input)
+  const displayName = getToolDisplayName(name)
+  const prettyInput = input && Object.keys(input).length > 0
+    ? JSON.stringify(input, null, 2)
+    : ''
 
   return (
     <div className="animate-in slide-in-from-bottom-1 min-w-0 overflow-hidden rounded-xl border border-border/40 bg-accent/20 duration-200 fade-in">
@@ -909,15 +928,9 @@ function ToolGroupView({ tools, isCompleted }: { tools: ToolEntry[]; isCompleted
         onClick={() => setIsExpanded(!isExpanded)}
         className="flex w-full cursor-pointer items-center gap-2 px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent/30 hover:text-foreground"
       >
-        {isCompleted ? (
-          <svg className="h-4 w-4 shrink-0 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        ) : (
-          <div className="flex h-4 w-4 shrink-0 items-center justify-center">
-            <div className="h-2 w-2 animate-pulse rounded-full bg-primary" />
-          </div>
-        )}
+        <div className="flex h-4 w-4 shrink-0 items-center justify-center">
+          <div className="h-2 w-2 rounded-full bg-primary" />
+        </div>
 
         <svg
           className={`h-4 w-4 shrink-0 transition-transform ${!isExpanded ? '-rotate-90' : ''}`}
@@ -928,16 +941,15 @@ function ToolGroupView({ tools, isCompleted }: { tools: ToolEntry[]; isCompleted
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
 
-        <span className="flex-1 text-left">
-          {isExpanded ? '隐藏步骤' : `${tools.length} 个步骤`}
-        </span>
+        <span className="font-medium text-foreground">{displayName}</span>
+        {description && <span className="truncate opacity-70">{description}</span>}
       </button>
 
-      {isExpanded && (
-        <div className="space-y-1 px-2 pb-2">
-          {tools.map((tool, index) => (
-            <ToolItem key={index} tool={tool} />
-          ))}
+      {isExpanded && prettyInput && (
+        <div className="border-t border-border/40 px-4 py-3">
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-background/70 p-3 text-xs leading-5 text-foreground/85">
+            {prettyInput}
+          </pre>
         </div>
       )}
     </div>
@@ -955,79 +967,40 @@ function ErrorBanner({ content }: { content: string }) {
   )
 }
 
-function ToolItem({ tool }: { tool: ToolEntry }) {
-  const description = getToolDescription(tool.name, tool.input)
-  const displayName = getToolDisplayName(tool.name)
+function ToolResultView({ name, content }: { name: string; content: string }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const normalized = content.trim()
+  const lineCount = normalized.split('\n').length
+  const shouldCollapse = normalized.length > 900 || lineCount > 14
+  const preview = shouldCollapse && !isExpanded
+    ? `${normalized.slice(0, 900).trimEnd()}...`
+    : normalized
 
   return (
-    <div className="flex items-center gap-2 rounded-lg bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-      <ToolIcon name={tool.name} />
-      <span className="font-medium">{displayName}</span>
-      {description && <span className="max-w-md truncate opacity-70">{description}</span>}
+    <div className="animate-in slide-in-from-bottom-1 min-w-0 overflow-hidden rounded-xl border border-emerald-200/50 bg-emerald-50/70 duration-200 fade-in dark:border-emerald-900/40 dark:bg-emerald-950/20">
+      <div className="flex items-center gap-2 px-4 py-2.5 text-sm text-emerald-900 dark:text-emerald-100">
+        <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span className="font-medium">{getToolDisplayName(name || '执行结果')}</span>
+        {shouldCollapse && (
+          <button
+            type="button"
+            onClick={() => setIsExpanded((value) => !value)}
+            className="ml-auto text-xs text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-300"
+          >
+            {isExpanded ? '收起输出' : '展开输出'}
+          </button>
+        )}
+      </div>
+      {normalized ? (
+        <div className="border-t border-emerald-200/50 px-4 py-3 dark:border-emerald-900/40">
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-background/80 p-3 text-xs leading-5 text-foreground/90">
+            {preview}
+          </pre>
+        </div>
+      ) : null}
     </div>
-  )
-}
-
-function ToolIcon({ name }: { name: string }) {
-  const iconClass = 'h-4 w-4'
-
-  if (['Read', 'Edit', 'Write'].includes(name)) {
-    return (
-      <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-        />
-      </svg>
-    )
-  }
-
-  if (['Glob', 'Grep', 'WebSearch', 'mcp__laborany_web__search', 'mcp__laborany_web__get_site_info', 'mcp__laborany_web__list_site_pattern_candidates', 'mcp__laborany_web__save_global_note'].includes(name)) {
-    return (
-      <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-      </svg>
-    )
-  }
-
-  if (name === 'Bash') {
-    return (
-      <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-        />
-      </svg>
-    )
-  }
-
-  if (['WebFetch', 'mcp__laborany_web__read_page', 'mcp__laborany_web__screenshot', 'mcp__laborany_web__browser_open', 'mcp__laborany_web__browser_navigate', 'mcp__laborany_web__browser_screenshot'].includes(name)) {
-    return (
-      <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
-        />
-      </svg>
-    )
-  }
-
-  return (
-    <svg className={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-      />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-    </svg>
   )
 }
 

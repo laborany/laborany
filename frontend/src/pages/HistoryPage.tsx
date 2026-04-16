@@ -9,10 +9,10 @@ import { API_BASE } from '../config'
 import { ExecutionPanel } from '../components/execution'
 import { Tooltip } from '../components/ui'
 import {
-  appendMessageWithVariants,
   applyVariantSelections,
   loadStoredVariantSelections,
 } from '../lib/messageVariants'
+import { parseUTCDate, sessionDetailToAgentMessages } from '../lib/sessionMessages'
 import {
   buildQuestionResponsePayload,
   buildQuestionResponseText,
@@ -270,93 +270,6 @@ function buildPendingQuestionFromHistory(session: SessionDetail | null): Pending
 }
 
 const CONVERSE_SYNC_RETRY_DELAY_MS = 900
-
-/* ── SQLite datetime('now') 返回 UTC 但不带时区标记，
- *    补上 'Z' 让 JS 正确识别为 UTC，toLocaleString 自动转本地时区 ── */
-function parseUTCDate(dateStr: string): Date {
-  const s = dateStr.trim()
-  if (s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s)) return new Date(s)
-  return new Date(s + 'Z')
-}
-
-/**
- * convertMessages
- * 将后端 SessionDetail 的原始消息转换为前端 AgentMessage 格式
- * 纯函数，提取到组件外部以便 useMemo 稳定引用
- */
-function convertMessages(session: SessionDetail | null): AgentMessage[] {
-  if (!session) return []
-
-  const messages: AgentMessage[] = []
-
-  for (const msg of session.messages) {
-    if (msg.type === 'user' && msg.content) {
-      messages.push({
-        id: String(msg.id),
-        type: 'user',
-        content: msg.content,
-        timestamp: parseUTCDate(msg.createdAt),
-        serverMessageId: msg.id,
-        meta: msg.meta || null,
-      })
-    } else if (msg.type === 'assistant' && msg.content) {
-      const widgetMeta = msg.meta?.widget
-      const assistantMessage: AgentMessage = {
-        id: String(msg.id),
-        type: 'assistant',
-        content: widgetMeta ? '' : msg.content,
-        timestamp: parseUTCDate(msg.createdAt),
-        serverMessageId: msg.id,
-        meta: msg.meta || null,
-        ...(widgetMeta ? { widgetId: widgetMeta.widgetId, widgetTitle: widgetMeta.title } : {}),
-      }
-      if (widgetMeta) {
-        messages.push(assistantMessage)
-      } else {
-        const merged = appendMessageWithVariants(messages, assistantMessage)
-        messages.length = 0
-        messages.push(...merged)
-      }
-    } else if (msg.type === 'tool_use' && msg.toolName) {
-      const parsedToolInput =
-        msg.toolInput && typeof msg.toolInput === 'object'
-          ? msg.toolInput as Record<string, unknown>
-          : undefined
-
-      messages.push({
-        id: String(msg.id),
-        type: 'tool',
-        content: '',
-        toolName: msg.toolName,
-        toolInput: parsedToolInput,
-        timestamp: parseUTCDate(msg.createdAt),
-        serverMessageId: msg.id,
-        meta: msg.meta || null,
-      })
-    } else if (msg.type === 'tool_result' && msg.toolResult) {
-      messages.push({
-        id: `${msg.id}-result`,
-        type: 'tool',
-        content: msg.toolResult.substring(0, 500) + (msg.toolResult.length > 500 ? '...' : ''),
-        toolName: '执行结果',
-        timestamp: parseUTCDate(msg.createdAt),
-        serverMessageId: msg.id,
-        meta: msg.meta || null,
-      })
-    }
-  }
-
-  if (messages.length === 0) {
-    messages.push({
-      id: 'query',
-      type: 'user',
-      content: session.query,
-      timestamp: parseUTCDate(session.created_at),
-    })
-  }
-
-  return messages
-}
 
 function SessionDetailContent({
   routeSessionId = '',
@@ -867,7 +780,7 @@ function SessionDetailContent({
 
   const historyMessages = useMemo(
     () => {
-      const converted = convertMessages(session)
+      const converted = sessionDetailToAgentMessages(session)
       if (!isConverseSession || !sessionId) return converted
       return applyVariantSelections(converted, loadStoredVariantSelections(sessionId))
     },
@@ -905,7 +818,7 @@ function SessionDetailContent({
     : (agent.pendingQuestion ? agent.respondToQuestion : handleQuestionSubmit)
   const stopHandler = isConverseSession ? converse.stop : agent.stop
   const assistantMessages = useMemo(
-    () => convertMessages(assistantSession),
+    () => sessionDetailToAgentMessages(assistantSession),
     [assistantSession],
   )
   const hasAssistantTab = Boolean(

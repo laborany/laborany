@@ -117,21 +117,38 @@ export default function ExecutePage() {
   }, [converseSid, converse.resumeSession])
 
   useEffect(() => {
-    if (!agent.workId) return
     if (/^\/history\/work\/[^/]+$/.test(location.pathname)) return
 
-    const params = new URLSearchParams()
-    if (converseSid) {
-      params.set('converseSid', converseSid)
+    const currentSid = (searchParams.get('sid') || '').trim()
+    const currentWorkId = (searchParams.get('workId') || '').trim()
+    const nextSid = (agent.sessionId || '').trim()
+    const nextWorkId = (agent.workId || '').trim()
+
+    if (!nextSid && !nextWorkId) return
+
+    const nextParams = new URLSearchParams(searchParams)
+    let changed = false
+
+    if (nextSid && currentSid !== nextSid) {
+      nextParams.set('sid', nextSid)
+      changed = true
     }
-    const nextPath = `/history/work/${encodeURIComponent(agent.workId)}${params.toString() ? `?${params.toString()}` : ''}`
-    navigate(nextPath, { replace: true })
-  }, [agent.workId, converseSid, location.pathname, navigate])
+
+    if (nextWorkId && currentWorkId !== nextWorkId) {
+      nextParams.set('workId', nextWorkId)
+      changed = true
+    }
+
+    if (!changed) return
+
+    setSearchParams(nextParams, { replace: true })
+  }, [agent.sessionId, agent.workId, location.pathname, searchParams, setSearchParams])
 
   useEffect(() => {
     const sid = searchParams.get('sid')
     const query = searchParams.get('q')
     const attachmentIds = parseAttachmentIdsParam(searchParams.get('attachments'))
+    const hasLiveState = agent.isRunning || agent.messages.length > 0 || Boolean(agent.sessionId)
     const explicitOriginQuery = typeof (location.state as { originQuery?: unknown } | null)?.originQuery === 'string'
       ? ((location.state as { originQuery?: string }).originQuery || '').trim()
       : ''
@@ -143,6 +160,7 @@ export default function ExecutePage() {
         ? ((location.state as { workId?: string }).workId || '').trim()
         : '')
     if (!sid && !query && attachmentIds.length === 0) return
+    if (!query && attachmentIds.length === 0 && hasLiveState) return
 
     const normalizedQuery = query?.trim() || (attachmentIds.length > 0 ? ATTACHMENT_ONLY_EXECUTION_QUERY : '')
     const bootstrapKey = `${skillId || ''}|${sid || ''}|${normalizedQuery}|${attachmentIds.join(',')}|${handoffQuery}`
@@ -223,6 +241,10 @@ export default function ExecutePage() {
         startedNewExecution = true
       }
 
+      if (sid && !normalizedQuery && !attached && !continuedBySid) {
+        await agent.loadSessionSnapshot(sid)
+      }
+
       if ((query || attachmentIds.length > 0) && (startedNewExecution || attached || continuedBySid)) {
         const nextParams = new URLSearchParams(searchParams)
         nextParams.delete('q')
@@ -237,7 +259,20 @@ export default function ExecutePage() {
     }
 
     void bootstrap()
-  }, [searchParams, setSearchParams, agent.execute, agent.attachToSession, agent.resumeSession, skillId, location.state, converse.workId])
+  }, [
+    searchParams,
+    setSearchParams,
+    agent.execute,
+    agent.attachToSession,
+    agent.resumeSession,
+    agent.loadSessionSnapshot,
+    agent.isRunning,
+    agent.messages.length,
+    agent.sessionId,
+    skillId,
+    location.state,
+    converse.workId,
+  ])
 
   useEffect(() => {
     if (skillId !== 'skill-creator') return

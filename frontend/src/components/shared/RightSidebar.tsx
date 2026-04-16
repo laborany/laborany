@@ -98,7 +98,10 @@ function getToolDisplayName(name: string): string {
 
 function extractToolUsages(messages: AgentMessage[]): ToolUsage[] {
   return messages
-    .filter((message) => message.type === 'tool' && message.toolName)
+    .filter((message) => {
+      if (message.type !== 'tool' || !message.toolName) return false
+      return normalizeToolName(message.toolName) !== '执行结果'
+    })
     .map((message) => ({
       id: message.id,
       name: normalizeToolName(message.toolName!),

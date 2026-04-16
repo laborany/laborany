@@ -313,6 +313,7 @@ function restoreMessagesFromPayload(sessionId: string, payload: ConverseSessionP
           id,
           type: 'tool' as const,
           content: item.toolResult || item.content || '',
+          toolName: '执行结果',
           timestamp: createdAt,
           serverMessageId: item.id ?? null,
           meta: item.meta || null,
@@ -659,6 +660,7 @@ export function useConverse(): UseConverseReturn {
             id: `tool_result_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             type: 'tool',
             content: (data.toolResult as string) || '',
+            toolName: '执行结果',
             timestamp: new Date(),
           },
         ])

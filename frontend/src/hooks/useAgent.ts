@@ -1,9 +1,10 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { AgentMessage, TaskFile, WidgetState } from '../types'
+import type { AgentMessage, SessionDetail, TaskFile, WidgetState } from '../types'
 import { API_BASE } from '../config/api'
 import { useModelProfile } from '../contexts/ModelProfileContext'
 import { mergeAttachmentIds, uploadAttachments } from '../lib/attachments'
+import { sessionDetailToAgentMessages } from '../lib/sessionMessages'
 import {
   buildQuestionResponsePayload,
   buildQuestionResponseText,
@@ -80,6 +81,12 @@ interface SessionDetailMessage {
 }
 
 interface SessionDetailResponse {
+  id?: string
+  query?: string
+  status?: string
+  created_at?: string
+  work_id?: string | null
+  work_dir?: string
   messages?: SessionDetailMessage[]
 }
 
@@ -682,6 +689,26 @@ export function useAgent(skillId: string) {
             pendingTextFlushRef.current = false
             assistantIdRef.current = crypto.randomUUID()
           }
+          break
+        }
+
+        case 'tool_result': {
+          // 重放期间跳过 tool 消息入列，历史 tool 消息由服务端快照提供
+          if (isReplayingRef.current) break
+
+          setState((s) => ({
+            ...s,
+            messages: [
+              ...s.messages,
+              {
+                id: crypto.randomUUID(),
+                type: 'tool',
+                content: typeof event.toolResult === 'string' ? event.toolResult : '',
+                toolName: '执行结果',
+                timestamp: new Date(),
+              },
+            ],
+          }))
           break
         }
 
@@ -1477,6 +1504,52 @@ export function useAgent(skillId: string) {
     [state.sessionId, state.filesVersion],
   )
 
+  const loadSessionSnapshot = useCallback(async (targetSessionId: string): Promise<boolean> => {
+    if (!targetSessionId) return false
+
+    const token = localStorage.getItem('token')
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(targetSessionId)}`, {
+        headers: createAuthHeaders(token),
+      })
+      if (!res.ok) return false
+
+      const detail = await res.json() as SessionDetail
+      const nextWorkId = typeof detail.work_id === 'string' && detail.work_id.trim()
+        ? detail.work_id.trim()
+        : null
+
+      sessionIdRef.current = targetSessionId
+      workIdRef.current = nextWorkId
+      rememberActiveSessionId(targetSessionId)
+
+      committedWidgetsRef.current.clear()
+
+      setState((s) => ({
+        ...s,
+        messages: sessionDetailToAgentMessages(detail),
+        isRunning: false,
+        runCompletedAt: detail.status === 'completed' || detail.status === 'failed' || detail.status === 'stopped'
+          ? new Date().toISOString()
+          : null,
+        sessionId: targetSessionId,
+        workId: nextWorkId,
+        error: null,
+        connectionStatus: null,
+        workDir: detail.work_dir || null,
+        pendingQuestion: null,
+        activeWidget: null,
+        streamingWidget: null,
+      }))
+
+      await hydrateLatestPersistedWidget(targetSessionId)
+      return true
+    } catch (err) {
+      console.warn('[useAgent] 恢复会话快照失败:', err)
+      return false
+    }
+  }, [rememberActiveSessionId])
+
   async function hydrateLatestPersistedWidget(targetSessionId: string) {
     if (!targetSessionId) return
 
@@ -1712,6 +1785,7 @@ export function useAgent(skillId: string) {
     detach,
     clear,
     resumeSession,
+    loadSessionSnapshot,
     fetchTaskFiles,
     getFileUrl,
     respondToQuestion,
