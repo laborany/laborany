@@ -188,7 +188,9 @@ async function bundleSingleArch(platform, arch, bundleDir) {
 
   // 验证安装
   const cliPath = path.join(bundleDir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js')
-  if (!fs.existsSync(cliPath)) {
+  const binExePath = path.join(bundleDir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe')
+  const binPath = path.join(bundleDir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude')
+  if (!fs.existsSync(cliPath) && !fs.existsSync(binExePath) && !fs.existsSync(binPath)) {
     throw new Error('Claude Code CLI 安装失败')
   }
 
