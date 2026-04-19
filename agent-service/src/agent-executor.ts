@@ -543,31 +543,36 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   communicationPreferenceManager.applyFromUserText(userQuery, userQuery)
 
-  // 每轮都构建并写入系统提示词（确保记忆实时生效）
+  memoryFileManager.ensureSkillMemoryDir(skill.meta.id)
+
+  // CLAUDE.md 只写稳定内容（新会话或 skill 变化时），保证 Anthropic 缓存命中
+  const claudeMdPath = join(taskDir, 'CLAUDE.md')
+  const stableSections: string[] = []
+  if (!skill.systemPrompt.includes('## 联网调研策略')) {
+    stableSections.push(buildResearchPolicySection())
+  }
+  stableSections.push(skill.systemPrompt)
+  const stablePrompt = stableSections.join('\n\n---\n\n')
+
+  if (isNewSession || !existsSync(claudeMdPath)) {
+    writeFileSync(claudeMdPath, stablePrompt, 'utf-8')
+    console.log(`[Agent] 已写入系统提示词到 ${claudeMdPath}`)
+  }
+
+  // 每轮变化的内容（runtime context + memory）注入用户消息前缀，不污染缓存前缀
   const retrieved = memoryOrchestrator.retrieve({
     sessionId,
     skillId: skill.meta.id,
     query: userQuery,
     tokenBudget: 4000,
   })
-  memoryFileManager.ensureSkillMemoryDir(skill.meta.id)
   const runtimeContext = buildLaborAnyRuntimeContext(taskDir, skill.meta.id, sessionId)
-  const sections = [runtimeContext]
-  if (!skill.systemPrompt.includes('## 联网调研策略')) {
-    sections.push(buildResearchPolicySection())
-  }
+  const dynamicParts: string[] = [runtimeContext]
   if (retrieved.context) {
-    sections.push(retrieved.context)
+    dynamicParts.push(retrieved.context)
   }
-  sections.push(skill.systemPrompt)
-  const systemPrompt = sections.join('\n\n---\n\n')
-
-  const claudeMdPath = join(taskDir, 'CLAUDE.md')
-  writeFileSync(claudeMdPath, systemPrompt, 'utf-8')
-  console.log(`[Agent] 已写入系统提示词到 ${claudeMdPath}`)
-
-  // 用户消息只包含查询内容
-  const prompt = userQuery
+  const dynamicPrefix = dynamicParts.join('\n\n---\n\n')
+  const prompt = `${dynamicPrefix}\n\n---\n\n${userQuery}`
 
   if (!prompt.trim()) {
     onEvent({
