@@ -5,7 +5,7 @@
  * │  保留 DecisionCard（决策确认）和 QuestionInput（结构化问答）            │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 
-import type { AgentMessage } from '../../types/message'
+import type { AgentMessage, MessageReference } from '../../types/message'
 import type { WidgetState } from '../../types/message'
 import type { PendingQuestion } from '../../hooks/useAgent'
 import MessageList from '../shared/MessageList'
@@ -29,7 +29,7 @@ export interface DecisionPrompt {
 /* ── 主面板 Props ── */
 interface ConversationPanelProps {
   messages: AgentMessage[]
-  onSend: (text: string, files?: File[]) => void
+  onSend: (text: string, files?: File[], references?: MessageReference[]) => void
   onRegenerate?: (messageId: string) => void | Promise<void>
   onSelectVariant?: (messageId: string, variantIndex: number) => void
   onStop?: () => void
@@ -54,6 +54,10 @@ interface ConversationPanelProps {
     tone: 'warning' | 'neutral'
     message: string
   } | null
+  references?: MessageReference[]
+  onRemoveReference?: (referenceId: string) => void
+  onCreateReference?: (reference: MessageReference) => void
+  onNavigateReference?: (reference: MessageReference) => void
   mcpNotice?: {
     tone: 'warning' | 'neutral' | 'success'
     message: string
@@ -83,6 +87,10 @@ export function ConversationPanel({
   streamingWidget,
   onExpandWidget,
   assistantHint,
+  references,
+  onRemoveReference,
+  onCreateReference,
+  onNavigateReference,
 }: ConversationPanelProps) {
   const hasWidget = activeWidget != null
 
@@ -135,6 +143,8 @@ export function ConversationPanel({
             onExpandWidget={onExpandWidget}
             onWidgetInteraction={onWidgetInteraction}
             onWidgetFallbackToText={onWidgetFallbackToText}
+            onCreateReference={onCreateReference}
+            onNavigateReference={onNavigateReference}
           />
           {error && <p className="text-sm text-red-500 text-center mt-4">{error}</p>}
 
@@ -157,10 +167,12 @@ export function ConversationPanel({
       <div className="shrink-0 border-t border-border">
         <div className="max-w-3xl mx-auto">
           <ChatInput
-            onSubmit={(q, files) => onSend(q, files)}
+            onSubmit={(q, files, nextReferences) => onSend(q, files, nextReferences)}
             onStop={onStop || (() => {})}
             isRunning={isThinking}
             placeholder="继续把要求交给个人助理..."
+            references={references}
+            onRemoveReference={onRemoveReference}
           />
         </div>
       </div>

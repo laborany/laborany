@@ -5,6 +5,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, ChangeEvent, ClipboardEvent, DragEvent } from 'react'
+import type { MessageReference } from '../../types'
 import { FileIcon } from './FileIcon'
 import {
   DropdownMenu,
@@ -45,12 +46,14 @@ interface Attachment {
 type ChatInputVariant = 'home' | 'reply'
 
 interface ChatInputProps {
-  onSubmit: (query: string, files: File[]) => void
+  onSubmit: (query: string, files: File[], references?: MessageReference[]) => void
   onStop: () => void
   isRunning: boolean
   placeholder?: string
   autoFocus?: boolean
   variant?: ChatInputVariant
+  references?: MessageReference[]
+  onRemoveReference?: (referenceId: string) => void
 }
 
 export default function ChatInput({
@@ -60,6 +63,8 @@ export default function ChatInput({
   placeholder = '输入你的问题...',
   autoFocus = false,
   variant = 'reply',
+  references = [],
+  onRemoveReference,
 }: ChatInputProps) {
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -203,7 +208,7 @@ export default function ChatInput({
     const finalQuery = query || (validAttachments.length > 0 ? '我上传了一些文件' : '')
     const files = validAttachments.map((a) => a.file)
 
-    onSubmit(finalQuery, files)
+    onSubmit(finalQuery, files, references)
     setValue('')
     setAttachments([])
 
@@ -298,6 +303,19 @@ export default function ChatInput({
           <span className="text-sm font-medium text-primary">松开鼠标上传文件</span>
         </div>
       )}
+      {/* 引用区 */}
+      {references.length > 0 && (
+        <div className="px-4 py-2 flex flex-wrap gap-2 border-b border-border/50">
+          {references.map((reference) => (
+            <ReferencePreview
+              key={reference.id}
+              reference={reference}
+              onRemove={onRemoveReference ? () => onRemoveReference(reference.id) : undefined}
+            />
+          ))}
+        </div>
+      )}
+
       {/* 附件预览区 */}
       {attachments.length > 0 && (
         <div className="px-4 py-2 flex flex-wrap gap-2 border-b border-border/50">
@@ -493,6 +511,44 @@ export default function ChatInput({
  * │                       附件预览组件                                        │
  * │  图片显示缩略图，文件显示图标，错误显示红色边框                               │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+function ReferencePreview({
+  reference,
+  onRemove,
+}: {
+  reference: MessageReference
+  onRemove?: () => void
+}) {
+  const icon = reference.kind === 'artifact'
+    ? '📎'
+    : reference.kind === 'tool_result'
+      ? '✅'
+      : reference.kind === 'widget'
+        ? '🧩'
+        : '💬'
+
+  return (
+    <div className="flex items-center gap-2 px-2 py-1 rounded text-sm group bg-muted/50">
+      <span>{icon}</span>
+      <div className="flex flex-col min-w-0">
+        <span className="truncate max-w-[180px] text-foreground">{reference.title}</span>
+        <span className="truncate max-w-[220px] text-xs text-muted-foreground">
+          {reference.snippet || getReferenceKindLabel(reference.kind)}
+        </span>
+      </div>
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
+    </div>
+  )
+}
+
 function AttachmentPreview({
   attachment,
   onRemove,
@@ -551,6 +607,13 @@ function AttachmentPreview({
  * └──────────────────────────────────────────────────────────────────────────┘ */
 function getFileExt(filename: string): string {
   return filename.split('.').pop() || ''
+}
+
+function getReferenceKindLabel(kind: MessageReference['kind']): string {
+  if (kind === 'artifact') return '产物引用'
+  if (kind === 'tool_result') return '工具结果引用'
+  if (kind === 'widget') return '组件引用'
+  return '消息引用'
 }
 
 function readFileAsDataURL(file: File): Promise<string> {

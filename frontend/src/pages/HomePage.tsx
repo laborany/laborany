@@ -572,6 +572,10 @@ export default function HomePage() {
         const text = `[来自组件交互]\n${JSON.stringify(data, null, 2)}`
         void converse.sendMessage(text)
       }}
+      references={converse.draftReferences}
+      onRemoveReference={converse.removeDraftReference}
+      onCreateReference={converse.addDraftReference}
+      onNavigateReference={converse.navigateReference}
       assistantHint={getAssistantPhaseHint(phase)}
     />
   }

@@ -1131,20 +1131,26 @@ class RuntimeTaskManager {
 
     if (event.type === 'tool_use') {
       dbHelper.run(
-        `INSERT INTO messages (session_id, type, tool_name, tool_input) VALUES (?, ?, ?, ?)`,
+        `INSERT INTO messages (session_id, type, tool_name, tool_input, meta) VALUES (?, ?, ?, ?, ?)`,
         [
           task.sessionId,
           'tool_use',
           event.toolName || '',
           JSON.stringify(event.toolInput || {}),
+          event.toolUseId ? JSON.stringify({ toolUseId: event.toolUseId, messageKind: 'tool_use' }) : null,
         ],
       )
     }
 
     if (event.type === 'tool_result') {
       dbHelper.run(
-        `INSERT INTO messages (session_id, type, tool_result) VALUES (?, ?, ?)`,
-        [task.sessionId, 'tool_result', event.toolResult || ''],
+        `INSERT INTO messages (session_id, type, tool_result, meta) VALUES (?, ?, ?, ?)`,
+        [
+          task.sessionId,
+          'tool_result',
+          event.toolResult || '',
+          event.toolUseId ? JSON.stringify({ toolUseId: event.toolUseId, messageKind: 'tool_result' }) : null,
+        ],
       )
     }
 

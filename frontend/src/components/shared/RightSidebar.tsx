@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import type { AgentMessage, TaskFile } from '../../types'
+import type { AgentMessage, MessageReference, TaskFile } from '../../types'
 import type { FileArtifact } from '../preview'
 import { getCategory, getExt, getFileIcon, isPreviewable } from '../preview'
 import { CollapsibleSection } from './CollapsibleSection'
@@ -14,6 +14,7 @@ interface RightSidebarProps {
   onSelectArtifact: (artifact: FileArtifact) => void
   getFileUrl: (path: string) => string
   workDir: string | null
+  onCreateReference?: (reference: MessageReference) => void
 }
 
 interface ToolUsage {
@@ -199,10 +200,12 @@ function ArtifactItem({
   file,
   isSelected,
   onClick,
+  onReference,
 }: {
   file: TaskFile
   isSelected: boolean
   onClick: () => void
+  onReference?: () => void
 }) {
   const ext = file.ext || getExt(file.name)
   const icon = getFileIcon(ext)
@@ -216,6 +219,26 @@ function ArtifactItem({
     >
       <span>{icon}</span>
       <span className="truncate text-foreground">{file.name}</span>
+      {onReference && (
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(event) => {
+            event.stopPropagation()
+            onReference()
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              event.stopPropagation()
+              onReference()
+            }
+          }}
+          className="ml-auto rounded border border-border/60 px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent"
+        >
+          引用
+        </span>
+      )}
     </button>
   )
 }
@@ -228,6 +251,7 @@ export function RightSidebar({
   onSelectArtifact,
   getFileUrl,
   workDir,
+  onCreateReference,
 }: RightSidebarProps) {
   const [showAllTools, setShowAllTools] = useState(false)
 
@@ -261,6 +285,16 @@ export function RightSidebar({
                 file={file}
                 isSelected={isSelectedArtifactPath(file, selectedArtifact?.path, workDir)}
                 onClick={() => onSelectArtifact(toFileArtifact(file, getFileUrl, workDir))}
+                onReference={onCreateReference
+                  ? () => onCreateReference({
+                    id: `artifact:${toArtifactPath(file.path, workDir)}`,
+                    kind: 'artifact',
+                    title: file.name,
+                    snippet: file.path,
+                    artifactName: file.name,
+                    artifactPath: toArtifactPath(file.path, workDir),
+                  })
+                  : undefined}
               />
             ))}
           </div>

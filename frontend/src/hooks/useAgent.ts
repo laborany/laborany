@@ -1,6 +1,6 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import type { AgentMessage, SessionDetail, TaskFile, WidgetState } from '../types'
+import type { AgentMessage, MessageReference, SessionDetail, TaskFile, WidgetState } from '../types'
 import { API_BASE } from '../config/api'
 import { useModelProfile } from '../contexts/ModelProfileContext'
 import { mergeAttachmentIds, uploadAttachments } from '../lib/attachments'
@@ -37,6 +37,8 @@ export interface PendingQuestion {
 
 interface AgentState {
   messages: AgentMessage[]
+  draftReferences: MessageReference[]
+  highlightedReferenceId: string | null
   isRunning: boolean
   runCompletedAt: string | null
   sessionId: string | null
@@ -369,6 +371,8 @@ export function useAgent(skillId: string) {
 
   const [state, setState] = useState<AgentState>({
     messages: [],
+    draftReferences: [],
+    highlightedReferenceId: null,
     isRunning: false,
     runCompletedAt: null,
     sessionId: null,
@@ -518,6 +522,8 @@ export function useAgent(skillId: string) {
 
     setState({
       messages: [],
+      draftReferences: [],
+      highlightedReferenceId: null,
       isRunning: false,
       runCompletedAt: null,
       sessionId: null,
@@ -1179,7 +1185,10 @@ export function useAgent(skillId: string) {
   )
 
   const execute = useCallback(
-    async (query: string, files?: File[], options?: { originQuery?: string; attachmentIds?: string[]; requestQuery?: string; assistantHandoffText?: string; workId?: string }) => {
+    async (query: string, files?: File[], referencesOrOptions?: MessageReference[] | { originQuery?: string; attachmentIds?: string[]; requestQuery?: string; assistantHandoffText?: string; workId?: string }, maybeOptions?: { originQuery?: string; attachmentIds?: string[]; requestQuery?: string; assistantHandoffText?: string; workId?: string }) => {
+      const references = Array.isArray(referencesOrOptions) ? referencesOrOptions : []
+      const options = Array.isArray(referencesOrOptions) ? maybeOptions : referencesOrOptions
+
       if (executeInFlightRef.current) {
         console.warn('[useAgent] 忽略重复执行：已有请求在进行中')
         return
@@ -1212,6 +1221,7 @@ export function useAgent(skillId: string) {
         assistantHandoffText: options?.assistantHandoffText || '',
         workId: options?.workId || '',
         attachmentIds: (options?.attachmentIds || []).join('|'),
+        references: references.map((reference) => reference.id).join('|'),
       })
       const now = Date.now()
       const lastExecute = lastExecuteFingerprintRef.current
@@ -1235,6 +1245,7 @@ export function useAgent(skillId: string) {
         type: 'user',
         content: visibleUserQuery,
         timestamp: new Date(),
+        meta: references.length > 0 ? { references } : undefined,
       }
       const assistantHandoffMessage: AgentMessage | null = options?.assistantHandoffText
         ? {
@@ -1267,6 +1278,7 @@ export function useAgent(skillId: string) {
         pendingQuestion: null,
         activeWidget: null,
         streamingWidget: null,
+        draftReferences: [],
       }))
 
       terminalEventRef.current = false
@@ -1330,6 +1342,7 @@ export function useAgent(skillId: string) {
               ...(options?.workId ? { workId: options.workId } : {}),
             }
             : (options?.workId ? { workId: options.workId } : undefined),
+          references: references.length > 0 ? references : undefined,
         })
 
         const res = await fetchWithRetry(
@@ -1456,6 +1469,8 @@ export function useAgent(skillId: string) {
     committedWidgetsRef.current.clear()
     setState({
       messages: [],
+      draftReferences: [],
+      highlightedReferenceId: null,
       isRunning: false,
       runCompletedAt: null,
       sessionId: null,
@@ -1644,6 +1659,48 @@ export function useAgent(skillId: string) {
     [state.pendingQuestion, execute],
   )
 
+  const addDraftReference = useCallback((reference: MessageReference) => {
+    setState((s) => ({
+      ...s,
+      draftReferences: s.draftReferences.some((item) => item.id === reference.id)
+        ? s.draftReferences
+        : [...s.draftReferences, reference],
+    }))
+  }, [])
+
+  const removeDraftReference = useCallback((referenceId: string) => {
+    setState((s) => ({
+      ...s,
+      draftReferences: s.draftReferences.filter((item) => item.id !== referenceId),
+    }))
+  }, [])
+
+  const navigateReference = useCallback((reference: MessageReference) => {
+    if (reference.kind === 'widget' && reference.widgetId) {
+      const widget = committedWidgetsRef.current.get(reference.widgetId)
+        || (state.streamingWidget?.widgetId === reference.widgetId ? state.streamingWidget : null)
+      if (widget) {
+        setState((s) => ({ ...s, activeWidget: widget }))
+        return
+      }
+    }
+
+    if (typeof document === 'undefined') return
+    const selector = reference.messageId
+      ? `[data-message-id="${reference.messageId}"]`
+      : typeof reference.serverMessageId === 'number'
+        ? `[data-server-message-id="${reference.serverMessageId}"]`
+        : ''
+    if (!selector) return
+    const node = document.querySelector<HTMLElement>(selector)
+    if (!node) return
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    node.classList.add('ring-2', 'ring-primary/60', 'rounded-xl', 'bg-primary/5')
+    window.setTimeout(() => {
+      node.classList.remove('ring-2', 'ring-primary/60', 'rounded-xl', 'bg-primary/5')
+    }, 2000)
+  }, [state.streamingWidget])
+
   const showWidget = useCallback((widgetId: string) => {
     const widget = committedWidgetsRef.current.get(widgetId)
       || (state.streamingWidget?.widgetId === widgetId ? state.streamingWidget : null)
@@ -1806,6 +1863,9 @@ export function useAgent(skillId: string) {
     runCompletedAt: state.runCompletedAt,
     showWidget,
     setActiveWidget,
+    addDraftReference,
+    removeDraftReference,
+    navigateReference,
   }
 }
 

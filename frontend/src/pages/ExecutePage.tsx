@@ -425,6 +425,10 @@ export default function ExecutePage() {
             onStop={converse.stop}
             placeholder="继续把要求交给个人助理..."
             emptyText="暂无助理会话记录"
+            references={converse.draftReferences}
+            onRemoveReference={converse.removeDraftReference}
+            onCreateReference={converse.addDraftReference}
+            onNavigateReference={converse.navigateReference}
           />
         </div>
       ) : (

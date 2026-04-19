@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { AgentMessage, MessageMeta, WidgetState } from '../../types'
+import type { AgentMessage, MessageMeta, MessageReference, WidgetState } from '../../types'
 import { getLatestRegeneratableMessageId } from '../../lib/messageVariants'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { InlineWidget } from '../widget/InlineWidget'
@@ -25,6 +25,8 @@ interface MessageListProps {
   onExpandWidget?: (widgetId: string) => void
   onWidgetInteraction?: (widgetId: string, data: unknown) => void
   onWidgetFallbackToText?: () => void
+  onCreateReference?: (reference: MessageReference) => void
+  onNavigateReference?: (reference: MessageReference) => void
 }
 
 type TextBlock = {
@@ -234,6 +236,8 @@ export default function MessageList({
   onExpandWidget,
   onWidgetInteraction,
   onWidgetFallbackToText,
+  onCreateReference,
+  onNavigateReference,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLElement | null>(null)
@@ -364,6 +368,8 @@ export default function MessageList({
           onExpandWidget={onExpandWidget}
           onWidgetInteraction={onWidgetInteraction}
           onWidgetFallbackToText={onWidgetFallbackToText}
+          onCreateReference={onCreateReference}
+          onNavigateReference={onNavigateReference}
         />
       ))}
       <div ref={bottomRef} />
@@ -499,6 +505,8 @@ function BlockRenderer({
   onExpandWidget,
   onWidgetInteraction,
   onWidgetFallbackToText,
+  onCreateReference,
+  onNavigateReference,
 }: {
   block: RenderBlock
   message?: AgentMessage
@@ -511,10 +519,20 @@ function BlockRenderer({
   onExpandWidget?: (widgetId: string) => void
   onWidgetInteraction?: (widgetId: string, data: unknown) => void
   onWidgetFallbackToText?: () => void
+  onCreateReference?: (reference: MessageReference) => void
+  onNavigateReference?: (reference: MessageReference) => void
 }) {
   switch (block.type) {
     case 'user':
-      return <UserBubble content={block.content} meta={block.meta} />
+      return (
+        <UserBubble
+          content={block.content}
+          meta={block.meta}
+          message={message}
+          onCreateReference={onCreateReference}
+          onNavigateReference={onNavigateReference}
+        />
+      )
     case 'text':
       if (message?.meta?.messageKind === 'action_summary') {
         return <AssistantHandoffCard content={block.content} />
@@ -532,12 +550,20 @@ function BlockRenderer({
           onSelectVariant={onSelectVariant}
           regeneratingMessageId={regeneratingMessageId}
           onVisualizeMessage={onVisualizeMessage}
+          onCreateReference={onCreateReference}
+          onNavigateReference={onNavigateReference}
         />
       )
     case 'tool_call':
       return <ToolCallView name={block.name} input={block.input} />
     case 'tool_result':
-      return <ToolResultView name={block.name} content={block.content} />
+      return (
+        <ToolResultView
+          name={block.name}
+          content={block.content}
+          onCreateReference={onCreateReference}
+        />
+      )
     case 'error':
       return <ErrorBanner content={block.content} />
     case 'thinking':
@@ -557,6 +583,15 @@ function BlockRenderer({
           onExpand={onExpandWidget}
           onInteraction={onWidgetInteraction}
           onFallbackToText={onWidgetFallbackToText}
+          onReference={onCreateReference
+            ? (widgetId, title) => onCreateReference({
+              id: `widget:${widgetId}`,
+              kind: 'widget',
+              title,
+              snippet: '组件引用',
+              widgetId,
+            })
+            : undefined}
         />
       )
   }
@@ -580,16 +615,39 @@ function AssistantHandoffCard({ content }: { content: string }) {
   )
 }
 
-function UserBubble({ content, meta }: { content: string; meta?: MessageMeta | null }) {
+function UserBubble({
+  content,
+  meta,
+  message,
+  onCreateReference,
+  onNavigateReference,
+}: {
+  content: string
+  meta?: MessageMeta | null
+  message?: AgentMessage
+  onCreateReference?: (reference: MessageReference) => void
+  onNavigateReference?: (reference: MessageReference) => void
+}) {
   const canCopy = meta?.capabilities?.canCopy ?? true
 
   return (
     <div className="group animate-in slide-in-from-bottom-1 flex justify-end duration-200 fade-in">
-      <div className="max-w-[85%]">
+      <div
+        className="max-w-[85%]"
+        data-message-id={message?.id}
+        data-server-message-id={message?.serverMessageId ?? undefined}
+      >
+        <ReferencePills references={meta?.references} onNavigateReference={onNavigateReference} align="right" />
         <div className="rounded-lg bg-primary px-4 py-3 text-primary-foreground">
           <div className="whitespace-pre-wrap">{content}</div>
         </div>
-        <MessageActionBar text={content} canCopy={canCopy} latestRegeneratableMessageId={null} />
+        <MessageActionBar
+          text={content}
+          canCopy={canCopy}
+          message={message}
+          latestRegeneratableMessageId={null}
+          onCreateReference={onCreateReference}
+        />
       </div>
     </div>
   )
@@ -625,6 +683,8 @@ function TextBlockView({
   onSelectVariant,
   regeneratingMessageId,
   onVisualizeMessage,
+  onCreateReference,
+  onNavigateReference,
 }: {
   content: string
   isStreaming: boolean
@@ -637,6 +697,8 @@ function TextBlockView({
   onSelectVariant?: (messageId: string, variantIndex: number) => void
   regeneratingMessageId?: string | null
   onVisualizeMessage?: (content: string) => void
+  onCreateReference?: (reference: MessageReference) => void
+  onNavigateReference?: (reference: MessageReference) => void
 }) {
   // Fix P0-1: 降低 debounce 延迟，从 300ms → 50ms，减少卡顿感
   const debouncedContent = useDebouncedValue(content, isStreaming ? 50 : 0)
@@ -667,6 +729,7 @@ function TextBlockView({
               onRegenerate={onRegenerate}
               regeneratingMessageId={regeneratingMessageId}
               onVisualizeMessage={onVisualizeMessage}
+              onCreateReference={onCreateReference}
             />
             <VariantPager message={message} onSelectVariant={onSelectVariant} />
           </>
@@ -676,7 +739,8 @@ function TextBlockView({
   }
 
   return (
-    <div className="group animate-in slide-in-from-bottom-1 duration-200 fade-in">
+    <div className="group animate-in slide-in-from-bottom-1 duration-200 fade-in" data-message-id={message?.id} data-server-message-id={message?.serverMessageId ?? undefined}>
+      <ReferencePills references={meta?.references} onNavigateReference={onNavigateReference} />
       <div className="prose prose-sm max-w-none dark:prose-invert">
         <MarkdownView content={content} />
       </div>
@@ -690,6 +754,7 @@ function TextBlockView({
             onRegenerate={onRegenerate}
             regeneratingMessageId={regeneratingMessageId}
             onVisualizeMessage={onVisualizeMessage}
+            onCreateReference={onCreateReference}
           />
           <VariantPager message={message} onSelectVariant={onSelectVariant} />
         </>
@@ -706,6 +771,7 @@ function MessageActionBar({
   onRegenerate,
   regeneratingMessageId,
   onVisualizeMessage,
+  onCreateReference,
 }: {
   text: string
   canCopy: boolean
@@ -714,6 +780,7 @@ function MessageActionBar({
   onRegenerate?: (messageId: string) => void | Promise<void>
   regeneratingMessageId?: string | null
   onVisualizeMessage?: (content: string) => void
+  onCreateReference?: (reference: MessageReference) => void
 }) {
   const canRegenerate = Boolean(
     message
@@ -722,11 +789,29 @@ function MessageActionBar({
     && message.meta?.capabilities?.canRegenerate,
   )
   const canVisualize = Boolean(onVisualizeMessage && text.trim())
+  const canReference = Boolean(message && onCreateReference && buildMessageReference(message))
 
-  if (!text.trim() || (!canCopy && !canRegenerate && !canVisualize)) return null
+  if (!text.trim() || (!canCopy && !canRegenerate && !canVisualize && !canReference)) return null
 
   return (
     <div className="mt-1 flex justify-end gap-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+      {canReference && message && (
+        <button
+          type="button"
+          onClick={() => {
+            const reference = buildMessageReference(message)
+            if (reference) onCreateReference?.(reference)
+          }}
+          title="引用"
+          aria-label="引用"
+          className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14L21 3m0 0h-7m7 0v7M14 10l-11 11m0 0h7m-7 0v-7" />
+          </svg>
+          <span>引用</span>
+        </button>
+      )}
       {canVisualize && (
         <button
           type="button"
@@ -967,7 +1052,15 @@ function ErrorBanner({ content }: { content: string }) {
   )
 }
 
-function ToolResultView({ name, content }: { name: string; content: string }) {
+function ToolResultView({
+  name,
+  content,
+  onCreateReference,
+}: {
+  name: string
+  content: string
+  onCreateReference?: (reference: MessageReference) => void
+}) {
   const [isExpanded, setIsExpanded] = useState(false)
   const normalized = content.trim()
   const summary = normalized
@@ -995,6 +1088,38 @@ function ToolResultView({ name, content }: { name: string; content: string }) {
         </svg>
         <span className="font-medium">{getToolDisplayName(name || '执行结果')}</span>
         {description && <span className="truncate text-left opacity-75">{description}</span>}
+        {onCreateReference && normalized && (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(event) => {
+              event.stopPropagation()
+              onCreateReference({
+                id: `tool_result:${name}:${description || normalized.slice(0, 24)}`,
+                kind: 'tool_result',
+                title: getToolDisplayName(name || '执行结果'),
+                snippet: normalized.slice(0, 140),
+                toolName: name || '执行结果',
+              })
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                event.stopPropagation()
+                onCreateReference({
+                  id: `tool_result:${name}:${description || normalized.slice(0, 24)}`,
+                  kind: 'tool_result',
+                  title: getToolDisplayName(name || '执行结果'),
+                  snippet: normalized.slice(0, 140),
+                  toolName: name || '执行结果',
+                })
+              }
+            }}
+            className="ml-auto inline-flex rounded border border-emerald-300/60 px-2 py-0.5 text-xs hover:bg-emerald-100/60 dark:border-emerald-800 dark:hover:bg-emerald-900/30"
+          >
+            引用
+          </span>
+        )}
       </button>
       {normalized && isExpanded ? (
         <div className="border-t border-emerald-200/50 px-4 py-3 dark:border-emerald-900/40">
@@ -1095,6 +1220,64 @@ function getToolDescription(name: string, input?: Record<string, unknown>): stri
     default:
       return ''
   }
+}
+
+function buildMessageReference(message: AgentMessage): MessageReference | null {
+  const text = message.content.trim()
+  const widget = message.meta?.widget
+
+  if (widget && message.widgetId) {
+    return {
+      id: `widget:${widget.widgetId}`,
+      kind: 'widget',
+      title: widget.title,
+      snippet: '组件引用',
+      messageId: message.id,
+      serverMessageId: message.serverMessageId ?? null,
+      widgetId: widget.widgetId,
+      turnId: message.meta?.turnId ?? null,
+    }
+  }
+
+  if (!text) return null
+
+  return {
+    id: `message:${message.id}`,
+    kind: 'message',
+    title: message.type === 'user' ? '用户消息' : '对话消息',
+    snippet: text.slice(0, 140),
+    messageId: message.id,
+    serverMessageId: message.serverMessageId ?? null,
+    turnId: message.meta?.turnId ?? null,
+  }
+}
+
+function ReferencePills({
+  references,
+  onNavigateReference,
+  align = 'left',
+}: {
+  references?: MessageReference[]
+  onNavigateReference?: (reference: MessageReference) => void
+  align?: 'left' | 'right'
+}) {
+  if (!references || references.length === 0) return null
+
+  return (
+    <div className={`mb-2 flex flex-wrap gap-2 ${align === 'right' ? 'justify-end' : ''}`}>
+      {references.map((reference) => (
+        <button
+          key={reference.id}
+          type="button"
+          onClick={() => onNavigateReference?.(reference)}
+          className="inline-flex max-w-full items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <span>{reference.kind === 'artifact' ? '📎' : reference.kind === 'tool_result' ? '✅' : reference.kind === 'widget' ? '🧩' : '💬'}</span>
+          <span className="truncate max-w-[220px]">{reference.title}</span>
+        </button>
+      ))}
+    </div>
+  )
 }
 
 function WidgetAnchorCard({ widgetId, title, onClick }: { widgetId: string; title: string; onClick?: (widgetId: string) => void }) {

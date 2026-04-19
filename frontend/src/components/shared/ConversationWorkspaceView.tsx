@@ -1,7 +1,7 @@
 import MessageList from './MessageList'
 import ChatInput from './ChatInput'
 import { QuestionInput } from './QuestionInput'
-import type { AgentMessage } from '../../types'
+import type { AgentMessage, MessageReference } from '../../types'
 import type { PendingQuestion } from '../../hooks/useAgent'
 
 interface ConversationWorkspaceViewProps {
@@ -14,10 +14,14 @@ interface ConversationWorkspaceViewProps {
   regeneratingMessageId?: string | null
   pendingQuestion?: PendingQuestion | null
   respondToQuestion?: (questionId: string, answers: Record<string, string>) => void
-  onSubmit: (text: string, files?: File[]) => void
+  onSubmit: (text: string, files?: File[], references?: MessageReference[]) => void
   onStop?: () => void
   placeholder?: string
   emptyText?: string
+  references?: MessageReference[]
+  onRemoveReference?: (referenceId: string) => void
+  onCreateReference?: (reference: MessageReference) => void
+  onNavigateReference?: (reference: MessageReference) => void
 }
 
 export function ConversationWorkspaceView({
@@ -34,6 +38,10 @@ export function ConversationWorkspaceView({
   onStop,
   placeholder = '继续对话...',
   emptyText = '暂无会话记录',
+  references = [],
+  onRemoveReference,
+  onCreateReference,
+  onNavigateReference,
 }: ConversationWorkspaceViewProps) {
   const hasHeader = Boolean(title || subtitle)
 
@@ -54,6 +62,8 @@ export function ConversationWorkspaceView({
             onRegenerate={onRegenerate}
             onSelectVariant={onSelectVariant}
             regeneratingMessageId={regeneratingMessageId}
+            onCreateReference={onCreateReference}
+            onNavigateReference={onNavigateReference}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -71,6 +81,8 @@ export function ConversationWorkspaceView({
             onStop={onStop || (() => {})}
             isRunning={isRunning}
             placeholder={placeholder}
+            references={references}
+            onRemoveReference={onRemoveReference}
           />
         )}
       </div>

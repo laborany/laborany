@@ -74,7 +74,26 @@ type ConverseMessageKind =
   | 'action_summary'
   | 'question_summary'
   | 'rule_reply'
+  | 'tool_use'
+  | 'tool_result'
   | 'error'
+
+interface ConverseMessageReference {
+  id: string
+  kind: 'message' | 'artifact' | 'tool_result' | 'widget'
+  title: string
+  snippet?: string
+  sessionId?: string | null
+  workId?: string | null
+  messageId?: string
+  serverMessageId?: number | null
+  turnId?: string | null
+  artifactPath?: string
+  artifactName?: string
+  toolUseId?: string | null
+  toolName?: string | null
+  widgetId?: string | null
+}
 
 interface ConverseMessageMeta {
   sessionMode: 'converse'
@@ -88,6 +107,8 @@ interface ConverseMessageMeta {
     canCopy: boolean
     canRegenerate: boolean
   }
+  references?: ConverseMessageReference[]
+  toolUseId?: string | null
   widget?: { widgetId: string; title: string; html: string; status: string; displayMode?: 'inline' | 'panel' }
 }
 
@@ -127,12 +148,16 @@ function buildConverseMessageMeta({
   source,
   replyToMessageId = null,
   canRegenerate = false,
+  references,
+  toolUseId,
 }: {
   kind: ConverseMessageKind
   turnId: string
   source: 'user' | 'llm' | 'rule'
   replyToMessageId?: number | null
   canRegenerate?: boolean
+  references?: ConverseMessageReference[]
+  toolUseId?: string | null
 }): ConverseMessageMeta {
   const supportsVariants = kind === 'assistant_reply'
   return {
@@ -147,6 +172,8 @@ function buildConverseMessageMeta({
       canCopy: true,
       canRegenerate,
     },
+    ...(references && references.length > 0 ? { references } : {}),
+    ...(toolUseId ? { toolUseId } : {}),
   }
 }
 
@@ -241,6 +268,37 @@ function summarizeAction(action: ConverseActionPayload): string {
     return '已识别为定时任务，进入创建流程。'
   }
   return `准备发送文件：${action.filePaths.join(', ')}`
+}
+
+function normalizeReferences(input: unknown): ConverseMessageReference[] {
+  if (!Array.isArray(input)) return []
+  const normalized: Array<ConverseMessageReference | null> = input
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const candidate = item as Record<string, unknown>
+      const id = asString(candidate.id)
+      const title = asString(candidate.title)
+      const kind = candidate.kind
+      if (!id || !title) return null
+      if (kind !== 'message' && kind !== 'artifact' && kind !== 'tool_result' && kind !== 'widget') return null
+      return {
+        id,
+        kind,
+        title,
+        snippet: asString(candidate.snippet) || undefined,
+        sessionId: asString(candidate.sessionId) || undefined,
+        workId: asString(candidate.workId) || undefined,
+        messageId: asString(candidate.messageId) || undefined,
+        serverMessageId: typeof candidate.serverMessageId === 'number' ? candidate.serverMessageId : undefined,
+        turnId: asString(candidate.turnId) || undefined,
+        artifactPath: asString(candidate.artifactPath) || undefined,
+        artifactName: asString(candidate.artifactName) || undefined,
+        toolUseId: asString(candidate.toolUseId) || undefined,
+        toolName: asString(candidate.toolName) || undefined,
+        widgetId: asString(candidate.widgetId) || undefined,
+      } satisfies ConverseMessageReference
+    })
+  return normalized.filter((item): item is ConverseMessageReference => item !== null)
 }
 
 function withAttachmentIds<T extends object>(
@@ -525,7 +583,7 @@ router.post('/regenerate', async (req: Request, res: Response) => {
 
 async function appendExternalMessage(
   sessionId: string,
-  type: 'user' | 'assistant' | 'error' | 'system',
+  type: 'user' | 'assistant' | 'error' | 'system' | 'tool_use' | 'tool_result',
   content: string,
   meta?: ConverseMessageMeta,
 ): Promise<number | null> {
@@ -1969,6 +2027,7 @@ router.post('/', async (req: Request, res: Response) => {
     modelProfileId,
     reasoningEffort: rawReasoningEffort,
     attachmentIds: rawAttachmentIds,
+    references: rawReferences,
     latestUserQuery: rawLatestUserQuery,
     questionResponse: rawQuestionResponse,
   } = req.body
@@ -2006,6 +2065,7 @@ router.post('/', async (req: Request, res: Response) => {
     ...normalizeAttachmentIds(rawAttachmentIds),
     ...extracted.attachmentIds,
   ]))
+  const references = normalizeReferences(rawReferences)
   const baseQuery = extracted.text || rawQuery.trim() || (attachmentIds.length > 0 ? ATTACHMENT_ONLY_CONVERSE_QUERY : '')
   const effectiveBaseQuery = buildQuestionAwareQuery(rawMessages, baseQuery, questionResponse)
   const persistUserQuery = rawQuery.trim() || baseQuery || '用户发起了对话分派请求'
@@ -2050,6 +2110,7 @@ router.post('/', async (req: Request, res: Response) => {
       kind: 'user',
       turnId,
       source: 'user',
+      references,
     }),
   )
 
@@ -2387,6 +2448,23 @@ router.post('/', async (req: Request, res: Response) => {
               toolInput: event.toolInput || {},
               toolUseId: event.toolUseId || null,
             })
+            void fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId,
+                type: 'tool_use',
+                toolName: event.toolName || '',
+                toolInput: event.toolInput || {},
+                meta: buildConverseMessageMeta({
+                  kind: 'tool_use',
+                  turnId,
+                  source: 'llm',
+                  replyToMessageId: userMessageId,
+                  toolUseId: event.toolUseId || null,
+                }),
+              }),
+            }).catch(() => {})
             return
           }
 
@@ -2395,6 +2473,22 @@ router.post('/', async (req: Request, res: Response) => {
               toolResult: event.toolResult || event.content || '',
               toolUseId: event.toolUseId || null,
             })
+            void fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId,
+                type: 'tool_result',
+                toolResult: event.toolResult || event.content || '',
+                meta: buildConverseMessageMeta({
+                  kind: 'tool_result',
+                  turnId,
+                  source: 'llm',
+                  replyToMessageId: userMessageId,
+                  toolUseId: event.toolUseId || null,
+                }),
+              }),
+            }).catch(() => {})
             return
           }
 

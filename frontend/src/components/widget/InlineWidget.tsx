@@ -22,6 +22,7 @@ interface InlineWidgetProps {
   onExpand?: (widgetId: string) => void
   onInteraction?: (widgetId: string, data: unknown) => void
   onFallbackToText?: () => void
+  onReference?: (widgetId: string, title: string) => void
 }
 
 export function InlineWidget({
@@ -33,6 +34,7 @@ export function InlineWidget({
   onExpand,
   onInteraction,
   onFallbackToText,
+  onReference,
 }: InlineWidgetProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const frameLoadedRef = useRef(false)
@@ -218,19 +220,34 @@ export function InlineWidget({
           )}
           <span className="text-xs font-medium text-muted-foreground truncate">{title}</span>
         </div>
-        {onExpand && status === 'ready' && (
-          <button
-            type="button"
-            onClick={() => onExpand(widgetId)}
-            className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground hover:bg-accent/50"
-            aria-label="展开到面板"
-            title="展开"
-          >
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-            </svg>
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {onReference && status === 'ready' && (
+            <button
+              type="button"
+              onClick={() => onReference(widgetId, title)}
+              className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground hover:bg-accent/50"
+              aria-label="引用组件"
+              title="引用"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14L21 3m0 0h-7m7 0v7M14 10l-11 11m0 0h7m-7 0v-7" />
+              </svg>
+            </button>
+          )}
+          {onExpand && status === 'ready' && (
+            <button
+              type="button"
+              onClick={() => onExpand(widgetId)}
+              className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground hover:bg-accent/50"
+              aria-label="展开到面板"
+              title="展开"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* iframe */}

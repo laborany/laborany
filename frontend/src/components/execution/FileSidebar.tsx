@@ -6,7 +6,7 @@
  * ║  2. 宽度可配 —— 通过 props 控制，默认 280px                                ║
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
-import type { AgentMessage, TaskFile } from '../../types'
+import type { AgentMessage, MessageReference, TaskFile } from '../../types'
 import type { FileArtifact } from '../preview'
 import { RightSidebar } from '../shared/RightSidebar'
 
@@ -22,6 +22,7 @@ export interface FileSidebarProps {
   getFileUrl: (path: string) => string
   workDir: string | null
   width?: number
+  onCreateReference?: (reference: MessageReference) => void
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -41,6 +42,7 @@ export function FileSidebar({
   getFileUrl,
   workDir,
   width = DEFAULT_WIDTH,
+  onCreateReference,
 }: FileSidebarProps) {
   return (
     <div style={{ width }} className="shrink-0">
@@ -52,6 +54,7 @@ export function FileSidebar({
         onSelectArtifact={onSelectArtifact}
         getFileUrl={getFileUrl}
         workDir={workDir}
+        onCreateReference={onCreateReference}
       />
     </div>
   )

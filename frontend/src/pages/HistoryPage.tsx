@@ -4,7 +4,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAgent, type PendingQuestion } from '../hooks/useAgent'
 import { useConverse } from '../hooks/useConverse'
 import { useSkillNameMap } from '../hooks/useSkillNameMap'
-import type { AgentMessage, TaskFile, SessionDetail, SessionLiveStatus, WidgetState, WorkDetailResponse, WorkSummary } from '../types'
+import type { AgentMessage, MessageReference, TaskFile, SessionDetail, SessionLiveStatus, WidgetState, WorkDetailResponse, WorkSummary } from '../types'
 import { API_BASE } from '../config'
 import { ExecutionPanel } from '../components/execution'
 import { Tooltip } from '../components/ui'
@@ -299,6 +299,7 @@ function SessionDetailContent({
   const [deleting, setDeleting] = useState(false)
 
   const [viewingWidget, setViewingWidget] = useState<WidgetState | null>(null)
+  const [historyReferences, setHistoryReferences] = useState<MessageReference[]>([])
   const sessionId = routeSessionId || resolvedSessionId || ''
 
   const attachInFlightRef = useRef<Promise<void> | null>(null)
@@ -334,6 +335,7 @@ function SessionDetailContent({
     setTaskFiles([])
     setFilesVersion(0)
     setViewingWidget(null)
+    setHistoryReferences([])
     setResolvedSessionId(null)
     setActiveTab('employee')
   }, [routeSessionId, routeWorkId])
@@ -622,22 +624,24 @@ function SessionDetailContent({
     [sessionId],
   )
 
-  async function handleContinue(query: string) {
+  async function handleContinue(query: string, _files?: File[], references?: MessageReference[]) {
     const normalizedQuery = query.trim()
     if (!session || !sessionId || !normalizedQuery) return
+    const nextReferences = references || historyReferences
+    setHistoryReferences([])
 
     if (isConverseSession) {
       if (converse.messages.length === 0) {
         await converse.resumeSession(sessionId)
       }
       setContinuing(true)
-      await converse.sendMessage(normalizedQuery)
+      await converse.sendMessage(normalizedQuery, [], nextReferences)
       return
     }
 
     agent.resumeSession(sessionId)
     setContinuing(true)
-    await agent.execute(normalizedQuery)
+    await agent.execute(normalizedQuery, [], nextReferences)
   }
 
   const handleQuestionSubmit = useCallback(
@@ -805,6 +809,37 @@ function SessionDetailContent({
       status: w.status as WidgetState['status'],
     })
   }, [allMessages])
+
+  const handleCreateHistoryReference = useCallback((reference: MessageReference) => {
+    setHistoryReferences((prev) => prev.some((item) => item.id === reference.id) ? prev : [...prev, reference])
+  }, [])
+
+  const handleRemoveHistoryReference = useCallback((referenceId: string) => {
+    setHistoryReferences((prev) => prev.filter((item) => item.id !== referenceId))
+  }, [])
+
+  const handleNavigateHistoryReference = useCallback((reference: MessageReference) => {
+    if (reference.kind === 'widget' && reference.widgetId) {
+      handleShowWidget(reference.widgetId)
+      return
+    }
+
+    if (typeof document === 'undefined') return
+    const selector = reference.messageId
+      ? `[data-message-id="${reference.messageId}"]`
+      : typeof reference.serverMessageId === 'number'
+        ? `[data-server-message-id="${reference.serverMessageId}"]`
+        : ''
+    if (!selector) return
+    const node = document.querySelector<HTMLElement>(selector)
+    if (!node) return
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    node.classList.add('ring-2', 'ring-primary/60', 'rounded-xl', 'bg-primary/5')
+    window.setTimeout(() => {
+      node.classList.remove('ring-2', 'ring-primary/60', 'rounded-xl', 'bg-primary/5')
+    }, 2000)
+  }, [handleShowWidget])
+
   const handleWidgetInteraction = useCallback((data: unknown) => {
     const text = `[来自组件交互]\n${JSON.stringify(data, null, 2)}`
     void handleContinue(text)
@@ -968,6 +1003,10 @@ function SessionDetailContent({
           onStop={converse.stop}
           placeholder="继续把要求交给个人助理..."
           emptyText="暂无助理会话记录"
+          references={converse.draftReferences}
+          onRemoveReference={converse.removeDraftReference}
+          onCreateReference={converse.addDraftReference}
+          onNavigateReference={converse.navigateReference}
         />
         </div>
       </div>
@@ -1021,6 +1060,10 @@ function SessionDetailContent({
         onWidgetFallbackToText={isConverseSession ? () => { void handleContinue('[请改为文本解释]') } : undefined}
         onShowWidget={handleShowWidget}
         onExpandWidget={handleShowWidget}
+        references={historyReferences}
+        onRemoveReference={handleRemoveHistoryReference}
+        onCreateReference={handleCreateHistoryReference}
+        onNavigateReference={handleNavigateHistoryReference}
       />
     </div>
   )

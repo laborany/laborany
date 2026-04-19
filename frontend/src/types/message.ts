@@ -18,6 +18,25 @@ export interface MessageCapabilities {
   canRegenerate?: boolean
 }
 
+export type MessageReferenceKind = 'message' | 'artifact' | 'tool_result' | 'widget'
+
+export interface MessageReference {
+  id: string
+  kind: MessageReferenceKind
+  title: string
+  snippet?: string
+  sessionId?: string | null
+  workId?: string | null
+  messageId?: string
+  serverMessageId?: number | null
+  turnId?: string | null
+  artifactPath?: string
+  artifactName?: string
+  toolUseId?: string | null
+  toolName?: string | null
+  widgetId?: string | null
+}
+
 export interface MessageMeta {
   sessionMode?: MessageSessionMode
   messageKind?: MessageKind
@@ -27,6 +46,7 @@ export interface MessageMeta {
   variantIndex?: number | null
   source?: 'user' | 'llm' | 'rule' | 'system'
   capabilities?: MessageCapabilities
+  references?: MessageReference[]
   widget?: { widgetId: string; title: string; html: string; status: string; displayMode?: 'inline' | 'panel' }
 }
 

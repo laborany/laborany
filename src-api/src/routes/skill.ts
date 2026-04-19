@@ -62,6 +62,54 @@ interface AssistantSourceMeta {
   workId?: string
 }
 
+interface MessageReferencePayload {
+  id: string
+  kind: 'message' | 'artifact' | 'tool_result' | 'widget'
+  title: string
+  snippet?: string
+  sessionId?: string | null
+  workId?: string | null
+  messageId?: string
+  serverMessageId?: number | null
+  turnId?: string | null
+  artifactPath?: string
+  artifactName?: string
+  toolUseId?: string | null
+  toolName?: string | null
+  widgetId?: string | null
+}
+
+function normalizeReferences(input: unknown): MessageReferencePayload[] {
+  if (!Array.isArray(input)) return []
+  return input
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const candidate = item as Record<string, unknown>
+      const id = typeof candidate.id === 'string' ? candidate.id.trim() : ''
+      const kind = candidate.kind
+      const title = typeof candidate.title === 'string' ? candidate.title.trim() : ''
+      if (!id || !title) return null
+      if (kind !== 'message' && kind !== 'artifact' && kind !== 'tool_result' && kind !== 'widget') return null
+      return {
+        id,
+        kind,
+        title,
+        snippet: typeof candidate.snippet === 'string' ? candidate.snippet : undefined,
+        sessionId: typeof candidate.sessionId === 'string' ? candidate.sessionId : undefined,
+        workId: typeof candidate.workId === 'string' ? candidate.workId : undefined,
+        messageId: typeof candidate.messageId === 'string' ? candidate.messageId : undefined,
+        serverMessageId: typeof candidate.serverMessageId === 'number' ? candidate.serverMessageId : undefined,
+        turnId: typeof candidate.turnId === 'string' ? candidate.turnId : undefined,
+        artifactPath: typeof candidate.artifactPath === 'string' ? candidate.artifactPath : undefined,
+        artifactName: typeof candidate.artifactName === 'string' ? candidate.artifactName : undefined,
+        toolUseId: typeof candidate.toolUseId === 'string' ? candidate.toolUseId : undefined,
+        toolName: typeof candidate.toolName === 'string' ? candidate.toolName : undefined,
+        widgetId: typeof candidate.widgetId === 'string' ? candidate.widgetId : undefined,
+      } satisfies MessageReferencePayload
+    })
+    .filter((item): item is MessageReferencePayload => Boolean(item))
+}
+
 function applyReasoningEffort(
   modelOverride: ModelOverride | undefined,
   reasoningEffort?: ReasoningEffort,
@@ -563,6 +611,7 @@ skill.post('/execute', async (c) => {
   let sourceRaw: string | undefined
   let sourceMeta: Record<string, unknown> | undefined
   let attachmentIdsRaw: unknown
+  let referencesRaw: unknown
   const files: File[] = []
 
   const contentType = c.req.header('Content-Type') || ''
@@ -577,6 +626,7 @@ skill.post('/execute', async (c) => {
     reasoningEffortRaw = (body['reasoningEffort'] as string) || (body['reasoning_effort'] as string)
     sourceRaw = body['source'] as string
     attachmentIdsRaw = body['attachmentIds']
+    referencesRaw = body['references']
     const sourceMetaStr = body['sourceMeta'] as string
     if (sourceMetaStr) {
       try {
@@ -606,6 +656,7 @@ skill.post('/execute', async (c) => {
     reasoningEffortRaw = body.reasoningEffort || body.reasoning_effort
     sourceRaw = body.source
     attachmentIdsRaw = body.attachmentIds
+    referencesRaw = body.references
     sourceMeta = body.sourceMeta
   }
 
@@ -614,6 +665,7 @@ skill.post('/execute', async (c) => {
   const requestedReasoningEffort = normalizeReasoningEffort(reasoningEffortRaw)
   const source = (sourceRaw || '').trim() || 'desktop'
   const requestAttachmentIds = normalizeAttachmentIds(attachmentIdsRaw)
+  const references = normalizeReferences(referencesRaw)
 
   if (!skillId || typeof query !== 'string') {
     return c.json({ error: '缺少 skillId 或 query 参数' }, 400)
@@ -673,8 +725,13 @@ skill.post('/execute', async (c) => {
     )
 
     dbHelper.run(
-      `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-      [sessionId, 'user', visibleUserQuery]
+      `INSERT INTO messages (session_id, type, content, meta) VALUES (?, ?, ?, ?)`,
+      [
+        sessionId,
+        'user',
+        visibleUserQuery,
+        references.length > 0 ? JSON.stringify({ references }) : null,
+      ]
     )
 
     return streamSSE(c, async (stream) => {
@@ -721,8 +778,13 @@ skill.post('/execute', async (c) => {
     )
 
     dbHelper.run(
-      `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-      [sessionId, 'user', visibleUserQuery]
+      `INSERT INTO messages (session_id, type, content, meta) VALUES (?, ?, ?, ?)`,
+      [
+        sessionId,
+        'user',
+        visibleUserQuery,
+        references.length > 0 ? JSON.stringify({ references }) : null,
+      ]
     )
 
     return streamSSE(c, async (stream) => {
@@ -867,8 +929,13 @@ skill.post('/execute', async (c) => {
   const workDir = taskDir
   // 保存用户消息
   dbHelper.run(
-    `INSERT INTO messages (session_id, type, content) VALUES (?, ?, ?)`,
-    [sessionId, 'user', visibleUserQuery]
+    `INSERT INTO messages (session_id, type, content, meta) VALUES (?, ?, ?, ?)`,
+    [
+      sessionId,
+      'user',
+      visibleUserQuery,
+      references.length > 0 ? JSON.stringify({ references }) : null,
+    ]
   )
 
   if (assistantHandoffText) {

@@ -25,6 +25,23 @@ type MessageKind =
   | 'tool_use'
   | 'tool_result'
 
+interface MessageReferencePayload {
+  id?: string
+  kind?: 'message' | 'artifact' | 'tool_result' | 'widget'
+  title?: string
+  snippet?: string
+  sessionId?: string | null
+  workId?: string | null
+  messageId?: string
+  serverMessageId?: number | null
+  turnId?: string | null
+  artifactPath?: string
+  artifactName?: string
+  toolUseId?: string | null
+  toolName?: string | null
+  widgetId?: string | null
+}
+
 interface MessageMetaPayload {
   sessionMode?: MessageSessionMode
   messageKind?: MessageKind
@@ -37,6 +54,8 @@ interface MessageMetaPayload {
     canCopy?: boolean
     canRegenerate?: boolean
   }
+  references?: MessageReferencePayload[]
+  toolUseId?: string | null
 }
 
 function inferSessionSource(sessionId: string, skillId: string, dbSource?: string): SessionSource {

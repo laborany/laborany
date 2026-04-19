@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { AGENT_API_BASE, API_BASE } from '../config/api'
 import type { PendingQuestion } from './useAgent'
-import type { AgentMessage, MessageMeta, WidgetState } from '../types/message'
+import type { AgentMessage, MessageMeta, MessageReference, WidgetState } from '../types/message'
 import { useModelProfile } from '../contexts/ModelProfileContext'
 import { supportsGenerativeWidgets } from '../lib/widgetSupport'
 import {
@@ -51,7 +51,7 @@ export interface ConverseAction {
 
 export interface UseConverseReturn {
   messages: AgentMessage[]
-  sendMessage: (text: string, files?: File[]) => Promise<void>
+  sendMessage: (text: string, files?: File[], references?: MessageReference[]) => Promise<void>
   regenerateMessage: (messageId: string) => Promise<void>
   selectVariant: (messageId: string, variantIndex: number) => void
   stop: () => void
@@ -76,6 +76,11 @@ export interface UseConverseReturn {
     tone: 'warning' | 'neutral' | 'success'
     message: string
   } | null
+  draftReferences: MessageReference[]
+  addDraftReference: (reference: MessageReference) => void
+  removeDraftReference: (referenceId: string) => void
+  navigateReference: (reference: MessageReference) => void
+  highlightedReferenceId: string | null
   setActiveWidget: React.Dispatch<React.SetStateAction<WidgetState | null>>
   showWidget: (widgetId: string) => void
   expandWidget: (widgetId: string) => void
@@ -409,6 +414,8 @@ export function useConverse(): UseConverseReturn {
   const [activeWidget, setActiveWidget] = useState<WidgetState | null>(null)
   const [streamingWidget, setStreamingWidget] = useState<WidgetState | null>(null)
   const [mcpNotice, setMcpNotice] = useState<UseConverseReturn['mcpNotice']>(null)
+  const [highlightedReferenceId, setHighlightedReferenceId] = useState<string | null>(null)
+  const [draftReferences, setDraftReferences] = useState<MessageReference[]>([])
 
   const sessionIdRef = useRef<string | null>(null)
   const workIdRef = useRef<string | null>(null)
@@ -834,8 +841,16 @@ export function useConverse(): UseConverseReturn {
   const sendMessage = useCallback(async (
     text: string,
     files: File[] = [],
-    questionResponse?: QuestionResponsePayload | null,
+    referencesOrQuestionResponse?: MessageReference[] | QuestionResponsePayload | null,
+    maybeQuestionResponse?: QuestionResponsePayload | null,
   ) => {
+    const references = Array.isArray(referencesOrQuestionResponse)
+      ? referencesOrQuestionResponse
+      : []
+    const questionResponse = Array.isArray(referencesOrQuestionResponse)
+      ? (maybeQuestionResponse || null)
+      : (referencesOrQuestionResponse || null)
+
     const requestSeq = ++requestSeqRef.current
     const q = text.trim()
     if (!q && files.length === 0) return
@@ -858,6 +873,7 @@ export function useConverse(): UseConverseReturn {
           canCopy: true,
           canRegenerate: false,
         },
+        ...(references.length > 0 ? { references } : {}),
       },
     }
 
@@ -869,6 +885,7 @@ export function useConverse(): UseConverseReturn {
     setError(null)
     setMcpNotice(null)
     setIsThinking(true)
+    setDraftReferences([])
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -897,6 +914,7 @@ export function useConverse(): UseConverseReturn {
           modelProfileId: activeProfileId || undefined,
           reasoningEffort: activeReasoningEffort !== 'default' ? activeReasoningEffort : undefined,
           questionResponse: questionResponse || undefined,
+          references: references.length > 0 ? references : undefined,
           attachmentIds: mergedFileIds,
           context: {
             channel: 'desktop',
@@ -1068,7 +1086,7 @@ export function useConverse(): UseConverseReturn {
     if (!answerText) return
 
     setPendingQuestion(null)
-    await sendMessage(answerText, [], responsePayload)
+    await sendMessage(answerText, [], [], responsePayload)
   }, [pendingQuestion, sendMessage])
 
   const resumeSession = useCallback(async (targetSessionId: string): Promise<boolean> => {
@@ -1092,6 +1110,39 @@ export function useConverse(): UseConverseReturn {
       return false
     }
   }, [applySessionPayload, fetchSessionPayload])
+
+  const addDraftReference = useCallback((reference: MessageReference) => {
+    setDraftReferences((prev) => prev.some((item) => item.id === reference.id) ? prev : [...prev, reference])
+  }, [])
+
+  const removeDraftReference = useCallback((referenceId: string) => {
+    setDraftReferences((prev) => prev.filter((item) => item.id !== referenceId))
+  }, [])
+
+  const navigateReference = useCallback((reference: MessageReference) => {
+    if (reference.kind === 'widget' && reference.widgetId) {
+      const widget = committedWidgetsRef.current.get(reference.widgetId)
+      if (widget) {
+        setActiveWidget(widget)
+        return
+      }
+    }
+
+    if (typeof document === 'undefined') return
+    const selector = reference.messageId
+      ? `[data-message-id="${reference.messageId}"]`
+      : typeof reference.serverMessageId === 'number'
+        ? `[data-server-message-id="${reference.serverMessageId}"]`
+        : ''
+    if (!selector) return
+    const node = document.querySelector<HTMLElement>(selector)
+    if (!node) return
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    node.classList.add('ring-2', 'ring-primary/60', 'rounded-xl', 'bg-primary/5')
+    window.setTimeout(() => {
+      node.classList.remove('ring-2', 'ring-primary/60', 'rounded-xl', 'bg-primary/5')
+    }, 2000)
+  }, [])
 
   const showWidget = useCallback((widgetId: string) => {
     const widget = committedWidgetsRef.current.get(widgetId)
@@ -1123,6 +1174,8 @@ export function useConverse(): UseConverseReturn {
     setActiveWidget(null)
     setStreamingWidget(null)
     setMcpNotice(null)
+    setDraftReferences([])
+    setHighlightedReferenceId(null)
     messagesRef.current = []
     sessionIdRef.current = null
     workIdRef.current = null
@@ -1149,6 +1202,11 @@ export function useConverse(): UseConverseReturn {
     activeWidget,
     streamingWidget,
     mcpNotice,
+    draftReferences,
+    addDraftReference,
+    removeDraftReference,
+    navigateReference,
+    highlightedReferenceId,
     setActiveWidget,
     showWidget,
     expandWidget,

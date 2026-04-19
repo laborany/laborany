@@ -9,7 +9,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════╝ */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import type { AgentMessage, TaskFile, WidgetState } from '../../types'
+import type { AgentMessage, MessageReference, TaskFile, WidgetState } from '../../types'
 import type { FileArtifact } from '../preview'
 import { getExt, getCategory } from '../preview'
 import { useVitePreview } from '../../hooks/useVitePreview'
@@ -43,7 +43,7 @@ export interface ExecutionPanelProps {
   filesVersion: number
 
   /* 交互 */
-  onSubmit: (message: string, files?: File[]) => void
+  onSubmit: (message: string, files?: File[], references?: MessageReference[]) => void
   onStop: () => void
   onRegenerate?: (messageId: string) => void | Promise<void>
   onSelectVariant?: (messageId: string, variantIndex: number) => void
@@ -76,6 +76,10 @@ export interface ExecutionPanelProps {
   onWidgetFallbackToText?: () => void
   onShowWidget?: (widgetId: string) => void
   onExpandWidget?: (widgetId: string) => void
+  references?: MessageReference[]
+  onRemoveReference?: (referenceId: string) => void
+  onCreateReference?: (reference: MessageReference) => void
+  onNavigateReference?: (reference: MessageReference) => void
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -146,12 +150,17 @@ export function ExecutionPanel({
   onWidgetFallbackToText,
   onShowWidget,
   onExpandWidget,
+  references: externalReferences,
+  onRemoveReference: externalRemoveReference,
+  onCreateReference: externalCreateReference,
+  onNavigateReference: externalNavigateReference,
 }: ExecutionPanelProps) {
   /* ── 预览状态 ── */
   const [isPreviewVisible, setIsPreviewVisible] = useState(false)
   const [isRightSidebarVisible, setIsRightSidebarVisible] = useState(false)
   const [selectedArtifact, setSelectedArtifact] = useState<FileArtifact | null>(null)
   const [showLivePreview, setShowLivePreview] = useState(false)
+  const [references, setReferences] = useState<MessageReference[]>([])
   const hasAutoExpandedRef = useRef(false)
   const selectedPathRef = useRef<string | null>(null)
   const previewSelectionHint = useMemo(
@@ -166,6 +175,7 @@ export function ExecutionPanel({
     setIsPreviewVisible(false)
     setIsRightSidebarVisible(false)
     setShowLivePreview(false)
+    setReferences([])
   }, [sessionId, workDir])
 
   /* ── 可拖拽面板 ── */
@@ -193,6 +203,7 @@ export function ExecutionPanel({
   const handleSelectArtifact = useCallback((artifact: FileArtifact) => {
     setSelectedArtifact(artifact)
     setIsPreviewVisible(true)
+    setIsRightSidebarVisible(true)
     setShowLivePreview(false)
   }, [])
 
@@ -203,6 +214,46 @@ export function ExecutionPanel({
     setIsPreviewVisible(true)
     startPreview(workDir)
   }, [workDir, startPreview])
+
+  const handleCreateReference = useCallback((reference: MessageReference) => {
+    setReferences((prev) => prev.some((item) => item.id === reference.id) ? prev : [...prev, reference])
+  }, [])
+
+  const handleRemoveReference = useCallback((referenceId: string) => {
+    setReferences((prev) => prev.filter((item) => item.id !== referenceId))
+  }, [])
+
+  const handleNavigateReference = useCallback((reference: MessageReference) => {
+    if (reference.kind === 'artifact' && reference.artifactPath) {
+      const taskFile = findTaskFileByArtifactPath(taskFiles, reference.artifactPath, workDir)
+      if (taskFile) {
+        handleSelectArtifact(toFileArtifact(taskFile, getFileUrl, workDir))
+      }
+      return
+    }
+
+    if (reference.kind === 'widget' && reference.widgetId) {
+      onShowWidget?.(reference.widgetId)
+      return
+    }
+
+    if ((reference.kind === 'message' || reference.kind === 'tool_result') && typeof document !== 'undefined') {
+      const selector = reference.messageId
+        ? `[data-message-id="${reference.messageId}"]`
+        : typeof reference.serverMessageId === 'number'
+          ? `[data-server-message-id="${reference.serverMessageId}"]`
+          : ''
+      if (!selector) return
+      const node = document.querySelector<HTMLElement>(selector)
+      if (!node) return
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [taskFiles, workDir, handleSelectArtifact, getFileUrl])
+
+  const effectiveReferences = externalReferences ?? references
+  const effectiveCreateReference = externalCreateReference ?? handleCreateReference
+  const effectiveRemoveReference = externalRemoveReference ?? handleRemoveReference
+  const effectiveNavigateReference = externalNavigateReference ?? handleNavigateReference
 
   /* ── 关闭预览 ── */
   const handleClosePreview = useCallback(() => {
@@ -267,6 +318,10 @@ export function ExecutionPanel({
         streamingWidget={streamingWidget}
         onWidgetInteraction={onWidgetInteraction}
         onWidgetFallbackToText={onWidgetFallbackToText}
+        onCreateReference={effectiveCreateReference}
+        onNavigateReference={effectiveNavigateReference}
+        references={effectiveReferences}
+        onRemoveReference={effectiveRemoveReference}
       />
 
       {/* ════════════════════════════════════════════════════════════════════
@@ -324,6 +379,7 @@ export function ExecutionPanel({
           onSelectArtifact={handleSelectArtifact}
           getFileUrl={getFileUrl}
           workDir={workDir}
+          onCreateReference={effectiveCreateReference}
         />
       )}
     </div>
@@ -345,7 +401,7 @@ interface ChatPanelProps {
   isRunning: boolean
   pendingQuestion: PendingQuestion | null
   respondToQuestion: (id: string, answers: Record<string, string>) => void
-  onSubmit: (message: string, files?: File[]) => void
+  onSubmit: (message: string, files?: File[], references?: MessageReference[]) => void
   onStop: () => void
   onRegenerate?: (messageId: string) => void | Promise<void>
   onSelectVariant?: (messageId: string, variantIndex: number) => void
@@ -358,6 +414,10 @@ interface ChatPanelProps {
   streamingWidget?: WidgetState | null
   onWidgetInteraction?: (widgetId: string, data: unknown) => void
   onWidgetFallbackToText?: () => void
+  onCreateReference?: (reference: MessageReference) => void
+  onNavigateReference?: (reference: MessageReference) => void
+  references?: MessageReference[]
+  onRemoveReference?: (referenceId: string) => void
 }
 
 function ChatPanel({
@@ -383,6 +443,10 @@ function ChatPanel({
   streamingWidget,
   onWidgetInteraction,
   onWidgetFallbackToText,
+  onCreateReference,
+  onNavigateReference,
+  references,
+  onRemoveReference,
 }: ChatPanelProps) {
   return (
     <div
@@ -423,6 +487,8 @@ function ChatPanel({
             streamingWidget={streamingWidget}
             onWidgetInteraction={onWidgetInteraction}
             onWidgetFallbackToText={onWidgetFallbackToText}
+            onCreateReference={onCreateReference}
+            onNavigateReference={onNavigateReference}
           />
         )}
       </div>
@@ -441,6 +507,8 @@ function ChatPanel({
           onStop={onStop}
           isRunning={isRunning}
           placeholder={placeholder}
+          references={references}
+          onRemoveReference={onRemoveReference}
         />
       </div>
     </div>
