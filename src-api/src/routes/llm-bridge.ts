@@ -53,13 +53,14 @@ function normalizeOpenAiBaseUrl(baseUrl?: string): string {
   return (baseUrl || 'https://api.openai.com/v1').trim().replace(/\/+$/, '')
 }
 
-type OpenAiProviderKind = 'generic' | 'deepseek' | 'zhipu_glm'
+type OpenAiProviderKind = 'generic' | 'deepseek' | 'zhipu_glm' | 'anthropic'
 
 interface OpenAiProviderCapabilities {
   kind: OpenAiProviderKind
   includeReasoningContent: boolean
   requireReasoningContentForToolCalls: boolean
   supportsThinkingConfig: boolean
+  isNativeAnthropic: boolean
 }
 
 const OPENAI_BRIDGE_DEFAULT_TIMEOUT_MS = 120_000
@@ -69,6 +70,19 @@ function detectOpenAiProviderCapabilities(baseUrl?: string, model?: string): Ope
   const normalizedBaseUrl = normalizeOpenAiBaseUrl(baseUrl).toLowerCase()
   const normalizedModel = (model || '').trim().toLowerCase()
 
+  const isAnthropic = normalizedBaseUrl.includes('anthropic.com')
+    || normalizedBaseUrl.includes('api.anthropic')
+    || normalizedModel.startsWith('claude-')
+  if (isAnthropic) {
+    return {
+      kind: 'anthropic',
+      includeReasoningContent: false,
+      requireReasoningContentForToolCalls: false,
+      supportsThinkingConfig: false,
+      isNativeAnthropic: true,
+    }
+  }
+
   const isDeepSeek = normalizedBaseUrl.includes('deepseek') || normalizedModel.includes('deepseek')
   if (isDeepSeek) {
     return {
@@ -76,6 +90,7 @@ function detectOpenAiProviderCapabilities(baseUrl?: string, model?: string): Ope
       includeReasoningContent: true,
       requireReasoningContentForToolCalls: true,
       supportsThinkingConfig: false,
+      isNativeAnthropic: false,
     }
   }
 
@@ -88,6 +103,7 @@ function detectOpenAiProviderCapabilities(baseUrl?: string, model?: string): Ope
       includeReasoningContent: true,
       requireReasoningContentForToolCalls: false,
       supportsThinkingConfig: true,
+      isNativeAnthropic: false,
     }
   }
 
@@ -96,6 +112,7 @@ function detectOpenAiProviderCapabilities(baseUrl?: string, model?: string): Ope
     includeReasoningContent: false,
     requireReasoningContentForToolCalls: false,
     supportsThinkingConfig: false,
+    isNativeAnthropic: false,
   }
 }
 
@@ -597,6 +614,58 @@ router.post('/anthropic/v1/messages', async (c) => {
   const cached = responseCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now()) {
     return c.json(cached.payload)
+  }
+
+  if (provider.isNativeAnthropic) {
+    const upstreamUrl = `${upstreamBaseUrl}/v1/messages`
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-api-key': upstreamApiKey,
+      'anthropic-version': '2023-06-01',
+    }
+
+    const anthropicBeta = c.req.header('anthropic-beta')
+    if (anthropicBeta) {
+      headers['anthropic-beta'] = anthropicBeta
+    } else {
+      headers['anthropic-beta'] = 'prompt-caching-2024-07-31'
+    }
+
+    let upstreamResponse: Response
+    try {
+      upstreamResponse = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(OPENAI_BRIDGE_DEFAULT_TIMEOUT_MS),
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'upstream request failed'
+      return c.json(buildAnthropicError(502, message), 502)
+    }
+
+    const rawBody = await upstreamResponse.text()
+    if (!upstreamResponse.ok) {
+      const status = upstreamResponse.status as ContentfulStatusCode
+      return c.json(
+        buildAnthropicError(status, parseErrorMessage(rawBody)),
+        status,
+      )
+    }
+
+    let anthropicResponse: AnthropicResponseBody
+    try {
+      anthropicResponse = rawBody ? JSON.parse(rawBody) as AnthropicResponseBody : {} as AnthropicResponseBody
+    } catch {
+      return c.json(buildAnthropicError(502, 'upstream returned invalid JSON'), 502)
+    }
+
+    responseCache.set(cacheKey, {
+      expiresAt: Date.now() + RESPONSE_CACHE_TTL_MS,
+      payload: anthropicResponse,
+    })
+
+    return c.json(anthropicResponse)
   }
 
   const openAiMessages = mapAnthropicMessagesToOpenAi(messages, {
