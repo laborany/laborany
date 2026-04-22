@@ -114,6 +114,13 @@ const EMPLOYEE_PROFILE_MAP: Record<string, EmployeeDirectoryProfile> = {
     tags: ['图表', '流程图', '可视化'],
     priority: 140,
   },
+  'laborany-design': {
+    displayName: '设计大师',
+    roleTitle: '设计同事',
+    summary: '高保真 HTML 原型、幻灯片、动画、视频一体化设计，覆盖从设计方向到导出 MP4/PPTX 全流程。',
+    tags: ['设计', '原型', '幻灯片', '动画', 'HTML'],
+    priority: 145,
+  },
   'video-creator': {
     displayName: '视频策划',
     roleTitle: '视频创作同事',

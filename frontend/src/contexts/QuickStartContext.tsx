@@ -82,6 +82,14 @@ export const DEFAULT_SCENARIOS: HomeCaseItem[] = [
     description: '招聘新员工，或帮现有员工提升能力',
   },
   {
+    id: 'case-laborany-design',
+    targetType: 'skill',
+    targetId: 'laborany-design',
+    icon: '🎨',
+    name: '设计大师',
+    description: '让设计同事做高保真原型、幻灯片、动画或视频',
+  },
+  {
     id: 'case-xhs-note-creator',
     targetType: 'skill',
     targetId: 'xhs-note-creator',

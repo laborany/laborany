@@ -53,6 +53,12 @@
     "bundle:all:mac-arm64": "npm run bundle:cli:mac-arm64 && npm run bundle:uv:mac-arm64",
     "bundle:all:mac-universal": "npm run bundle:cli:mac-universal && npm run bundle:uv:mac-universal",
     "bundle:all:linux": "npm run bundle:cli:linux && npm run bundle:uv:linux",
+    "bundle:ffmpeg": "node scripts/fetch-ffmpeg-bundles.mjs",
+    "bundle:ffmpeg:all": "node scripts/fetch-ffmpeg-bundles.mjs --platform=all",
+    "bundle:ffmpeg:win": "node scripts/fetch-ffmpeg-bundles.mjs --platform=win-x64",
+    "bundle:ffmpeg:mac-arm64": "node scripts/fetch-ffmpeg-bundles.mjs --platform=darwin-arm64",
+    "bundle:ffmpeg:mac-x64": "node scripts/fetch-ffmpeg-bundles.mjs --platform=darwin-x64",
+    "bundle:ffmpeg:linux": "node scripts/fetch-ffmpeg-bundles.mjs --platform=linux-x64",
     "memory:clean": "node scripts/clean-memory.js",
     "verify:memory-fastpaths": "node scripts/verify-memory-fastpaths.js",
     "verify:memory-ui-real": "node scripts/verify-memory-ui-real.js",
@@ -156,6 +162,15 @@
           "filter": [
             "**/*"
           ]
+        },
+        {
+          "from": "ffmpeg-bundle-win-x64",
+          "to": "ffmpeg-bundle",
+          "filter": [
+            "ffmpeg.exe",
+            "*.LICENSE",
+            "*.README"
+          ]
         }
       ]
     },
@@ -209,6 +224,24 @@
           "filter": [
             "**/*"
           ]
+        },
+        {
+          "from": "ffmpeg-bundle-darwin-arm64",
+          "to": "ffmpeg-bundle-darwin-arm64",
+          "filter": [
+            "ffmpeg",
+            "*.LICENSE",
+            "*.README"
+          ]
+        },
+        {
+          "from": "ffmpeg-bundle-darwin-x64",
+          "to": "ffmpeg-bundle-darwin-x64",
+          "filter": [
+            "ffmpeg",
+            "*.LICENSE",
+            "*.README"
+          ]
         }
       ]
     },
@@ -237,6 +270,15 @@
           "to": "agent/web-research",
           "filter": [
             "**/*"
+          ]
+        },
+        {
+          "from": "ffmpeg-bundle-linux-x64",
+          "to": "ffmpeg-bundle",
+          "filter": [
+            "ffmpeg",
+            "*.LICENSE",
+            "*.README"
           ]
         }
       ]

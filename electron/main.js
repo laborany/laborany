@@ -299,6 +299,9 @@ function buildSidecarEnv(extra = {}) {
     ? path.join(__dirname, '..', 'skills')
     : path.join(process.resourcesPath, 'skills')
 
+  // 解析内置 ffmpeg 路径（供 laborany-design skill 做视频导出/BGM 混音）
+  const ffmpegPath = resolveBundledFfmpeg()
+
   const env = {
     ...process.env,
     LABORANY_HOME: runtimePaths.appHome || process.env.LABORANY_HOME || '',
@@ -306,11 +309,55 @@ function buildSidecarEnv(extra = {}) {
     LABORANY_RUNTIME_META_PATH: runtimePaths.runtimeMetaPath || process.env.LABORANY_RUNTIME_META_PATH || '',
     LABORANY_RUNTIME_COMMAND_PATH: runtimePaths.runtimeCommandPath || process.env.LABORANY_RUNTIME_COMMAND_PATH || '',
     LABORANY_BUILTIN_SKILLS_DIR: builtinSkillsDir,
+    ...(ffmpegPath ? { LABORANY_FFMPEG: ffmpegPath } : {}),
     ...extra,
   }
 
   // Never pass Claude nested-session marker to sidecars.
   return removeEnvKeysCaseInsensitive(env, ['CLAUDECODE'])
+}
+
+/**
+ * 查找随包的 ffmpeg 二进制（分发包结构见 package.json extraResources）。
+ * 找不到返回 null，skill 脚本会 fallback 到 PATH 上的 ffmpeg。
+ */
+function resolveBundledFfmpeg() {
+  const exe = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+  const candidates = []
+
+  if (isDev) {
+    // 开发模式：按平台找本地 ffmpeg-bundle-* 目录
+    const platKey = (() => {
+      if (process.platform === 'darwin') {
+        return process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64'
+      }
+      if (process.platform === 'win32') return 'win-x64'
+      if (process.platform === 'linux') return 'linux-x64'
+      return null
+    })()
+    if (platKey) {
+      candidates.push(path.join(__dirname, '..', `ffmpeg-bundle-${platKey}`, exe))
+    }
+  } else {
+    // 生产模式：extraResources 落位
+    const res = process.resourcesPath
+    if (process.platform === 'darwin') {
+      const platKey = process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64'
+      candidates.push(path.join(res, `ffmpeg-bundle-${platKey}`, exe))
+    } else {
+      // win/linux 统一落在 ffmpeg-bundle/
+      candidates.push(path.join(res, 'ffmpeg-bundle', exe))
+    }
+  }
+
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p
+    } catch {
+      // ignore
+    }
+  }
+  return null
 }
 
 function initRuntimePathsAndLogger() {

@@ -1,0 +1,13 @@
+{
+  "name": "laborany-design-skill",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bundled runtime dependencies for the LaborAny 设计大师 skill (HTML→PDF/PPTX/video tools).",
+  "type": "module",
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "playwright": "^1.49.0",
+    "pptxgenjs": "^3.12.0",
+    "sharp": "^0.33.0"
+  }
+}

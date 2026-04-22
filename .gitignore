@@ -13,6 +13,13 @@
 # │                           依赖目录                                        │
 # └──────────────────────────────────────────────────────────────────────────┘
 node_modules/
+# Exception: LaborAny 设计大师 skill 需要预装依赖随包发布（Chromium 不下载）
+!skills/laborany-design/node_modules/
+!skills/laborany-design/node_modules/**
+
+# ffmpeg 静态二进制（构建前 node scripts/fetch-ffmpeg-bundles.mjs 拉取，不入 git）
+ffmpeg-bundle-*/ffmpeg
+ffmpeg-bundle-*/ffmpeg.exe
 __pycache__/
 *.pyc
 .venv/

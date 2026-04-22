@@ -283,14 +283,14 @@ jobs:
 
       - name: Build API and CLI bundle
         run: |
-          npm run bundle:cli:mac-x64
+          npm run bundle:cli:mac-universal
           npm run bundle:uv:mac-x64
           npm run build:api:mac-x64
           npm run build:agent:mac
           # 确保可执行文件有执行权限
           chmod +x src-api/dist/laborany-api-mac
           chmod +x agent-service/dist/laborany-agent-mac
-          chmod +x cli-bundle/node
+          chmod +x cli-bundle-x64/node
           chmod +x uv-bundle/uv
 
       - name: Build Frontend
