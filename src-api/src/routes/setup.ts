@@ -12,6 +12,7 @@ import { homedir, platform } from 'os'
 import { execSync, spawnSync } from 'child_process'
 import {
   wrapCmdForUtf8,
+  withUtf8Env,
   sanitizeClaudeEnv,
   encodeOpenAiBridgeApiKey,
   normalizeModelInterfaceType,
@@ -39,7 +40,14 @@ interface GitDependencyStatus {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       检查内置 CLI Bundle                                 │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function getBundledClaudePath(): { node: string; cli: string } | null {
+interface BundledClaudeLaunch {
+  command: string
+  argsPrefix: string[]
+  displayPath: string
+  nodePath?: string
+}
+
+function getBundledClaudeLaunch(): BundledClaudeLaunch | null {
   const os = platform()
   const arch = process.arch
   const exeDir = dirname(process.execPath)
@@ -75,10 +83,30 @@ function getBundledClaudePath(): { node: string; cli: string } | null {
       ? join(bundleDir, 'node.exe')
       : join(bundleDir, 'node')
     const cliJs = join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'cli.js')
+    const nativeBinCandidates = [
+      join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'),
+      join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'bin', 'claude'),
+    ]
+    const nativeBin = nativeBinCandidates.find(candidate => existsSync(candidate))
+
+    if (nativeBin) {
+      console.log(`[Setup] 找到内置 CLI Bundle: ${bundleDir}`)
+      return {
+        command: nativeBin,
+        argsPrefix: [],
+        displayPath: nativeBin,
+        nodePath: existsSync(nodeBin) ? nodeBin : undefined,
+      }
+    }
 
     if (existsSync(nodeBin) && existsSync(cliJs)) {
       console.log(`[Setup] 找到内置 CLI Bundle: ${bundleDir}`)
-      return { node: nodeBin, cli: cliJs }
+      return {
+        command: nodeBin,
+        argsPrefix: [cliJs],
+        displayPath: cliJs,
+        nodePath: nodeBin,
+      }
     }
   }
 
@@ -136,16 +164,20 @@ interface SetupClaudeCliLaunch {
   argsPrefix: string[]
   shell: boolean
   source: 'bundled' | 'system'
+  nodePath?: string
+  displayPath?: string
 }
 
 function resolveSetupClaudeCliLaunch(): SetupClaudeCliLaunch | null {
-  const bundled = getBundledClaudePath()
+  const bundled = getBundledClaudeLaunch()
   if (bundled) {
     return {
-      command: bundled.node,
-      argsPrefix: [bundled.cli],
+      command: bundled.command,
+      argsPrefix: bundled.argsPrefix,
       shell: false,
       source: 'bundled',
+      nodePath: bundled.nodePath,
+      displayPath: bundled.displayPath,
     }
   }
 
@@ -160,7 +192,27 @@ function resolveSetupClaudeCliLaunch(): SetupClaudeCliLaunch | null {
     argsPrefix: [],
     shell: isCmdShim,
     source: 'system',
+    displayPath: systemPath,
   }
+}
+
+function prependBundledNodeToPath(
+  env: Record<string, string | undefined>,
+  bundledNodePath?: string,
+): Record<string, string | undefined> {
+  if (!bundledNodePath) return env
+
+  const nodeDir = dirname(bundledNodePath)
+  const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'PATH'
+  const delimiter = platform() === 'win32' ? ';' : ':'
+  const current = env[pathKey] || ''
+  const parts = current.split(delimiter).filter(Boolean)
+
+  if (!parts.includes(nodeDir)) {
+    env[pathKey] = [nodeDir, ...parts].join(delimiter)
+  }
+
+  return env
 }
 
 function getBundledSearchBases(): string[] {
@@ -344,7 +396,10 @@ async function validateAnthropicConfig(params: {
   }
 
   try {
-    const env: Record<string, string | undefined> = sanitizeClaudeEnv({ ...process.env })
+    const env: Record<string, string | undefined> = prependBundledNodeToPath(
+      sanitizeClaudeEnv(withUtf8Env({ ...process.env })),
+      cliLaunch.nodePath,
+    )
     env.ANTHROPIC_API_KEY = apiKey
     env.ANTHROPIC_MODEL = model
     if (baseUrl) {
@@ -492,7 +547,7 @@ async function validateOpenAiCompatibleConfig(params: {
 
 function computeSetupStatus() {
   const gitDependency = detectGitDependency()
-  const bundled = getBundledClaudePath()
+  const bundled = getBundledClaudeLaunch()
   const systemPath = bundled ? null : findClaudeCodePath()
   const claudeReady = Boolean(bundled || systemPath)
   const environmentReady = Boolean(claudeReady && gitDependency.installed)
@@ -525,7 +580,7 @@ function computeSetupStatus() {
     },
     claudeCode: {
       installed: claudeReady,
-      path: bundled?.cli || systemPath || null,
+      path: bundled?.displayPath || systemPath || null,
       bundled: Boolean(bundled),
     },
     dependencies: {

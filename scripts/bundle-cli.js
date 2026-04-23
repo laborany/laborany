@@ -139,6 +139,98 @@ function copyNpmFromNodeDist(platform, tempDir, nodeDir, bundleDir) {
   log('已复制 npm 到 deps/npm（Live Preview 需要）')
 }
 
+function getClaudeNativePackageSpec(platform, arch, wrapperPkg) {
+  const optional = wrapperPkg.optionalDependencies || {}
+  let pkgName = null
+  let binName = platform === 'win' ? 'claude.exe' : 'claude'
+
+  if (platform === 'mac') {
+    pkgName = `@anthropic-ai/claude-code-darwin-${arch}`
+  } else if (platform === 'win') {
+    pkgName = `@anthropic-ai/claude-code-win32-${arch}`
+  } else if (platform === 'linux') {
+    pkgName = `@anthropic-ai/claude-code-linux-${arch}`
+  }
+
+  if (!pkgName || !optional[pkgName]) {
+    return null
+  }
+
+  return {
+    pkgName,
+    version: optional[pkgName],
+    binName,
+  }
+}
+
+function getInstallForceFlag(platform, arch) {
+  const currentPlatform = os.platform()
+  const currentArch = os.arch()
+
+  if (platform === 'mac' && currentPlatform === 'darwin' && currentArch !== arch) {
+    return '--force'
+  }
+  if (platform === 'linux' && currentPlatform === 'linux' && currentArch !== arch) {
+    return '--force'
+  }
+  if (platform === 'win' && currentPlatform === 'win32' && currentArch !== arch) {
+    return '--force'
+  }
+
+  return ''
+}
+
+function installClaudeCodeForTarget(platform, arch, bundleDir, npmRegistry) {
+  log('安装 @anthropic-ai/claude-code...')
+  execSync(`npm install @anthropic-ai/claude-code --registry="${npmRegistry}"`, {
+    cwd: bundleDir,
+    stdio: 'inherit'
+  })
+
+  const wrapperPkgPath = path.join(bundleDir, 'node_modules', '@anthropic-ai', 'claude-code', 'package.json')
+  const wrapperPkg = JSON.parse(fs.readFileSync(wrapperPkgPath, 'utf-8'))
+  const targetSpec = getClaudeNativePackageSpec(platform, arch, wrapperPkg)
+
+  if (!targetSpec) {
+    log('未检测到目标架构 native Claude 包，保留现有安装结果')
+    return
+  }
+
+  const forceFlag = getInstallForceFlag(platform, arch)
+  log(`检测到 native Claude 包，确保目标架构资源: ${targetSpec.pkgName}@${targetSpec.version}`)
+  execSync(
+    `npm install ${forceFlag} ${targetSpec.pkgName}@${targetSpec.version} --registry="${npmRegistry}"`,
+    {
+      cwd: bundleDir,
+      stdio: 'inherit'
+    }
+  )
+
+  const targetPkgDir = path.join(bundleDir, 'node_modules', ...targetSpec.pkgName.split('/'))
+  const targetBinaryPath = path.join(targetPkgDir, targetSpec.binName)
+  const wrapperBinaryPath = path.join(bundleDir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe')
+
+  if (!fs.existsSync(targetBinaryPath)) {
+    throw new Error(`目标架构 Claude binary 缺失: ${targetBinaryPath}`)
+  }
+
+  fs.copyFileSync(targetBinaryPath, wrapperBinaryPath)
+  if (platform !== 'win') {
+    fs.chmodSync(wrapperBinaryPath, 0o755)
+  }
+
+  const anthropicDir = path.join(bundleDir, 'node_modules', '@anthropic-ai')
+  const keepName = targetSpec.pkgName.split('/')[1]
+  if (fs.existsSync(anthropicDir)) {
+    for (const entry of fs.readdirSync(anthropicDir)) {
+      if (!entry.startsWith('claude-code-')) continue
+      if (entry === keepName) continue
+      fs.rmSync(path.join(anthropicDir, entry), { recursive: true, force: true })
+      log(`  删除非目标架构包: @anthropic-ai/${entry}`)
+    }
+  }
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       打包单个架构                                        │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -178,13 +270,8 @@ async function bundleSingleArch(platform, arch, bundleDir) {
     JSON.stringify({ name: 'cli-bundle', private: true, type: 'module' }, null, 2)
   )
 
-  // 安装 Claude Code CLI
-  log('安装 @anthropic-ai/claude-code...')
-  const npmRegistry = process.env.NPM_REGISTRY || 'https://registry.npmmirror.com'
-  execSync(`npm install @anthropic-ai/claude-code --registry="${npmRegistry}"`, {
-    cwd: bundleDir,
-    stdio: 'inherit'
-  })
+  const npmRegistry = process.env.NPM_REGISTRY || 'https://registry.npmjs.org'
+  installClaudeCodeForTarget(platform, arch, bundleDir, npmRegistry)
 
   // 验证安装
   const cliPath = path.join(bundleDir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js')
@@ -192,6 +279,14 @@ async function bundleSingleArch(platform, arch, bundleDir) {
   const binPath = path.join(bundleDir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude')
   if (!fs.existsSync(cliPath) && !fs.existsSync(binExePath) && !fs.existsSync(binPath)) {
     throw new Error('Claude Code CLI 安装失败')
+  }
+
+  if (platform !== 'win') {
+    for (const executablePath of [binExePath, binPath]) {
+      if (fs.existsSync(executablePath)) {
+        fs.chmodSync(executablePath, 0o755)
+      }
+    }
   }
 
   // 清理不需要的平台文件（减小体积）

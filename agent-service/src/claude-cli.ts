@@ -20,6 +20,8 @@ export interface ClaudeCliLaunchConfig {
   argsPrefix: string[]
   shell: boolean
   source: 'bundled' | 'system' | 'env'
+  nodePath?: string
+  displayPath?: string
 }
 
 export interface ClaudeCliPromptDelivery {
@@ -202,14 +204,33 @@ function findBundledClaudeLaunch(): ClaudeCliLaunchConfig | undefined {
       const bundleDir = join(base, dirName)
       const nodeBin = join(bundleDir, nodeBinName)
       const cliJs = join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'cli.js')
+      const nativeBinCandidates = [
+        join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'),
+        join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'bin', 'claude'),
+      ]
+      const nativeBin = nativeBinCandidates.find(candidate => existsSync(candidate))
+
+      if (nativeBin) {
+        console.log(`[ClaudeCLI] Using bundled native CLI: ${bundleDir}`)
+        return {
+          command: nativeBin,
+          argsPrefix: [],
+          shell: false,
+          source: 'bundled',
+          nodePath: existsSync(nodeBin) ? nodeBin : undefined,
+          displayPath: nativeBin,
+        }
+      }
 
       if (existsSync(nodeBin) && existsSync(cliJs)) {
-        console.log(`[ClaudeCLI] Using bundled CLI: ${bundleDir}`)
+        console.log(`[ClaudeCLI] Using bundled legacy CLI: ${bundleDir}`)
         return {
           command: nodeBin,
           argsPrefix: [cliJs],
           shell: false,
           source: 'bundled',
+          nodePath: nodeBin,
+          displayPath: cliJs,
         }
       }
     }
@@ -280,6 +301,7 @@ export function resolveClaudeCliLaunch(): ClaudeCliLaunchConfig | undefined {
     argsPrefix: [],
     shell: isCmdShim,
     source: isEnvPath ? 'env' : 'system',
+    displayPath: claudePath,
   }
 }
 
@@ -314,7 +336,10 @@ function getLlmBridgeAnthropicBaseUrl(): string {
   return `${getSrcApiBaseUrl()}/llm-bridge/anthropic`
 }
 
-export function buildClaudeEnvConfig(overrides?: ModelOverride): Record<string, string | undefined> {
+export function buildClaudeEnvConfig(
+  overrides?: ModelOverride,
+  bundledNodePath?: string,
+): Record<string, string | undefined> {
   refreshRuntimeConfig()
 
   const env: Record<string, string | undefined> = sanitizeClaudeEnv(
@@ -387,6 +412,17 @@ export function buildClaudeEnvConfig(overrides?: ModelOverride): Record<string, 
     } else {
       delete env.CLAUDE_CODE_GIT_BASH_PATH
       console.warn('[ClaudeCLI] Git Bash not found. Claude Code may fail on Windows.')
+    }
+  }
+
+  if (bundledNodePath) {
+    const nodeDir = dirname(bundledNodePath)
+    const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'PATH'
+    const delimiter = platform() === 'win32' ? ';' : ':'
+    const current = env[pathKey] || ''
+    const parts = current.split(delimiter).filter(Boolean)
+    if (!parts.includes(nodeDir)) {
+      env[pathKey] = [nodeDir, ...parts].join(delimiter)
     }
   }
 

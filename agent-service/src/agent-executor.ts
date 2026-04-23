@@ -450,7 +450,10 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   }
 
   console.log(`[Agent] Claude CLI source: ${cliLaunch.source}`)
-  console.log(`[Agent] Claude CLI command: ${cliLaunch.command}`)
+  console.log(`[Agent] Claude CLI command: ${cliLaunch.displayPath || cliLaunch.command}`)
+  if (cliLaunch.nodePath) {
+    console.log(`[Agent] Claude CLI node: ${cliLaunch.nodePath}`)
+  }
   const effectiveModel = modelOverride?.model || process.env.ANTHROPIC_MODEL
   const effectiveBaseUrl = modelOverride?.baseUrl || process.env.ANTHROPIC_BASE_URL
   const effectiveReasoningEffort = normalizeReasoningEffort(
@@ -489,7 +492,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   let widgetState: WidgetHandlerState | undefined
   if (cliWidgetRuntimeEnabled) {
     try {
-      const mcpNodeCommand = resolveMcpNodeCommand(cliLaunch.source === 'bundled' ? cliLaunch.command : undefined)
+      const mcpNodeCommand = resolveMcpNodeCommand(cliLaunch.source === 'bundled' ? cliLaunch.nodePath : undefined)
       const widgetMcpPath = writeMcpConfig(taskDir, mcpNodeCommand)
       const userMcpPath = writeUserMcpConfig(taskDir)
 
@@ -532,7 +535,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   try {
     const webMcpPath = writeWebResearchMcpConfig(taskDir, {
       agentServicePort: process.env.AGENT_PORT || '3002',
-      nodePath: resolveMcpNodeCommand(cliLaunch.source === 'bundled' ? cliLaunch.command : undefined),
+      nodePath: resolveMcpNodeCommand(cliLaunch.source === 'bundled' ? cliLaunch.nodePath : undefined),
       modelProfileId,
     })
     args.push('--mcp-config', webMcpPath)
@@ -590,7 +593,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   const proc = spawn(cliLaunch.command, spawnArgs, {
     cwd: taskDir,
-    env: buildClaudeEnvConfig(modelOverride),
+    env: buildClaudeEnvConfig(modelOverride, cliLaunch.nodePath),
     shell: cliLaunch.shell,
     stdio: [promptDelivery.useStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
   })

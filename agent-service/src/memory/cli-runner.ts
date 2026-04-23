@@ -94,7 +94,7 @@ export async function runClaudePrompt(options: ClaudePromptOptions): Promise<Cla
 
   try {
     const proc = spawn(cli.command, spawnArgs, {
-      env: buildClaudeEnvConfig(),
+      env: buildClaudeEnvConfig(undefined, cli.nodePath),
       shell: cli.shell,
       stdio: [promptDelivery.useStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       windowsHide: true,

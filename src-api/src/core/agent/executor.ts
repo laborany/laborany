@@ -295,7 +295,14 @@ export function ensureTaskDir(sessionId: string): string {
  * │                       Claude Code 路径检测                                │
  * │  优先级：内置 CLI Bundle > 系统安装 > 自动安装                             │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function getBundledClaudePath(): { node: string; cli: string } | null {
+interface BundledClaudeLaunch {
+  command: string
+  argsPrefix: string[]
+  displayPath: string
+  nodePath?: string
+}
+
+function getBundledClaudeLaunch(): BundledClaudeLaunch | null {
   const os = platform()
   const arch = process.arch
   const exeDir = dirname(process.execPath)
@@ -334,14 +341,35 @@ function getBundledClaudePath(): { node: string; cli: string } | null {
       ? join(bundleDir, 'node.exe')
       : join(bundleDir, 'node')
     const cliJs = join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'cli.js')
+    const nativeBinCandidates = [
+      join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'),
+      join(bundleDir, 'deps', '@anthropic-ai', 'claude-code', 'bin', 'claude'),
+    ]
+    const nativeBin = nativeBinCandidates.find(candidate => existsSync(candidate))
 
     console.log(`[Agent] 检查 CLI Bundle: ${bundleDir}`)
     console.log(`[Agent]   node: ${nodeBin} (exists: ${existsSync(nodeBin)})`)
     console.log(`[Agent]   cli: ${cliJs} (exists: ${existsSync(cliJs)})`)
+    console.log(`[Agent]   native: ${nativeBin || nativeBinCandidates[0]} (exists: ${Boolean(nativeBin)})`)
+
+    if (nativeBin) {
+      console.log(`[Agent] 找到内置 CLI Bundle（native）: ${bundleDir}`)
+      return {
+        command: nativeBin,
+        argsPrefix: [],
+        displayPath: nativeBin,
+        nodePath: existsSync(nodeBin) ? nodeBin : undefined,
+      }
+    }
 
     if (existsSync(nodeBin) && existsSync(cliJs)) {
-      console.log(`[Agent] 找到内置 CLI Bundle: ${bundleDir}`)
-      return { node: nodeBin, cli: cliJs }
+      console.log(`[Agent] 找到内置 CLI Bundle（legacy cli.js）: ${bundleDir}`)
+      return {
+        command: nodeBin,
+        argsPrefix: [cliJs],
+        displayPath: cliJs,
+        nodePath: nodeBin,
+      }
     }
   }
 
@@ -397,8 +425,11 @@ function findClaudeCodePath(): string | undefined {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 interface ClaudeCodeConfig {
   useBundled: boolean
+  command: string
+  argsPrefix: string[]
+  shell: boolean
   nodePath?: string
-  cliPath?: string
+  displayPath?: string
   claudePath?: string
 }
 
@@ -410,13 +441,16 @@ interface RuntimeDependencyIssue {
 
 function ensureClaudeCode(): ClaudeCodeConfig | undefined {
   // 1. 优先检查内置 CLI Bundle
-  const bundled = getBundledClaudePath()
+  const bundled = getBundledClaudeLaunch()
   if (bundled) {
     console.log('[Agent] 使用内置 CLI Bundle')
     return {
       useBundled: true,
-      nodePath: bundled.node,
-      cliPath: bundled.cli,
+      command: bundled.command,
+      argsPrefix: bundled.argsPrefix,
+      shell: false,
+      nodePath: bundled.nodePath,
+      displayPath: bundled.displayPath,
     }
   }
 
@@ -426,6 +460,9 @@ function ensureClaudeCode(): ClaudeCodeConfig | undefined {
     console.log('[Agent] 使用系统安装的 Claude Code')
     return {
       useBundled: false,
+      command: systemPath,
+      argsPrefix: [],
+      shell: platform() === 'win32' && systemPath.toLowerCase().endsWith('.cmd'),
       claudePath: systemPath,
     }
   }
@@ -442,6 +479,9 @@ function ensureClaudeCode(): ClaudeCodeConfig | undefined {
     if (systemPath) {
       return {
         useBundled: false,
+        command: systemPath,
+        argsPrefix: [],
+        shell: platform() === 'win32' && systemPath.toLowerCase().endsWith('.cmd'),
         claudePath: systemPath,
       }
     }
@@ -601,7 +641,29 @@ function getLlmBridgeAnthropicBaseUrl(): string {
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       构建环境配置                                         │
  * └──────────────────────────────────────────────────────────────────────────┘ */
-function buildEnvConfig(overrides?: ModelOverride): Record<string, string | undefined> {
+function prependBundledNodeToPath(
+  env: Record<string, string | undefined>,
+  bundledNodePath?: string,
+): Record<string, string | undefined> {
+  if (!bundledNodePath) return env
+
+  const nodeDir = dirname(bundledNodePath)
+  const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'PATH'
+  const delimiter = platform() === 'win32' ? ';' : ':'
+  const current = env[pathKey] || ''
+  const parts = current.split(delimiter).filter(Boolean)
+
+  if (!parts.includes(nodeDir)) {
+    env[pathKey] = [nodeDir, ...parts].join(delimiter)
+  }
+
+  return env
+}
+
+function buildEnvConfig(
+  overrides?: ModelOverride,
+  bundledNodePath?: string,
+): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = sanitizeClaudeEnv(
     withUtf8Env({ ...process.env }),
   )
@@ -681,7 +743,7 @@ function buildEnvConfig(overrides?: ModelOverride): Record<string, string | unde
     env.LC_ALL = env.LC_ALL || 'en_US.UTF-8'
   }
 
-  return env
+  return prependBundledNodeToPath(env, bundledNodePath)
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -1077,15 +1139,16 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   }
 
   if (claudeConfig.useBundled) {
-    console.log(`[Agent] Node: ${claudeConfig.nodePath}`)
-    console.log(`[Agent] CLI: ${claudeConfig.cliPath}`)
+    if (claudeConfig.nodePath) {
+      console.log(`[Agent] Node: ${claudeConfig.nodePath}`)
+    }
+    console.log(`[Agent] CLI: ${claudeConfig.displayPath || claudeConfig.command}`)
   } else {
     console.log(`[Agent] Claude Code: ${claudeConfig.claudePath}`)
   }
   console.log(`[Agent] Model: ${effectiveModel || 'default'}`)
   console.log(`[Agent] API Key configured: ${effectiveApiKey ? 'Yes' : 'No'}`)
 
-  const isWindows = platform() === 'win32'
   const args = [
     '--print',
     '--output-format', 'stream-json',
@@ -1169,25 +1232,13 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   console.log(`[Agent] Args: ${args.join(' ')}`)
 
-  // 根据配置选择启动方式
-  let proc
-  if (claudeConfig.useBundled) {
-    // 统一使用 stdin 传递 prompt，避免 CLI arg 长度限制或特殊字符问题
-    const bundledArgs = [claudeConfig.cliPath!, ...args]
-    proc = spawn(claudeConfig.nodePath!, bundledArgs, {
-      cwd: taskDir,
-      env: buildEnvConfig(modelOverride),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-  } else {
-    // 使用系统安装的 claude 命令
-    proc = spawn(claudeConfig.claudePath!, args, {
-      cwd: taskDir,
-      env: buildEnvConfig(modelOverride),
-      shell: isWindows,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-  }
+  const spawnArgs = [...claudeConfig.argsPrefix, ...args]
+  const proc = spawn(claudeConfig.command, spawnArgs, {
+    cwd: taskDir,
+    env: buildEnvConfig(modelOverride, claudeConfig.nodePath),
+    shell: claudeConfig.shell,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
 
   if (proc.stdin) {
     proc.stdin.write(prompt, 'utf-8')

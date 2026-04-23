@@ -601,7 +601,7 @@ export class MemoryCliExtractor {
       const promptDelivery = buildClaudeCliPromptDelivery(cliLaunch, args, prompt)
       const spawnArgs = [...cliLaunch.argsPrefix, ...promptDelivery.args]
       const proc = spawn(cliLaunch.command, spawnArgs, {
-        env: buildClaudeEnvConfig(),
+        env: buildClaudeEnvConfig(undefined, cliLaunch.nodePath),
         shell: cliLaunch.shell,
         stdio: [promptDelivery.useStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       })
@@ -737,7 +737,7 @@ export async function runClaudeCliPrompt(prompt: string, timeoutMs = 30_000): Pr
 
   try {
     const proc = spawn(cliLaunch.command, spawnArgs, {
-      env: buildClaudeEnvConfig(),
+      env: buildClaudeEnvConfig(undefined, cliLaunch.nodePath),
       shell: cliLaunch.shell,
       stdio: [promptDelivery.useStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     })
