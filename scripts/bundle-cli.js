@@ -17,6 +17,7 @@ const os = require('os')
  * │                           配置                                           │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const NODE_VERSION = '20.18.0'
+const CLAUDE_CODE_VERSION = process.env.CLAUDE_CODE_VERSION || '2.1.119'
 const ROOT_DIR = path.join(__dirname, '..')
 const CACHE_DIR = path.join(os.homedir(), '.laborany', 'cache')
 
@@ -181,8 +182,8 @@ function getInstallForceFlag(platform, arch) {
 }
 
 function installClaudeCodeForTarget(platform, arch, bundleDir, npmRegistry) {
-  log('安装 @anthropic-ai/claude-code...')
-  execSync(`npm install @anthropic-ai/claude-code --registry="${npmRegistry}"`, {
+  log(`安装 @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}...`)
+  execSync(`npm install @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} --registry="${npmRegistry}"`, {
     cwd: bundleDir,
     stdio: 'inherit'
   })
