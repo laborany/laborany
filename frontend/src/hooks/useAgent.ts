@@ -633,6 +633,9 @@ export function useAgent(skillId: string) {
           rememberActiveSessionId(sid)
           break
 
+        case 'heartbeat':
+          break
+
         case 'text': {
           // 重放期间跳过文本累积，历史文本由 HistoryPage 的 convertMessages 提供
           if (isReplayingRef.current) break
@@ -1030,7 +1033,9 @@ export function useAgent(skillId: string) {
           }
           handleEvent(event)
           const type = typeof event.type === 'string' ? event.type : eventType
-          if (type && type !== 'session') {
+          if (type === 'heartbeat') {
+            lastSseActivityAtRef.current = Date.now()
+          } else if (type && type !== 'session') {
             lastProgressAt = Date.now()
             lastSseActivityAtRef.current = lastProgressAt
           }

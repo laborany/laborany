@@ -79,35 +79,52 @@ interface MessageReferencePayload {
   widgetId?: string | null
 }
 
+interface SseStream {
+  writeSSE(message: { data: string }): Promise<void>
+}
+
+const SSE_HEARTBEAT_INTERVAL_MS = 25_000
+
+function startSseHeartbeat(stream: SseStream): ReturnType<typeof setInterval> {
+  return setInterval(() => {
+    void stream.writeSSE({
+      data: JSON.stringify({ type: 'heartbeat', at: new Date().toISOString() }),
+    }).catch(() => {})
+  }, SSE_HEARTBEAT_INTERVAL_MS)
+}
+
 function normalizeReferences(input: unknown): MessageReferencePayload[] {
   if (!Array.isArray(input)) return []
-  return input
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null
-      const candidate = item as Record<string, unknown>
-      const id = typeof candidate.id === 'string' ? candidate.id.trim() : ''
-      const kind = candidate.kind
-      const title = typeof candidate.title === 'string' ? candidate.title.trim() : ''
-      if (!id || !title) return null
-      if (kind !== 'message' && kind !== 'artifact' && kind !== 'tool_result' && kind !== 'widget') return null
-      return {
-        id,
-        kind,
-        title,
-        snippet: typeof candidate.snippet === 'string' ? candidate.snippet : undefined,
-        sessionId: typeof candidate.sessionId === 'string' ? candidate.sessionId : undefined,
-        workId: typeof candidate.workId === 'string' ? candidate.workId : undefined,
-        messageId: typeof candidate.messageId === 'string' ? candidate.messageId : undefined,
-        serverMessageId: typeof candidate.serverMessageId === 'number' ? candidate.serverMessageId : undefined,
-        turnId: typeof candidate.turnId === 'string' ? candidate.turnId : undefined,
-        artifactPath: typeof candidate.artifactPath === 'string' ? candidate.artifactPath : undefined,
-        artifactName: typeof candidate.artifactName === 'string' ? candidate.artifactName : undefined,
-        toolUseId: typeof candidate.toolUseId === 'string' ? candidate.toolUseId : undefined,
-        toolName: typeof candidate.toolName === 'string' ? candidate.toolName : undefined,
-        widgetId: typeof candidate.widgetId === 'string' ? candidate.widgetId : undefined,
-      } satisfies MessageReferencePayload
+  const references: MessageReferencePayload[] = []
+
+  for (const item of input) {
+    if (!item || typeof item !== 'object') continue
+    const candidate = item as Record<string, unknown>
+    const id = typeof candidate.id === 'string' ? candidate.id.trim() : ''
+    const kind = candidate.kind
+    const title = typeof candidate.title === 'string' ? candidate.title.trim() : ''
+    if (!id || !title) continue
+    if (kind !== 'message' && kind !== 'artifact' && kind !== 'tool_result' && kind !== 'widget') continue
+
+    references.push({
+      id,
+      kind,
+      title,
+      snippet: typeof candidate.snippet === 'string' ? candidate.snippet : undefined,
+      sessionId: typeof candidate.sessionId === 'string' ? candidate.sessionId : undefined,
+      workId: typeof candidate.workId === 'string' ? candidate.workId : undefined,
+      messageId: typeof candidate.messageId === 'string' ? candidate.messageId : undefined,
+      serverMessageId: typeof candidate.serverMessageId === 'number' ? candidate.serverMessageId : undefined,
+      turnId: typeof candidate.turnId === 'string' ? candidate.turnId : undefined,
+      artifactPath: typeof candidate.artifactPath === 'string' ? candidate.artifactPath : undefined,
+      artifactName: typeof candidate.artifactName === 'string' ? candidate.artifactName : undefined,
+      toolUseId: typeof candidate.toolUseId === 'string' ? candidate.toolUseId : undefined,
+      toolName: typeof candidate.toolName === 'string' ? candidate.toolName : undefined,
+      widgetId: typeof candidate.widgetId === 'string' ? candidate.widgetId : undefined,
     })
-    .filter((item): item is MessageReferencePayload => Boolean(item))
+  }
+
+  return references
 }
 
 function applyReasoningEffort(
@@ -971,6 +988,7 @@ skill.post('/execute', async (c) => {
   const workId = findWorkIdBySessionId(sessionId) || undefined
 
   return streamSSE(c, async (stream) => {
+    const heartbeat = startSseHeartbeat(stream)
     await stream.writeSSE({ data: JSON.stringify({ type: 'session', sessionId, workId }) })
     if (modelSelection.warning) {
       await stream.writeSSE({
@@ -995,6 +1013,7 @@ skill.post('/execute', async (c) => {
     try {
       await runtimeTaskManager.waitForCompletion(sessionId)
     } finally {
+      clearInterval(heartbeat)
       unsubscribe()
     }
   })
@@ -1029,6 +1048,7 @@ skill.get('/runtime/attach/:sessionId', (c) => {
   }
 
   return streamSSE(c, async (stream) => {
+    const heartbeat = startSseHeartbeat(stream)
     // Fix P0-6: writeSSE 包装 try-catch，防止客户端断开时异常导致 unsubscribe 不执行
     const writeRuntimeEvent = async (event: RuntimeEvent) => {
       try {
@@ -1046,6 +1066,7 @@ skill.get('/runtime/attach/:sessionId', (c) => {
     try {
       await runtimeTaskManager.waitForCompletion(sessionId)
     } finally {
+      clearInterval(heartbeat)
       unsubscribe()
     }
   })

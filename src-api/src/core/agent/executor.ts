@@ -889,6 +889,10 @@ const EXPLANATION_INTENT_PATTERN = /解释|说明|讲解|展示|演示|理解|co
 const NO_FILE_PATTERN = /不要写文件|不要创建文件|不要生成文件|不要落地文件|不要改代码|不要实现|直接回答|直接解释|直接用|just explain|do not write files?|don't write files?/i
 const EXECUTION_ARTIFACT_PATTERN = /修复|实现|重构|写代码|编程|代码|项目|仓库|repo|repository|脚本|命令|测试|提交|commit|build|fix|implement|refactor|create file|write file|edit file/i
 const MISSING_PRINT_INPUT_RE = /Input must be provided either through stdin or as a prompt argument when using --print/i
+const TRANSIENT_CLAUDE_ERROR_PATTERN = /(?:API Error:\s*)?(?:502|503|504|529)\b|bad gateway|service unavailable|gateway timeout|overloaded|temporar(?:y|ily) unavailable|operation (?:was )?aborted due to timeout|timed?\s*out|timeout|ETIMEDOUT|ECONNRESET|ECONNABORTED|EAI_AGAIN|ENOTFOUND|socket hang up|network error|fetch failed|rate[ _-]?limit|429/i
+const NON_RECOVERABLE_CLAUDE_ERROR_PATTERN = /invalid api key|authentication|unauthorized|forbidden|permission denied|credit balance|billing|quota exceeded|Nosuchfileor directory|No such file or directory|ENOENT|EACCES/i
+const DEFAULT_CLAUDE_RECOVERY_ATTEMPTS = 2
+const MAX_CLAUDE_RECOVERY_ATTEMPTS = 5
 
 function formatClaudeCliExitError(code: number | null, stderrSnippet: string): string {
   const trimmed = stderrSnippet.trim()
@@ -898,6 +902,57 @@ function formatClaudeCliExitError(code: number | null, stderrSnippet: string): s
   return trimmed
     ? `Claude Code 退出码: ${code}\n${trimmed}`
     : `Claude Code 退出码: ${code}`
+}
+
+function getClaudeRecoveryAttempts(): number {
+  const raw = process.env.LABORANY_CLAUDE_RECOVERY_ATTEMPTS
+  if (!raw) return DEFAULT_CLAUDE_RECOVERY_ATTEMPTS
+
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed)) return DEFAULT_CLAUDE_RECOVERY_ATTEMPTS
+  return Math.max(0, Math.min(MAX_CLAUDE_RECOVERY_ATTEMPTS, parsed))
+}
+
+function getClaudeRecoveryDelayMs(recoveryAttempt: number): number {
+  return Math.min(1500 * 2 ** Math.max(0, recoveryAttempt - 1), 10_000)
+}
+
+async function waitForClaudeRecoveryDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) return
+
+  await new Promise<void>((resolve) => {
+    const cleanup = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', cleanup)
+      resolve()
+    }
+    const timer = setTimeout(cleanup, ms)
+    signal.addEventListener('abort', cleanup, { once: true })
+  })
+}
+
+function isRecoverableClaudeCliFailure(code: number | null, stderrSnippet: string): boolean {
+  const text = stderrSnippet.trim()
+  if (!text) return false
+  if (code === 0) return false
+  if (MISSING_PRINT_INPUT_RE.test(text)) return false
+  if (NON_RECOVERABLE_CLAUDE_ERROR_PATTERN.test(text)) return false
+  return TRANSIENT_CLAUDE_ERROR_PATTERN.test(text)
+}
+
+function buildClaudeRecoveryPrompt(originalPrompt: string, stderrSnippet: string): string {
+  return [
+    '上一次执行因 Claude 上游网络/API 临时错误中断，LaborAny 正在恢复同一个任务。',
+    '请先检查当前工作目录、已有文件、CLAUDE.md 和会话上下文，然后继续未完成的工作。',
+    '不要重复已经完成的步骤，尤其不要重复发布、提交、删除、发送消息、付费调用等有副作用的操作。',
+    '如果无法判断继续是否安全，请停下来说明当前状态和需要用户确认的风险。',
+    '',
+    '原始用户任务：',
+    originalPrompt,
+    '',
+    '上一次错误摘要：',
+    stderrSnippet.trim() || '(无 stderr 摘要)',
+  ].join('\n')
 }
 
 function shouldForceDirectWidgetMode(skillId: string, userQuery: string): boolean {
@@ -1157,10 +1212,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     '--dangerously-skip-permissions',
   ]
 
-  if (!isNewSession) {
-    args.push('--continue')
-  }
-
   if (effectiveModel) {
     args.push('--model', effectiveModel)
   }
@@ -1230,23 +1281,6 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     return
   }
 
-  console.log(`[Agent] Args: ${args.join(' ')}`)
-
-  const spawnArgs = [...claudeConfig.argsPrefix, ...args]
-  const proc = spawn(claudeConfig.command, spawnArgs, {
-    cwd: taskDir,
-    env: buildEnvConfig(modelOverride, claudeConfig.nodePath),
-    shell: claudeConfig.shell,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
-
-  if (proc.stdin) {
-    proc.stdin.write(prompt, 'utf-8')
-    proc.stdin.end()
-  }
-
-  let lineBuffer = ''
-  let agentResponse = ''  // 收集 Agent 的文本输出
   const onWidgetEvent = (event: WidgetEvent) => {
     if (event.type === 'widget_start') {
       onEvent({ type: 'widget_start', widgetId: event.widgetId, title: event.title })
@@ -1262,143 +1296,289 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     ? { widgetState, onWidgetEvent }
     : undefined
 
-  if (!proc.stdout || !proc.stderr) {
-    throw new Error('Claude CLI stdio is unavailable')
+  interface ClaudeCliRunResult {
+    code: number | null
+    stderrSnippet: string
+    agentResponse: string
+    hadProgress: boolean
+    spawnError?: Error
   }
 
-  proc.stdout.on('data', (data: Buffer) => {
-    lineBuffer += data.toString('utf-8')
-    const lines = lineBuffer.split('\n')
-    lineBuffer = lines.pop() || ''
-    for (const line of lines) {
-      const event = parseStreamLineWithReturn(line, emitEvent, streamCtx)
-      // 收集文本输出用于记忆
-      if (event?.type === 'text' && event.content) {
-        agentResponse += event.content
+  const buildAttemptArgs = (useContinue: boolean): string[] => {
+    const attemptArgs = [...args]
+    if (useContinue) {
+      attemptArgs.push('--continue')
+    }
+    return attemptArgs
+  }
+
+  const runClaudeOnce = async (
+    attemptIndex: number,
+    attemptPrompt: string,
+    useContinue: boolean,
+  ): Promise<ClaudeCliRunResult> => {
+    lastProgressAt = Date.now()
+    idleWarningSent = false
+
+    const attemptArgs = buildAttemptArgs(useContinue)
+    const spawnArgs = [...claudeConfig.argsPrefix, ...attemptArgs]
+    console.log(`[Agent] Args${attemptIndex > 0 ? ` (recovery ${attemptIndex})` : ''}: ${attemptArgs.join(' ')}`)
+
+    let proc: ReturnType<typeof spawn>
+    try {
+      proc = spawn(claudeConfig.command, spawnArgs, {
+        cwd: taskDir,
+        env: buildEnvConfig(modelOverride, claudeConfig.nodePath),
+        shell: claudeConfig.shell,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+    } catch (error) {
+      return {
+        code: null,
+        stderrSnippet: '',
+        agentResponse: '',
+        hadProgress: false,
+        spawnError: error instanceof Error ? error : new Error(String(error)),
       }
     }
-  })
 
-  let stderrBuffer = ''
-
-  proc.stderr.on('data', (data: Buffer) => {
-    const chunk = data.toString('utf-8')
-    stderrBuffer += chunk
-    if (stderrBuffer.length > 4000) {
-      stderrBuffer = stderrBuffer.slice(-4000)
-    }
-    console.error('[Agent] stderr:', chunk)
-
-    /* 逐行检查，匹配到重试/错误模式的行透传到前端 */
-    for (const line of chunk.split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed && STDERR_FORWARD_PATTERN.test(trimmed)) {
-        emitEvent({ type: 'status', content: trimmed })
+    if (!proc.stdout || !proc.stderr) {
+      return {
+        code: null,
+        stderrSnippet: '',
+        agentResponse: '',
+        hadProgress: false,
+        spawnError: new Error('Claude CLI stdio is unavailable'),
       }
     }
-  })
 
-  const abortHandler = () => proc.kill('SIGTERM')
-  signal.addEventListener('abort', abortHandler)
-
-  const idleWarningTimer = setInterval(() => {
-    if (signal.aborted) return
-    if (proc.exitCode !== null || proc.killed) return
-
-    const idleMs = Date.now() - lastProgressAt
-    if (idleMs < IDLE_WARNING_THRESHOLD_MS || idleWarningSent) {
-      return
+    if (proc.stdin) {
+      proc.stdin.write(attemptPrompt, 'utf-8')
+      proc.stdin.end()
     }
 
-    idleWarningSent = true
-    emitEvent({
-      type: 'warning',
-      content: '任务执行时间较长，已超过 10 分钟无新输出。任务仍在继续，请耐心等待。',
-    })
-  }, IDLE_WARNING_CHECK_INTERVAL_MS)
+    let lineBuffer = ''
+    let agentResponse = ''
+    let stderrBuffer = ''
+    let hadProgress = false
 
-  return new Promise((resolve) => {
-    proc.on('close', async (code) => {
-      clearInterval(idleWarningTimer)
-      signal.removeEventListener('abort', abortHandler)
-      if (lineBuffer.trim()) {
-        const event = parseStreamLineWithReturn(lineBuffer, emitEvent, streamCtx)
+    proc.stdout.on('data', (data: Buffer) => {
+      lineBuffer += data.toString('utf-8')
+      const lines = lineBuffer.split('\n')
+      lineBuffer = lines.pop() || ''
+      for (const line of lines) {
+        const event = parseStreamLineWithReturn(line, emitEvent, streamCtx)
+        if (event && isProgressEvent(event)) {
+          hadProgress = true
+        }
+        // 收集文本输出用于记忆
         if (event?.type === 'text' && event.content) {
           agentResponse += event.content
         }
       }
+    })
 
-      if (signal.aborted) {
-        emitEvent({ type: 'error', content: '执行被中止' })
-      } else if (code !== 0) {
-        const stderrSnippet = stderrBuffer.trim().slice(0, 600)
-        emitEvent({
-          type: 'error',
-          content: formatClaudeCliExitError(code, stderrSnippet),
-        })
+    proc.stderr.on('data', (data: Buffer) => {
+      const chunk = data.toString('utf-8')
+      stderrBuffer += chunk
+      if (stderrBuffer.length > 4000) {
+        stderrBuffer = stderrBuffer.slice(-4000)
       }
+      console.error('[Agent] stderr:', chunk)
 
-      // 任务完成后记录到三级记忆系统
-      if (code === 0 && !signal.aborted) {
-        try {
-          if (shouldPersistMemory(skill.meta.id, userQuery)) {
-            const result = await fetchJsonWithTimeout<{
-              success?: boolean
-              skipped?: boolean
-              reason?: string
-              extractionMethod?: string
-              written?: { cells?: number }
-            }>(
-              '/memory/record-task',
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  skillId: skill.meta.id,
-                  userQuery: stripPipelineContext(userQuery),
-                  assistantResponse: agentResponse || '',
-                }),
-              },
-              20_000,
-            )
-
-            if (!result.ok) {
-              throw new Error(`status=${result.status} body=${result.rawText.slice(0, 240)}`)
-            }
-
-            const payload = result.data ?? {}
-
-            if (!payload.success) {
-              throw new Error(`invalid response body=${JSON.stringify(payload).slice(0, 240)}`)
-            }
-
-            if (payload.skipped) {
-              console.log(`[Agent] Memory write skipped: ${payload.reason || 'unknown reason'}`)
-            } else {
-              console.log(
-                `[Agent] Memory write completed: method=${payload.extractionMethod || 'unknown'}, cells=${payload.written?.cells ?? 0}`,
-              )
-            }
-          }
-        } catch (err) {
-          console.error('[Agent] 记录记忆失败:', err)
-          emitEvent({
-            type: 'warning',
-            content: '记忆写入失败，本次任务结果已保留，但不会更新记忆。',
-          })
+      /* 逐行检查，匹配到重试/错误模式的行透传到前端 */
+      for (const line of chunk.split('\n')) {
+        const trimmed = line.trim()
+        if (trimmed && STDERR_FORWARD_PATTERN.test(trimmed)) {
+          emitEvent({ type: 'status', content: trimmed })
         }
       }
-
-      emitEvent({ type: 'done' })
-      resolve()
     })
 
-    proc.on('error', (err) => {
-      clearInterval(idleWarningTimer)
-      signal.removeEventListener('abort', abortHandler)
-      emitEvent({ type: 'error', content: err.message })
-      emitEvent({ type: 'done' })
-      resolve()
+    const abortHandler = () => proc.kill('SIGTERM')
+    signal.addEventListener('abort', abortHandler)
+
+    const idleWarningTimer = setInterval(() => {
+      if (signal.aborted) return
+      if (proc.exitCode !== null || proc.killed) return
+
+      const idleMs = Date.now() - lastProgressAt
+      if (idleMs < IDLE_WARNING_THRESHOLD_MS || idleWarningSent) {
+        return
+      }
+
+      idleWarningSent = true
+      emitEvent({
+        type: 'warning',
+        content: '任务执行时间较长，已超过 10 分钟无新输出。任务仍在继续，请耐心等待。',
+      })
+    }, IDLE_WARNING_CHECK_INTERVAL_MS)
+
+    return await new Promise<ClaudeCliRunResult>((resolve) => {
+      let settled = false
+      const finish = (result: ClaudeCliRunResult) => {
+        if (settled) return
+        settled = true
+        clearInterval(idleWarningTimer)
+        signal.removeEventListener('abort', abortHandler)
+        resolve(result)
+      }
+
+      proc.on('close', (code) => {
+        if (lineBuffer.trim()) {
+          const event = parseStreamLineWithReturn(lineBuffer, emitEvent, streamCtx)
+          if (event && isProgressEvent(event)) {
+            hadProgress = true
+          }
+          if (event?.type === 'text' && event.content) {
+            agentResponse += event.content
+          }
+        }
+
+        finish({
+          code,
+          stderrSnippet: stderrBuffer.trim().slice(-1200),
+          agentResponse,
+          hadProgress,
+        })
+      })
+
+      proc.on('error', (err) => {
+        finish({
+          code: null,
+          stderrSnippet: stderrBuffer.trim().slice(-1200),
+          agentResponse,
+          hadProgress,
+          spawnError: err,
+        })
+      })
     })
-  })
+  }
+
+  const maxRecoveryAttempts = getClaudeRecoveryAttempts()
+  let agentResponse = ''
+  let finalCode: number | null = null
+  let finalStderrSnippet = ''
+  let finalSpawnError: Error | undefined
+  let completed = false
+  let hasProgressAcrossAttempts = false
+
+  for (let attemptIndex = 0; attemptIndex <= maxRecoveryAttempts; attemptIndex += 1) {
+    if (signal.aborted) {
+      break
+    }
+
+    const useRecoveryPrompt = attemptIndex > 0 && (!isNewSession || hasProgressAcrossAttempts)
+    const useContinue = !isNewSession || (attemptIndex > 0 && hasProgressAcrossAttempts)
+    const attemptPrompt = useRecoveryPrompt
+      ? buildClaudeRecoveryPrompt(prompt, finalStderrSnippet)
+      : prompt
+    const result = await runClaudeOnce(attemptIndex, attemptPrompt, useContinue)
+
+    agentResponse += result.agentResponse
+    finalCode = result.code
+    finalStderrSnippet = result.stderrSnippet
+    finalSpawnError = result.spawnError
+    hasProgressAcrossAttempts = hasProgressAcrossAttempts || result.hadProgress
+
+    if (signal.aborted) {
+      break
+    }
+
+    if (result.spawnError) {
+      break
+    }
+
+    if (result.code === 0) {
+      completed = true
+      if (attemptIndex > 0) {
+        emitEvent({
+          type: 'status',
+          content: 'Claude 上游连接已恢复，任务继续执行完成。',
+        })
+      }
+      break
+    }
+
+    if (
+      attemptIndex >= maxRecoveryAttempts ||
+      !isRecoverableClaudeCliFailure(result.code, result.stderrSnippet)
+    ) {
+      break
+    }
+
+    const nextRecoveryAttempt = attemptIndex + 1
+    const delayMs = getClaudeRecoveryDelayMs(nextRecoveryAttempt)
+    const message = `Claude 上游网络/API 临时异常，${Math.round(delayMs / 1000)}s 后尝试恢复 (${nextRecoveryAttempt}/${maxRecoveryAttempts})。`
+    emitEvent({ type: 'warning', content: message })
+    emitEvent({ type: 'status', content: message })
+    await waitForClaudeRecoveryDelay(delayMs, signal)
+    if (signal.aborted) {
+      break
+    }
+  }
+
+  if (signal.aborted) {
+    emitEvent({ type: 'error', content: '执行被中止' })
+  } else if (!completed) {
+    emitEvent({
+      type: 'error',
+      content: finalSpawnError
+        ? finalSpawnError.message
+        : formatClaudeCliExitError(finalCode, finalStderrSnippet),
+    })
+  }
+
+  // 任务完成后记录到三级记忆系统
+  if (completed && !signal.aborted) {
+    try {
+      if (shouldPersistMemory(skill.meta.id, userQuery)) {
+        const result = await fetchJsonWithTimeout<{
+          success?: boolean
+          skipped?: boolean
+          reason?: string
+          extractionMethod?: string
+          written?: { cells?: number }
+        }>(
+          '/memory/record-task',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              skillId: skill.meta.id,
+              userQuery: stripPipelineContext(userQuery),
+              assistantResponse: agentResponse || '',
+            }),
+          },
+          20_000,
+        )
+
+        if (!result.ok) {
+          throw new Error(`status=${result.status} body=${result.rawText.slice(0, 240)}`)
+        }
+
+        const payload = result.data ?? {}
+
+        if (!payload.success) {
+          throw new Error(`invalid response body=${JSON.stringify(payload).slice(0, 240)}`)
+        }
+
+        if (payload.skipped) {
+          console.log(`[Agent] Memory write skipped: ${payload.reason || 'unknown reason'}`)
+        } else {
+          console.log(
+            `[Agent] Memory write completed: method=${payload.extractionMethod || 'unknown'}, cells=${payload.written?.cells ?? 0}`,
+          )
+        }
+      }
+    } catch (err) {
+      console.error('[Agent] 记录记忆失败:', err)
+      emitEvent({
+        type: 'warning',
+        content: '记忆写入失败，本次任务结果已保留，但不会更新记忆。',
+      })
+    }
+  }
+
+  emitEvent({ type: 'done' })
 }
