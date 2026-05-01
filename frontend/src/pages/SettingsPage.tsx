@@ -107,6 +107,7 @@ export default function SettingsPage() {
               removeProfile={s.removeProfile}
               moveProfile={s.moveProfile}
               updateProfile={s.updateProfile}
+              toggleProfileCapability={s.toggleProfileCapability}
               setProfileAsCurrentDefault={s.setProfileAsCurrentDefault}
               testProfileConnection={s.testProfileConnection}
               saveModelProfiles={s.saveModelProfiles}

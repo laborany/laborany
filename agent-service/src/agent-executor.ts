@@ -38,6 +38,8 @@ import {
   type WidgetEvent,
 } from './generative-ui/index.js'
 import { writeWebResearchMcpConfig } from './web-research/index.js'
+import { writeVisionMcpConfig, buildVisionPolicySection } from './vision/index.js'
+import { writeImageGenMcpConfig, buildImageGenPolicySection } from './image-gen/index.js'
 import { buildResearchPolicySection } from './web-research/policy/research-policy.js'
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -66,19 +68,21 @@ function stripPipelineContext(userQuery: string): string {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentEvent {
   type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done' | 'stopped' | 'status'
-    | 'widget_start' | 'widget_delta' | 'widget_commit' | 'widget_error' | 'mcp_status'
+    | 'widget_start' | 'widget_delta' | 'widget_commit' | 'widget_error' | 'mcp_status' | 'image_generated'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
   toolUseId?: string
   toolResult?: string
   taskDir?: string
-  isError?: boolean  // 结构化错误标记，用于判断执行是否失败
-  // Widget event fields
+  isError?: boolean
   widgetId?: string
   widgetTitle?: string
   widgetHtml?: string
   mcpServers?: McpServerStatus[]
+  imageFileName?: string
+  imageFilePath?: string
+  imagePrompt?: string
 }
 
 export interface McpServerStatus {
@@ -117,6 +121,8 @@ interface ExecuteOptions {
   onEvent: (event: AgentEvent) => void
   modelOverride?: ModelOverride
   modelProfileId?: string
+  visionProfileId?: string
+  imageGenProfileId?: string
   enableWidgets?: boolean
 }
 
@@ -154,6 +160,30 @@ function getRuntimePlatformLabel(): string {
   if (platform() === 'win32') return 'Windows'
   if (platform() === 'darwin') return 'macOS'
   return 'Linux'
+}
+
+function buildVisionImageGenDecisionSection(): string {
+  return `## 视觉工具决策流程
+
+当视觉理解（mcp__laborany_vision__analyze_image）和图片生成（mcp__laborany_image_gen__generate_image）同时可用时，按以下流程选择：
+
+1. 用户是否提到或上传了已有图片？
+   → 是：图片已存在，你需要理解或分析它 → 调用 analyze_image
+   → 否：继续下一步
+
+2. 用户是否明确要求"生成/画/创作/制作"图片？
+   → 是：用户想要新图片 → 调用 generate_image
+   → 否：继续下一步
+
+3. 用户描述了一个场景但没说"生成图片"，只是想让 AI 理解某个画面？
+   → 是：理解意图 → 调用 analyze_image（如果提供了参考图）或纯文字回复（无参考图）
+   → 否：不需要调用任何视觉工具，用文字回复
+
+关键区分：
+- "帮我看看这张图" / "这张截图什么意思" → analyze_image（理解已有图片）
+- "帮我画一张" / "生成一张海报" / "把这段描述变成图" → generate_image（创作新图片）
+- 绝不能用 generate_image 来"分析已有图片"，也不能用 analyze_image 来"生成新图片"
+- 如果用户同时上传图片并要求基于它生成新图：先 analyze_image 理解原图，再 generate_image 创作新图`
 }
 
 function buildLaborAnyRuntimeContext(taskDir: string, skillId: string, sessionId: string): string {
@@ -403,7 +433,7 @@ function parseMcpStatusLine(line: string): McpServerStatus | null {
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, modelOverride, modelProfileId, enableWidgets } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, modelOverride, modelProfileId, visionProfileId, imageGenProfileId, enableWidgets } = options
 
   refreshRuntimeConfig()
 
@@ -533,15 +563,36 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
 
   // ── Web Research MCP: 对所有用户统一注入 ──
   try {
+    const mcpNodeCommand = resolveMcpNodeCommand(cliLaunch.source === 'bundled' ? cliLaunch.nodePath : undefined)
     const webMcpPath = writeWebResearchMcpConfig(taskDir, {
       agentServicePort: process.env.AGENT_PORT || '3002',
-      nodePath: resolveMcpNodeCommand(cliLaunch.source === 'bundled' ? cliLaunch.nodePath : undefined),
+      nodePath: mcpNodeCommand,
       modelProfileId,
     })
     args.push('--mcp-config', webMcpPath)
     console.log(`[Agent] Web Research MCP injected: ${webMcpPath}`)
+
+    if (visionProfileId) {
+      const visionMcpPath = writeVisionMcpConfig(taskDir, {
+        agentServicePort: process.env.AGENT_PORT || '3002',
+        nodePath: mcpNodeCommand,
+        modelProfileId: visionProfileId,
+      })
+      args.push('--mcp-config', visionMcpPath)
+      console.log(`[Agent] Vision MCP injected: ${visionMcpPath}`)
+    }
+
+    if (imageGenProfileId) {
+      const imageGenMcpPath = writeImageGenMcpConfig(taskDir, {
+        agentServicePort: process.env.AGENT_PORT || '3002',
+        nodePath: mcpNodeCommand,
+        modelProfileId: imageGenProfileId,
+      })
+      args.push('--mcp-config', imageGenMcpPath)
+      console.log(`[Agent] Image Gen MCP injected: ${imageGenMcpPath}`)
+    }
   } catch (err) {
-    console.error('[Agent] Failed to inject web research MCP:', err)
+    console.error('[Agent] Failed to inject web research / vision / image-gen MCP:', err)
   }
 
   communicationPreferenceManager.applyFromUserText(userQuery, userQuery)
@@ -553,6 +604,15 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const stableSections: string[] = []
   if (!skill.systemPrompt.includes('## 联网调研策略')) {
     stableSections.push(buildResearchPolicySection())
+  }
+  if (visionProfileId && !skill.systemPrompt.includes('## 视觉理解策略')) {
+    stableSections.push(buildVisionPolicySection())
+  }
+  if (imageGenProfileId && !skill.systemPrompt.includes('## 图片生成策略')) {
+    stableSections.push(buildImageGenPolicySection())
+  }
+  if (visionProfileId && imageGenProfileId && !skill.systemPrompt.includes('## 视觉工具决策流程')) {
+    stableSections.push(buildVisionImageGenDecisionSection())
   }
   stableSections.push(skill.systemPrompt)
   const stablePrompt = stableSections.join('\n\n---\n\n')

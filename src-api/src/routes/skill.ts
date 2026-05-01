@@ -40,6 +40,7 @@ import {
 import { isExistingSkillSessionBusy } from '../lib/skill-session-guard.js'
 import {
   getSkillModelProfileId,
+  getSkillModelSetting,
   removeSkillModelSetting,
   resolveSkillModelSettingDetail,
   upsertSkillModelSetting,
@@ -550,22 +551,52 @@ skill.put('/:skillId/model-config', async (c) => {
     return c.json({ error: 'Skill not found' }, 404)
   }
 
-  const body = await c.req.json<{ modelProfileId?: string | null }>().catch(() => ({} as { modelProfileId?: string | null }))
-  const modelProfileId = typeof body.modelProfileId === 'string'
-    ? body.modelProfileId.trim()
-    : ''
+  const body = await c.req.json<{
+    textChatProfileId?: string | null
+    visionProfileId?: string | null
+    imageGenProfileId?: string | null
+    videoGenProfileId?: string | null
+    modelProfileId?: string | null
+  }>().catch(() => ({} as {
+    textChatProfileId?: string | null
+    visionProfileId?: string | null
+    imageGenProfileId?: string | null
+    videoGenProfileId?: string | null
+    modelProfileId?: string | null
+  }))
 
-  if (modelProfileId) {
-    migrateFromEnvIfNeeded()
-    const store = readModelProfiles()
-    const profile = store.profiles.find((item) => item.id === modelProfileId)
-    if (!profile) {
-      return c.json({ error: '模型配置不存在' }, 400)
-    }
-    upsertSkillModelSetting(skillId, modelProfileId)
-  } else {
-    upsertSkillModelSetting(skillId, undefined)
+  const nextConfig = {
+    textChatProfileId: typeof body.textChatProfileId === 'string'
+      ? body.textChatProfileId.trim()
+      : typeof body.modelProfileId === 'string'
+        ? body.modelProfileId.trim()
+        : '',
+    visionProfileId: typeof body.visionProfileId === 'string' ? body.visionProfileId.trim() : '',
+    imageGenProfileId: typeof body.imageGenProfileId === 'string' ? body.imageGenProfileId.trim() : '',
+    videoGenProfileId: typeof body.videoGenProfileId === 'string' ? body.videoGenProfileId.trim() : '',
   }
+
+  migrateFromEnvIfNeeded()
+  const store = readModelProfiles()
+  const validateProfileId = (profileId: string, label: string) => {
+    if (!profileId) return null
+    const profile = store.profiles.find((item) => item.id === profileId)
+    if (!profile) {
+      return `${label}不存在`
+    }
+    return null
+  }
+
+  const validationError = validateProfileId(nextConfig.textChatProfileId, '文本模型配置')
+    || validateProfileId(nextConfig.visionProfileId, '视觉模型配置')
+    || validateProfileId(nextConfig.imageGenProfileId, '图片生成模型配置')
+    || validateProfileId(nextConfig.videoGenProfileId, '视频生成模型配置')
+
+  if (validationError) {
+    return c.json({ error: validationError }, 400)
+  }
+
+  upsertSkillModelSetting(skillId, nextConfig)
 
   return c.json({
     success: true,
@@ -970,6 +1001,8 @@ skill.post('/execute', async (c) => {
     )
   }
 
+  const skillModelSetting = getSkillModelSetting(skillId)
+
   runtimeTaskManager.startTask({
     sessionId,
     skillId,
@@ -979,6 +1012,8 @@ skill.post('/execute', async (c) => {
     modelProfileId: modelSelection.modelProfileId,
     modelProfileName: modelSelection.modelProfileName,
     modelName: modelSelection.modelName,
+    visionProfileId: skillModelSetting?.visionProfileId,
+    imageGenProfileId: skillModelSetting?.imageGenProfileId,
     originQuery: skillId === 'skill-creator' ? (originQuery || cleanQuery) : undefined,
     beforeSkillIds: skillId === 'skill-creator' ? beforeSkillIds : undefined,
     source: source as 'desktop' | 'feishu' | 'qq' | 'wechat' | 'cron' | 'converse',

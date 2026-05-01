@@ -56,11 +56,13 @@ export {
 } from './encoding.js'
 
 export {
+  normalizeModelCapabilities,
   normalizeModelInterfaceType,
   normalizeReasoningEffort,
   encodeOpenAiBridgeApiKey,
   decodeOpenAiBridgeApiKey,
   isOpenAiBridgeApiKey,
+  type ModelCapability,
   type ModelInterfaceType,
   type OpenAiBridgeCredential,
   type ReasoningEffort,

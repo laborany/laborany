@@ -2025,6 +2025,8 @@ router.post('/', async (req: Request, res: Response) => {
     messages: rawMessages,
     context: rawContext,
     modelProfileId,
+    visionProfileId: rawVisionProfileId,
+    imageGenProfileId: rawImageGenProfileId,
     reasoningEffort: rawReasoningEffort,
     attachmentIds: rawAttachmentIds,
     references: rawReferences,
@@ -2036,6 +2038,12 @@ router.post('/', async (req: Request, res: Response) => {
   const reasoningEffort = normalizeReasoningEffort(
     typeof rawReasoningEffort === 'string' ? rawReasoningEffort : undefined,
   )
+  const visionProfileId = typeof rawVisionProfileId === 'string'
+    ? rawVisionProfileId.trim()
+    : ''
+  const imageGenProfileId = typeof rawImageGenProfileId === 'string'
+    ? rawImageGenProfileId.trim()
+    : ''
 
   if (!rawMessages || !Array.isArray(rawMessages) || !rawMessages.length) {
     res.status(400).json({ error: '缺少 messages 参数' })
@@ -2344,7 +2352,7 @@ router.post('/', async (req: Request, res: Response) => {
     const systemPrompt = buildConverseSystemPrompt(memoryCtx, effectiveRuntimeContext, {
       forceWidgetDirectMode: widgetRuntimePlan.forceDirectMode,
       latestUserQuery: query,
-    })
+    }, visionProfileId, imageGenProfileId)
     const skill = {
       meta: { id: '__converse__', name: '对话助手', description: '多轮对话', kind: 'skill' as const },
       systemPrompt,
@@ -2354,6 +2362,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     let fullText = ''
     let hasPendingQuestion = false
+    let lastToolName = ''
     const runCliConverse = async (enableWidgets: boolean): Promise<void> => {
 
       /* ── 通过 CLI 执行对话 ── */
@@ -2364,6 +2373,8 @@ router.post('/', async (req: Request, res: Response) => {
         signal: abortController.signal,
         modelOverride,
         modelProfileId,
+        visionProfileId: visionProfileId || undefined,
+        imageGenProfileId: imageGenProfileId || undefined,
         enableWidgets,
         onEvent: (event) => {
           if (event.type === 'widget_start') {
@@ -2448,6 +2459,7 @@ router.post('/', async (req: Request, res: Response) => {
               toolInput: event.toolInput || {},
               toolUseId: event.toolUseId || null,
             })
+            lastToolName = event.toolName || ''
             void fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2473,6 +2485,25 @@ router.post('/', async (req: Request, res: Response) => {
               toolResult: event.toolResult || event.content || '',
               toolUseId: event.toolUseId || null,
             })
+
+            if (lastToolName.includes('generate_image')) {
+              const resultText = event.toolResult || event.content || ''
+              const fileNameMatch = resultText.match(/(?:保存到|saved to)[:\s]+(.+?\.\w+)/i)
+              const promptMatch = resultText.match(/(?:原始提示词|实际提示词|Original prompt)[:\s]+(.+)/i)
+              if (fileNameMatch) {
+                const fileName = fileNameMatch[1].trim()
+                const filePath = fileName
+                const prompt = promptMatch ? promptMatch[1].trim() : ''
+                sseWrite(res, 'image_generated', {
+                  fileName,
+                  filePath,
+                  prompt,
+                  sessionId,
+                })
+              }
+            }
+            lastToolName = ''
+
             void fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },

@@ -4,7 +4,10 @@ import { readModelProfiles } from './model-profiles.js'
 import { getConfigDir } from './app-config.js'
 
 export interface SkillModelSetting {
-  modelProfileId?: string
+  textChatProfileId?: string
+  visionProfileId?: string
+  imageGenProfileId?: string
+  videoGenProfileId?: string
   updatedAt: string
 }
 
@@ -37,10 +40,21 @@ export function readSkillModelSettings(): SkillModelSettingsStore {
       ? Object.fromEntries(
         Object.entries(parsed.skills).flatMap(([skillId, value]) => {
           if (!value || typeof value !== 'object') return []
-          const setting = value as Partial<SkillModelSetting>
+          const setting = value as Partial<SkillModelSetting> & { modelProfileId?: string }
           return [[skillId, {
-            modelProfileId: typeof setting.modelProfileId === 'string'
-              ? setting.modelProfileId.trim() || undefined
+            textChatProfileId: typeof setting.textChatProfileId === 'string'
+              ? setting.textChatProfileId.trim() || undefined
+              : typeof setting.modelProfileId === 'string'
+                ? setting.modelProfileId.trim() || undefined
+                : undefined,
+            visionProfileId: typeof setting.visionProfileId === 'string'
+              ? setting.visionProfileId.trim() || undefined
+              : undefined,
+            imageGenProfileId: typeof setting.imageGenProfileId === 'string'
+              ? setting.imageGenProfileId.trim() || undefined
+              : undefined,
+            videoGenProfileId: typeof setting.videoGenProfileId === 'string'
+              ? setting.videoGenProfileId.trim() || undefined
               : undefined,
             updatedAt: typeof setting.updatedAt === 'string' && setting.updatedAt.trim()
               ? setting.updatedAt
@@ -73,29 +87,38 @@ export function getSkillModelSetting(skillId: string): SkillModelSetting | null 
 }
 
 export function getSkillModelProfileId(skillId: string): string | undefined {
-  return getSkillModelSetting(skillId)?.modelProfileId
+  return getSkillModelSetting(skillId)?.textChatProfileId
 }
 
-export function upsertSkillModelSetting(skillId: string, modelProfileId?: string): SkillModelSetting | null {
+export function upsertSkillModelSetting(
+  skillId: string,
+  next: Partial<Pick<SkillModelSetting, 'textChatProfileId' | 'visionProfileId' | 'imageGenProfileId' | 'videoGenProfileId'>>,
+): SkillModelSetting | null {
   const normalizedSkillId = skillId.trim()
   if (!normalizedSkillId) return null
 
-  const normalizedProfileId = (modelProfileId || '').trim() || undefined
   const store = readSkillModelSettings()
+  const current = store.skills[normalizedSkillId]
+  const nextSetting: SkillModelSetting = {
+    textChatProfileId: (next.textChatProfileId || '').trim() || undefined,
+    visionProfileId: (next.visionProfileId || '').trim() || undefined,
+    imageGenProfileId: (next.imageGenProfileId || '').trim() || undefined,
+    videoGenProfileId: (next.videoGenProfileId || '').trim() || undefined,
+    updatedAt: new Date().toISOString(),
+  }
 
-  if (!normalizedProfileId) {
+  if (!nextSetting.textChatProfileId && !nextSetting.visionProfileId && !nextSetting.imageGenProfileId && !nextSetting.videoGenProfileId) {
     delete store.skills[normalizedSkillId]
     writeSkillModelSettings(store)
     return null
   }
 
-  const nextSetting: SkillModelSetting = {
-    modelProfileId: normalizedProfileId,
-    updatedAt: new Date().toISOString(),
+  store.skills[normalizedSkillId] = {
+    ...current,
+    ...nextSetting,
   }
-  store.skills[normalizedSkillId] = nextSetting
   writeSkillModelSettings(store)
-  return nextSetting
+  return store.skills[normalizedSkillId]
 }
 
 export function removeSkillModelSetting(skillId: string): void {
@@ -108,23 +131,39 @@ export function removeSkillModelSetting(skillId: string): void {
 }
 
 export function resolveSkillModelSettingDetail(skillId: string): {
-  modelProfileId?: string
-  modelProfileName?: string
+  textChatProfileId?: string
+  textChatProfileName?: string
+  visionProfileId?: string
+  visionProfileName?: string
+  imageGenProfileId?: string
+  imageGenProfileName?: string
+  videoGenProfileId?: string
+  videoGenProfileName?: string
   updatedAt?: string
   usesOverride: boolean
 } {
   const setting = getSkillModelSetting(skillId)
-  if (!setting?.modelProfileId) {
+  if (!setting) {
     return { usesOverride: false }
   }
 
   const store = readModelProfiles()
-  const profile = store.profiles.find((item) => item.id === setting.modelProfileId)
+  const resolveName = (profileId?: string) => store.profiles.find((item) => item.id === profileId)?.name
+
+  const usesOverride = Boolean(
+    setting.textChatProfileId || setting.visionProfileId || setting.imageGenProfileId || setting.videoGenProfileId,
+  )
 
   return {
-    modelProfileId: setting.modelProfileId,
-    modelProfileName: profile?.name,
+    textChatProfileId: setting.textChatProfileId,
+    textChatProfileName: resolveName(setting.textChatProfileId),
+    visionProfileId: setting.visionProfileId,
+    visionProfileName: resolveName(setting.visionProfileId),
+    imageGenProfileId: setting.imageGenProfileId,
+    imageGenProfileName: resolveName(setting.imageGenProfileId),
+    videoGenProfileId: setting.videoGenProfileId,
+    videoGenProfileName: resolveName(setting.videoGenProfileId),
     updatedAt: setting.updatedAt,
-    usesOverride: true,
+    usesOverride,
   }
 }

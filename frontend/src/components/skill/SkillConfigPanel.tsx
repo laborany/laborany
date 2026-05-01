@@ -25,7 +25,10 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [fileContent, setFileContent] = useState<string>('')
   const [editing, setEditing] = useState(false)
-  const [modelProfileId, setModelProfileId] = useState('')
+  const [textChatProfileId, setTextChatProfileId] = useState('')
+  const [visionProfileId, setVisionProfileId] = useState('')
+  const [imageGenProfileId, setImageGenProfileId] = useState('')
+  const [videoGenProfileId, setVideoGenProfileId] = useState('')
   const [savingModelConfig, setSavingModelConfig] = useState(false)
   const [modelConfigMessage, setModelConfigMessage] = useState<string | null>(null)
   const isAssistantSkill = skillId === '__generic__' || skillId === '__converse__'
@@ -50,7 +53,10 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
       })
       const data = await res.json()
       setDetail(data)
-      setModelProfileId(data.modelConfig?.modelProfileId || '')
+      setTextChatProfileId(data.modelConfig?.textChatProfileId || '')
+      setVisionProfileId(data.modelConfig?.visionProfileId || '')
+      setImageGenProfileId(data.modelConfig?.imageGenProfileId || '')
+      setVideoGenProfileId(data.modelConfig?.videoGenProfileId || '')
     } catch {
       // 模拟数据
       setDetail({
@@ -88,7 +94,10 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          modelProfileId: modelProfileId || null,
+          textChatProfileId: textChatProfileId || null,
+          visionProfileId: visionProfileId || null,
+          imageGenProfileId: imageGenProfileId || null,
+          videoGenProfileId: videoGenProfileId || null,
         }),
       })
       const data = await res.json().catch(() => ({})) as {
@@ -100,7 +109,11 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
         throw new Error(data.error || '保存员工模型设置失败')
       }
       setDetail((prev) => prev ? { ...prev, modelConfig: data.modelConfig || prev.modelConfig } : prev)
-      setModelConfigMessage(modelProfileId ? '员工模型设置已保存' : '已恢复为继承个人助手默认模型')
+      setModelConfigMessage(
+        textChatProfileId || visionProfileId || imageGenProfileId || videoGenProfileId
+          ? '员工多模态模型设置已保存'
+          : '已恢复为继承默认模型配置'
+      )
     } catch (error) {
       setModelConfigMessage(error instanceof Error ? error.message : '保存员工模型设置失败')
     } finally {
@@ -185,8 +198,8 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
               <div>
                 <label className="block text-xs font-medium text-muted-foreground mb-1">执行模型</label>
                 <select
-                  value={modelProfileId}
-                  onChange={(e) => setModelProfileId(e.target.value)}
+                  value={textChatProfileId}
+                  onChange={(e) => setTextChatProfileId(e.target.value)}
                   className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                 >
                   <option value="">
@@ -199,15 +212,63 @@ export function SkillConfigPanel({ skillId, onBack }: SkillConfigPanelProps) {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">视觉理解模型</label>
+                <select
+                  value={visionProfileId}
+                  onChange={(e) => setVisionProfileId(e.target.value)}
+                  className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="">未绑定</option>
+                  {profiles.filter(profile => profile.capabilities.includes('vision_understanding')).map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}{profile.model ? ` · ${profile.model}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">图片生成模型</label>
+                <select
+                  value={imageGenProfileId}
+                  onChange={(e) => setImageGenProfileId(e.target.value)}
+                  className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="">未绑定</option>
+                  {profiles.filter(profile => profile.capabilities.includes('image_generation')).map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}{profile.model ? ` · ${profile.model}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">视频生成模型</label>
+                <select
+                  value={videoGenProfileId}
+                  onChange={(e) => setVideoGenProfileId(e.target.value)}
+                  className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="">未绑定</option>
+                  {profiles.filter(profile => profile.capabilities.includes('video_generation')).map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}{profile.model ? ` · ${profile.model}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <p className="text-xs text-muted-foreground">
                 {isAssistantSkill
-                  ? '为个人助理绑定默认模型后，对话会默认使用这里的模型；但如果当前对话或任务显式指定了别的模型，会优先使用本次指定模型。'
-                  : '为当前员工绑定默认模型后，调用该员工时会默认使用这里的模型；但如果本次任务或定时任务显式指定了别的模型，会优先使用本次指定模型。'}
+                  ? '个人助理可分别绑定文本、视觉与生成模型；若本次对话显式指定了文本模型，仍以本次指定为准。'
+                  : '当前员工可分别绑定文本、视觉与生成模型；执行时优先使用本次任务显式指定，其次使用这里的默认绑定。'}
               </p>
-              {detail?.modelConfig?.usesOverride && detail.modelConfig.modelProfileName && (
-                <p className="text-xs text-primary">
-                  当前绑定：{detail.modelConfig.modelProfileName}
-                </p>
+              {detail?.modelConfig?.usesOverride && (
+                <div className="space-y-1 text-xs text-primary">
+                  {detail.modelConfig.textChatProfileName && <p>执行模型：{detail.modelConfig.textChatProfileName}</p>}
+                  {detail.modelConfig.visionProfileName && <p>视觉理解：{detail.modelConfig.visionProfileName}</p>}
+                  {detail.modelConfig.imageGenProfileName && <p>图片生成：{detail.modelConfig.imageGenProfileName}</p>}
+                  {detail.modelConfig.videoGenProfileName && <p>视频生成：{detail.modelConfig.videoGenProfileName}</p>}
+                </div>
               )}
               {modelConfigMessage && (
                 <p className="text-xs text-muted-foreground">{modelConfigMessage}</p>

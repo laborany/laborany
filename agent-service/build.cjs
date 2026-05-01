@@ -8,6 +8,10 @@ const srcGenUiDir = resolve(__dirname, 'src/generative-ui')
 const distGenUiDir = join(distDir, 'generative-ui')
 const srcWebResearchDir = resolve(__dirname, 'src/web-research')
 const distWebResearchDir = join(distDir, 'web-research')
+const srcVisionDir = resolve(__dirname, 'src/vision')
+const distVisionDir = join(distDir, 'vision')
+const srcImageGenDir = resolve(__dirname, 'src/image-gen')
+const distImageGenDir = join(distDir, 'image-gen')
 
 async function main() {
   // 1. Bundle main agent service
@@ -41,6 +45,26 @@ async function main() {
     target: 'node20',
     format: 'esm',
     outfile: join(distWebResearchDir, 'mcp', 'mcp-server.mjs'),
+    banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
+  })
+
+  await esbuild.build({
+    entryPoints: [join(srcVisionDir, 'mcp', 'mcp-server.mjs')],
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
+    format: 'esm',
+    outfile: join(distVisionDir, 'mcp', 'mcp-server.mjs'),
+    banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
+  })
+
+  await esbuild.build({
+    entryPoints: [join(srcImageGenDir, 'mcp', 'mcp-server.mjs')],
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
+    format: 'esm',
+    outfile: join(distImageGenDir, 'mcp', 'mcp-server.mjs'),
     banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
   })
 

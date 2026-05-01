@@ -11,6 +11,7 @@ import { Hono } from 'hono'
 import { v4 as uuid } from 'uuid'
 import {
   encodeOpenAiBridgeApiKey,
+  normalizeModelCapabilities,
   normalizeModelInterfaceType,
   type ModelInterfaceType,
 } from 'laborany-shared'
@@ -50,6 +51,87 @@ function extractAnthropicText(content: unknown): string {
     }
   }
   return chunks.join('\n').trim()
+}
+
+async function validateVisionConfig(params: {
+  apiKey: string
+  baseUrl?: string
+  model?: string
+  interfaceType?: ModelInterfaceType
+  imagePath?: string
+  prompt?: string
+}): Promise<{ success: boolean; message: string; analysis?: string }> {
+  const apiKey = params.apiKey.trim()
+  const interfaceType = normalizeModelInterfaceType(params.interfaceType)
+  const prompt = (params.prompt || '').trim() || '请描述这张图片的主要内容。'
+  const imagePath = (params.imagePath || '').trim()
+  if (!imagePath) {
+    return { success: false, message: '缺少 imagePath' }
+  }
+
+  try {
+    const { readFile } = await import('fs/promises')
+    const imageBuffer = await readFile(imagePath)
+    const mediaType = imagePath.endsWith('.png') ? 'image/png' : imagePath.endsWith('.webp') ? 'image/webp' : 'image/jpeg'
+    const imageBase64 = imageBuffer.toString('base64')
+
+    if (interfaceType === 'openai_compatible') {
+      const response = await fetch(`${(params.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: (params.model || '').trim() || 'gpt-4o-mini',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: `data:${mediaType};base64,${imageBase64}` } },
+            ],
+          }],
+          max_tokens: 300,
+        }),
+        signal: AbortSignal.timeout(30000),
+      })
+      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } }
+      const analysis = data.choices?.[0]?.message?.content?.trim()
+      if (!response.ok || !analysis) {
+        return { success: false, message: data.error?.message || '视觉模型请求失败' }
+      }
+      return { success: true, message: '视觉理解测试通过', analysis }
+    }
+
+    const response = await fetch(`${(params.baseUrl || 'https://api.anthropic.com').replace(/\/+$/, '')}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: (params.model || '').trim() || 'claude-3-5-sonnet-latest',
+        max_tokens: 300,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
+          ],
+        }],
+      }),
+      signal: AbortSignal.timeout(30000),
+    })
+    const data = await response.json() as { content?: Array<{ type?: string; text?: string }>; error?: { message?: string } }
+    const analysis = data.content?.filter(item => item.type === 'text').map(item => item.text || '').join('\n').trim()
+    if (!response.ok || !analysis) {
+      return { success: false, message: data.error?.message || '视觉模型请求失败' }
+    }
+    return { success: true, message: '视觉理解测试通过', analysis }
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : '视觉模型测试失败' }
+  }
 }
 
 async function validateOpenAiCompatibleConfig(params: {
@@ -181,6 +263,7 @@ router.put('/', async (c) => {
     const name = (p.name || '').trim()
     const apiKey = (p.apiKey || '').trim()
     const interfaceType = normalizeModelInterfaceType(p.interfaceType)
+    const capabilities = normalizeModelCapabilities(p.capabilities)
 
     if (!name) {
       errors.push(`Profile[${i}]: name 不能为空`)
@@ -198,6 +281,10 @@ router.put('/', async (c) => {
 
     if (interfaceType !== 'anthropic' && interfaceType !== 'openai_compatible') {
       errors.push(`Profile[${i}]: interfaceType 无效`)
+    }
+
+    if (capabilities.length === 0) {
+      errors.push(`Profile[${i}]: capabilities 至少需要一个能力`)
     }
 
     // 如果有 id 且不是新建，检查重复
@@ -235,6 +322,7 @@ router.put('/', async (c) => {
       baseUrl: (p.baseUrl || '').trim() || undefined,
       model: (p.model || '').trim() || undefined,
       interfaceType: normalizeModelInterfaceType(p.interfaceType || existingProfile?.interfaceType),
+      capabilities: normalizeModelCapabilities(p.capabilities ?? existingProfile?.capabilities),
       createdAt: existingProfile?.createdAt || now,
       updatedAt: now,
     }
@@ -265,6 +353,57 @@ router.put('/', async (c) => {
  * │  POST /api/config/model-profiles/test                                    │
  * │  测试指定 profile 的连通性                                                │
  * └──────────────────────────────────────────────────────────────────────────┘ */
+router.post('/test-vision', async (c) => {
+  const token = c.req.header('X-Internal-Token')
+  const body = await c.req.json<{
+    apiKey?: string
+    baseUrl?: string
+    model?: string
+    profileId?: string
+    interfaceType?: ModelInterfaceType
+    imagePath?: string
+    prompt?: string
+  }>()
+
+  let apiKey = (body.apiKey || '').trim()
+  let baseUrl = (body.baseUrl || '').trim()
+  let model = (body.model || '').trim()
+  let interfaceType = normalizeModelInterfaceType(body.interfaceType)
+
+  if (!apiKey && body.profileId) {
+    const store = readModelProfiles()
+    const profile = store.profiles.find((p) => p.id === body.profileId)
+    if (profile) {
+      apiKey = profile.apiKey
+      baseUrl = profile.baseUrl || ''
+      model = profile.model || ''
+      interfaceType = normalizeModelInterfaceType(profile.interfaceType)
+    }
+  }
+
+  if (!apiKey) {
+    return c.json({ success: false, message: 'apiKey 不能为空' }, 400)
+  }
+
+  if (!body.imagePath) {
+    return c.json({ success: false, message: 'imagePath 不能为空' }, 400)
+  }
+
+  if (token && token !== getInternalToken()) {
+    return c.json({ success: false, message: 'Unauthorized' }, 401)
+  }
+
+  const result = await validateVisionConfig({
+    apiKey,
+    baseUrl: baseUrl || undefined,
+    model: model || undefined,
+    interfaceType,
+    imagePath: body.imagePath,
+    prompt: body.prompt,
+  })
+  return c.json(result, result.success ? 200 : 400)
+})
+
 router.post('/test', async (c) => {
   const body = await c.req.json<{
     apiKey?: string
@@ -272,6 +411,7 @@ router.post('/test', async (c) => {
     model?: string
     profileId?: string
     interfaceType?: ModelInterfaceType
+    capabilities?: string[]
   }>()
 
   let apiKey = (body.apiKey || '').trim()

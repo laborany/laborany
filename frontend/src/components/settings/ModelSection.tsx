@@ -1,7 +1,14 @@
-import type { ModelProfile } from '../../contexts/ModelProfileContext'
+import type { ModelCapability, ModelProfile } from '../../contexts/ModelProfileContext'
 import type { BannerType, TemplateGroup } from './types'
 import { SettingsCard } from './SettingsCard'
 import { ModelWidgetSupportSummary } from '../shared/ModelWidgetSupportSummary'
+
+const CAPABILITY_OPTIONS: Array<{ value: ModelCapability; label: string }> = [
+  { value: 'text_chat', label: '文本对话' },
+  { value: 'vision_understanding', label: '视觉理解' },
+  { value: 'image_generation', label: '图片生成' },
+  { value: 'video_generation', label: '视频生成' },
+]
 
 export function ModelSection({
   groups,
@@ -18,6 +25,7 @@ export function ModelSection({
   removeProfile,
   moveProfile,
   updateProfile,
+  toggleProfileCapability,
   setProfileAsCurrentDefault,
   testProfileConnection,
   saveModelProfiles,
@@ -36,6 +44,7 @@ export function ModelSection({
   removeProfile: (id: string) => void
   moveProfile: (id: string, dir: -1 | 1) => void
   updateProfile: (id: string, field: keyof ModelProfile, value: string) => void
+  toggleProfileCapability: (id: string, capability: ModelCapability) => void
   setProfileAsCurrentDefault: (id: string) => void | Promise<void>
   testProfileConnection: (profile: ModelProfile) => void
   saveModelProfiles: () => void
@@ -134,6 +143,26 @@ export function ModelSection({
               <div>
                 <label className="block text-xs font-medium text-muted-foreground mb-1">模型名称</label>
                 <input type="text" value={profile.model || ''} onChange={e => updateProfile(profile.id, 'model', e.target.value)} placeholder={profile.interfaceType === 'openai_compatible' ? 'gpt-4o-mini' : 'claude-sonnet-4-20250514'} className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">模型能力</label>
+              <div className="flex flex-wrap gap-2">
+                {CAPABILITY_OPTIONS.map((option) => {
+                  const checked = profile.capabilities.includes(option.value)
+                  return (
+                    <label key={option.value} className="inline-flex items-center gap-2 rounded border border-border px-2.5 py-1.5 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleProfileCapability(profile.id, option.value)}
+                        className="rounded border-border"
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  )
+                })}
               </div>
             </div>
 

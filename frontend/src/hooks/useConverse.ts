@@ -674,6 +674,36 @@ export function useConverse(): UseConverseReturn {
         return
       }
 
+      if (eventType === 'image_generated') {
+        const fileName = (data.fileName as string) || (data.imageFileName as string) || ''
+        const filePath = (data.filePath as string) || (data.imageFilePath as string) || ''
+        const prompt = (data.prompt as string) || (data.imagePrompt as string) || ''
+        const sid = sessionIdRef.current
+        if (fileName && sid) {
+          const imageUrl = `${API_BASE}/task/${encodeURIComponent(sid)}/files/${encodeURIComponent(filePath)}`
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `image_gen_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              type: 'assistant' as const,
+              content: '',
+              timestamp: new Date(),
+              meta: {
+                sessionMode: 'converse',
+                source: 'llm',
+                image: {
+                  fileName,
+                  filePath,
+                  url: imageUrl,
+                  prompt,
+                },
+              },
+            },
+          ])
+        }
+        return
+      }
+
       if (eventType === 'widget_start') {
         setStreamingWidget({
           widgetId: data.widgetId as string,
@@ -912,6 +942,8 @@ export function useConverse(): UseConverseReturn {
           latestUserQuery: userInput,
           messages: payloadMessages,
           modelProfileId: activeProfileId || undefined,
+          visionProfileId: profiles.find((p) => p.capabilities.includes('vision_understanding'))?.id || undefined,
+          imageGenProfileId: profiles.find((p) => p.capabilities.includes('image_generation'))?.id || undefined,
           reasoningEffort: activeReasoningEffort !== 'default' ? activeReasoningEffort : undefined,
           questionResponse: questionResponse || undefined,
           references: references.length > 0 ? references : undefined,

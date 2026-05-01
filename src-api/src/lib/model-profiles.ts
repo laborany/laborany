@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { v4 as uuid } from 'uuid'
-import { normalizeModelInterfaceType, type ModelInterfaceType } from 'laborany-shared'
+import { normalizeModelCapabilities, normalizeModelInterfaceType, type ModelCapability, type ModelInterfaceType } from 'laborany-shared'
 import { getConfigDir, readEnvConfig, writeEnvConfig } from './app-config.js'
 
 export interface ModelProfile {
@@ -19,6 +19,7 @@ export interface ModelProfile {
   baseUrl?: string
   model?: string
   interfaceType: ModelInterfaceType
+  capabilities: ModelCapability[]
   createdAt: string
   updatedAt: string
 }
@@ -67,6 +68,7 @@ export function readModelProfiles(): ModelProfilesStore {
       baseUrl: item.baseUrl,
       model: item.model,
       interfaceType: normalizeModelInterfaceType((item as Partial<ModelProfile>).interfaceType),
+      capabilities: normalizeModelCapabilities((item as Partial<ModelProfile>).capabilities),
       createdAt: item.createdAt || new Date().toISOString(),
       updatedAt: item.updatedAt || new Date().toISOString(),
     }))
@@ -160,6 +162,7 @@ export function migrateFromEnvIfNeeded(): void {
     baseUrl: envConfig.ANTHROPIC_BASE_URL,
     model: envConfig.ANTHROPIC_MODEL,
     interfaceType: envInterfaceType,
+    capabilities: ['text_chat'],
     createdAt: now,
     updatedAt: now,
   }

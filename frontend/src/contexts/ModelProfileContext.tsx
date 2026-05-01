@@ -4,6 +4,7 @@ import { API_BASE } from '../config/api'
 
 export type ModelInterfaceType = 'anthropic' | 'openai_compatible'
 export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high'
+export type ModelCapability = 'text_chat' | 'vision_understanding' | 'image_generation' | 'video_generation'
 
 export interface ModelProfile {
   id: string
@@ -12,6 +13,7 @@ export interface ModelProfile {
   baseUrl?: string
   model?: string
   interfaceType: ModelInterfaceType
+  capabilities: ModelCapability[]
   createdAt: string
   updatedAt: string
 }
@@ -55,14 +57,23 @@ export function ModelProfileProvider({ children }: { children: ReactNode }) {
       const res = await fetch(`${API_BASE}/config/model-profiles`, { headers })
       if (!res.ok) return
       const data = await res.json() as { profiles?: ModelProfile[] }
-      const list = Array.isArray(data.profiles)
-        ? data.profiles.map((profile) => {
+      const list: ModelProfile[] = Array.isArray(data.profiles)
+        ? data.profiles.map((profile): ModelProfile => {
           const interfaceType: ModelInterfaceType = profile.interfaceType === 'openai_compatible'
             ? 'openai_compatible'
             : 'anthropic'
+          const capabilities: ModelCapability[] = Array.isArray(profile.capabilities)
+            ? profile.capabilities.filter((item): item is ModelCapability => (
+              item === 'text_chat'
+              || item === 'vision_understanding'
+              || item === 'image_generation'
+              || item === 'video_generation'
+            ))
+            : []
           return {
             ...profile,
             interfaceType,
+            capabilities: capabilities.length > 0 ? capabilities : ['text_chat'],
           }
         })
         : []

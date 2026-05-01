@@ -142,6 +142,8 @@ interface RuntimeTask {
   modelProfileId?: string
   modelProfileName?: string
   modelName?: string
+  visionProfileId?: string
+  imageGenProfileId?: string
   status: RuntimeTaskStatus
   startedAt: number
   completedAt?: number
@@ -175,6 +177,8 @@ interface StartTaskOptions {
   modelProfileId?: string
   modelProfileName?: string
   modelName?: string
+  visionProfileId?: string
+  imageGenProfileId?: string
   originQuery?: string
   beforeSkillIds?: Set<string>
   source?: 'desktop' | 'feishu' | 'qq' | 'wechat' | 'cron' | 'converse'
@@ -232,6 +236,8 @@ class RuntimeTaskManager {
       modelProfileId: options.modelProfileId,
       modelProfileName: options.modelProfileName,
       modelName: options.modelName,
+      visionProfileId: options.visionProfileId,
+      imageGenProfileId: options.imageGenProfileId,
       status: 'running',
       startedAt: Date.now(),
       stopRequested: false,
@@ -764,6 +770,8 @@ class RuntimeTaskManager {
           signal: task.controller.signal,
           modelOverride: options.modelOverride,
           modelProfileId: options.modelProfileId,
+          visionProfileId: options.visionProfileId,
+          imageGenProfileId: options.imageGenProfileId,
           enableWidgets: shouldEnableDesktopWidgetsForTask(task.source, options.modelOverride),
           onEvent: (event) => this.handleAgentEvent(task, event),
         })
@@ -993,6 +1001,8 @@ class RuntimeTaskManager {
         workDir: options.workDir,
         modelOverride: options.modelOverride,
         modelProfileId: task.modelProfileId,
+        visionProfileId: task.visionProfileId,
+        imageGenProfileId: task.imageGenProfileId,
         enableWidgets: shouldEnableDesktopWidgetsForTask(task.source, options.modelOverride),
         onEvent: (event) => {
           if (event.type === 'text' && event.content) {
@@ -1108,6 +1118,20 @@ class RuntimeTaskManager {
     }
 
     if (event.type === 'tool_result') {
+      if (task.activeToolName && task.activeToolName.includes('generate_image')) {
+        const resultText = event.toolResult || event.content || ''
+        const fileNameMatch = resultText.match(/(?:保存到|saved to)[:\s]+(.+?\.\w+)/i)
+        const promptMatch = resultText.match(/(?:原始提示词|实际提示词|Original prompt)[:\s]+(.+)/i)
+        if (fileNameMatch) {
+          const fileName = fileNameMatch[1].trim()
+          this.emitEvent(task, {
+            type: 'image_generated',
+            imageFileName: fileName,
+            imageFilePath: fileName,
+            imagePrompt: promptMatch ? promptMatch[1].trim() : '',
+          })
+        }
+      }
       task.activeToolName = null
       task.activeToolUseId = null
       task.activeToolInputSummary = null

@@ -972,6 +972,39 @@ export function useAgent(skillId: string) {
           break
         }
 
+        case 'image_generated': {
+          const fileName = (event.fileName as string) || (event.imageFileName as string) || ''
+          const filePath = (event.filePath as string) || (event.imageFilePath as string) || ''
+          const prompt = (event.prompt as string) || (event.imagePrompt as string) || ''
+          const sid = sessionIdRef.current
+          if (fileName && sid) {
+            const imageUrl = `${API_BASE}/task/${encodeURIComponent(sid)}/files/${encodeURIComponent(filePath)}`
+            setState((s) => ({
+              ...s,
+              messages: [
+                ...s.messages,
+                {
+                  id: `image_gen_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                  type: 'assistant',
+                  content: '',
+                  timestamp: new Date(),
+                  meta: {
+                    sessionMode: 'execution',
+                    source: 'llm',
+                    image: {
+                      fileName,
+                      filePath,
+                      url: imageUrl,
+                      prompt,
+                    },
+                  },
+                },
+              ],
+            }))
+          }
+          break
+        }
+
         case 'stopped':
         case 'done':
         case 'aborted':

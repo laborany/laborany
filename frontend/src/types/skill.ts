@@ -59,8 +59,14 @@ export interface SkillDetail {
   kind?: SkillKind
   modelConfig?: {
     usesOverride: boolean
-    modelProfileId?: string
-    modelProfileName?: string
+    textChatProfileId?: string
+    textChatProfileName?: string
+    visionProfileId?: string
+    visionProfileName?: string
+    imageGenProfileId?: string
+    imageGenProfileName?: string
+    videoGenProfileId?: string
+    videoGenProfileName?: string
     updatedAt?: string
   }
   files: SkillFile[]

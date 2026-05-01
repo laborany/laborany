@@ -68,6 +68,12 @@ type InlineWidgetBlock = {
   status: 'loading' | 'ready' | 'error'
   errorMessage?: string
 }
+type ImageBlock = {
+  type: 'image'
+  fileName: string
+  url: string
+  prompt?: string
+}
 
 type RenderBlock =
   | TextBlock
@@ -79,6 +85,7 @@ type RenderBlock =
   | ThinkingContentBlock
   | WidgetAnchorBlock
   | InlineWidgetBlock
+  | ImageBlock
 
 type AssistantSegment =
   | { type: 'text'; content: string }
@@ -394,7 +401,6 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
 
     if (message.type === 'assistant' && message.widgetId) {
       const widgetMeta = message.meta?.widget
-      // New data with displayMode='inline' and full widget data → inline rendering
       if (widgetMeta?.displayMode === 'inline' && widgetMeta.html) {
         blocks.push({
           type: 'inline_widget',
@@ -404,13 +410,23 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
           status: (widgetMeta.status as 'loading' | 'ready' | 'error') || 'ready',
         })
       } else {
-        // Legacy data or panel mode → keep anchor card
         blocks.push({
           type: 'widget_anchor',
           widgetId: message.widgetId,
           title: message.widgetTitle || 'Widget',
         })
       }
+      continue
+    }
+
+    if (message.type === 'assistant' && message.meta?.image) {
+      const imageData = message.meta.image
+      blocks.push({
+        type: 'image',
+        fileName: imageData.fileName,
+        url: imageData.url,
+        prompt: imageData.prompt,
+      })
       continue
     }
 
@@ -593,6 +609,22 @@ function BlockRenderer({
             })
             : undefined}
         />
+      )
+    case 'image':
+      return (
+        <div className="flex flex-col items-center gap-2 py-2 animate-in fade-in duration-300">
+          <img
+            src={block.url}
+            alt={block.fileName}
+            className="max-w-full rounded-lg shadow-md cursor-pointer hover:shadow-lg transition-shadow"
+            style={{ maxHeight: 400 }}
+            onClick={() => window.open(block.url, '_blank')}
+          />
+          <span className="text-xs text-muted-foreground">{block.fileName}</span>
+          {block.prompt && (
+            <span className="text-xs text-muted-foreground italic max-w-md text-center">{block.prompt}</span>
+          )}
+        </div>
       )
   }
 }

@@ -7,6 +7,8 @@
 
 import { loadCatalog, type CatalogItem } from './catalog.js'
 import { buildResearchPolicySection } from './web-research/policy/research-policy.js'
+import { buildVisionPolicySection } from './vision/index.js'
+import { buildImageGenPolicySection } from './image-gen/index.js'
 
 export interface ConverseRuntimeContext {
   channel?: string
@@ -363,32 +365,67 @@ LABORANY_ACTION: {"action":"setup_schedule","scheduleKind":"at","atMs":177284160
 助手（错误）：让我先搜索一下蓝色光标的股票代码信息...已确认代码是 300058.SZ，现在进行分析...
 （这是错误的！你不能自己执行分析。你只能输出 LABORANY_ACTION 让下游执行器处理。）`
 
+function buildVisionImageGenDecisionSection(): string {
+  return `## 视觉工具决策流程
+
+当 visual 理解（mcp__laborany_vision__analyze_image）和图片生成（mcp__laborany_image_gen__generate_image）同时可用时，按以下流程选择：
+
+1. 用户是否提到或上传了已有图片？
+   → 是：图片已存在，你需要理解或分析它 → 调用 analyze_image
+   → 否：继续下一步
+
+2. 用户是否明确要求"生成/画/创作/制作"图片？
+   → 是：用户想要新图片 → 调用 generate_image
+   → 否：继续下一步
+
+3. 用户描述了一个场景但没说"生成图片"，只是想让 AI 理解某个画面？
+   → 是：理解意图 → 调用 analyze_image（如果提供了参考图）或纯文字回复（无参考图）
+   → 否：不需要调用任何视觉工具，用文字回复
+
+关键区分：
+- "帮我看看这张图" / "这张截图什么意思" → analyze_image（理解已有图片）
+- "帮我画一张" / "生成一张海报" / "把这段描述变成图" → generate_image（创作新图片）
+- 绝不能用 generate_image 来"分析已有图片"，也不能用 analyze_image 来"生成新图片"
+- 如果用户同时上传图片并要求基于它生成新图：先 analyze_image 理解原图，再 generate_image 创作新图`
+}
+
 export function buildConverseSystemPrompt(
   memoryContext: string,
   runtimeContext?: ConverseRuntimeContext,
   options?: ConversePromptOptions,
+  visionProfileId?: string,
+  imageGenProfileId?: string,
 ): string {
   const catalogText = formatCatalog(loadCatalog())
-  const sections = [
+  const coreSections: string[] = [
     BEHAVIOR_SECTION,
     ADDRESSING_SECTION,
     buildRuntimeContextSection(runtimeContext),
     buildForcedResearchTurnSection(options?.latestUserQuery),
     buildResearchPolicySection(),
+  ]
+  if (visionProfileId) {
+    coreSections.push(buildVisionPolicySection())
+  }
+  if (imageGenProfileId) {
+    coreSections.push(buildImageGenPolicySection())
+  }
+  if (visionProfileId && imageGenProfileId) {
+    coreSections.push(buildVisionImageGenDecisionSection())
+  }
+  if (options?.forceWidgetDirectMode) {
+    coreSections.push(buildWidgetDirectModeSection())
+  }
+  coreSections.push(
     `## 可用能力目录\n\n${catalogText}`,
     QUESTION_PROTOCOL_SECTION,
     ACTION_PROTOCOL_SECTION,
     FEW_SHOT_SECTION,
-  ]
-
-  if (options?.forceWidgetDirectMode) {
-    // 插入到 catalog 之前（原来 catalog 在索引 3，现在因为插入了 ResearchPolicy 变成索引 4）
-    sections.splice(4, 0, buildWidgetDirectModeSection())
-  }
+  )
 
   if (memoryContext) {
-    sections.push(`## 用户记忆\n\n${memoryContext}`)
+    coreSections.push(`## 用户记忆\n\n${memoryContext}`)
   }
 
-  return sections.join('\n\n---\n\n')
+  return coreSections.join('\n\n---\n\n')
 }

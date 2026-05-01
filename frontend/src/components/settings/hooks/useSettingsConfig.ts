@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { API_BASE, AGENT_API_BASE } from '../../../config/api'
 import { useModelProfile } from '../../../contexts/ModelProfileContext'
-import type { ModelProfile } from '../../../contexts/ModelProfileContext'
+import type { ModelCapability, ModelProfile } from '../../../contexts/ModelProfileContext'
 import type {
   ConfigItem,
   ConfigTemplate,
@@ -474,7 +474,7 @@ export function useSettingsConfig() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           apiKey: profile.apiKey, baseUrl: profile.baseUrl, model: profile.model,
-          profileId: profile.id, interfaceType: profile.interfaceType,
+          profileId: profile.id, interfaceType: profile.interfaceType, capabilities: profile.capabilities,
         }),
       })
       const data = await res.json() as { success?: boolean; message?: string }
@@ -495,6 +495,7 @@ export function useSettingsConfig() {
       name: `配置 ${editProfiles.length + 1}`,
       apiKey: '',
       interfaceType: 'anthropic',
+      capabilities: ['text_chat'],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -520,6 +521,20 @@ export function useSettingsConfig() {
 
   function updateProfile(id: string, field: keyof ModelProfile, value: string) {
     setEditProfiles(prev => prev.map(p => p.id === id ? { ...p, [field]: value, updatedAt: new Date().toISOString() } : p))
+  }
+
+  function toggleProfileCapability(id: string, capability: ModelCapability) {
+    setEditProfiles(prev => prev.map((profile) => {
+      if (profile.id !== id) return profile
+      const next = profile.capabilities.includes(capability)
+        ? profile.capabilities.filter(item => item !== capability)
+        : [...profile.capabilities, capability]
+      return {
+        ...profile,
+        capabilities: next.length > 0 ? next : ['text_chat'],
+        updatedAt: new Date().toISOString(),
+      }
+    }))
   }
 
   async function setProfileAsCurrentDefault(id: string) {
@@ -785,7 +800,7 @@ export function useSettingsConfig() {
 
     // Actions
     saveConfig, retryApplyConfig, exportLogs, switchStorageHome,
-    saveModelProfiles, testProfileConnection, addProfile, removeProfile, moveProfile, updateProfile,
+    saveModelProfiles, testProfileConnection, addProfile, removeProfile, moveProfile, updateProfile, toggleProfileCapability,
     setProfileAsCurrentDefault,
     loadWechatStatus, testWechatConfig, startWechatLoginFlow, cancelWechatLoginFlow, closeWechatLoginDialog, logoutWechat,
     testEmailConfig, testFeishuConfig, testQQConfig,

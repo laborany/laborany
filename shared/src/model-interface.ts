@@ -1,5 +1,6 @@
 export type ModelInterfaceType = 'anthropic' | 'openai_compatible'
 export type ReasoningEffort = 'low' | 'medium' | 'high'
+export type ModelCapability = 'text_chat' | 'vision_understanding' | 'image_generation' | 'video_generation'
 
 export interface OpenAiBridgeCredential {
   apiKey: string
@@ -23,6 +24,17 @@ function fromBase64Url(input: string): string {
   const normalized = input.replace(/-/g, '+').replace(/_/g, '/')
   const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
   return Buffer.from(padded, 'base64').toString('utf-8')
+}
+
+export function normalizeModelCapabilities(value: unknown): ModelCapability[] {
+  const raw = Array.isArray(value) ? value : []
+  const normalized = raw.filter((item): item is ModelCapability => (
+    item === 'text_chat'
+    || item === 'vision_understanding'
+    || item === 'image_generation'
+    || item === 'video_generation'
+  ))
+  return normalized.length > 0 ? Array.from(new Set(normalized)) : ['text_chat']
 }
 
 export function normalizeModelInterfaceType(value?: string): ModelInterfaceType {

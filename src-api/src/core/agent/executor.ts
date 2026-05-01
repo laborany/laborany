@@ -44,6 +44,8 @@ import {
   writeUserMcpConfig,
 } from './generative-ui/tools.js'
 import { buildResearchPolicySection, writeWebResearchMcpConfig } from './web-research.js'
+import { buildVisionPolicySection, writeVisionMcpConfig } from './vision.js'
+import { buildImageGenPolicySection, writeImageGenMcpConfig } from './image-gen.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -65,6 +67,7 @@ export interface AgentEvent {
     | 'widget_delta'
     | 'widget_commit'
     | 'widget_error'
+    | 'image_generated'
   content?: string
   toolName?: string
   toolUseId?: string
@@ -75,6 +78,9 @@ export interface AgentEvent {
   title?: string
   html?: string
   message?: string
+  imageFileName?: string
+  imageFilePath?: string
+  imagePrompt?: string
 }
 
 export interface ModelOverride {
@@ -170,6 +176,8 @@ interface ExecuteOptions {
   workDir?: string  // 可选的工作目录，用于复合技能共享目录
   modelOverride?: ModelOverride
   modelProfileId?: string
+  visionProfileId?: string
+  imageGenProfileId?: string
   enableWidgets?: boolean
 }
 
@@ -199,6 +207,30 @@ function getRuntimePlatformLabel(): string {
   if (platform() === 'win32') return 'Windows'
   if (platform() === 'darwin') return 'macOS'
   return 'Linux'
+}
+
+function buildVisionImageGenDecisionSection(): string {
+  return `## 视觉工具决策流程
+
+当视觉理解（mcp__laborany_vision__analyze_image）和图片生成（mcp__laborany_image_gen__generate_image）同时可用时，按以下流程选择：
+
+1. 用户是否提到或上传了已有图片？
+   → 是：图片已存在，你需要理解或分析它 → 调用 analyze_image
+   → 否：继续下一步
+
+2. 用户是否明确要求"生成/画/创作/制作"图片？
+   → 是：用户想要新图片 → 调用 generate_image
+   → 否：继续下一步
+
+3. 用户描述了一个场景但没说"生成图片"，只是想让 AI 理解某个画面？
+   → 是：理解意图 → 调用 analyze_image（如果提供了参考图）或纯文字回复（无参考图）
+   → 否：不需要调用任何视觉工具，用文字回复
+
+关键区分：
+- "帮我看看这张图" / "这张截图什么意思" → analyze_image（理解已有图片）
+- "帮我画一张" / "生成一张海报" / "把这段描述变成图" → generate_image（创作新图片）
+- 绝不能用 generate_image 来"分析已有图片"，也不能用 analyze_image 来"生成新图片"
+- 如果用户同时上传图片并要求基于它生成新图：先 analyze_image 理解原图，再 generate_image 创作新图`
 }
 
 function buildLaborAnyRuntimeContext(taskDir: string, skillId: string): string {
@@ -245,13 +277,24 @@ async function writeClaudeMdWithMemory(
   targetDir: string,
   skillId: string,
   skillSystemPrompt: string,
-  userQuery?: string
+  userQuery?: string,
+  visionProfileId?: string,
+  imageGenProfileId?: string,
 ): Promise<void> {
   const claudeMdPath = join(targetDir, 'CLAUDE.md')
   const runtimeContext = buildLaborAnyRuntimeContext(targetDir, skillId)
   const sections = [runtimeContext]
   if (!skillSystemPrompt.includes('## 联网调研策略')) {
     sections.push(buildResearchPolicySection())
+  }
+  if (visionProfileId && !skillSystemPrompt.includes('## 视觉理解策略')) {
+    sections.push(buildVisionPolicySection())
+  }
+  if (imageGenProfileId && !skillSystemPrompt.includes('## 图片生成策略')) {
+    sections.push(buildImageGenPolicySection())
+  }
+  if (visionProfileId && imageGenProfileId && !skillSystemPrompt.includes('## 视觉工具决策流程')) {
+    sections.push(buildVisionImageGenDecisionSection())
   }
 
   try {
@@ -1088,7 +1131,7 @@ function buildEffectiveSkillPrompt(
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, workDir, modelOverride, modelProfileId, enableWidgets } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, workDir, modelOverride, modelProfileId, visionProfileId, imageGenProfileId, enableWidgets } = options
 
   let lastProgressAt = Date.now()
   let idleWarningSent = false
@@ -1152,6 +1195,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     skill.meta.id,
     effectiveSkillPrompt,
     userQuery,
+    visionProfileId,
+    imageGenProfileId,
   )
   console.log(`[Agent] Task directory: ${taskDir}`)
   console.log(`[Agent] Is new session: ${isNewSession}`)
@@ -1256,15 +1301,36 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   }
 
   try {
+    const mcpNodeCommand = resolveMcpNodeCommand(claudeConfig.useBundled ? claudeConfig.nodePath : undefined)
     const webMcpPath = writeWebResearchMcpConfig(taskDir, {
       agentServiceBaseUrl: getAgentServiceUrl(),
-      nodePath: resolveMcpNodeCommand(claudeConfig.useBundled ? claudeConfig.nodePath : undefined),
+      nodePath: mcpNodeCommand,
       modelProfileId,
     })
     args.push('--mcp-config', webMcpPath)
     console.log(`[Agent] Web Research MCP injected: ${webMcpPath}`)
+
+    if (visionProfileId) {
+      const visionMcpPath = writeVisionMcpConfig(taskDir, {
+        agentServiceBaseUrl: getAgentServiceUrl(),
+        nodePath: mcpNodeCommand,
+        modelProfileId: visionProfileId,
+      })
+      args.push('--mcp-config', visionMcpPath)
+      console.log(`[Agent] Vision MCP injected: ${visionMcpPath}`)
+    }
+
+    if (imageGenProfileId) {
+      const imageGenMcpPath = writeImageGenMcpConfig(taskDir, {
+        agentServiceBaseUrl: getAgentServiceUrl(),
+        nodePath: mcpNodeCommand,
+        modelProfileId: imageGenProfileId,
+      })
+      args.push('--mcp-config', imageGenMcpPath)
+      console.log(`[Agent] Image Gen MCP injected: ${imageGenMcpPath}`)
+    }
   } catch (error) {
-    console.error('[Agent] Failed to inject web research MCP:', error)
+    console.error('[Agent] Failed to inject web research / vision / image-gen MCP:', error)
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
