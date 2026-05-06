@@ -159,8 +159,9 @@ function copyFileIfMissing(sourcePath, targetPath, counters, skipFileNames) {
     counters.copied += 1
   } catch (error) {
     counters.failed += 1
+    counters.failedPaths?.push(sourcePath)
     const reason = error instanceof Error ? error.message : String(error)
-    console.warn(`[Electron] Skip file during migration (${fileName}): ${reason}`)
+    console.warn(`[Electron] Skip file during migration (${sourcePath}): ${reason}`)
   }
 }
 
@@ -176,6 +177,7 @@ function copyDirIncremental(sourceDir, targetDir, counters, options = {}) {
     entries = fs.readdirSync(sourceDir, { withFileTypes: true })
   } catch (error) {
     counters.failed += 1
+    counters.failedPaths?.push(sourceDir)
     const reason = error instanceof Error ? error.message : String(error)
     console.warn(`[Electron] Skip directory during migration (${sourceDir}): ${reason}`)
     return
@@ -199,6 +201,7 @@ function copyDirIncremental(sourceDir, targetDir, counters, options = {}) {
         ensureDirSync(toPath)
       } catch (error) {
         counters.failed += 1
+        counters.failedPaths?.push(toPath)
         const reason = error instanceof Error ? error.message : String(error)
         console.warn(`[Electron] Skip target directory during migration (${toPath}): ${reason}`)
         continue
@@ -212,6 +215,74 @@ function copyDirIncremental(sourceDir, targetDir, counters, options = {}) {
       copyFileIfMissing(fromPath, toPath, counters, skipFileNames)
     }
   }
+}
+
+const LABORANY_STORAGE_MIGRATION_ENTRIES = [
+  '.env',
+  'profile.json',
+  'model-profiles.json',
+  'laborany.db',
+  'data',
+  'uploads',
+  'skills',
+  'libreoffice',
+]
+
+function migrateLaborAnyStorageData(currentHome, targetHome) {
+  const counters = {
+    copied: 0,
+    skipped: 0,
+    failed: 0,
+    failedPaths: [],
+  }
+  const skipFileNames = new Set([
+    'runtime-meta.json',
+    'runtime-command.json',
+    'cookies',
+    'cookies-journal',
+    'lock',
+    'lock-journal',
+  ])
+  const skipDirNames = new Set([
+    'cache',
+    'code cache',
+    'gpucache',
+    'dawncache',
+    'shadercache',
+    'browser-profiles',
+    'logs',
+    'Logs',
+  ])
+
+  for (const entryName of LABORANY_STORAGE_MIGRATION_ENTRIES) {
+    const sourcePath = path.join(currentHome, entryName)
+    const targetPath = path.join(targetHome, entryName)
+    if (!fs.existsSync(sourcePath)) {
+      counters.skipped += 1
+      continue
+    }
+
+    let entryStat = null
+    try {
+      entryStat = fs.statSync(sourcePath)
+    } catch (error) {
+      counters.failed += 1
+      counters.failedPaths.push(sourcePath)
+      const reason = error instanceof Error ? error.message : String(error)
+      console.warn(`[Electron] Skip storage entry during migration (${sourcePath}): ${reason}`)
+      continue
+    }
+
+    if (entryStat.isDirectory()) {
+      copyDirIncremental(sourcePath, targetPath, counters, { skipFileNames, skipDirNames })
+    } else if (entryStat.isFile()) {
+      copyFileIfMissing(sourcePath, targetPath, counters, skipFileNames)
+    } else {
+      counters.skipped += 1
+    }
+  }
+
+  return counters
 }
 
 function processRuntimeCommand() {
@@ -248,29 +319,11 @@ function processRuntimeCommand() {
 
     ensureDirSync(targetHome)
 
-    const counters = { copied: 0, skipped: 0, failed: 0 }
-    copyDirIncremental(currentHome, targetHome, counters, {
-      skipFileNames: new Set([
-        'runtime-meta.json',
-        'runtime-command.json',
-        'cookies',
-        'cookies-journal',
-        'lock',
-        'lock-journal',
-      ]),
-      skipDirNames: new Set([
-        'cache',
-        'code cache',
-        'gpucache',
-        'dawncache',
-        'shadercache',
-        'logs',
-        'Logs',
-      ]),
-    })
+    const counters = migrateLaborAnyStorageData(currentHome, targetHome)
 
     if (counters.failed > 0) {
-      throw new Error(`migration failed for ${counters.failed} entries, switch aborted`)
+      const failedPreview = counters.failedPaths.slice(0, 3).join(', ')
+      throw new Error(`migration failed for ${counters.failed} LaborAny data entries, switch aborted${failedPreview ? `: ${failedPreview}` : ''}`)
     }
 
     persistRuntimeMeta(targetHome)

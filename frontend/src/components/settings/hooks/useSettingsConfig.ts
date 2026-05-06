@@ -342,16 +342,35 @@ export function useSettingsConfig() {
     }
   }
 
-  async function waitForApiRecovery(maxWaitMs = 60000, intervalMs = 1500): Promise<boolean> {
+  async function waitForStorageHomeSwitch(
+    expectedHome: string,
+    previousHome: string,
+    maxWaitMs = 70000,
+    intervalMs = 1500,
+  ): Promise<ConfigResponse | null> {
     const started = Date.now()
+    let sawServiceDrop = false
     while (Date.now() - started < maxWaitMs) {
       try {
         const res = await fetch(`${API_BASE}/config`, { cache: 'no-store' })
-        if (res.ok) return true
-      } catch { /* keep polling */ }
+        if (res.ok) {
+          const data = await res.json() as ConfigResponse
+          if (data.appHome && isSameStoragePath(data.appHome, expectedHome)) {
+            return data
+          }
+
+          // A 200 from the old sidecar can arrive before its delayed restart begins.
+          // Keep polling until we either observe the new home or time out.
+          if (data.appHome && previousHome && !isSameStoragePath(data.appHome, previousHome)) {
+            sawServiceDrop = true
+          }
+        }
+      } catch {
+        sawServiceDrop = true
+      }
       await new Promise(resolve => setTimeout(resolve, intervalMs))
     }
-    return false
+    return sawServiceDrop ? null : await loadConfig()
   }
 
   async function switchStorageHome() {
@@ -384,14 +403,28 @@ export function useSettingsConfig() {
         if (!res.ok) { setMessage({ type: 'error', text: data.error || '存储路径切换请求失败' }); return }
         if (typeof data.targetHome === 'string' && data.targetHome.trim()) expectedHome = data.targetHome.trim()
       }
-      const recovered = await waitForApiRecovery(70000, 1500)
-      if (!recovered) {
-        setMessage({ type: 'warning', text: '服务正在重启，但暂未自动恢复连接。请稍后停留在设置页重试刷新。' })
+      const latest = await waitForStorageHomeSwitch(expectedHome, appHome, 70000, 1500)
+      if (!latest) {
+        setMessage({ type: 'warning', text: '服务已重启，但暂未检测到目标存储路径生效。请稍后重试或查看日志。' })
         return
       }
-      const latest = await loadConfig()
-      if (!latest?.appHome || !isSameStoragePath(latest.appHome, expectedHome)) {
-        setMessage({ type: 'warning', text: '服务已恢复，但检测到存储路径未完成切换，请重试一次或查看日志。' })
+      setConfig(latest.config || {})
+      setConfigPath(latest.envPath || '')
+      setProfilePath(latest.profilePath || '')
+      setLogsPath(latest.logsDir || '')
+      setLogsFallbackActive(Boolean(latest.logsFallbackActive))
+      setLogsFallbackReason(latest.logsFallbackReason || '')
+      setMigrationReportPath(latest.migrationReportPath || '')
+      setAppHome(latest.appHome || '')
+      setStorageHomeInput(latest.appHome || '')
+      setProfileName(latest.profile?.name || '')
+      const values: Record<string, string> = {}
+      for (const [key, item] of Object.entries(latest.config || {})) {
+        values[key] = item.value
+      }
+      setEditValues(values)
+      if (!latest.appHome || !isSameStoragePath(latest.appHome, expectedHome)) {
+        setMessage({ type: 'warning', text: '未检测到目标存储路径生效，请查看日志中的迁移失败原因。' })
         return
       }
       setMessage({ type: 'success', text: '存储路径已切换并自动恢复连接' })
