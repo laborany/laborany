@@ -56,6 +56,18 @@ interface MessageMetaPayload {
   }
   references?: MessageReferencePayload[]
   toolUseId?: string | null
+  image?: {
+    fileName?: string
+    filePath?: string
+    url?: string
+    prompt?: string
+  }
+  video?: {
+    fileName?: string
+    filePath?: string
+    url?: string
+    prompt?: string
+  }
 }
 
 function inferSessionSource(sessionId: string, skillId: string, dbSource?: string): SessionSource {

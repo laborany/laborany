@@ -58,7 +58,15 @@
     "bundle:ffmpeg:win": "node scripts/fetch-ffmpeg-bundles.mjs --platform=win-x64",
     "bundle:ffmpeg:mac-arm64": "node scripts/fetch-ffmpeg-bundles.mjs --platform=darwin-arm64",
     "bundle:ffmpeg:mac-x64": "node scripts/fetch-ffmpeg-bundles.mjs --platform=darwin-x64",
+    "bundle:ffmpeg:mac-universal": "npm run bundle:ffmpeg:mac-arm64 && npm run bundle:ffmpeg:mac-x64",
     "bundle:ffmpeg:linux": "node scripts/fetch-ffmpeg-bundles.mjs --platform=linux-x64",
+    "verify:ffmpeg": "node scripts/verify-ffmpeg-bundle.mjs --platform=current",
+    "verify:ffmpeg:all": "node scripts/verify-ffmpeg-bundle.mjs --platform=all",
+    "verify:ffmpeg:win": "node scripts/verify-ffmpeg-bundle.mjs --platform=win-x64",
+    "verify:ffmpeg:mac-arm64": "node scripts/verify-ffmpeg-bundle.mjs --platform=darwin-arm64",
+    "verify:ffmpeg:mac-x64": "node scripts/verify-ffmpeg-bundle.mjs --platform=darwin-x64",
+    "verify:ffmpeg:mac-universal": "node scripts/verify-ffmpeg-bundle.mjs --platform=mac-universal",
+    "verify:ffmpeg:linux": "node scripts/verify-ffmpeg-bundle.mjs --platform=linux-x64",
     "memory:clean": "node scripts/clean-memory.js",
     "verify:memory-fastpaths": "node scripts/verify-memory-fastpaths.js",
     "verify:memory-ui-real": "node scripts/verify-memory-ui-real.js",
@@ -69,10 +77,10 @@
     "verify:remote-bot-flow": "npm --prefix agent-service exec tsx ./scripts/verify-remote-bot-flow.ts",
     "verify:wechat-media": "npm --prefix agent-service exec tsx ./scripts/verify-wechat-media.ts",
     "test:dispatch": "concurrently -k -s first -n AGENT,API,E2E -c yellow,blue,green \"tmp-debug\\run-agent-e2e.cmd\" \"tmp-debug\\run-api-e2e.cmd\" \"tmp-debug\\run-e2e-dispatch.cmd\"",
-    "build:electron": "npm run bundle:all:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && npm run fix:native:win && node ./scripts/run-local-bin.js electron-builder --win --publish never",
-    "build:electron:mac": "npm run bundle:all:mac-universal && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && npm run fix:native:mac-x64 && node ./scripts/run-local-bin.js electron-builder --mac --publish never",
-    "build:electron:mac-arm64": "npm run bundle:all:mac-universal && npm run build:api:mac-arm64 && npm run build:agent:mac-arm64 && npm run build:frontend && npm run fix:native:mac && node ./scripts/run-local-bin.js electron-builder --mac --publish never",
-    "build:electron:linux": "npm run bundle:all:linux && npm run build:api:linux && npm run build:agent:linux && npm run build:frontend && npm run fix:native:linux && node ./scripts/run-local-bin.js electron-builder --linux --publish never",
+    "build:electron": "npm run bundle:all:win && npm run bundle:ffmpeg:win && npm run verify:ffmpeg:win && npm run build:api:win && npm run build:agent:win && npm run build:frontend && npm run fix:native:win && node ./scripts/run-local-bin.js electron-builder --win --publish never",
+    "build:electron:mac": "npm run bundle:all:mac-universal && npm run bundle:ffmpeg:mac-universal && npm run verify:ffmpeg:mac-universal && npm run build:api:mac && npm run build:agent:mac && npm run build:frontend && npm run fix:native:mac-x64 && node ./scripts/run-local-bin.js electron-builder --mac --publish never",
+    "build:electron:mac-arm64": "npm run bundle:all:mac-universal && npm run bundle:ffmpeg:mac-universal && npm run verify:ffmpeg:mac-universal && npm run build:api:mac-arm64 && npm run build:agent:mac-arm64 && npm run build:frontend && npm run fix:native:mac && node ./scripts/run-local-bin.js electron-builder --mac --publish never",
+    "build:electron:linux": "npm run bundle:all:linux && npm run bundle:ffmpeg:linux && npm run verify:ffmpeg:linux && npm run build:api:linux && npm run build:agent:linux && npm run build:frontend && npm run fix:native:linux && node ./scripts/run-local-bin.js electron-builder --linux --publish never",
     "install:all": "node scripts/install-all.js install",
     "install:all:ci": "node scripts/install-all.js ci"
   },
@@ -106,6 +114,27 @@
       {
         "from": "agent-service/dist/web-research",
         "to": "agent/web-research",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "agent-service/dist/vision",
+        "to": "agent/vision",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "agent-service/dist/image-gen",
+        "to": "agent/image-gen",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "agent-service/dist/video-gen",
+        "to": "agent/video-gen",
         "filter": [
           "**/*"
         ]
@@ -157,6 +186,27 @@
           ]
         },
         {
+          "from": "agent-service/dist/vision",
+          "to": "agent/vision",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "agent-service/dist/image-gen",
+          "to": "agent/image-gen",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "agent-service/dist/video-gen",
+          "to": "agent/video-gen",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
           "from": "git-bash",
           "to": "git-bash",
           "filter": [
@@ -193,6 +243,27 @@
         {
           "from": "agent-service/dist/web-research",
           "to": "agent/web-research",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "agent-service/dist/vision",
+          "to": "agent/vision",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "agent-service/dist/image-gen",
+          "to": "agent/image-gen",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "agent-service/dist/video-gen",
+          "to": "agent/video-gen",
           "filter": [
             "**/*"
           ]
@@ -268,6 +339,27 @@
         {
           "from": "agent-service/dist/web-research",
           "to": "agent/web-research",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "agent-service/dist/vision",
+          "to": "agent/vision",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "agent-service/dist/image-gen",
+          "to": "agent/image-gen",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "agent-service/dist/video-gen",
+          "to": "agent/video-gen",
           "filter": [
             "**/*"
           ]

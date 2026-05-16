@@ -16,6 +16,7 @@ const DISPLAY_NAME_MAP: Record<string, string> = {
   'xlsx': 'Excel 表格分析师',
   'diagram': '图表设计师',
   'video-creator': '视频策划',
+  'ai-video-studio': 'AI视频导演',
   'paper-explainer': '论文研究员',
   'paper-editor': '学术编辑',
   'email-assistant': '邮件专员',

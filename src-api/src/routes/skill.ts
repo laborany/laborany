@@ -45,7 +45,7 @@ import {
   resolveSkillModelSettingDetail,
   upsertSkillModelSetting,
 } from '../lib/skill-model-settings.js'
-import { normalizeReasoningEffort, type ReasoningEffort } from 'laborany-shared'
+import { normalizeReasoningEffort, type ModelCapability, type ReasoningEffort } from 'laborany-shared'
 
 interface SessionModelMeta {
   modelProfileId?: string
@@ -406,6 +406,33 @@ function resolveExecutionModelSelection(
     ...selection,
     modelOverride: appliedModelOverride,
     warning: fallbackWarning,
+  }
+}
+
+function resolveExecutionMultimodalProfiles(skillId: string): {
+  visionProfileId?: string
+  imageGenProfileId?: string
+  videoGenProfileId?: string
+} {
+  migrateFromEnvIfNeeded()
+  const store = readModelProfiles()
+  const skillModelSetting = getSkillModelSetting(skillId)
+  const isUsableProfile = (profile: ModelProfile | undefined, capability?: ModelCapability) => {
+    if (!profile || !(profile.apiKey || '').trim()) return false
+    return capability ? profile.capabilities.includes(capability) : true
+  }
+  const resolveProfileId = (profileId: string | undefined, capability: ModelCapability) => {
+    const configured = profileId
+      ? store.profiles.find(profile => profile.id === profileId)
+      : undefined
+    if (isUsableProfile(configured, capability)) return configured?.id
+    return store.profiles.find(profile => isUsableProfile(profile, capability))?.id
+  }
+
+  return {
+    visionProfileId: resolveProfileId(skillModelSetting?.visionProfileId, 'vision_understanding'),
+    imageGenProfileId: resolveProfileId(skillModelSetting?.imageGenProfileId, 'image_generation'),
+    videoGenProfileId: resolveProfileId(skillModelSetting?.videoGenProfileId, 'video_generation'),
   }
 }
 
@@ -1001,7 +1028,7 @@ skill.post('/execute', async (c) => {
     )
   }
 
-  const skillModelSetting = getSkillModelSetting(skillId)
+  const multimodalProfiles = resolveExecutionMultimodalProfiles(skillId)
 
   runtimeTaskManager.startTask({
     sessionId,
@@ -1012,8 +1039,9 @@ skill.post('/execute', async (c) => {
     modelProfileId: modelSelection.modelProfileId,
     modelProfileName: modelSelection.modelProfileName,
     modelName: modelSelection.modelName,
-    visionProfileId: skillModelSetting?.visionProfileId,
-    imageGenProfileId: skillModelSetting?.imageGenProfileId,
+    visionProfileId: multimodalProfiles.visionProfileId,
+    imageGenProfileId: multimodalProfiles.imageGenProfileId,
+    videoGenProfileId: multimodalProfiles.videoGenProfileId,
     originQuery: skillId === 'skill-creator' ? (originQuery || cleanQuery) : undefined,
     beforeSkillIds: skillId === 'skill-creator' ? beforeSkillIds : undefined,
     source: source as 'desktop' | 'feishu' | 'qq' | 'wechat' | 'cron' | 'converse',

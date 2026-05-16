@@ -1,5 +1,6 @@
 import { resolveModelProfile } from '../lib/resolve-model-profile.js'
 import { generateImageWithOpenAi, type GenerateImageInput, type GenerateImageResult } from './adapters/openai-image-gen.js'
+import { generateImageWithGemini } from './adapters/gemini-image-gen.js'
 
 export type { GenerateImageResult }
 
@@ -11,6 +12,20 @@ export async function generateImageWithProfile(input: GenerateImageInput): Promi
   }
 
   const taskDir = (process.env.LABORANY_TASK_DIR || '').trim()
+  const model = (modelOverride.model || '').trim().toLowerCase()
+  const baseUrl = (modelOverride.baseUrl || '').trim().toLowerCase()
+
+  if (
+    model.includes('gemini')
+    || model.includes('nano-banana')
+    || baseUrl.includes('generativelanguage.googleapis.com')
+  ) {
+    return generateImageWithGemini({
+      apiKey: modelOverride.apiKey,
+      baseUrl: modelOverride.baseUrl,
+      model: modelOverride.model,
+    }, input, taskDir)
+  }
 
   return generateImageWithOpenAi({
     apiKey: modelOverride.apiKey,

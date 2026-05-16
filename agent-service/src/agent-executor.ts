@@ -13,6 +13,8 @@ import type { Skill } from 'laborany-shared'
 import {
   BUILTIN_SKILLS_DIR,
   USER_SKILLS_DIR,
+  appendMediaContextItem,
+  buildMediaContextPromptSection,
   getUserDir,
   normalizeReasoningEffort,
   resolveGenerativeWidgetSupport,
@@ -40,6 +42,7 @@ import {
 import { writeWebResearchMcpConfig } from './web-research/index.js'
 import { writeVisionMcpConfig, buildVisionPolicySection } from './vision/index.js'
 import { writeImageGenMcpConfig, buildImageGenPolicySection } from './image-gen/index.js'
+import { writeVideoGenMcpConfig, buildVideoGenPolicySection } from './video-gen/index.js'
 import { buildResearchPolicySection } from './web-research/policy/research-policy.js'
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -68,7 +71,7 @@ function stripPipelineContext(userQuery: string): string {
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export interface AgentEvent {
   type: 'init' | 'text' | 'tool_use' | 'tool_result' | 'warning' | 'error' | 'done' | 'stopped' | 'status'
-    | 'widget_start' | 'widget_delta' | 'widget_commit' | 'widget_error' | 'mcp_status' | 'image_generated'
+    | 'widget_start' | 'widget_delta' | 'widget_commit' | 'widget_error' | 'mcp_status' | 'image_generated' | 'video_generated'
   content?: string
   toolName?: string
   toolInput?: Record<string, unknown>
@@ -83,6 +86,9 @@ export interface AgentEvent {
   imageFileName?: string
   imageFilePath?: string
   imagePrompt?: string
+  videoFileName?: string
+  videoFilePath?: string
+  videoPrompt?: string
 }
 
 export interface McpServerStatus {
@@ -123,6 +129,7 @@ interface ExecuteOptions {
   modelProfileId?: string
   visionProfileId?: string
   imageGenProfileId?: string
+  videoGenProfileId?: string
   enableWidgets?: boolean
 }
 
@@ -186,6 +193,17 @@ function buildVisionImageGenDecisionSection(): string {
 - 如果用户同时上传图片并要求基于它生成新图：先 analyze_image 理解原图，再 generate_image 创作新图`
 }
 
+function buildImageVideoGenDecisionSection(): string {
+  return `## 图片视频生成决策流程
+
+当图片生成（mcp__laborany_image_gen__generate_image）和视频生成（mcp__laborany_video_gen__generate_video）同时可用时：
+
+- 用户要求"图片、海报、插画、封面、概念图、效果图"等静态视觉产物 → 调用 generate_image
+- 用户要求"视频、短片、动画、动态广告、运镜、图生视频、文生视频"等动态视觉产物 → 调用 generate_video
+- 用户要求先做静态图再做视频，或明确说"先生成图，再基于图生成视频" → 先 generate_image，再用生成图片的本地 path 作为 generate_video 的 image reference；若使用本地视频 reference，需要已配置 TOS，或改用公网 URL / provider asset:// ID
+- 不要用 generate_image 代替视频生成，也不要用 generate_video 代替静态图片生成`
+}
+
 function buildLaborAnyRuntimeContext(taskDir: string, skillId: string, sessionId: string): string {
   const tasksBase = TASKS_DIR
   const uploadsBase = UPLOADS_DIR
@@ -214,6 +232,17 @@ function buildLaborAnyRuntimeContext(taskDir: string, skillId: string, sessionId
     '- When creating or updating skills, write under user skills directory, never builtin skills directory.',
     '- In task replies, use concrete absolute paths when asking users to inspect files.',
   ].join('\n')
+}
+
+function tryAppendMediaContextItem(
+  taskDir: string,
+  item: Parameters<typeof appendMediaContextItem>[1],
+): void {
+  try {
+    appendMediaContextItem(taskDir, item)
+  } catch (error) {
+    console.warn('[Agent] Failed to append media context:', error)
+  }
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -433,7 +462,7 @@ function parseMcpStatusLine(line: string): McpServerStatus | null {
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, modelOverride, modelProfileId, visionProfileId, imageGenProfileId, enableWidgets } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, modelOverride, modelProfileId, visionProfileId, imageGenProfileId, videoGenProfileId, enableWidgets } = options
 
   refreshRuntimeConfig()
 
@@ -591,8 +620,17 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       args.push('--mcp-config', imageGenMcpPath)
       console.log(`[Agent] Image Gen MCP injected: ${imageGenMcpPath}`)
     }
+    if (videoGenProfileId) {
+      const videoGenMcpPath = writeVideoGenMcpConfig(taskDir, {
+        agentServicePort: process.env.AGENT_PORT || '3002',
+        nodePath: mcpNodeCommand,
+        modelProfileId: videoGenProfileId,
+      })
+      args.push('--mcp-config', videoGenMcpPath)
+      console.log(`[Agent] Video Gen MCP injected: ${videoGenMcpPath}`)
+    }
   } catch (err) {
-    console.error('[Agent] Failed to inject web research / vision / image-gen MCP:', err)
+    console.error('[Agent] Failed to inject web research / vision / image-gen / video-gen MCP:', err)
   }
 
   communicationPreferenceManager.applyFromUserText(userQuery, userQuery)
@@ -611,8 +649,14 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   if (imageGenProfileId && !skill.systemPrompt.includes('## 图片生成策略')) {
     stableSections.push(buildImageGenPolicySection())
   }
+  if (videoGenProfileId && !skill.systemPrompt.includes('## 视频生成策略')) {
+    stableSections.push(buildVideoGenPolicySection())
+  }
   if (visionProfileId && imageGenProfileId && !skill.systemPrompt.includes('## 视觉工具决策流程')) {
     stableSections.push(buildVisionImageGenDecisionSection())
+  }
+  if (imageGenProfileId && videoGenProfileId && !skill.systemPrompt.includes('## 图片视频生成决策流程')) {
+    stableSections.push(buildImageVideoGenDecisionSection())
   }
   stableSections.push(skill.systemPrompt)
   const stablePrompt = stableSections.join('\n\n---\n\n')
@@ -633,6 +677,10 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const dynamicParts: string[] = [runtimeContext]
   if (retrieved.context) {
     dynamicParts.push(retrieved.context)
+  }
+  const mediaContext = buildMediaContextPromptSection(taskDir)
+  if (mediaContext) {
+    dynamicParts.push(mediaContext)
   }
   const dynamicPrefix = dynamicParts.join('\n\n---\n\n')
   const prompt = `${dynamicPrefix}\n\n---\n\n${userQuery}`
@@ -690,6 +738,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   const streamCtx: ParseStreamContext | undefined = widgetState
     ? { widgetState, onWidgetEvent }
     : undefined
+  let activeMediaToolName = ''
 
   const wrappedOnEvent = (event: AgentEvent) => {
     if (event.type === 'mcp_status' && Array.isArray(event.mcpServers)) {
@@ -709,12 +758,58 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     if (event.type === 'tool_use' && event.toolName) {
       lastProgressAt = Date.now()
       idleWarningSent = false
+      activeMediaToolName = event.toolName
       const desc = event.toolInput?.description || event.toolInput?.file_path || event.toolInput?.command || ''
       toolSummary += `[工具: ${event.toolName}] ${String(desc).slice(0, 100)}\n`
     }
     if (event.type === 'tool_result') {
       lastProgressAt = Date.now()
       idleWarningSent = false
+      const resultText = event.toolResult || event.content || ''
+      if (activeMediaToolName.includes('analyze_image')) {
+        tryAppendMediaContextItem(taskDir, {
+          kind: 'image',
+          operation: 'understanding',
+          summary: resultText,
+          toolName: activeMediaToolName,
+        })
+      } else if (activeMediaToolName.includes('analyze_video')) {
+        tryAppendMediaContextItem(taskDir, {
+          kind: 'video',
+          operation: 'understanding',
+          summary: resultText,
+          toolName: activeMediaToolName,
+        })
+      } else if (activeMediaToolName.includes('generate_image')) {
+        const fileNameMatch = resultText.match(/(?:保存到|saved to)[:\s]+(.+?\.\w+)/i)
+        const promptMatch = resultText.match(/(?:原始提示词|实际提示词|Original prompt)[:\s]+(.+)/i)
+        if (fileNameMatch) {
+          const filePath = fileNameMatch[1].trim()
+          tryAppendMediaContextItem(taskDir, {
+            kind: 'image',
+            operation: 'generation',
+            filePath,
+            prompt: promptMatch ? promptMatch[1].trim() : undefined,
+            summary: resultText,
+            toolName: activeMediaToolName,
+          })
+        }
+      } else if (activeMediaToolName.includes('generate_video')) {
+        const fileNameMatch = resultText.match(/(?:保存到|saved to)[:\s]+(.+?\.mp4)/i)
+        const promptMatch = resultText.match(/(?:原始提示词|Original prompt)[:\s]+(.+)/i)
+        if (fileNameMatch) {
+          const filePath = fileNameMatch[1].trim()
+          tryAppendMediaContextItem(taskDir, {
+            kind: 'video',
+            operation: 'generation',
+            filePath,
+            prompt: promptMatch ? promptMatch[1].trim() : undefined,
+            summary: resultText,
+            toolName: activeMediaToolName,
+          })
+        }
+      }
+      activeMediaToolName = ''
     }
   }
 

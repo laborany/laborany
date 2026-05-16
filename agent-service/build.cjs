@@ -12,6 +12,8 @@ const srcVisionDir = resolve(__dirname, 'src/vision')
 const distVisionDir = join(distDir, 'vision')
 const srcImageGenDir = resolve(__dirname, 'src/image-gen')
 const distImageGenDir = join(distDir, 'image-gen')
+const srcVideoGenDir = resolve(__dirname, 'src/video-gen')
+const distVideoGenDir = join(distDir, 'video-gen')
 
 async function main() {
   // 1. Bundle main agent service
@@ -65,6 +67,16 @@ async function main() {
     target: 'node20',
     format: 'esm',
     outfile: join(distImageGenDir, 'mcp', 'mcp-server.mjs'),
+    banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
+  })
+
+  await esbuild.build({
+    entryPoints: [join(srcVideoGenDir, 'mcp', 'mcp-server.mjs')],
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
+    format: 'esm',
+    outfile: join(distVideoGenDir, 'mcp', 'mcp-server.mjs'),
     banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
   })
 

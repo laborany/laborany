@@ -8,10 +8,19 @@
 import { Router, Request, Response } from 'express'
 import { readFile, readdir } from 'fs/promises'
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { isAbsolute, join, relative, resolve, sep } from 'path'
+import { MEDIA_CONTEXT_FILE } from 'laborany-shared'
 import { TASKS_DIR } from '../paths.js'
 
 const router = Router()
+
+function resolveSafeTaskFilePath(taskDir: string, filePath: string): { fullPath: string; safe: boolean } {
+  const root = resolve(taskDir)
+  const fullPath = resolve(root, filePath)
+  const rel = relative(root, fullPath)
+  const safe = rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+  return { fullPath, safe }
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                         健康检查端点                                      │
@@ -49,10 +58,15 @@ router.get('/tasks/:sessionId/files/*', async (req: Request, res: Response) => {
   const { sessionId } = req.params
   const filePath = req.params[0]
   const taskDir = join(TASKS_DIR, sessionId)
-  const fullPath = join(taskDir, filePath)
+  const { fullPath, safe } = resolveSafeTaskFilePath(taskDir, filePath)
 
-  if (!fullPath.startsWith(taskDir)) {
+  if (!safe) {
     res.status(403).json({ error: '禁止访问' })
+    return
+  }
+
+  if (isInternalTaskPath(filePath)) {
+    res.status(404).json({ error: '文件不存在' })
     return
   }
 
@@ -101,7 +115,22 @@ const PREVIEWABLE_EXTS = new Set([
   'pdf', 'txt', 'md', 'json', 'css', 'js',
 ])
 
-const IGNORE_LIST = new Set(['history.txt', '.git', 'node_modules', '__pycache__'])
+const IGNORE_LIST = new Set(['history.txt', '.git', 'node_modules', '__pycache__', 'CLAUDE.md', MEDIA_CONTEXT_FILE])
+
+function shouldIgnoreTaskEntry(name: string): boolean {
+  if (!name) return true
+  if (IGNORE_LIST.has(name)) return true
+  if (name.startsWith('.')) return true
+  if (name.startsWith('history-') && name.endsWith('.txt')) return true
+  return false
+}
+
+function isInternalTaskPath(filePath: string): boolean {
+  return filePath
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .some(segment => shouldIgnoreTaskEntry(segment))
+}
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       递归列出任务目录文件                                 │
@@ -129,7 +158,7 @@ async function listTaskFiles(baseDir: string, relativePath: string): Promise<Tas
   const files: TaskFile[] = []
 
   for (const entry of entries) {
-    if (IGNORE_LIST.has(entry.name)) continue
+    if (shouldIgnoreTaskEntry(entry.name)) continue
 
     const entryPath = relativePath ? `${relativePath}/${entry.name}` : entry.name
 

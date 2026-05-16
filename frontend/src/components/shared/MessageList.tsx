@@ -73,6 +73,14 @@ type ImageBlock = {
   fileName: string
   url: string
   prompt?: string
+  messageId?: string
+}
+type VideoBlock = {
+  type: 'video'
+  fileName: string
+  url: string
+  prompt?: string
+  messageId?: string
 }
 
 type RenderBlock =
@@ -86,6 +94,7 @@ type RenderBlock =
   | WidgetAnchorBlock
   | InlineWidgetBlock
   | ImageBlock
+  | VideoBlock
 
 type AssistantSegment =
   | { type: 'text'; content: string }
@@ -363,7 +372,7 @@ export default function MessageList({
         <BlockRenderer
           key={index}
           block={block}
-          message={block.type === 'user' || block.type === 'text'
+          message={block.type === 'user' || block.type === 'text' || block.type === 'image' || block.type === 'video'
             ? (block.messageId ? messageMap.get(block.messageId) : undefined)
             : undefined}
           latestRegeneratableMessageId={latestRegeneratableMessageId}
@@ -426,6 +435,19 @@ function buildRenderBlocks(messages: AgentMessage[], isRunning: boolean): Render
         fileName: imageData.fileName,
         url: imageData.url,
         prompt: imageData.prompt,
+        messageId: message.id,
+      })
+      continue
+    }
+
+    if (message.type === 'assistant' && message.meta?.video) {
+      const videoData = message.meta.video
+      blocks.push({
+        type: 'video',
+        fileName: videoData.fileName,
+        url: videoData.url,
+        prompt: videoData.prompt,
+        messageId: message.id,
       })
       continue
     }
@@ -612,7 +634,7 @@ function BlockRenderer({
       )
     case 'image':
       return (
-        <div className="flex flex-col items-center gap-2 py-2 animate-in fade-in duration-300">
+        <div className="group flex flex-col items-center gap-2 py-2 animate-in fade-in duration-300">
           <img
             src={block.url}
             alt={block.fileName}
@@ -624,6 +646,41 @@ function BlockRenderer({
           {block.prompt && (
             <span className="text-xs text-muted-foreground italic max-w-md text-center">{block.prompt}</span>
           )}
+          <MessageActionBar
+            text={`图片已生成: ${block.fileName}${block.prompt ? `\n提示词: ${block.prompt}` : ''}`}
+            canCopy
+            message={message}
+            latestRegeneratableMessageId={latestRegeneratableMessageId}
+            onCreateReference={onCreateReference}
+          />
+        </div>
+      )
+    case 'video':
+      return (
+        <div className="group flex flex-col items-center gap-2 py-2 animate-in fade-in duration-300">
+          <video
+            src={block.url}
+            controls
+            className="max-w-full rounded-lg shadow-md"
+            style={{ maxHeight: 420 }}
+          />
+          <button
+            type="button"
+            className="text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => window.open(block.url, '_blank')}
+          >
+            {block.fileName}
+          </button>
+          {block.prompt && (
+            <span className="text-xs text-muted-foreground italic max-w-md text-center">{block.prompt}</span>
+          )}
+          <MessageActionBar
+            text={`视频已生成: ${block.fileName}${block.prompt ? `\n提示词: ${block.prompt}` : ''}`}
+            canCopy
+            message={message}
+            latestRegeneratableMessageId={latestRegeneratableMessageId}
+            onCreateReference={onCreateReference}
+          />
         </div>
       )
   }
@@ -1257,6 +1314,8 @@ function getToolDescription(name: string, input?: Record<string, unknown>): stri
 function buildMessageReference(message: AgentMessage): MessageReference | null {
   const text = message.content.trim()
   const widget = message.meta?.widget
+  const image = message.meta?.image
+  const video = message.meta?.video
 
   if (widget && message.widgetId) {
     return {
@@ -1267,6 +1326,34 @@ function buildMessageReference(message: AgentMessage): MessageReference | null {
       messageId: message.id,
       serverMessageId: message.serverMessageId ?? null,
       widgetId: widget.widgetId,
+      turnId: message.meta?.turnId ?? null,
+    }
+  }
+
+  if (image) {
+    return {
+      id: `artifact:${message.id}:image`,
+      kind: 'artifact',
+      title: image.fileName || '生成图片',
+      snippet: image.prompt || '生成图片',
+      messageId: message.id,
+      serverMessageId: message.serverMessageId ?? null,
+      artifactPath: image.filePath,
+      artifactName: image.fileName,
+      turnId: message.meta?.turnId ?? null,
+    }
+  }
+
+  if (video) {
+    return {
+      id: `artifact:${message.id}:video`,
+      kind: 'artifact',
+      title: video.fileName || '生成视频',
+      snippet: video.prompt || '生成视频',
+      messageId: message.id,
+      serverMessageId: message.serverMessageId ?? null,
+      artifactPath: video.filePath,
+      artifactName: video.fileName,
       turnId: message.meta?.turnId ?? null,
     }
   }

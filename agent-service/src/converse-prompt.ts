@@ -9,6 +9,7 @@ import { loadCatalog, type CatalogItem } from './catalog.js'
 import { buildResearchPolicySection } from './web-research/policy/research-policy.js'
 import { buildVisionPolicySection } from './vision/index.js'
 import { buildImageGenPolicySection } from './image-gen/index.js'
+import { buildVideoGenPolicySection } from './video-gen/index.js'
 
 export interface ConverseRuntimeContext {
   channel?: string
@@ -389,12 +390,24 @@ function buildVisionImageGenDecisionSection(): string {
 - 如果用户同时上传图片并要求基于它生成新图：先 analyze_image 理解原图，再 generate_image 创作新图`
 }
 
+function buildImageVideoGenDecisionSection(): string {
+  return `## 图片视频生成决策流程
+
+当图片生成（mcp__laborany_image_gen__generate_image）和视频生成（mcp__laborany_video_gen__generate_video）同时可用时：
+
+- 用户要求"图片、海报、插画、封面、概念图、效果图"等静态视觉产物 → 调用 generate_image
+- 用户要求"视频、短片、动画、动态广告、运镜、图生视频、文生视频"等动态视觉产物 → 调用 generate_video
+- 用户要求先做静态图再做视频，或明确说"先生成图，再基于图生成视频" → 先 generate_image，再用生成图片的本地 path 作为 generate_video 的 image reference；若使用本地视频 reference，需要已配置 TOS，或改用公网 URL / provider asset:// ID
+- 不要用 generate_image 代替视频生成，也不要用 generate_video 代替静态图片生成`
+}
+
 export function buildConverseSystemPrompt(
   memoryContext: string,
   runtimeContext?: ConverseRuntimeContext,
   options?: ConversePromptOptions,
   visionProfileId?: string,
   imageGenProfileId?: string,
+  videoGenProfileId?: string,
 ): string {
   const catalogText = formatCatalog(loadCatalog())
   const coreSections: string[] = [
@@ -410,8 +423,14 @@ export function buildConverseSystemPrompt(
   if (imageGenProfileId) {
     coreSections.push(buildImageGenPolicySection())
   }
+  if (videoGenProfileId) {
+    coreSections.push(buildVideoGenPolicySection())
+  }
   if (visionProfileId && imageGenProfileId) {
     coreSections.push(buildVisionImageGenDecisionSection())
+  }
+  if (imageGenProfileId && videoGenProfileId) {
+    coreSections.push(buildImageVideoGenDecisionSection())
   }
   if (options?.forceWidgetDirectMode) {
     coreSections.push(buildWidgetDirectModeSection())

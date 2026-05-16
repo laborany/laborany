@@ -3,7 +3,7 @@ export interface ConfigItem {
   masked: string
 }
 
-export type ConfigGroupId = 'model' | 'wechat' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
+export type ConfigGroupId = 'model' | 'storage' | 'wechat' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
 
 export interface ConfigTemplate {
   label?: string
@@ -108,10 +108,12 @@ export const BOOLEAN_KEYS = new Set([
   'QQ_REQUIRE_ALLOWLIST',
   'NOTIFY_ON_SUCCESS',
   'NOTIFY_ON_ERROR',
+  'LABORANY_TOS_ENABLED',
 ])
 
 export const DEFAULT_GROUPS: TemplateGroup[] = [
   { id: 'model', title: '模型服务', description: '配置 API Key、Base URL 和模型名称。' },
+  { id: 'storage', title: '媒体素材存储', description: '配置 TOS，让本地视频参考素材可用于视频生成。' },
   { id: 'wechat', title: '微信 Bot', description: '开启微信 ClawBot 接入，并支持扫码绑定。' },
   { id: 'feishu', title: '飞书 Bot', description: '开启飞书会话接入与文件回传能力。' },
   { id: 'qq', title: 'QQ Bot', description: '开启 QQ C2C 私聊接入能力。' },

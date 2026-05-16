@@ -92,6 +92,16 @@ function main() {
         cpSync(webResearchSrc, webResearchDest, { recursive: true })
       }
     }
+
+    for (const sidecarName of ['vision', 'image-gen', 'video-gen']) {
+      const sidecarSrc = join(agentDir, 'dist', sidecarName)
+      if (!existsSync(sidecarSrc)) continue
+      const resolvedOutput = join(agentDir, output)
+      const sidecarDest = join(dirname(resolvedOutput), sidecarName)
+      if (sidecarSrc !== sidecarDest) {
+        cpSync(sidecarSrc, sidecarDest, { recursive: true })
+      }
+    }
   } finally {
     if (hasNativeBinary && existsSync(backupPath)) {
       copyFileSync(backupPath, nativeBinaryPath)

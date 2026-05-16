@@ -26,6 +26,10 @@ import {
   type QuestionResponsePayload,
 } from '../lib/question-response'
 
+function encodeTaskFilePath(filePath: string): string {
+  return filePath.split('/').map(encodeURIComponent).join('/')
+}
+
 export interface ConverseAction {
   action:
     | 'recommend_capability'
@@ -680,7 +684,7 @@ export function useConverse(): UseConverseReturn {
         const prompt = (data.prompt as string) || (data.imagePrompt as string) || ''
         const sid = sessionIdRef.current
         if (fileName && sid) {
-          const imageUrl = `${API_BASE}/task/${encodeURIComponent(sid)}/files/${encodeURIComponent(filePath)}`
+          const imageUrl = `${API_BASE}/task/${encodeURIComponent(sid)}/files/${encodeTaskFilePath(filePath)}`
           setMessages((prev) => [
             ...prev,
             {
@@ -695,6 +699,36 @@ export function useConverse(): UseConverseReturn {
                   fileName,
                   filePath,
                   url: imageUrl,
+                  prompt,
+                },
+              },
+            },
+          ])
+        }
+        return
+      }
+
+      if (eventType === 'video_generated') {
+        const fileName = (data.fileName as string) || (data.videoFileName as string) || ''
+        const filePath = (data.filePath as string) || (data.videoFilePath as string) || ''
+        const prompt = (data.prompt as string) || (data.videoPrompt as string) || ''
+        const sid = sessionIdRef.current
+        if (fileName && sid) {
+          const videoUrl = `${API_BASE}/task/${encodeURIComponent(sid)}/files/${encodeTaskFilePath(filePath)}`
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `video_gen_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              type: 'assistant' as const,
+              content: '',
+              timestamp: new Date(),
+              meta: {
+                sessionMode: 'converse',
+                source: 'llm',
+                video: {
+                  fileName,
+                  filePath,
+                  url: videoUrl,
                   prompt,
                 },
               },
@@ -944,6 +978,7 @@ export function useConverse(): UseConverseReturn {
           modelProfileId: activeProfileId || undefined,
           visionProfileId: profiles.find((p) => p.capabilities.includes('vision_understanding'))?.id || undefined,
           imageGenProfileId: profiles.find((p) => p.capabilities.includes('image_generation'))?.id || undefined,
+          videoGenProfileId: profiles.find((p) => p.capabilities.includes('video_generation'))?.id || undefined,
           reasoningEffort: activeReasoningEffort !== 'default' ? activeReasoningEffort : undefined,
           questionResponse: questionResponse || undefined,
           references: references.length > 0 ? references : undefined,

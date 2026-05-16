@@ -2027,6 +2027,7 @@ router.post('/', async (req: Request, res: Response) => {
     modelProfileId,
     visionProfileId: rawVisionProfileId,
     imageGenProfileId: rawImageGenProfileId,
+    videoGenProfileId: rawVideoGenProfileId,
     reasoningEffort: rawReasoningEffort,
     attachmentIds: rawAttachmentIds,
     references: rawReferences,
@@ -2043,6 +2044,9 @@ router.post('/', async (req: Request, res: Response) => {
     : ''
   const imageGenProfileId = typeof rawImageGenProfileId === 'string'
     ? rawImageGenProfileId.trim()
+    : ''
+  const videoGenProfileId = typeof rawVideoGenProfileId === 'string'
+    ? rawVideoGenProfileId.trim()
     : ''
 
   if (!rawMessages || !Array.isArray(rawMessages) || !rawMessages.length) {
@@ -2352,7 +2356,7 @@ router.post('/', async (req: Request, res: Response) => {
     const systemPrompt = buildConverseSystemPrompt(memoryCtx, effectiveRuntimeContext, {
       forceWidgetDirectMode: widgetRuntimePlan.forceDirectMode,
       latestUserQuery: query,
-    }, visionProfileId, imageGenProfileId)
+    }, visionProfileId, imageGenProfileId, videoGenProfileId)
     const skill = {
       meta: { id: '__converse__', name: '对话助手', description: '多轮对话', kind: 'skill' as const },
       systemPrompt,
@@ -2375,6 +2379,7 @@ router.post('/', async (req: Request, res: Response) => {
         modelProfileId,
         visionProfileId: visionProfileId || undefined,
         imageGenProfileId: imageGenProfileId || undefined,
+        videoGenProfileId: videoGenProfileId || undefined,
         enableWidgets,
         onEvent: (event) => {
           if (event.type === 'widget_start') {
@@ -2493,6 +2498,7 @@ router.post('/', async (req: Request, res: Response) => {
               if (fileNameMatch) {
                 const fileName = fileNameMatch[1].trim()
                 const filePath = fileName
+                const encodedFilePath = filePath.split('/').map(encodeURIComponent).join('/')
                 const prompt = promptMatch ? promptMatch[1].trim() : ''
                 sseWrite(res, 'image_generated', {
                   fileName,
@@ -2500,6 +2506,69 @@ router.post('/', async (req: Request, res: Response) => {
                   prompt,
                   sessionId,
                 })
+                void fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    sessionId,
+                    type: 'assistant',
+                    content: `图片已生成: ${fileName}`,
+                    meta: {
+                      ...buildConverseMessageMeta({
+                        kind: 'assistant_reply',
+                        turnId,
+                        source: 'llm',
+                        replyToMessageId: userMessageId,
+                      }),
+                      image: {
+                        fileName,
+                        filePath,
+                        url: `/api/task/${encodeURIComponent(sessionId)}/files/${encodedFilePath}`,
+                        prompt,
+                      },
+                    },
+                  }),
+                }).catch(() => {})
+              }
+            }
+            if (lastToolName.includes('generate_video')) {
+              const resultText = event.toolResult || event.content || ''
+              const fileNameMatch = resultText.match(/(?:保存到|saved to)[:\s]+(.+?\.mp4)/i)
+              const promptMatch = resultText.match(/(?:原始提示词|Original prompt)[:\s]+(.+)/i)
+              if (fileNameMatch) {
+                const fileName = fileNameMatch[1].trim()
+                const filePath = fileName
+                const encodedFilePath = filePath.split('/').map(encodeURIComponent).join('/')
+                const prompt = promptMatch ? promptMatch[1].trim() : ''
+                sseWrite(res, 'video_generated', {
+                  fileName,
+                  filePath,
+                  prompt,
+                  sessionId,
+                })
+                void fetch(`${getSrcApiBaseUrl()}/sessions/external/message`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    sessionId,
+                    type: 'assistant',
+                    content: `视频已生成: ${fileName}`,
+                    meta: {
+                      ...buildConverseMessageMeta({
+                        kind: 'assistant_reply',
+                        turnId,
+                        source: 'llm',
+                        replyToMessageId: userMessageId,
+                      }),
+                      video: {
+                        fileName,
+                        filePath,
+                        url: `/api/task/${encodeURIComponent(sessionId)}/files/${encodedFilePath}`,
+                        prompt,
+                      },
+                    },
+                  }),
+                }).catch(() => {})
               }
             }
             lastToolName = ''

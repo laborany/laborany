@@ -37,6 +37,7 @@ const REPO_ROOT = path.resolve(__dirname, '..');
  * └──────────────────────────────────────────────────────────────────────────┘ */
 const VERSION = 'b6.1.1';
 const BASE = `https://github.com/eugeneware/ffmpeg-static/releases/download/${VERSION}`;
+const MAX_DOWNLOAD_ATTEMPTS = 3;
 
 const PLATFORMS = {
   'darwin-arm64': { url: `${BASE}/ffmpeg-darwin-arm64`, outName: 'ffmpeg',     mode: 0o755 },
@@ -60,24 +61,60 @@ function currentPlatformKey() {
 function download(url, outPath) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(outPath);
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      file.close(() => {
+        fs.rmSync(outPath, { force: true });
+        reject(error);
+      });
+    };
     const req = https.get(url, { headers: { 'User-Agent': 'laborany-build' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        file.close();
-        fs.unlinkSync(outPath);
-        download(res.headers.location, outPath).then(resolve, reject);
+        settled = true;
+        file.close(() => {
+          fs.rmSync(outPath, { force: true });
+          download(res.headers.location, outPath).then(resolve, reject);
+        });
         return;
       }
       if (res.statusCode !== 200) {
-        file.close();
-        fs.unlinkSync(outPath);
-        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        fail(new Error(`HTTP ${res.statusCode} for ${url}`));
         return;
       }
       res.pipe(file);
-      file.on('finish', () => file.close(resolve));
+      file.on('finish', () => {
+        if (settled) return;
+        settled = true;
+        file.close(resolve);
+      });
     });
-    req.on('error', reject);
+    req.setTimeout(120000, () => {
+      req.destroy(new Error(`download timed out for ${url}`));
+    });
+    req.on('error', fail);
+    file.on('error', fail);
   });
+}
+
+async function downloadWithRetry(url, outPath) {
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_DOWNLOAD_ATTEMPTS; attempt += 1) {
+    try {
+      await download(url, outPath);
+      return;
+    } catch (error) {
+      lastError = error;
+      fs.rmSync(outPath, { force: true });
+      if (attempt < MAX_DOWNLOAD_ATTEMPTS) {
+        const delayMs = attempt * 3000;
+        console.warn(`[retry] download failed (${attempt}/${MAX_DOWNLOAD_ATTEMPTS}): ${error.message}; retrying in ${delayMs / 1000}s`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  throw lastError;
 }
 
 /* ┌──────────────────────────────────────────────────────────────────────────┐
@@ -93,7 +130,7 @@ async function fetchOne(key) {
     return;
   }
   console.log(`[fetch] ${key} ← ${spec.url}`);
-  await download(spec.url, out);
+  await downloadWithRetry(spec.url, out);
   fs.chmodSync(out, spec.mode);
   console.log(`[done]  ${key} → ${out} (${(fs.statSync(out).size / 1e6).toFixed(1)} MB)`);
 }

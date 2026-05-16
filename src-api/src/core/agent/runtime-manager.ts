@@ -144,6 +144,7 @@ interface RuntimeTask {
   modelName?: string
   visionProfileId?: string
   imageGenProfileId?: string
+  videoGenProfileId?: string
   status: RuntimeTaskStatus
   startedAt: number
   completedAt?: number
@@ -179,6 +180,7 @@ interface StartTaskOptions {
   modelName?: string
   visionProfileId?: string
   imageGenProfileId?: string
+  videoGenProfileId?: string
   originQuery?: string
   beforeSkillIds?: Set<string>
   source?: 'desktop' | 'feishu' | 'qq' | 'wechat' | 'cron' | 'converse'
@@ -238,6 +240,7 @@ class RuntimeTaskManager {
       modelName: options.modelName,
       visionProfileId: options.visionProfileId,
       imageGenProfileId: options.imageGenProfileId,
+      videoGenProfileId: options.videoGenProfileId,
       status: 'running',
       startedAt: Date.now(),
       stopRequested: false,
@@ -772,6 +775,7 @@ class RuntimeTaskManager {
           modelProfileId: options.modelProfileId,
           visionProfileId: options.visionProfileId,
           imageGenProfileId: options.imageGenProfileId,
+          videoGenProfileId: options.videoGenProfileId,
           enableWidgets: shouldEnableDesktopWidgetsForTask(task.source, options.modelOverride),
           onEvent: (event) => this.handleAgentEvent(task, event),
         })
@@ -1003,6 +1007,7 @@ class RuntimeTaskManager {
         modelProfileId: task.modelProfileId,
         visionProfileId: task.visionProfileId,
         imageGenProfileId: task.imageGenProfileId,
+        videoGenProfileId: task.videoGenProfileId,
         enableWidgets: shouldEnableDesktopWidgetsForTask(task.source, options.modelOverride),
         onEvent: (event) => {
           if (event.type === 'text' && event.content) {
@@ -1129,6 +1134,20 @@ class RuntimeTaskManager {
             imageFileName: fileName,
             imageFilePath: fileName,
             imagePrompt: promptMatch ? promptMatch[1].trim() : '',
+          })
+        }
+      }
+      if (task.activeToolName && task.activeToolName.includes('generate_video')) {
+        const resultText = event.toolResult || event.content || ''
+        const fileNameMatch = resultText.match(/(?:保存到|saved to)[:\s]+(.+?\.mp4)/i)
+        const promptMatch = resultText.match(/(?:原始提示词|Original prompt)[:\s]+(.+)/i)
+        if (fileNameMatch) {
+          const fileName = fileNameMatch[1].trim()
+          this.emitEvent(task, {
+            type: 'video_generated',
+            videoFileName: fileName,
+            videoFilePath: fileName,
+            videoPrompt: promptMatch ? promptMatch[1].trim() : '',
           })
         }
       }

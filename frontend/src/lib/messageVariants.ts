@@ -175,11 +175,21 @@ export function persistStoredVariantSelection(
 
 export function toConversationPayloadMessages(messages: AgentMessage[]): Array<{ role: 'user' | 'assistant'; content: string }> {
   return messages
-    .filter((item) => (item.type === 'user' || item.type === 'assistant') && item.content.trim())
-    .map((item) => ({
-      role: item.type === 'assistant' ? 'assistant' : 'user',
-      content: item.content,
-    }))
+    .flatMap((item) => {
+      if (item.type !== 'user' && item.type !== 'assistant') return []
+      const content = item.content.trim()
+      const mediaSummary = item.meta?.image
+        ? `图片已生成: ${item.meta.image.fileName || item.meta.image.filePath}${item.meta.image.prompt ? `\n提示词: ${item.meta.image.prompt}` : ''}`
+        : item.meta?.video
+          ? `视频已生成: ${item.meta.video.fileName || item.meta.video.filePath}${item.meta.video.prompt ? `\n提示词: ${item.meta.video.prompt}` : ''}`
+          : ''
+      const payloadContent = content || mediaSummary
+      if (!payloadContent.trim()) return []
+      return [{
+        role: item.type === 'assistant' ? 'assistant' as const : 'user' as const,
+        content: payloadContent,
+      }]
+    })
 }
 
 export function buildRegenerateContextMessages(

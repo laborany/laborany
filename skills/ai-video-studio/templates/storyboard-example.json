@@ -1,0 +1,32 @@
+{
+  "project": {
+    "title": "示例短视频",
+    "platform": "douyin",
+    "ratio": "9:16",
+    "resolution": "1080p",
+    "segment_seconds": 15
+  },
+  "characters": [
+    {
+      "id": "hero",
+      "name": "主角",
+      "visual_identity": "28岁，黑色短发，白色衬衫，深色外套，银色腕表",
+      "consistency_tokens": "same 28-year-old East Asian protagonist, short black hair, white shirt, dark jacket, silver watch, consistent face and outfit"
+    }
+  ],
+  "shots": [
+    {
+      "id": "shot-01",
+      "duration": 15,
+      "goal": "开场钩子",
+      "scene": "夜晚城市办公室",
+      "camera": "缓慢推进到主角面部",
+      "action": "主角盯着屏幕，突然意识到关键问题",
+      "visual_description": "冷色屏幕光，窗外霓虹，桌面凌乱但有秩序",
+      "music": "低频悬疑电子乐，3秒处加入上升音效",
+      "voiceover": "你以为问题出在努力，其实出在选择。",
+      "image_file": "shots/shot-01.png",
+      "video_file": "clips/shot-01.mp4"
+    }
+  ]
+}

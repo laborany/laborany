@@ -15,6 +15,10 @@ import {
 
 export type { AgentMessage, TaskFile }
 
+function encodeTaskFilePath(filePath: string): string {
+  return filePath.split('/').map(encodeURIComponent).join('/')
+}
+
 export interface QuestionOption {
   label: string
   description: string
@@ -978,7 +982,7 @@ export function useAgent(skillId: string) {
           const prompt = (event.prompt as string) || (event.imagePrompt as string) || ''
           const sid = sessionIdRef.current
           if (fileName && sid) {
-            const imageUrl = `${API_BASE}/task/${encodeURIComponent(sid)}/files/${encodeURIComponent(filePath)}`
+            const imageUrl = `${API_BASE}/task/${encodeURIComponent(sid)}/files/${encodeTaskFilePath(filePath)}`
             setState((s) => ({
               ...s,
               messages: [
@@ -995,6 +999,39 @@ export function useAgent(skillId: string) {
                       fileName,
                       filePath,
                       url: imageUrl,
+                      prompt,
+                    },
+                  },
+                },
+              ],
+            }))
+          }
+          break
+        }
+
+        case 'video_generated': {
+          const fileName = (event.fileName as string) || (event.videoFileName as string) || ''
+          const filePath = (event.filePath as string) || (event.videoFilePath as string) || ''
+          const prompt = (event.prompt as string) || (event.videoPrompt as string) || ''
+          const sid = sessionIdRef.current
+          if (fileName && sid) {
+            const videoUrl = `${API_BASE}/task/${encodeURIComponent(sid)}/files/${encodeTaskFilePath(filePath)}`
+            setState((s) => ({
+              ...s,
+              messages: [
+                ...s.messages,
+                {
+                  id: `video_gen_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                  type: 'assistant',
+                  content: '',
+                  timestamp: new Date(),
+                  meta: {
+                    sessionMode: 'execution',
+                    source: 'llm',
+                    video: {
+                      fileName,
+                      filePath,
+                      url: videoUrl,
                       prompt,
                     },
                   },

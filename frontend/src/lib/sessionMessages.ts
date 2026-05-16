@@ -27,17 +27,18 @@ export function sessionDetailToAgentMessages(session: SessionDetail | null): Age
 
     if (msg.type === 'assistant' && msg.content) {
       const widgetMeta = msg.meta?.widget
+      const mediaMeta = msg.meta?.image || msg.meta?.video
       const assistantMessage: AgentMessage = {
         id: String(msg.id),
         type: 'assistant',
-        content: widgetMeta ? '' : msg.content,
+        content: widgetMeta || mediaMeta ? '' : msg.content,
         timestamp: parseUTCDate(msg.createdAt),
         serverMessageId: msg.id,
         meta: msg.meta || null,
         ...(widgetMeta ? { widgetId: widgetMeta.widgetId, widgetTitle: widgetMeta.title } : {}),
       }
 
-      if (widgetMeta) {
+      if (widgetMeta || mediaMeta) {
         messages.push(assistantMessage)
       } else {
         const merged = appendMessageWithVariants(messages, assistantMessage)

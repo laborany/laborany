@@ -16,6 +16,8 @@ import {
   withUtf8Env,
   sanitizeClaudeEnv,
   encodeOpenAiBridgeApiKey,
+  appendMediaContextItem,
+  buildMediaContextPromptSection,
   normalizeModelInterfaceType,
   normalizeReasoningEffort,
   resolveExecuteGenerativeWidgetSupport,
@@ -46,6 +48,7 @@ import {
 import { buildResearchPolicySection, writeWebResearchMcpConfig } from './web-research.js'
 import { buildVisionPolicySection, writeVisionMcpConfig } from './vision.js'
 import { buildImageGenPolicySection, writeImageGenMcpConfig } from './image-gen.js'
+import { buildVideoGenPolicySection, writeVideoGenMcpConfig } from './video-gen.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -68,6 +71,7 @@ export interface AgentEvent {
     | 'widget_commit'
     | 'widget_error'
     | 'image_generated'
+    | 'video_generated'
   content?: string
   toolName?: string
   toolUseId?: string
@@ -81,6 +85,9 @@ export interface AgentEvent {
   imageFileName?: string
   imageFilePath?: string
   imagePrompt?: string
+  videoFileName?: string
+  videoFilePath?: string
+  videoPrompt?: string
 }
 
 export interface ModelOverride {
@@ -178,6 +185,7 @@ interface ExecuteOptions {
   modelProfileId?: string
   visionProfileId?: string
   imageGenProfileId?: string
+  videoGenProfileId?: string
   enableWidgets?: boolean
 }
 
@@ -233,6 +241,17 @@ function buildVisionImageGenDecisionSection(): string {
 - 如果用户同时上传图片并要求基于它生成新图：先 analyze_image 理解原图，再 generate_image 创作新图`
 }
 
+function buildImageVideoGenDecisionSection(): string {
+  return `## 图片视频生成决策流程
+
+当图片生成（mcp__laborany_image_gen__generate_image）和视频生成（mcp__laborany_video_gen__generate_video）同时可用时：
+
+- 用户要求"图片、海报、插画、封面、概念图、效果图"等静态视觉产物 → 调用 generate_image
+- 用户要求"视频、短片、动画、动态广告、运镜、图生视频、文生视频"等动态视觉产物 → 调用 generate_video
+- 用户要求先做静态图再做视频，或明确说"先生成图，再基于图生成视频" → 先 generate_image，再用生成图片的本地 path 作为 generate_video 的 image reference；若使用本地视频 reference，需要已配置 TOS，或改用公网 URL / provider asset:// ID
+- 不要用 generate_image 代替视频生成，也不要用 generate_video 代替静态图片生成`
+}
+
 function buildLaborAnyRuntimeContext(taskDir: string, skillId: string): string {
   const appHome = getAppHomeDir()
   const userHome = getUserDir()
@@ -264,6 +283,17 @@ function buildLaborAnyRuntimeContext(taskDir: string, skillId: string): string {
   ].join('\n')
 }
 
+function tryAppendMediaContextItem(
+  taskDir: string,
+  item: Parameters<typeof appendMediaContextItem>[1],
+): void {
+  try {
+    appendMediaContextItem(taskDir, item)
+  } catch (error) {
+    console.warn('[Agent] Failed to append media context:', error)
+  }
+}
+
 export function getTaskDir(sessionId: string): string {
   return join(getTasksBaseDir(), sessionId)
 }
@@ -280,6 +310,7 @@ async function writeClaudeMdWithMemory(
   userQuery?: string,
   visionProfileId?: string,
   imageGenProfileId?: string,
+  videoGenProfileId?: string,
 ): Promise<void> {
   const claudeMdPath = join(targetDir, 'CLAUDE.md')
   const runtimeContext = buildLaborAnyRuntimeContext(targetDir, skillId)
@@ -293,8 +324,14 @@ async function writeClaudeMdWithMemory(
   if (imageGenProfileId && !skillSystemPrompt.includes('## 图片生成策略')) {
     sections.push(buildImageGenPolicySection())
   }
+  if (videoGenProfileId && !skillSystemPrompt.includes('## 视频生成策略')) {
+    sections.push(buildVideoGenPolicySection())
+  }
   if (visionProfileId && imageGenProfileId && !skillSystemPrompt.includes('## 视觉工具决策流程')) {
     sections.push(buildVisionImageGenDecisionSection())
+  }
+  if (imageGenProfileId && videoGenProfileId && !skillSystemPrompt.includes('## 图片视频生成决策流程')) {
+    sections.push(buildImageVideoGenDecisionSection())
   }
 
   try {
@@ -1131,7 +1168,7 @@ function buildEffectiveSkillPrompt(
  * │                       执行 Agent 主函数                                   │
  * └──────────────────────────────────────────────────────────────────────────┘ */
 export async function executeAgent(options: ExecuteOptions): Promise<void> {
-  const { skill, query: userQuery, sessionId, signal, onEvent, workDir, modelOverride, modelProfileId, visionProfileId, imageGenProfileId, enableWidgets } = options
+  const { skill, query: userQuery, sessionId, signal, onEvent, workDir, modelOverride, modelProfileId, visionProfileId, imageGenProfileId, videoGenProfileId, enableWidgets } = options
 
   let lastProgressAt = Date.now()
   let idleWarningSent = false
@@ -1197,6 +1234,7 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     userQuery,
     visionProfileId,
     imageGenProfileId,
+    videoGenProfileId,
   )
   console.log(`[Agent] Task directory: ${taskDir}`)
   console.log(`[Agent] Is new session: ${isNewSession}`)
@@ -1329,16 +1367,29 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
       args.push('--mcp-config', imageGenMcpPath)
       console.log(`[Agent] Image Gen MCP injected: ${imageGenMcpPath}`)
     }
+    if (videoGenProfileId) {
+      const videoGenMcpPath = writeVideoGenMcpConfig(taskDir, {
+        agentServiceBaseUrl: getAgentServiceUrl(),
+        nodePath: mcpNodeCommand,
+        modelProfileId: videoGenProfileId,
+      })
+      args.push('--mcp-config', videoGenMcpPath)
+      console.log(`[Agent] Video Gen MCP injected: ${videoGenMcpPath}`)
+    }
   } catch (error) {
-    console.error('[Agent] Failed to inject web research / vision / image-gen MCP:', error)
+    console.error('[Agent] Failed to inject web research / vision / image-gen / video-gen MCP:', error)
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
    * 构建 prompt（系统提示词已写入 CLAUDE.md，这里只传用户查询）
    * ═══════════════════════════════════════════════════════════════════════════ */
   const prompt = userQuery
+  const mediaContext = buildMediaContextPromptSection(taskDir)
+  const effectivePrompt = mediaContext
+    ? `${mediaContext}\n\n---\n\n${prompt}`
+    : prompt
 
-  if (!prompt.trim()) {
+  if (!effectivePrompt.trim()) {
     emitEvent({
       type: 'error',
       content: '执行内容为空。请先输入任务内容，或上传文件后再试。',
@@ -1437,6 +1488,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
         if (event && isProgressEvent(event)) {
           hadProgress = true
         }
+        if (event) {
+          recordMediaContextFromEvent(event)
+        }
         // 收集文本输出用于记忆
         if (event?.type === 'text' && event.content) {
           agentResponse += event.content
@@ -1496,6 +1550,9 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
           if (event && isProgressEvent(event)) {
             hadProgress = true
           }
+          if (event) {
+            recordMediaContextFromEvent(event)
+          }
           if (event?.type === 'text' && event.content) {
             agentResponse += event.content
           }
@@ -1528,6 +1585,61 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
   let finalSpawnError: Error | undefined
   let completed = false
   let hasProgressAcrossAttempts = false
+  let activeMediaToolName = ''
+
+  const recordMediaContextFromEvent = (event: AgentEvent): void => {
+    if (event.type === 'tool_use' && event.toolName) {
+      activeMediaToolName = event.toolName
+      return
+    }
+    if (event.type !== 'tool_result') return
+
+    const resultText = event.toolResult || event.content || ''
+    if (activeMediaToolName.includes('analyze_image')) {
+      tryAppendMediaContextItem(taskDir, {
+        kind: 'image',
+        operation: 'understanding',
+        summary: resultText,
+        toolName: activeMediaToolName,
+      })
+    } else if (activeMediaToolName.includes('analyze_video')) {
+      tryAppendMediaContextItem(taskDir, {
+        kind: 'video',
+        operation: 'understanding',
+        summary: resultText,
+        toolName: activeMediaToolName,
+      })
+    } else if (activeMediaToolName.includes('generate_image')) {
+      const fileNameMatch = resultText.match(/(?:保存到|saved to)[:\s]+(.+?\.\w+)/i)
+      const promptMatch = resultText.match(/(?:原始提示词|实际提示词|Original prompt)[:\s]+(.+)/i)
+      if (fileNameMatch) {
+        const filePath = fileNameMatch[1].trim()
+        tryAppendMediaContextItem(taskDir, {
+          kind: 'image',
+          operation: 'generation',
+          filePath,
+          prompt: promptMatch ? promptMatch[1].trim() : undefined,
+          summary: resultText,
+          toolName: activeMediaToolName,
+        })
+      }
+    } else if (activeMediaToolName.includes('generate_video')) {
+      const fileNameMatch = resultText.match(/(?:保存到|saved to)[:\s]+(.+?\.mp4)/i)
+      const promptMatch = resultText.match(/(?:原始提示词|Original prompt)[:\s]+(.+)/i)
+      if (fileNameMatch) {
+        const filePath = fileNameMatch[1].trim()
+        tryAppendMediaContextItem(taskDir, {
+          kind: 'video',
+          operation: 'generation',
+          filePath,
+          prompt: promptMatch ? promptMatch[1].trim() : undefined,
+          summary: resultText,
+          toolName: activeMediaToolName,
+        })
+      }
+    }
+    activeMediaToolName = ''
+  }
 
   for (let attemptIndex = 0; attemptIndex <= maxRecoveryAttempts; attemptIndex += 1) {
     if (signal.aborted) {
@@ -1537,8 +1649,8 @@ export async function executeAgent(options: ExecuteOptions): Promise<void> {
     const useRecoveryPrompt = attemptIndex > 0 && (!isNewSession || hasProgressAcrossAttempts)
     const useContinue = !isNewSession || (attemptIndex > 0 && hasProgressAcrossAttempts)
     const attemptPrompt = useRecoveryPrompt
-      ? buildClaudeRecoveryPrompt(prompt, finalStderrSnippet)
-      : prompt
+      ? buildClaudeRecoveryPrompt(effectivePrompt, finalStderrSnippet)
+      : effectivePrompt
     const result = await runClaudeOnce(attemptIndex, attemptPrompt, useContinue)
 
     agentResponse += result.agentResponse

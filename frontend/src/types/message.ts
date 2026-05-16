@@ -49,6 +49,7 @@ export interface MessageMeta {
   references?: MessageReference[]
   widget?: { widgetId: string; title: string; html: string; status: string; displayMode?: 'inline' | 'panel' }
   image?: { fileName: string; filePath: string; url: string; prompt?: string }
+  video?: { fileName: string; filePath: string; url: string; prompt?: string }
 }
 
 export interface MessageVariant {

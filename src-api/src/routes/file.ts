@@ -6,13 +6,13 @@
 
 import { Hono } from 'hono'
 import { readFile, readdir, stat, writeFile, mkdir } from 'fs/promises'
-import { join } from 'path'
+import { isAbsolute, join, relative, resolve, sep } from 'path'
 import { existsSync, createWriteStream } from 'fs'
 import { v4 as uuid } from 'uuid'
 import { Readable } from 'stream'
 import { spawn } from 'child_process'
 import busboy from 'busboy'
-import { getRuntimeTasksDir, getRuntimeUploadsDir } from 'laborany-shared'
+import { MEDIA_CONTEXT_FILE, getRuntimeTasksDir, getRuntimeUploadsDir } from 'laborany-shared'
 import {
   isLibreOfficeAvailable,
   convertToPdf,
@@ -41,6 +41,14 @@ const TASKS_DIR = getTasksDir()
 
 const file = new Hono()
 
+function resolveSafeTaskFilePath(taskDir: string, filePath: string): { fullPath: string; safe: boolean } {
+  const root = resolve(taskDir)
+  const fullPath = resolve(root, filePath)
+  const rel = relative(root, fullPath)
+  const safe = rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+  return { fullPath, safe }
+}
+
 /* ┌──────────────────────────────────────────────────────────────────────────┐
  * │                       任务目录文件列表                                     │
  * └──────────────────────────────────────────────────────────────────────────┘ */
@@ -57,7 +65,7 @@ interface TaskFile {
   stepName?: string     // 复合技能步骤名称
 }
 
-const TASK_INTERNAL_IGNORE_LIST = new Set(['history.txt', '.git', 'node_modules', '__pycache__', 'CLAUDE.md'])
+const TASK_INTERNAL_IGNORE_LIST = new Set(['history.txt', '.git', 'node_modules', '__pycache__', 'CLAUDE.md', MEDIA_CONTEXT_FILE])
 const TASK_INTERNAL_DOWNLOAD_ALLOW_LIST = new Set(['.laborany-input-files.json'])
 
 function shouldIgnoreTaskEntry(name: string): boolean {
@@ -70,7 +78,7 @@ function shouldIgnoreTaskEntry(name: string): boolean {
 
 function isInternalTaskPath(filePath: string): boolean {
   const segments = filePath
-    .split('/')
+    .split(/[\\/]+/)
     .filter(Boolean)
 
   if (segments.length === 1 && TASK_INTERNAL_DOWNLOAD_ALLOW_LIST.has(segments[0])) {
@@ -187,16 +195,22 @@ file.get('/tasks/:sessionId/files', async (c) => {
 async function handleFileDownload(c: any, pathPrefix: string) {
   const sessionId = c.req.param('sessionId')
   // 路由挂载在 /api 下，所以完整路径是 /api/task/:sessionId/files/*
-  const filePath = c.req.path.replace(`/api/${pathPrefix}/${sessionId}/files/`, '')
+  const rawFilePath = c.req.path.replace(`/api/${pathPrefix}/${sessionId}/files/`, '')
+  let filePath = rawFilePath
+  try {
+    filePath = decodeURIComponent(rawFilePath)
+  } catch {
+    filePath = rawFilePath
+  }
   const taskDir = join(TASKS_DIR, sessionId)
-  const fullPath = join(taskDir, filePath)
+  const { fullPath, safe } = resolveSafeTaskFilePath(taskDir, filePath)
 
   console.log(`[File] Download request: ${c.req.path}`)
   console.log(`[File] Extracted file path: ${filePath}`)
   console.log(`[File] Full path: ${fullPath}`)
 
   // 安全检查
-  if (!fullPath.startsWith(taskDir)) {
+  if (!safe) {
     return c.json({ error: '禁止访问' }, 403)
   }
 

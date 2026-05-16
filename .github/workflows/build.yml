@@ -147,6 +147,14 @@ jobs:
           npm run bundle:all:win
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+          Write-Host ">>> npm run bundle:ffmpeg:win"
+          npm run bundle:ffmpeg:win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Write-Host ">>> npm run verify:ffmpeg:win"
+          npm run verify:ffmpeg:win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           Write-Host ">>> npm run build:api:win"
           npm run build:api:win
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -285,6 +293,8 @@ jobs:
         run: |
           npm run bundle:cli:mac-universal
           npm run bundle:uv:mac-universal
+          npm run bundle:ffmpeg:mac-universal
+          npm run verify:ffmpeg:mac-universal
           npm run build:api:mac-x64
           npm run build:agent:mac
           # 确保可执行文件有执行权限
@@ -370,6 +380,8 @@ jobs:
         run: |
           npm run bundle:cli:mac-universal
           npm run bundle:uv:mac-universal
+          npm run bundle:ffmpeg:mac-universal
+          npm run verify:ffmpeg:mac-universal
           npm run build:api:mac-arm64
           npm run build:agent:mac-arm64
           # 确保可执行文件有执行权限
@@ -455,6 +467,8 @@ jobs:
         run: |
           npm run bundle:cli:linux
           npm run bundle:uv:linux
+          npm run bundle:ffmpeg:linux
+          npm run verify:ffmpeg:linux
           npm run build:api:linux
           npm run build:agent:linux
           # 确保可执行文件有执行权限

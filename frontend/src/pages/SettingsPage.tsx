@@ -49,7 +49,7 @@ export default function SettingsPage() {
     )
   }
 
-  const showSaveBar = activeSection === 'profile' || activeSection === 'integration' || activeSection === 'system'
+  const showSaveBar = activeSection === 'profile' || activeSection === 'storage' || activeSection === 'integration' || activeSection === 'system'
 
   return (
     <div className="min-h-screen bg-background">
@@ -130,6 +130,13 @@ export default function SettingsPage() {
               exportingLogs={s.exportingLogs}
               exportLogs={s.exportLogs}
               switchStorageHome={s.switchStorageHome}
+              storageKeys={s.groupedKeys.storage}
+              template={s.template}
+              editValues={s.editValues}
+              showValues={s.showValues}
+              toggleShowValue={s.toggleShowValue}
+              handleChange={s.handleChange}
+              isFieldVisible={s.isFieldVisible}
             />
           )}
 

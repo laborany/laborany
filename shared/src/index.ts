@@ -38,6 +38,17 @@ export {
 } from './task-attachments.js'
 
 export {
+  MEDIA_CONTEXT_FILE,
+  readMediaContext,
+  appendMediaContextItem,
+  buildMediaContextPromptSection,
+  type MediaContextItem,
+  type MediaContextKind,
+  type MediaContextOperation,
+  type MediaContextStore,
+} from './media-context.js'
+
+export {
   CAPABILITY_ID_MAX_LENGTH,
   normalizeCapabilityDisplayName,
   normalizeCapabilityId,

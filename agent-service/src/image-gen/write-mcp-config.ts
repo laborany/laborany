@@ -36,7 +36,8 @@ export function buildImageGenPolicySection(): string {
 
 调用规则：
 - 仅在用户明确要求生成图片时调用，不要主动为纯文字描述生成图片
-- 调用时传入完整的图片描述 prompt，可选传入文件名、尺寸、风格参数
+- 调用时传入完整的图片描述 prompt，可选传入文件名、尺寸、比例、风格参数
+- 若模型配置为 OpenAI gpt-image 系列或 Google Gemini / Nano Banana 系列，仍使用同一个 generate_image 工具，工具会按模型配置自动选择适配器
 - 生成完成后，告知用户图片已保存到当前任务目录，可在右侧文件树中查看
 - 如用户只是描述一个画面场景但没有要求生成图片，不要调用此工具`
 }

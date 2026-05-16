@@ -259,6 +259,16 @@ export function useSettingsConfig() {
         errors.push('SMTP_PORT 必须为数字')
       }
     }
+    const tosEnabled = normalizeBool(editValues.LABORANY_TOS_ENABLED)
+    if (tosEnabled) {
+      if (!(editValues.LABORANY_TOS_ACCESS_KEY_ID || '').trim()) errors.push('TOS 已启用，但缺少 LABORANY_TOS_ACCESS_KEY_ID')
+      if (!(editValues.LABORANY_TOS_ACCESS_KEY_SECRET || '').trim()) errors.push('TOS 已启用，但缺少 LABORANY_TOS_ACCESS_KEY_SECRET')
+      if (!(editValues.LABORANY_TOS_REGION || '').trim()) errors.push('TOS 已启用，但缺少 LABORANY_TOS_REGION')
+      if (!(editValues.LABORANY_TOS_BUCKET || '').trim()) errors.push('TOS 已启用，但缺少 LABORANY_TOS_BUCKET')
+      if ((editValues.LABORANY_TOS_SIGNED_URL_EXPIRES || '').trim() && !isNumeric(editValues.LABORANY_TOS_SIGNED_URL_EXPIRES || '')) {
+        errors.push('LABORANY_TOS_SIGNED_URL_EXPIRES 必须为数字')
+      }
+    }
     return errors
   }
 
@@ -749,7 +759,7 @@ export function useSettingsConfig() {
   }, [template, config, editValues])
 
   const groupedKeys = useMemo(() => {
-    const buckets: Record<ConfigGroupId, string[]> = { model: [], wechat: [], feishu: [], qq: [], email: [], system: [], advanced: [] }
+    const buckets: Record<ConfigGroupId, string[]> = { model: [], storage: [], wechat: [], feishu: [], qq: [], email: [], system: [], advanced: [] }
     for (const key of allKeys) {
       const group = template[key]?.group || 'advanced'
       buckets[group].push(key)
@@ -767,7 +777,7 @@ export function useSettingsConfig() {
 
   const knownKeys = useMemo(() => {
     const set = new Set<string>()
-    for (const group of ['model', 'wechat', 'feishu', 'qq', 'email', 'system'] as ConfigGroupId[]) {
+    for (const group of ['model', 'storage', 'wechat', 'feishu', 'qq', 'email', 'system'] as ConfigGroupId[]) {
       for (const key of groupedKeys[group]) set.add(key)
     }
     return set

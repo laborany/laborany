@@ -23,6 +23,7 @@ const RUNTIME_OWNED_PREFIXES = [
   'SMTP_',
   'NOTIFICATION_',
   'NOTIFY_',
+  'LABORANY_TOS_',
 ] as const
 
 const PROCESS_OVERRIDE_KEYS = [

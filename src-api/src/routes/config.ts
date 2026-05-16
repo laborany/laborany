@@ -30,14 +30,14 @@ interface TemplateField {
   required: boolean
   placeholder: string
   sensitive: boolean
-  group: 'model' | 'wechat' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
+  group: 'model' | 'storage' | 'wechat' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
   order: number
   dependsOnKey?: string
   dependsOnValue?: string
 }
 
 interface TemplateGroup {
-  id: 'model' | 'wechat' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
+  id: 'model' | 'storage' | 'wechat' | 'feishu' | 'qq' | 'email' | 'system' | 'advanced'
   title: string
   description: string
 }
@@ -48,6 +48,11 @@ function buildTemplateGroups(): TemplateGroup[] {
       id: 'model',
       title: '模型服务',
       description: 'LaborAny 调用大模型所需的核心配置（建议优先完成）',
+    },
+    {
+      id: 'storage',
+      title: '媒体素材存储',
+      description: '配置 TOS，用于把本地视频参考素材上传为视频生成服务可访问的 URL',
     },
     {
       id: 'wechat',
@@ -278,6 +283,114 @@ function buildTemplate(): Record<string, TemplateField> {
       sensitive: true,
       group: 'email',
       order: 70,
+    },
+    LABORANY_TOS_ENABLED: {
+      label: '启用 TOS 素材中转',
+      description: '开启后，视频生成 MCP 可把本地视频 reference 上传到 TOS 再传给 Seedance（true/false）',
+      required: false,
+      placeholder: 'false',
+      sensitive: false,
+      group: 'storage',
+      order: 10,
+    },
+    LABORANY_TOS_ACCESS_KEY_ID: {
+      label: 'TOS Access Key ID',
+      description: '火山引擎 TOS 访问密钥 ID',
+      required: false,
+      placeholder: 'AKLT...',
+      sensitive: true,
+      group: 'storage',
+      order: 20,
+      dependsOnKey: 'LABORANY_TOS_ENABLED',
+      dependsOnValue: 'true',
+    },
+    LABORANY_TOS_ACCESS_KEY_SECRET: {
+      label: 'TOS Access Key Secret',
+      description: '火山引擎 TOS 访问密钥 Secret',
+      required: false,
+      placeholder: '',
+      sensitive: true,
+      group: 'storage',
+      order: 30,
+      dependsOnKey: 'LABORANY_TOS_ENABLED',
+      dependsOnValue: 'true',
+    },
+    LABORANY_TOS_STS_TOKEN: {
+      label: 'TOS STS Token（可选）',
+      description: '使用临时凭证时填写，长期 AK/SK 可留空',
+      required: false,
+      placeholder: '',
+      sensitive: true,
+      group: 'storage',
+      order: 40,
+      dependsOnKey: 'LABORANY_TOS_ENABLED',
+      dependsOnValue: 'true',
+    },
+    LABORANY_TOS_REGION: {
+      label: 'TOS Region',
+      description: 'Bucket 所在地域，例如 cn-beijing',
+      required: false,
+      placeholder: 'cn-beijing',
+      sensitive: false,
+      group: 'storage',
+      order: 50,
+      dependsOnKey: 'LABORANY_TOS_ENABLED',
+      dependsOnValue: 'true',
+    },
+    LABORANY_TOS_ENDPOINT: {
+      label: 'TOS Endpoint',
+      description: 'TOS endpoint，可填 tos-cn-beijing.volces.com 或 https://tos-cn-beijing.volces.com',
+      required: false,
+      placeholder: 'tos-cn-beijing.volces.com',
+      sensitive: false,
+      group: 'storage',
+      order: 60,
+      dependsOnKey: 'LABORANY_TOS_ENABLED',
+      dependsOnValue: 'true',
+    },
+    LABORANY_TOS_BUCKET: {
+      label: 'TOS Bucket',
+      description: '用于临时存放本地视频参考素材的 Bucket 名称',
+      required: false,
+      placeholder: 'your-bucket',
+      sensitive: false,
+      group: 'storage',
+      order: 70,
+      dependsOnKey: 'LABORANY_TOS_ENABLED',
+      dependsOnValue: 'true',
+    },
+    LABORANY_TOS_PREFIX: {
+      label: 'TOS Object Prefix',
+      description: '上传对象前缀，用于隔离 LaborAny 临时素材',
+      required: false,
+      placeholder: 'laborany/media-references',
+      sensitive: false,
+      group: 'storage',
+      order: 80,
+      dependsOnKey: 'LABORANY_TOS_ENABLED',
+      dependsOnValue: 'true',
+    },
+    LABORANY_TOS_PUBLIC_BASE_URL: {
+      label: '公开访问 Base URL（可选）',
+      description: 'Bucket/CDN 根地址已公开时填写；留空则自动生成临时签名 URL',
+      required: false,
+      placeholder: 'https://cdn.example.com',
+      sensitive: false,
+      group: 'storage',
+      order: 90,
+      dependsOnKey: 'LABORANY_TOS_ENABLED',
+      dependsOnValue: 'true',
+    },
+    LABORANY_TOS_SIGNED_URL_EXPIRES: {
+      label: '签名 URL 有效期（秒）',
+      description: '未设置公开 Base URL 时使用，默认 86400 秒',
+      required: false,
+      placeholder: '86400',
+      sensitive: false,
+      group: 'storage',
+      order: 100,
+      dependsOnKey: 'LABORANY_TOS_ENABLED',
+      dependsOnValue: 'true',
     },
     WECHAT_ENABLED: {
       label: '启用微信 Bot',
